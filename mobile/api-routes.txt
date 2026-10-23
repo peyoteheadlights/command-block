@@ -1,0 +1,163 @@
+# Every agent route the phone apps call (their screens, the widget, the
+# alert check, lock-screen alerts). tests/test_phone_app.py fails if one of
+# these disappears or loses its typed answer, so the agent stays compatible
+# with the apps already on people's phones. Add a route here when an app
+# starts calling it. The live feed (/ws) the apps also use is covered by
+# tests/test_api.py and tests/test_reliability.py.
+GET /api/health
+POST /api/auth/login
+POST /api/auth/logout
+GET /api/auth/me
+GET /api/servers
+GET /api/servers/{server_id}/status
+POST /api/servers/{server_id}/server/start
+POST /api/servers/{server_id}/server/stop
+POST /api/servers/{server_id}/server/restart
+GET /api/servers/{server_id}/logs
+POST /api/servers/{server_id}/logs/clear
+GET /api/servers/{server_id}/server/command/check
+POST /api/servers/{server_id}/server/command
+GET /api/servers/{server_id}/chat
+POST /api/servers/{server_id}/chat
+GET /api/servers/{server_id}/players
+POST /api/servers/{server_id}/players/actions
+GET /api/servers/{server_id}/players/actions/{action_id}
+GET /api/servers/{server_id}/events
+GET /api/servers/{server_id}/crashes
+GET /api/servers/{server_id}/crashes/{crash_id}
+GET /api/servers/{server_id}/recommendations
+POST /api/servers/{server_id}/recommendations/{rec_id}
+GET /api/servers/{server_id}/getting-started
+POST /api/servers/{server_id}/getting-started/dismiss
+GET /api/servers/{server_id}/join
+GET /api/servers/{server_id}/backups
+POST /api/servers/{server_id}/backups
+GET /api/servers/{server_id}/backups/{backup_id}/verify
+POST /api/servers/{server_id}/backups/{backup_id}/restore
+DELETE /api/servers/{server_id}/backups/{backup_id}
+POST /api/servers/{server_id}/backups/{backup_id}/copy
+GET /api/servers/{server_id}/backups/offsite
+PUT /api/servers/{server_id}/backups/offsite
+GET /api/servers/{server_id}/worlds
+POST /api/servers/{server_id}/worlds/save
+GET /api/servers/{server_id}/world/timeline
+POST /api/servers/{server_id}/world/undo
+GET /api/jobs
+# Only phone apps from before Undo and Redo call this one.
+POST /api/jobs/{job_id}/undo
+GET /api/servers/{server_id}/changes
+POST /api/servers/{server_id}/changes/undo
+POST /api/servers/{server_id}/changes/redo
+GET /api/servers/{server_id}/schedules
+POST /api/servers/{server_id}/schedules
+PUT /api/servers/{server_id}/schedules/{schedule_id}
+DELETE /api/servers/{server_id}/schedules/{schedule_id}
+POST /api/servers/{server_id}/schedules/{schedule_id}/run
+GET /api/servers/{server_id}/performance
+GET /api/servers/{server_id}/health/server
+# A backup's file is a zip, not JSON, so it has no typed answer; the apps
+# also download it from GET /api/servers/{server_id}/backups/{backup_id}/download
+# (tests/test_phone_world.py checks it stays).
+# Mods / Plugins / Packs and Game settings.
+GET /api/servers/{server_id}/mods
+POST /api/servers/{server_id}/mods/enable
+POST /api/servers/{server_id}/mods/disable
+GET /api/servers/{server_id}/mods/impact
+POST /api/servers/{server_id}/mods/remove
+POST /api/servers/{server_id}/mods/update
+GET /api/servers/{server_id}/mods/versions/{mod_id}
+POST /api/servers/{server_id}/mods/rollback
+GET /api/servers/{server_id}/mods/history
+GET /api/servers/{server_id}/mods/update-all
+POST /api/servers/{server_id}/mods/update-all
+GET /api/servers/{server_id}/mods/search
+GET /api/servers/{server_id}/mods/project/{project}
+POST /api/servers/{server_id}/mods/install
+GET /api/servers/{server_id}/mods/dependencies
+POST /api/servers/{server_id}/mods/dependencies/plan
+POST /api/servers/{server_id}/mods/dependencies/install
+POST /api/servers/{server_id}/mods/upload
+POST /api/modpacks/inspect
+DELETE /api/modpacks/{token}
+POST /api/servers/{server_id}/modpack
+GET /api/servers/{server_id}/addons
+POST /api/servers/{server_id}/addons/upload
+PUT /api/servers/{server_id}/addons/{pack_uuid}
+DELETE /api/servers/{server_id}/addons/{pack_uuid}
+GET /api/servers/{server_id}/game-settings
+PUT /api/servers/{server_id}/game-settings
+PUT /api/servers/{server_id}/game-settings/raw
+GET /api/alerts
+GET /api/app/phone
+PUT /api/app/phone
+DELETE /api/app/phone
+GET /api/version
+# Setup.
+GET /api/servers/{server_id}/settings
+PUT /api/servers/{server_id}/settings
+PUT /api/servers/{server_id}/color
+GET /api/servers/{server_id}/memory
+PUT /api/servers/{server_id}/memory
+GET /api/server-types
+GET /api/server-types/{type_id}/versions
+GET /api/servers/{server_id}/version
+POST /api/servers/{server_id}/version/preflight
+POST /api/servers/{server_id}/version
+POST /api/servers/{server_id}/version/roll-back
+POST /api/servers/{server_id}/eula
+GET /api/servers/{server_id}/crossplay
+PUT /api/servers/{server_id}/crossplay
+GET /api/servers/{server_id}/duplicate
+POST /api/servers/{server_id}/duplicate
+DELETE /api/servers/{server_id}
+# The PC folder picker, new servers and world import
+GET /api/folders
+POST /api/servers
+GET /api/new-server/options
+POST /api/new-server
+POST /api/modpacks/{token}/new-server
+POST /api/servers/{server_id}/world/import/upload
+POST /api/servers/{server_id}/world/import/folder
+GET /api/servers/{server_id}/world/saves
+POST /api/servers/{server_id}/world/import
+DELETE /api/servers/{server_id}/world/import/{token}
+POST /api/servers/{server_id}/world/download
+# The packed world is a zip, not JSON, so it has no typed answer; the apps
+# download it from GET /api/servers/{server_id}/world/download/{token}.
+GET /api/accounts
+POST /api/accounts
+PUT /api/accounts/{username}
+DELETE /api/accounts/{username}
+POST /api/accounts/{username}/invite
+DELETE /api/accounts/{username}/invite
+POST /api/invite/check
+POST /api/invite/accept
+POST /api/account/password
+GET /api/sessions
+DELETE /api/sessions/{session_id}
+# PC settings: owner only.
+POST /api/security/revoke-sessions
+GET /api/settings
+PUT /api/settings
+POST /api/maintenance
+POST /api/notifications/test
+GET /api/updates
+POST /api/updates/check
+GET /api/updates/preflight
+POST /api/updates/install
+GET /api/updates/old-copy
+POST /api/updates/old-copy/remove
+GET /api/jobs/{job_id}
+GET /api/export
+POST /api/export
+GET /api/help-bundle
+POST /api/help-bundle
+GET /api/power
+GET /api/system/startup
+# A help file is a zip, not JSON, so it has no typed answer; the apps
+# download it from GET /api/help-bundle/{token} to share it.
+# Alerts per device and Wake-on-LAN.
+GET /api/account/alerts
+PUT /api/account/alerts
+GET /api/wake
+POST /api/wake/key

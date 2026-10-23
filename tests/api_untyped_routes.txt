@@ -1,0 +1,15 @@
+# Older routes that answer without a response model yet (agent/api/responses.py).
+# Remove a line when its route gets one. New routes must not be added here.
+GET /api/export/{token}
+GET /api/help-bundle/{token}
+GET /api/push
+GET /api/security/tls
+GET /api/servers/{server_id}/backups/{backup_id}/download
+GET /api/servers/{server_id}/info
+GET /api/servers/{server_id}/logs/download
+GET /api/servers/{server_id}/mods/check
+GET /api/servers/{server_id}/players/sessions
+GET /api/servers/{server_id}/world/download/{token}
+POST /api/push/subscribe
+POST /api/push/test
+POST /api/push/unsubscribe

@@ -1,0 +1,207 @@
+"""One server's own settings: its name, memory flags, timeouts, and its
+overrides of the crash-handling, backup and mod settings."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from ... import colors, memory
+from ...config import SERVER_OVERRIDES, ConfigError
+from ...events import Event
+from ...minecraft import cpu
+from ...security.auth import Principal
+from ...security.permissions import SETTINGS_SERVER, SETTINGS_VIEW, require
+from ..deps import audit, get_server
+from ..responses import ColorSaved, MemoryOverview, MemorySaved, ServerSettings, ServerSettingsSaved
+from .models import MemoryRequest, ServerColorRequest, ServerSettingsRequest
+
+router = APIRouter()
+
+SERVER_SETTABLE = (
+    "server.name",
+    "server.max_players",
+    "server.stop_timeout",
+    "server.start_timeout",
+    "server.autostart_minecraft",
+    "server.jvm_args",
+    "server.cpu_cores",
+    "server.autosleep",
+    "server.autosleep_minutes",
+    "monitor.",
+    "backups.keep_",
+    "backups.include",
+    "backups.stop_server_for_backup",
+    "mods.backup_before_install",
+    "mods.update_check_hours",
+)
+
+
+@router.get("/settings", response_model=ServerSettings)
+async def get_server_settings(
+    principal: Principal = Depends(require(SETTINGS_VIEW)), ctx=Depends(get_server)
+):
+    return {
+        "server_id": ctx.server_id,
+        "server": ctx.config.server.to_dict(),
+        "color": ctx.color,
+        "palette": colors.palette(),
+        **{name: ctx.config.section(name).to_dict() for name in SERVER_OVERRIDES},
+        "overrides": {
+            name: ctx.config.root.server_entry(ctx.server_id).get(name) or {}
+            for name in SERVER_OVERRIDES
+        },
+        "editable": list(SERVER_SETTABLE),
+        "cpu": _cpu_overview(ctx),
+        "sleep": ctx.autosleep.status(),
+    }
+
+
+def _cpu_overview(ctx) -> dict:
+    """What the CPU core picker needs: this PC's cores, whether limits work
+    here, and which cores every other server is set to use."""
+    supported, why = cpu.supported()
+    others = []
+    for other in ctx.core.servers.values():
+        if other is ctx:
+            continue
+        others.append(
+            {"id": other.server_id, "name": other.name, "cores": other.config.server.cpu_cores}
+        )
+    return {
+        "logical_cores": cpu.logical_cores(),
+        "supported": supported,
+        "unsupported_reason": why,
+        "others": others,
+        "status": cpu.status(
+            ctx.server.pid if ctx.server.running else None, ctx.config.server.cpu_cores
+        ),
+    }
+
+
+@router.put("/settings", response_model=ServerSettingsSaved)
+async def update_server_settings(
+    payload: ServerSettingsRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    applied, rejected = {}, {}
+    for key, value in payload.updates.items():
+        if not any(key == p or key.startswith(p) for p in SERVER_SETTABLE):
+            rejected[key] = "This setting can't be changed here."
+            continue
+        if key == "server.autosleep_minutes":
+            try:
+                minutes = int(value)
+            except (TypeError, ValueError):
+                minutes = 0
+            if not 1 <= minutes <= 1440:
+                rejected[key] = "Pick between 1 minute and 24 hours."
+                continue
+            value = minutes
+        if key == "server.cpu_cores":
+            found = cpu.shape_problems(value) or cpu.problems(value)
+            if found:
+                rejected[key] = found[0]
+                continue
+        target = _where(ctx, key)
+        previous = target.get(key)
+        target.set(key, value)
+        try:
+            ctx.config.section(key.split(".", 1)[0])
+        except ConfigError as exc:
+            target.set(key, previous)
+            rejected[key] = str(exc)
+            continue
+        applied[key] = value
+    if applied:
+        try:
+            ctx.config.save()
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Settings could not be written to disk: {exc}"
+            ) from exc
+        if "server.name" in applied:
+            ctx.core.db.register_server(
+                ctx.server_id,
+                ctx.config.server.name,
+                str(ctx.config.server_dir),
+                ctx.config.server.type,
+            )
+            await _announce_change(ctx, f"Renamed the server to {ctx.name}")
+        audit(ctx, request, "server_settings_update", detail=", ".join(applied))
+    result: dict = {"ok": True, "applied": applied, "rejected": rejected}
+    if "server.cpu_cores" in applied and ctx.server.running:
+        # Applied to the running server at once, and read back from it.
+        result["cpu_cores"] = await ctx.server.apply_cpu_cores()
+    return result
+
+
+def _where(ctx, key: str):
+    """Where a setting is saved. With one server, its crash, backup and mod
+    settings stay the app-wide ones (unless it already has its own), so a
+    config.yaml with a single server: block keeps its shape."""
+    head = key.split(".", 1)[0]
+    if len(ctx.core.servers) > 1 or head not in SERVER_OVERRIDES:
+        return ctx.config
+    own = ctx.config.root.server_entry(ctx.server_id).get(head) or {}
+    return ctx.config if key.split(".", 1)[1].split(".")[0] in own else ctx.config.root
+
+
+@router.put("/color", response_model=ColorSaved)
+async def set_color(
+    payload: ServerColorRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    """Set this server's color: a palette color or the person's own hex."""
+    try:
+        color = colors.normalise(payload.color)
+    except colors.ColorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ctx.core.db.set_server_color(ctx.server_id, color)
+    audit(ctx, request, "server_color", detail=color)
+    await _announce_change(ctx, f"Changed {ctx.name}'s color")
+    return {"ok": True, "color": color}
+
+
+async def _announce_change(ctx, message: str) -> None:
+    """Tells every open app to reload the server list (name, color)."""
+    await ctx.bus.publish(
+        Event(type="server_changed", message=message, data={"color": ctx.color, "name": ctx.name})
+    )
+
+
+@router.get("/memory", response_model=MemoryOverview)
+async def get_memory(
+    principal: Principal = Depends(require(SETTINGS_VIEW)), ctx=Depends(get_server)
+):
+    """The memory slider: the PC's measured total and this server's limit."""
+    return memory.overview(ctx)
+
+
+@router.put("/memory", response_model=MemorySaved)
+async def set_memory(
+    payload: MemoryRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    """Set the -Xmx limit, leaving every other launch flag as it is. Takes
+    effect the next time the server starts."""
+    try:
+        mb = memory.check_limit(ctx, payload.memory_mb)
+    except memory.MemoryLimitError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    previous = list(ctx.config.server.jvm_args)
+    ctx.config.set("server.jvm_args", memory.with_limit(previous, mb))
+    try:
+        ctx.config.save()
+    except OSError as exc:
+        ctx.config.set("server.jvm_args", previous)
+        raise HTTPException(
+            status_code=500, detail=f"Settings could not be written to disk: {exc}"
+        ) from exc
+    audit(ctx, request, "memory_limit", detail=f"{mb} MB")
+    return {"ok": True, **memory.overview(ctx)}
