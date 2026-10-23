@@ -1,0 +1,279 @@
+# Architecture
+
+## Processes
+
+```
+uvicorn (one process)
+ └── FastAPI app
+      └── AgentCore
+           ├── MinecraftServer   supervises the java child process
+           ├── PlayerTracker     hooked into every console line
+           ├── MetricsMonitor    background sampling + tick-rate polling
+           ├── ModManager        mods folder + Modrinth client
+           ├── BackupManager     zip create / verify / restore
+           ├── CrashReporter     evidence collection + analysis
+           ├── Notifier          Discord + SMTP, subscribed to the bus
+           ├── Scheduler         due-task loop
+           ├── AuthManager       sessions, lockout, rate limits
+           ├── EventBus          fan-out to websockets, DB, notifications
+           └── Database          SQLite (WAL) with migrations
+
+java -Xmx6G -jar fabric-server-launch.jar nogui   (child process)
+```
+
+Minecraft is a **child process**, launched with an argument list and no shell.
+Its stdout and stderr are merged and read line by line into a bounded ring
+buffer, and every line is parsed for facts (startup complete, versions, joins,
+leaves, tick rate, shutdown) before being published on the event bus.
+
+## The event bus
+
+Everything interesting is an `Event` with a type, message, level and data.
+Subscribers: the database writer, the notifier, and every open WebSocket.
+
+Each WebSocket gets its **own bounded queue**. If a phone on a weak connection
+falls behind, its oldest events are dropped: the agent is never slowed down by
+a slow consumer. Console lines and metrics samples only go to pages showing
+that server (the queue filters them before they are queued), so another
+server's busy console can never push a crash alert out of a slow phone's
+queue. A subscriber that raises is logged and ignored.
+
+The notifier never sends from inside `publish`: it queues the alert and returns
+at once, and its own background task does the Discord and email sends. That is
+why a Discord outage or a slow mail server cannot stall the console reader or
+the Minecraft server. Fire-and-forget publishes (`publish_soon`) are held by
+the bus until they have run.
+
+The database writer works the same way: publishing appends the event to a
+list, and a background task writes whatever has collected once a second, in
+one transaction, in a worker thread. Other slow calls (`tailscale status`,
+`java -version`, the health checks' TCP probe, the storage walk) also run in
+worker threads, never on the event loop.
+
+## Why a crash is not a shutdown
+
+Getting this wrong means 3am alerts every time you stop the server. The
+supervisor tracks intent, not just the exit code:
+
+| Situation | Classified as | Alert? |
+| --- | --- | --- |
+| Someone pressed Stop | `user_stop` | stopped |
+| Scheduled stop ran | `scheduled_stop` | stopped |
+| `/stop` typed in game, clean shutdown lines seen | `clean_exit` | stopped |
+| Graceful stop timed out, process terminated | `force_killed` | stopped |
+| Process died while ONLINE, no stop requested | `crash` | **crash** |
+| Process died while STARTING | `startup_failure` | **crash** |
+
+Only the last two collect evidence, run the analyzer, and trigger auto-restart.
+
+## Storage split
+
+- **SQLite** holds small structured rows: events, players, sessions, metrics,
+  crash metadata, backup metadata, mod history and versions, schedules, audit
+  log, notification log, sessions, login attempts.
+- **Files** hold everything large: console tails, copied crash reports, copied
+  logs, backup zips, archived mod jars. The database stores paths to them.
+
+Migrations are forward-only and numbered in `agent/database/db.py`. The runner
+applies anything newer than the recorded version at startup. Each migration and
+the row recording it run in one transaction, so a migration that fails part way
+leaves the database exactly as it was.
+
+## Several servers
+
+`AgentCore` holds what the agent has once: the event bus, the database, sign-in,
+the notifier, the job tracker and the port manager. Each Minecraft server is a
+`ServerContext` in `core.servers`, with its own process supervisor, players,
+metrics, TPS, mods, backups, crash reporter and scheduler. A context sees the
+shared pieces through thin wrappers: a `ServerConfig` view (its own `server`
+settings, plus its `monitor`/`backups`/`mods` overrides on top of the shared
+sections), a `ServerBus` that stamps `server_id` on every event it publishes,
+and a `ServerDb` that scopes settings keys and audit rows to the server.
+
+Events without a `server_id` are about the agent itself (the certificate,
+machine-wide CPU and RAM alerts) and are stored under `_agent`.
+
+REST routes for one server are mounted under `/api/servers/{server_id}`; the
+`get_server` dependency turns the id into a context or a 404. The unprefixed
+routes from before are the same routers mounted again with no id, so they act
+on the first server. The WebSocket streams every server's events and the
+apps filter by the server being looked at.
+
+## Shared building blocks
+
+- **Jobs** (`agent/jobs.py`): a long operation with honest progress, stored in
+  the `jobs` table and streamed as `job` events. One risky job per server at a
+  time: backups, restores and every mod change (install, upload, update,
+  remove, turn on or off, roll back, dependencies). Jobs left running when the
+  agent stopped are marked interrupted.
+- **Safe change** (`agent/safechange.py`): stop if needed, take and verify a
+  backup, make the change, check it, put the backup back if the change or the
+  check fails, start again if asked. A change that succeeds goes on the
+  server's undo stack (`agent/changes.py`), and Undo puts its backup back.
+  Undo and Redo are two stacks per server in one table: Undo moves the top
+  change to the redo stack, Redo moves it back, and any new change empties
+  Redo. Version changes only empty Redo (they have their own Roll back).
+  Restoring a backup runs through it; later phases' risky changes will too.
+  From the stop until the result is checked, the server is held: every
+  start is refused with what it is waiting for.
+- **Port manager** (`agent/ports.py`): which port each server uses (from its
+  console, else `server.properties`, else Minecraft's default, and says which),
+  start refusals on a port or folder another running server uses, and free
+  port suggestions.
+- **Permissions** (`agent/security/permissions.py`): every route declares the
+  permission it needs with `Depends(require(...))`, and a test checks none is
+  missing. Today every signed-in user has every permission; helper accounts
+  later only change `permissions_for`.
+- **Downloader** (`agent/downloads.py`): the one way anything is fetched.
+  HTTPS only, an allow-list of official hosts re-checked on every redirect,
+  size caps, `.part` file renamed into place only after the strongest
+  published checksum matches, and an honest `verified: false` where a source
+  publishes none. Tests replace its module-level `TRANSPORT`, so nothing in
+  the suite touches the network.
+
+## Server types
+
+`agent/servertypes/` is where "what kind of server is this" lives, and
+nothing outside it asks `if type == "fabric"`:
+
+- `__init__.py`: one frozen `ServerType` per type (Vanilla, Fabric, Quilt,
+  Forge, NeoForge, Paper, Purpur), saying what it accepts, what its add-ons
+  are called and where they live, which metadata file they carry, which
+  Modrinth loaders match, how it is launched (`-jar`, or `java @win_args.txt`
+  for Forge and NeoForge; `unix_args.txt` off Windows), its installer's
+  arguments, where its versions come from, which TPS commands to try, which
+  folders a backup must hold besides the configured list (`backup_extra`),
+  and whether GeyserMC publishes a build for it. The apps'
+  comparison table is generated from exactly this, so it cannot drift.
+- `versions.py`: one provider per type, each asking that project's own API
+  (Mojang's piston-meta, meta.fabricmc.net, meta.quiltmc.org, the Forge and
+  NeoForged Maven metadata, fill.papermc.io, api.purpurmc.org), and turning
+  a chosen version into a `Plan` of files to fetch.
+- `install.py`: putting that plan in place, running the loader installer
+  where there is one (see `docs/security.md`), and changing a server's
+  version or type through the safe-change routine, keeping the previous
+  software for a one-step roll back.
+- `create.py`: a brand-new server. It checks the folder, checks Java, writes
+  `server.properties` and `eula.txt`, installs and registers it. It is never started
+  for you.
+- `bedrock.py`: Bedrock Dedicated Server. Mojang's download links
+  service names only the newest zip and no checksum, so each download is
+  recorded as unverified with its SHA-256, and every zip is kept in the data
+  folder's `bedrock-versions/` so older versions and roll backs work. Nothing
+  is downloaded before Mojang's EULA and Privacy Policy are accepted. An
+  update replaces only Mojang's files: worlds, `server.properties`,
+  `allowlist.json`, `permissions.json` and added packs stay.
+
+The Bedrock type's capabilities do the rest of the work: `dialect: "bedrock"`
+picks its console patterns (`console.bedrock_signals`), its player commands
+(`allowlist`, `permission`, players by xuid) and its `server.properties`
+keys; `backup_method: "save_hold"` makes backups use `save hold` /
+`save query` / `save resume` (`agent/backups/hold.py`); `ping: "raknet"`
+makes the reachability check a RakNet unconnected ping over UDP
+(`agent/minecraft/raknet.py`); `takes_memory_limit`, `reports_speed`,
+`crossplay`, `bans` and `reads_chat` are false, and the pages say "not
+applicable" for each. `can_change_to` refuses Java ↔ Bedrock. Its add-ons
+are packs (`agent/addons.py`), not mods.
+
+`agent/crossplay.py` sits beside them: Geyser and Floodgate installed into
+the server's own add-on folder with `auth-type: floodgate`, a UDP port from
+the port manager, and the differences a Bedrock player will notice written
+out in plain words.
+
+## The data folder
+
+`agent/datafolder.py` moves an old `<server>/mcsc-data` to the fixed app-data
+folder once, before anything else at startup touches the new folder: plan
+(read-only), copy into a staging folder, verify (SQLite backup + integrity
+check + row counts, SHA-256 per file), rewrite absolute paths in the copied
+database and the certificate paths in `config.yaml`, then switch, with the
+database moved in last. On any failure the staging folder goes and the old
+folder is used for that run. If an attempt is cut off part way (a power
+cut), the next start finishes it: entries already moved across that match the
+staged copy byte for byte are accepted; anything else in the way stops the
+move and the old folder is used. Tools that run before the first start
+(`--check`, `make_certs`, setup) look at the old folder until the copy exists.
+
+The CPU reading for the whole PC (`machine_cpu` in
+`agent/monitoring/metrics.py`) is shared by every server's monitor and never
+measured over less than a second, because psutil's own non-blocking reading
+is "since the last call on this thread" and gave the second of two servers
+about 0%.
+
+## Layout
+
+```
+agent/
+  config.py            layered config as typed sections (one place for
+                       every default), the server list, secrets from env only
+  core.py              AgentCore (shared) and ServerContext (one per server)
+  datafolder.py        the one-time move of the data folder
+  jobs.py              long operations with real progress
+  ports.py             game ports and start conflicts between servers
+  safechange.py        backup, change, check, undo
+  changes.py           Undo and Redo: each server's two stacks of changes
+  events.py            event bus
+  logging_setup.py     rotating agent logs
+  main.py              FastAPI app, security headers, error handlers, entrypoint
+  tailscale.py         what the Tailscale client reports about this machine
+  gamesettings.py      saving server.properties through the safe-change routine
+  duplicate.py         copying a server into a new one, as a job
+  modpack.py           reading and importing Modrinth .mrpack files
+  joininfo.py          the addresses friends type, read from this machine
+  autosleep.py         stopping a server nobody is playing on, per server
+  worldundo.py         the "Restore world" timeline, over the existing backups
+  checklist.py         the getting-started items, each from measured state
+  api/                 deps.py, errors.py (domain error -> HTTP status), ws.py,
+                       routes/ (one router per area: server, console, players,
+                       mods, backups, schedules, server_settings, gamesettings,
+                       duplicate, modpacks, friends, chat, world (per server);
+                       auth, settings, security, system, jobs, pushalerts
+                       (agent-wide))
+  backups/manager.py
+  database/db.py       schema + migrations
+  minecraft/           state, process, console, commands, chat, analyzer, crash,
+                       properties (server.properties reader/writer that keeps
+                       comments and unknown keys), playeractions (the player
+                       buttons and the console answers that confirm them)
+  crossplay.py         Geyser and Floodgate: Bedrock players on a Java server
+  downloads.py         the one safe downloader (allow-list, size caps, checksums)
+  mods/                jarinfo, modrinth, manager
+  servertypes/         what each kind of server is, its versions, installs,
+                       version and type changes, and making a new one
+  monitoring/          metrics, players
+  notifications/       dispatcher.py (Discord, email, alerts in the apps),
+                       fcm.py and apns.py (waking the phone apps)
+  scheduler/scheduler.py
+  security/            auth, paths, permissions, certs, tls
+desktop/               the desktop app (PySide6), see desktop/README.md
+mobile/                the Android and iPhone apps, see mobile/README.md
+shared/                the words (strings.json, Simple and Technical), the
+                       alert wording (feed.json), the colors (theme.json) and
+                       the phone apps' version, read by every app
+installer/             setup_tool, autostart, make_certs, make_secrets,
+                       firewall.ps1, and the setup's own screens (app/)
+scripts/               make_icons.py (the app icon), screenshots, the API
+                       contract check, installer and release helpers
+tests/                 the suite, plus a fake Minecraft server
+```
+
+## The apps
+
+The agent serves no web pages. The desktop app (`desktop/`) and the phone
+apps (`mobile/`) only use the API and the WebSocket, so anything the apps
+can do is a route with a permission check and an audit entry. Opening the
+agent's address in a browser shows one plain page saying to use the apps.
+
+All three read their words and colors from `shared/`, which is edited by
+hand, so every app says the same thing:
+
+- `strings.json` has one line per key with a Simple and a Technical
+  version. `tests/test_strings.py` checks both versions exist with the same
+  placeholders, every key the agent can send has words, and every
+  `desktop.` key is used.
+- `theme.json` has each theme's colors, and `color-cases.json` the recorded
+  results of tinting a page with a server's color. `agent/colors.py` does
+  the sums, and `tests/test_server_colors.py` checks it against those cases
+  and that text stays readable on every color.
+- `desktop/api-routes.txt` and `mobile/api-routes.txt` list every route
+  each app calls, and tests check each one exists and has a typed answer.

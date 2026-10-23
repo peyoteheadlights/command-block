@@ -1,0 +1,974 @@
+package io.github.peyoteheadlights.mcsc.core
+
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
+import javax.net.ssl.X509TrustManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+
+/** Why a request to the agent didn't give an answer. Each has a strings key. */
+sealed class AgentException(val key: String, message: String? = null) : Exception(message ?: key) {
+    /** No answer at all: the PC is off or asleep, the agent isn't running,
+     * or this phone isn't on Tailscale (the offline screen). */
+    class Unreachable : AgentException("mobile.error.unreachable")
+
+    /** The PC presented a different certificate from the one paired with. */
+    class CertificateChanged(val presented: String?) : AgentException("mobile.error.certificate_changed")
+
+    /** The PC's own certificate (the one paired with) has expired. */
+    class CertificateExpired(val presented: String?) : AgentException("mobile.error.certificate_expired")
+
+    /** A typed address whose certificate the phone doesn't trust. */
+    class CertificateNotTrusted(val presented: String?) : AgentException("mobile.error.certificate_untrusted")
+
+    /** Something answered, but not this app's agent. */
+    class NotAnAgent : AgentException("mobile.error.not_agent")
+
+    /** The sign-in ended (signed out on the PC, a helper removed, expired). */
+    class SignedOut : AgentException("error.session_ended")
+
+    /** Sign-in refused: the agent's own words ("Wrong username or password"). */
+    class SignInRefused(val reason: String) : AgentException("mobile.error.sign_in", reason)
+
+    /** The account isn't allowed to do that (403), in the agent's words. */
+    class NotAllowed(val reason: String) : AgentException("mobile.error.not_allowed", reason)
+
+    /** Work the agent answers only once done (a backup, a restore) gave no
+     * answer in time. It may still be running on the PC; the screen reads
+     * it again when the PC says it finished. */
+    class StillWorking : AgentException("mobile.error.still_working")
+
+    /** Any other refusal, in the agent's words, with its error number.
+     * A form the agent refused also has each value's reason, by key. */
+    class Failed(
+        val status: Int,
+        val reason: String?,
+        val requestId: String?,
+        val problems: Map<String, String> = emptyMap(),
+    ) : AgentException("mobile.error.failed", reason)
+}
+
+/** Writing a download into the phone's own file failed (the phone is
+ * full, or the place picked stopped taking it): not the PC's fault. */
+class SaveFileException(cause: IOException) : IOException(cause.message, cause)
+
+/** Lines the client may log: method, path and status. Never headers, bodies
+ * or the token; tests/NoSecretsTest checks that. */
+fun interface AgentLog {
+    fun line(text: String)
+}
+
+/**
+ * Talks to one paired PC over HTTPS with the certificate check from
+ * [PinnedTrust]. [token] is read for every request, from the phone's secure
+ * storage; [onSignedOut] is called on a 401, so the app forgets the token
+ * and locks itself out at once.
+ */
+class AgentClient(
+    val pairing: Pairing,
+    private val token: () -> String?,
+    private val onSignedOut: () -> Unit = {},
+    private val log: AgentLog = AgentLog { },
+    strict: Boolean = false,
+    baseClient: OkHttpClient = OkHttpClient(),
+    systemTrust: X509TrustManager = PinnedTrust.systemTrustManager(),
+    /** How long work the agent answers only when done may take. */
+    private val slowSeconds: Long = SLOW_SECONDS,
+) {
+    val trust = PinnedTrust(pairing.fingerprint, strict, systemTrust)
+
+    val http: OkHttpClient = trust.applyTo(baseClient.newBuilder())
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        // Stopping a server waits until Minecraft has saved and exited.
+        .callTimeout(150, TimeUnit.SECONDS)
+        .build()
+
+    /** For work the agent answers only when it is done (a backup, a
+     * restore): it sends nothing until then, so after [slowSeconds] with no
+     * answer the app says the PC may still be working ([AgentException.StillWorking]). */
+    private val slowHttp: OkHttpClient = http.newBuilder()
+        .readTimeout(slowSeconds, TimeUnit.SECONDS)
+        .callTimeout(0, TimeUnit.SECONDS)
+        .build()
+
+    private val files: OkHttpClient = http.newBuilder()
+        .readTimeout(2, TimeUnit.MINUTES)
+        .callTimeout(0, TimeUnit.SECONDS)
+        .build()
+
+    private val jsonType = "application/json".toMediaType()
+
+    suspend fun health(): Health = get("/api/health", Health.serializer(), signedIn = false)
+
+    suspend fun login(username: String, password: String, device: String): LoginResult {
+        val body = buildJsonObject {
+            put("username", username)
+            put("password", password)
+            put("device", device)
+            put("label", device)
+            // The app always keeps the sign-in, behind its own unlock.
+            put("remember", true)
+            // Kept until signed out, not for the browser's set number of days.
+            put("phone", true)
+        }
+        return call(post("/api/auth/login", body), LoginResult.serializer(), signedIn = false)
+    }
+
+    suspend fun logout() {
+        runCatching { call(post("/api/auth/logout", JsonObject(emptyMap())), JsonObject.serializer()) }
+    }
+
+    suspend fun me(): Me = get("/api/auth/me", Me.serializer())
+
+    suspend fun servers(): ServerList = get("/api/servers", ServerList.serializer())
+
+    suspend fun status(serverId: String): ServerStatus =
+        get("/api/servers/${path(serverId)}/status", ServerStatus.serializer())
+
+    /** start, stop or restart. */
+    suspend fun serverAction(serverId: String, action: String): ServerAction {
+        require(action in QUICK_ACTIONS) { "Not an action the app offers: $action" }
+        return call(
+            post("/api/servers/${path(serverId)}/server/$action", JsonObject(emptyMap())),
+            ServerAction.serializer(),
+        )
+    }
+
+    suspend fun alerts(after: Long?, limit: Int = 50): AppAlerts {
+        val query = buildString {
+            append("?limit=").append(limit)
+            if (after != null) append("&after=").append(after)
+        }
+        return get("/api/alerts$query", AppAlerts.serializer())
+    }
+
+    suspend fun phone(): AppPhone = get("/api/app/phone", AppPhone.serializer())
+
+    suspend fun registerPhone(pushToken: String, platform: String, label: String): AppPhone {
+        val body = buildJsonObject {
+            put("token", pushToken)
+            put("platform", platform)
+            put("label", label)
+        }
+        return call(request("/api/app/phone").put(body.toBody()).build(), AppPhone.serializer())
+    }
+
+    suspend fun forgetPhone(): AppPhone =
+        call(request("/api/app/phone").delete().build(), AppPhone.serializer())
+
+    /** The alerts this device gets: the shared list, or its own choice. */
+    suspend fun deviceAlerts(): DeviceAlerts = get("/api/account/alerts", DeviceAlerts.serializer())
+
+    /** [own] false: follow the shared list again; true: only [events]. */
+    suspend fun chooseDeviceAlerts(own: Boolean, events: Collection<String>): DeviceAlerts {
+        val body = buildJsonObject {
+            put("own", own)
+            put("events", JsonArray(events.sorted().map(::JsonPrimitive)))
+        }
+        return call(request("/api/account/alerts").put(body.toBody()).build(), DeviceAlerts.serializer())
+    }
+
+    /** What this device keeps to wake the PC once it sleeps (Wake-on-LAN). */
+    suspend fun wakeInfo(): WakeInfo = get("/api/wake", WakeInfo.serializer())
+
+    /** A new wake key for this device, shown once (the old one stops working). */
+    suspend fun wakeKey(): WakeKey = call(post("/api/wake/key", JsonObject(emptyMap())), WakeKey.serializer())
+
+    suspend fun version(): VersionInfo = get("/api/version", VersionInfo.serializer())
+
+    // ------------------------------------------------------------------
+    // One server's screens. Every route is the agent's own, with its
+    // permissions; the agent refuses whatever the account may not do.
+
+    /** The newest [lines] console lines (the agent keeps up to 500 here). */
+    suspend fun consoleLog(serverId: String, lines: Int = 500): ConsoleLog =
+        get("${server(serverId)}/logs?lines=${lines.coerceIn(1, 500)}", ConsoleLog.serializer())
+
+    /** Empties the agent's console view; Minecraft's log files stay. */
+    suspend fun clearConsole(serverId: String): Ok =
+        call(post("${server(serverId)}/logs/clear", JsonObject(emptyMap())), Ok.serializer())
+
+    /** Whether a command can be sent, and why it would need asking first. */
+    suspend fun checkCommand(serverId: String, command: String): CommandCheck =
+        get("${server(serverId)}/server/command/check?command=${path(command)}", CommandCheck.serializer())
+
+    /** Writes one line to Minecraft's console (never a shell). [confirm]
+     * only after the person said yes to the danger the check named. */
+    suspend fun sendCommand(serverId: String, command: String, confirm: Boolean): CommandSent {
+        val body = buildJsonObject {
+            put("command", command)
+            put("confirm", confirm)
+        }
+        return call(post("${server(serverId)}/server/command", body), CommandSent.serializer())
+    }
+
+    suspend fun chat(serverId: String, lines: Int = 200): ChatLog =
+        get("${server(serverId)}/chat?lines=${lines.coerceIn(1, 400)}", ChatLog.serializer())
+
+    /** Says [message] in the game as Server. It shows in the chat when the
+     * console prints it back, so the app never adds it itself. */
+    suspend fun sendChat(serverId: String, message: String): ChatSent =
+        call(post("${server(serverId)}/chat", buildJsonObject { put("message", message) }), ChatSent.serializer())
+
+    suspend fun players(serverId: String): PlayersPage = get("${server(serverId)}/players", PlayersPage.serializer())
+
+    /** One of the player buttons. [confirm] is for kick and ban, after asking. */
+    suspend fun playerAction(serverId: String, action: String, name: String, reason: String?, confirm: Boolean): PlayerActionResult {
+        require(action in PlayerActions.ALL) { "Not a player action: $action" }
+        val body = buildJsonObject {
+            put("action", action)
+            put("name", name)
+            put("reason", reason?.takeIf { it.isNotBlank() })
+            put("confirm", confirm)
+        }
+        return call(post("${server(serverId)}/players/actions", body), PlayerActionResult.serializer())
+    }
+
+    suspend fun playerActionStatus(serverId: String, actionId: String): PlayerActionStatus =
+        get("${server(serverId)}/players/actions/${path(actionId)}", PlayerActionStatus.serializer())
+
+    /** This server's events and the PC's own, newest first. */
+    suspend fun events(serverId: String, limit: Int = 200): EventList =
+        get("${server(serverId)}/events?limit=${limit.coerceIn(1, 500)}", EventList.serializer())
+
+    suspend fun crashes(serverId: String, limit: Int = 50): CrashList =
+        get("${server(serverId)}/crashes?limit=${limit.coerceIn(1, 200)}", CrashList.serializer())
+
+    suspend fun crash(serverId: String, crashId: Long): Crash = get("${server(serverId)}/crashes/$crashId", Crash.serializer())
+
+    suspend fun recommendations(serverId: String): Recommendations =
+        get("${server(serverId)}/recommendations", Recommendations.serializer())
+
+    /** snooze, dismiss or restore; the answer is the new list. */
+    suspend fun recommendationAction(serverId: String, recId: String, action: String): Recommendations {
+        require(action in REC_ACTIONS) { "Not a suggestion action: $action" }
+        return call(
+            post("${server(serverId)}/recommendations/${path(recId)}", buildJsonObject { put("action", action) }),
+            Recommendations.serializer(),
+        )
+    }
+
+    suspend fun gettingStarted(serverId: String): Checklist =
+        get("${server(serverId)}/getting-started", Checklist.serializer())
+
+    suspend fun hideGettingStarted(serverId: String): Checklist =
+        call(post("${server(serverId)}/getting-started/dismiss", JsonObject(emptyMap())), Checklist.serializer())
+
+    /** How friends join. Can take a few seconds: the PC asks Tailscale. */
+    suspend fun join(serverId: String): JoinInfo = get("${server(serverId)}/join", JoinInfo.serializer())
+
+    // ------------------------------------------------------------------
+    // Backups, Restore world, Schedules and Performance. Making a backup,
+    // a restore and Run now answer only once the work is done, which can
+    // take minutes for a big world, so those wait as long as it takes.
+
+    suspend fun backups(serverId: String): BackupList = get("${server(serverId)}/backups", BackupList.serializer())
+
+    suspend fun backUp(serverId: String): BackupMade =
+        call(post("${server(serverId)}/backups", JsonObject(emptyMap())), BackupMade.serializer(), slow = true)
+
+    /** Opens the archive on the PC and checks it, now. */
+    suspend fun checkBackup(serverId: String, backupId: Long): BackupCheck =
+        get("${server(serverId)}/backups/$backupId/verify", BackupCheck.serializer(), slow = true)
+
+    /** Without [confirm], only what would happen; nothing changes. */
+    suspend fun restoreBackup(serverId: String, backupId: Long, confirm: Boolean, startAfter: Boolean = false): Restored =
+        call(
+            post("${server(serverId)}/backups/$backupId/restore", Backups.restoreBody(confirm, startAfter)),
+            Restored.serializer(),
+            slow = confirm,
+        )
+
+    suspend fun deleteBackup(serverId: String, backupId: Long): BackupDeleted =
+        call(request("${server(serverId)}/backups/$backupId").delete().build(), BackupDeleted.serializer())
+
+    /** Copies one backup to the second-copy folder (again). */
+    suspend fun copyBackup(serverId: String, backupId: Long): BackupCopied =
+        call(post("${server(serverId)}/backups/$backupId/copy", JsonObject(emptyMap())), BackupCopied.serializer(), slow = true)
+
+    suspend fun offsite(serverId: String): Offsite = get("${server(serverId)}/backups/offsite", Offsite.serializer())
+
+    /** Turns second copies off. Choosing a folder needs the PC's folder list. */
+    suspend fun turnOffsiteOff(serverId: String): Offsite = call(
+        request("${server(serverId)}/backups/offsite").put(buildJsonObject { put("directory", "") }.toBody()).build(),
+        Offsite.serializer(),
+    )
+
+    /** Chooses the folder for second copies; the agent checks it first. */
+    suspend fun setOffsite(serverId: String, directory: String): OffsiteSaved = call(
+        request("${server(serverId)}/backups/offsite").put(buildJsonObject { put("directory", directory) }.toBody()).build(),
+        OffsiteSaved.serializer(),
+    )
+
+    // ------------------------------------------------------------ moderators
+    suspend fun moderators(): ModeratorList = get("/api/accounts", ModeratorList.serializer())
+
+    /** A new moderator with no password: the answer carries their invite. */
+    suspend fun addModerator(username: String, servers: List<String>?, permissions: Set<String>): ModeratorAdded {
+        val body = buildJsonObject {
+            put("username", username)
+            if (servers != null) put("servers", JsonArray(servers.map(::JsonPrimitive)))
+            put("permissions", JsonArray(permissions.sorted().map(::JsonPrimitive)))
+        }
+        return call(post("/api/accounts", body), ModeratorAdded.serializer())
+    }
+
+    /** "Save for this server", "Save for…", "Apply to all": built by [Moderators]. */
+    suspend fun saveModerator(username: String, body: JsonObject): ModeratorChanged =
+        call(request("/api/accounts/${path(username)}").put(body.toBody()).build(), ModeratorChanged.serializer())
+
+    /** A new invite; with [forgetPassword] the owner's Reset password, which signs them out. */
+    suspend fun inviteModerator(username: String, forgetPassword: Boolean): InviteCode =
+        call(post("/api/accounts/${path(username)}/invite", buildJsonObject { put("forget_password", forgetPassword) }), InviteCode.serializer())
+
+    suspend fun cancelInvite(username: String): Ok =
+        call(request("/api/accounts/${path(username)}/invite").delete().build(), Ok.serializer())
+
+    suspend fun removeModerator(username: String): ModeratorRemoved =
+        call(request("/api/accounts/${path(username)}").delete().build(), ModeratorRemoved.serializer())
+
+    /** Who an invite is for. No sign-in: the invite is what lets them in. */
+    suspend fun checkInvite(token: String): InviteCheck =
+        call(post("/api/invite/check", buildJsonObject { put("token", token) }), InviteCheck.serializer(), signedIn = false)
+
+    /** Chooses the password an invite is for and signs this phone in. */
+    suspend fun acceptInvite(token: String, password: String, device: String): LoginResult {
+        val body = buildJsonObject {
+            put("token", token)
+            put("password", password)
+            put("device", device)
+        }
+        return call(post("/api/invite/accept", body), LoginResult.serializer(), signedIn = false)
+    }
+
+    /** A moderator's own password; their other devices are signed out. */
+    suspend fun changePassword(current: String, new: String): Ok =
+        call(post("/api/account/password", buildJsonObject { put("current", current); put("new", new) }), Ok.serializer())
+
+    /** Signed-in devices: the owner's list has everyone's, a moderator's their own. */
+    suspend fun devices(): DeviceList = get("/api/sessions", DeviceList.serializer())
+
+    suspend fun signOutDevice(id: String): Ok =
+        call(request("/api/sessions/${path(id)}").delete().build(), Ok.serializer())
+
+    // ------------------------------------------------------------ PC settings (owner only)
+    /** Signs every device out, this phone too. */
+    suspend fun signEveryoneOut(): SessionsRevoked =
+        call(post("/api/security/revoke-sessions", JsonObject(emptyMap())), SessionsRevoked.serializer())
+
+    suspend fun pcSettings(): PcSettingsView = get("/api/settings", PcSettingsView.serializer())
+
+    /** Saves [updates] as built by [PcSettings.changes]; each refused one comes back with why. */
+    suspend fun savePcSettings(updates: JsonObject): SettingsSaved =
+        call(request("/api/settings").put(buildJsonObject { put("updates", updates) }.toBody()).build(), SettingsSaved.serializer())
+
+    suspend fun maintenance(on: Boolean): MaintenanceSet =
+        call(post("/api/maintenance", buildJsonObject { put("enabled", on) }), MaintenanceSet.serializer())
+
+    /** "discord" or "email". */
+    suspend fun testAlert(channel: String): TestAlert =
+        call(post("/api/notifications/test?channel=${path(channel)}", JsonObject(emptyMap())), TestAlert.serializer(), slow = true)
+
+    suspend fun power(): PowerStatus = get("/api/power", PowerStatus.serializer())
+
+    /** Asks Windows whether this app starts with it. It only checks. */
+    suspend fun startupCheck(): StartupReport = get("/api/system/startup", StartupReport.serializer(), slow = true)
+
+    suspend fun updates(): UpdateStatus = get("/api/updates", UpdateStatus.serializer())
+
+    suspend fun checkForUpdate(): UpdateStatus = call(post("/api/updates/check", JsonObject(emptyMap())), UpdateStatus.serializer(), slow = true)
+
+    /** The checks before updating: the version, and who is playing. */
+    suspend fun updateChecks(): UpdateStatus = get("/api/updates/preflight", UpdateStatus.serializer())
+
+    /** Starts the update; the PC restarts this app, so it stops answering for a while. */
+    suspend fun installUpdate(): UpdateStarted = call(post("/api/updates/install", JsonObject(emptyMap())), UpdateStarted.serializer())
+
+    suspend fun oldCopy(): OldCopyStatus = get("/api/updates/old-copy", OldCopyStatus.serializer())
+
+    suspend fun removeOldCopy(): OldCopyRemoved = call(post("/api/updates/old-copy/remove", JsonObject(emptyMap())), OldCopyRemoved.serializer())
+
+    suspend fun exportSizes(): ExportSizes = get("/api/export", ExportSizes.serializer())
+
+    /** Starts Export everything into a folder on the PC (body from [PcSettings.exportBody]). */
+    suspend fun startExport(body: JsonObject): ExportStarted = call(post("/api/export", body), ExportStarted.serializer())
+
+    suspend fun exportJob(id: String): ExportJob = get("/api/jobs/${path(id)}", ExportJob.serializer())
+
+    /** The files a help file would hold, before it is made. */
+    suspend fun helpFiles(): HelpFiles = get("/api/help-bundle", HelpFiles.serializer())
+
+    suspend fun makeHelpFile(): HelpFileMade =
+        call(post("/api/help-bundle", buildJsonObject { put("confirm", true) }), HelpFileMade.serializer(), slow = true)
+
+    /** Streams the help file into [out], as [downloadBackup] does, for the share menu. */
+    suspend fun downloadHelpFile(made: HelpFileMade, out: java.io.OutputStream): Long =
+        downloadZip("/api/help-bundle/${path(made.token)}?filename=${path(made.filename)}", out) { _, _ -> }
+
+    suspend fun newServerOptions(): NewServerOptions = get("/api/new-server/options", NewServerOptions.serializer())
+
+    /** Downloads and sets up a new server as a task; it isn't started. */
+    suspend fun createServer(new: NewServerRequest): ServerCreated = call(
+        post("/api/new-server", buildJsonObject {
+            put("name", new.name)
+            put("directory", new.directory)
+            put("type", new.type)
+            put("minecraft_version", new.minecraft)
+            new.loader?.let { put("loader_version", it) }
+            new.memoryMb?.let { put("memory_mb", it) }
+            new.color?.let { put("color", it) }
+            put("eula_accepted", new.eulaAccepted)
+        }),
+        ServerCreated.serializer(),
+        slow = true,
+    )
+
+    /** Puts a server folder already on the PC on the list; nothing in it changes. */
+    suspend fun addServer(name: String, directory: String, type: String, jar: String): ServerAdded = call(
+        post("/api/servers", buildJsonObject {
+            put("name", name)
+            put("directory", directory)
+            put("type", type)
+            put("jar", jar)
+        }),
+        ServerAdded.serializer(),
+    )
+
+    /** Makes a new server from a pack already read by [inspectModpack]. */
+    suspend fun modpackServer(token: String, name: String, directory: String, memoryMb: Int?, color: String?, eulaAccepted: Boolean): ServerCreated = call(
+        post("/api/modpacks/${path(token)}/new-server", buildJsonObject {
+            put("name", name)
+            put("directory", directory)
+            memoryMb?.let { put("memory_mb", it) }
+            color?.let { put("color", it) }
+            put("eula_accepted", eulaAccepted)
+        }),
+        ServerCreated.serializer(),
+        slow = true,
+    )
+
+    /** The folders inside [path] on the PC, or the drives and shortcuts when null. */
+    suspend fun folders(path: String?): FolderListing =
+        get(if (path.isNullOrEmpty()) "/api/folders" else "/api/folders?path=${path(path)}", FolderListing.serializer())
+
+    /**
+     * Streams a backup's zip into [out], with the sign-in in a header (never
+     * in the address), and returns the bytes written. [progress] gets the
+     * bytes so far and the size, when the PC said it. A failure writing to
+     * [out] is a [SaveFileException], not the PC's.
+     */
+    suspend fun downloadBackup(
+        serverId: String,
+        backupId: Long,
+        out: java.io.OutputStream,
+        progress: (Long, Long?) -> Unit = { _, _ -> },
+    ): Long = downloadZip("${server(serverId)}/backups/$backupId/download", out, progress)
+
+    /** Streams the world packed by [packWorld] into [out], as [downloadBackup] does. */
+    suspend fun downloadWorld(
+        serverId: String,
+        packed: WorldPacked,
+        out: java.io.OutputStream,
+        progress: (Long, Long?) -> Unit = { _, _ -> },
+    ): Long = downloadZip(
+        "${server(serverId)}/world/download/${path(packed.token)}?filename=${path(packed.filename)}", out, progress,
+    )
+
+    private suspend fun downloadZip(
+        path: String,
+        out: java.io.OutputStream,
+        progress: (Long, Long?) -> Unit,
+    ): Long = withContext(Dispatchers.IO) {
+        val current = token() ?: throw AgentException.SignedOut()
+        val request = Request.Builder().url(pairing.origin + path).header("Authorization", "Bearer $current").get().build()
+        val response = try {
+            files.newCall(request).execute()
+        } catch (e: IOException) {
+            log.line("GET ${request.url.encodedPath} -> no answer")
+            throw translate(e)
+        }
+        response.use {
+            log.line("GET ${request.url.encodedPath} -> ${it.code}")
+            if (!it.isSuccessful || !it.header("Content-Type").orEmpty().startsWith("application/zip")) {
+                read(it, request, JsonObject.serializer(), signedIn = true)
+                throw AgentException.NotAnAgent()
+            }
+            val body = it.body ?: throw AgentException.NotAnAgent()
+            val size = body.contentLength().takeIf { n -> n >= 0 }
+            var written = 0L
+            body.byteStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val n = try {
+                        input.read(buffer)
+                    } catch (e: IOException) {
+                        throw translate(e)
+                    }
+                    if (n < 0) break
+                    try {
+                        out.write(buffer, 0, n)
+                    } catch (e: IOException) {
+                        throw SaveFileException(e)
+                    }
+                    written += n
+                    progress(written, size)
+                }
+            }
+            if (size != null && written != size) throw AgentException.Unreachable()
+            written
+        }
+    }
+
+    /** Sends a world's zip (or .mcworld) and says what it is. Nothing is
+     * replaced until [importWorld]; [forgetWorld] throws it away. */
+    suspend fun uploadWorld(serverId: String, file: PickedFile, progress: (Long, Long?) -> Unit = { _, _ -> }): WorldRead {
+        val job = currentCoroutineContext()[Job]
+        val sending = upload("${server(serverId)}/world/import/upload", file) { sent, size ->
+            // Cancelled: stop sending, and the agent throws away the part it got.
+            if (job?.isActive == false) throw IOException("Cancelled")
+            progress(sent, size)
+        }
+        return call(sending, WorldRead.serializer(), slow = true)
+    }
+
+    /** Reads a world folder on the PC (one from the folder picker or single-player's saves). */
+    suspend fun pickWorldFolder(serverId: String, path: String): WorldRead =
+        call(post("${server(serverId)}/world/import/folder", buildJsonObject { put("path", path) }), WorldRead.serializer(), slow = true)
+
+    /** Single-player's worlds on the PC. */
+    suspend fun savedWorlds(serverId: String): SavedWorlds = get("${server(serverId)}/world/saves", SavedWorlds.serializer())
+
+    /** Replaces this server's world with the one read; a backup is taken first. */
+    suspend fun importWorld(serverId: String, token: String): WorldImported {
+        val body = buildJsonObject {
+            put("token", token)
+            put("confirm", true)
+        }
+        return call(post("${server(serverId)}/world/import", body), WorldImported.serializer(), slow = true)
+    }
+
+    suspend fun forgetWorld(serverId: String, token: String): Ok =
+        call(request("${server(serverId)}/world/import/${path(token)}").delete().build(), Ok.serializer())
+
+    /** Packs this server's world as a zip for single-player; [downloadWorld] fetches it. */
+    suspend fun packWorld(serverId: String): WorldPacked =
+        call(post("${server(serverId)}/world/download", JsonObject(emptyMap())), WorldPacked.serializer(), slow = true)
+
+    suspend fun worlds(serverId: String): WorldList = get("${server(serverId)}/worlds", WorldList.serializer())
+
+    /** Asks Minecraft to save the world now (save-all flush). */
+    suspend fun saveWorld(serverId: String): Requested =
+        call(post("${server(serverId)}/worlds/save", JsonObject(emptyMap())), Requested.serializer())
+
+    suspend fun worldTimeline(serverId: String): WorldTimeline =
+        get("${server(serverId)}/world/timeline", WorldTimeline.serializer())
+
+    /** Puts back only the world from that backup; the server must be off. */
+    suspend fun restoreWorld(serverId: String, backupId: Long): Restored {
+        val body = buildJsonObject {
+            put("backup_id", backupId)
+            put("confirm", true)
+        }
+        return call(post("${server(serverId)}/world/undo", body), Restored.serializer(), slow = true)
+    }
+
+    /** Every server's tasks running now, including a new server being set up. */
+    suspend fun runningJobs(): JobList = get("/api/jobs?running=true", JobList.serializer())
+
+    /** This server's recent tasks, newest first. */
+    suspend fun jobs(serverId: String, limit: Int = 20): JobList =
+        get("/api/jobs?server_id=${path(serverId)}&limit=${limit.coerceIn(1, 200)}", JobList.serializer())
+
+    /** The server's Undo and Redo lists. */
+    suspend fun changes(serverId: String): UndoRedo = get("${server(serverId)}/changes", UndoRedo.serializer())
+
+    /** Reverses the newest change ("undo") or puts back the one undone last
+     * ("redo"). The server stops for it; [startAfter] starts it again. */
+    suspend fun moveChange(serverId: String, direction: String, startAfter: Boolean): ChangeMoved {
+        require(direction == "undo" || direction == "redo")
+        val body = buildJsonObject { put("start_after", startAfter) }
+        return call(post("${server(serverId)}/changes/$direction", body), ChangeMoved.serializer(), slow = true)
+    }
+
+    suspend fun schedules(serverId: String): ScheduleList = get("${server(serverId)}/schedules", ScheduleList.serializer())
+
+    suspend fun addSchedule(serverId: String, body: JsonObject): ScheduleSaved =
+        call(post("${server(serverId)}/schedules", body), ScheduleSaved.serializer())
+
+    suspend fun updateSchedule(serverId: String, scheduleId: Long, body: JsonObject): ScheduleSaved =
+        call(request("${server(serverId)}/schedules/$scheduleId").put(body.toBody()).build(), ScheduleSaved.serializer())
+
+    suspend fun deleteSchedule(serverId: String, scheduleId: Long): Ok =
+        call(request("${server(serverId)}/schedules/$scheduleId").delete().build(), Ok.serializer())
+
+    suspend fun runSchedule(serverId: String, scheduleId: Long): ScheduleRan =
+        call(post("${server(serverId)}/schedules/$scheduleId/run", JsonObject(emptyMap())), ScheduleRan.serializer(), slow = true)
+
+    /** The graphs' samples for the last [hours] (1 to 168), the values now
+     * and, with [storage], the disk use (slow: the PC walks the server folder). */
+    suspend fun performance(serverId: String, hours: Int, storage: Boolean = true): Performance =
+        get("${server(serverId)}/performance?hours=${hours.coerceIn(1, 168)}&storage=$storage", Performance.serializer())
+
+    /** The health checks. Can take a few seconds: the PC asks Tailscale. */
+    suspend fun serverHealth(serverId: String): ServerHealth =
+        get("${server(serverId)}/health/server", ServerHealth.serializer())
+
+    // ------------------------------------------------------------------
+    // Mods / Plugins / Packs and Game settings. Mods change only while the
+    // server is stopped; the agent refuses otherwise, in its own words.
+    // Installs, updates and imports answer once done, so they wait.
+
+    suspend fun mods(serverId: String): ModList = get("${server(serverId)}/mods", ModList.serializer())
+
+    /** Turns a mod or plugin on or off without removing it. */
+    suspend fun setModEnabled(serverId: String, filename: String, enabled: Boolean): ModChanged =
+        call(post("${server(serverId)}/mods/${if (enabled) "enable" else "disable"}", fileBody(filename)), ModChanged.serializer())
+
+    /** What else needs a mod, asked before removing it. */
+    suspend fun modImpact(serverId: String, filename: String): ModImpact =
+        get("${server(serverId)}/mods/impact?filename=${path(filename)}", ModImpact.serializer())
+
+    /** Removes a mod; its file is kept so it can be put back. */
+    suspend fun removeMod(serverId: String, filename: String): ModRemoved =
+        call(post("${server(serverId)}/mods/remove", fileBody(filename)), ModRemoved.serializer())
+
+    suspend fun updateMod(serverId: String, filename: String, versionId: String?): ModUpdated {
+        val body = buildJsonObject {
+            put("filename", filename)
+            put("version_id", versionId)
+        }
+        return call(post("${server(serverId)}/mods/update", body), ModUpdated.serializer(), slow = true)
+    }
+
+    /** The copies of a mod kept on this server, newest first. */
+    suspend fun modVersions(serverId: String, modId: String): ModVersions =
+        get("${server(serverId)}/mods/versions/${path(modId)}", ModVersions.serializer())
+
+    suspend fun rollBackMod(serverId: String, modId: String, archivePath: String): ModRolledBack {
+        val body = buildJsonObject {
+            put("mod_id", modId)
+            put("archive_path", archivePath)
+        }
+        return call(post("${server(serverId)}/mods/rollback", body), ModRolledBack.serializer())
+    }
+
+    suspend fun modHistory(serverId: String, limit: Int = 100): ModHistory =
+        get("${server(serverId)}/mods/history?limit=${limit.coerceIn(1, 500)}", ModHistory.serializer())
+
+    /** What Update all would change, checked on Modrinth now. */
+    suspend fun updateAllPlan(serverId: String): UpdateAllPlan =
+        get("${server(serverId)}/mods/update-all", UpdateAllPlan.serializer(), slow = true)
+
+    /** Updates the ticked ones as one change (one backup, all or nothing). */
+    suspend fun updateAll(serverId: String, body: JsonObject): UpdateAllResult =
+        call(post("${server(serverId)}/mods/update-all", body), UpdateAllResult.serializer(), slow = true)
+
+    /** Modrinth results that fit this server's type and Minecraft version. */
+    suspend fun searchMods(serverId: String, query: String, offset: Int = 0): ModSearch =
+        get("${server(serverId)}/mods/search?q=${path(query)}&limit=$SEARCH_PAGE&offset=${offset.coerceAtLeast(0)}", ModSearch.serializer())
+
+    suspend fun modProject(serverId: String, slug: String): ModProject =
+        get("${server(serverId)}/mods/project/${path(slug)}", ModProject.serializer())
+
+    suspend fun installMod(serverId: String, slug: String, versionId: String?, withDependencies: Boolean): ModInstalled {
+        val body = buildJsonObject {
+            put("project", slug)
+            put("version_id", versionId)
+            put("install_dependencies", withDependencies)
+        }
+        return call(post("${server(serverId)}/mods/install", body), ModInstalled.serializer(), slow = true)
+    }
+
+    suspend fun dependencies(serverId: String): DependencyReport =
+        get("${server(serverId)}/mods/dependencies", DependencyReport.serializer())
+
+    /** What installing the missing ones would download. Nothing is yet. */
+    suspend fun planDependencies(serverId: String): DependencyPlan =
+        call(post("${server(serverId)}/mods/dependencies/plan", JsonObject(emptyMap())), DependencyPlan.serializer())
+
+    suspend fun installDependencies(serverId: String): DependencyInstall =
+        call(post("${server(serverId)}/mods/dependencies/install", JsonObject(emptyMap())), DependencyInstall.serializer(), slow = true)
+
+    /** Adds a mod or plugin file (.jar) picked on the phone. */
+    suspend fun uploadMod(serverId: String, file: PickedFile): ModUploaded =
+        call(upload("${server(serverId)}/mods/upload", file), ModUploaded.serializer(), slow = true)
+
+    /** Reads a modpack (.mrpack); with [serverId], also what importing it there would do. */
+    suspend fun inspectModpack(serverId: String?, file: PickedFile): ModpackInspected = call(
+        upload(if (serverId == null) "/api/modpacks/inspect" else "/api/modpacks/inspect?server_id=${path(serverId)}", file),
+        ModpackInspected.serializer(),
+        slow = true,
+    )
+
+    /** Throws away a modpack read but not imported. */
+    suspend fun forgetModpack(token: String): Ok =
+        call(request("/api/modpacks/${path(token)}").delete().build(), Ok.serializer())
+
+    suspend fun importModpack(serverId: String, token: String): ModpackImported {
+        val body = buildJsonObject {
+            put("token", token)
+            put("confirm", true)
+        }
+        return call(post("${server(serverId)}/modpack", body), ModpackImported.serializer(), slow = true)
+    }
+
+    /** A Bedrock server's behavior and resource packs. */
+    suspend fun addons(serverId: String): AddonList = get("${server(serverId)}/addons", AddonList.serializer())
+
+    suspend fun uploadAddon(serverId: String, file: PickedFile): AddonResult =
+        call(upload("${server(serverId)}/addons/upload", file), AddonResult.serializer(), slow = true)
+
+    suspend fun setAddonEnabled(serverId: String, uuid: String, enabled: Boolean): AddonResult = call(
+        request("${server(serverId)}/addons/${path(uuid)}").put(buildJsonObject { put("enabled", enabled) }.toBody()).build(),
+        AddonResult.serializer(),
+    )
+
+    suspend fun removeAddon(serverId: String, uuid: String): AddonResult =
+        call(request("${server(serverId)}/addons/${path(uuid)}").delete().build(), AddonResult.serializer())
+
+    suspend fun gameSettings(serverId: String): GameSettings =
+        get("${server(serverId)}/game-settings", GameSettings.serializer())
+
+    /** Saves only [values], the ones changed. A refused one comes back as
+     * [AgentException.Failed] with each value's reason in its problems. */
+    suspend fun saveGameSettings(serverId: String, values: JsonObject): GameSettingsSaved = call(
+        request("${server(serverId)}/game-settings").put(buildJsonObject { put("values", values) }.toBody()).build(),
+        GameSettingsSaved.serializer(),
+    )
+
+    /** Saves the whole server.properties as typed in Technical mode. The
+     * agent still checks the known keys, and writes nothing when one fails. */
+    suspend fun saveGameSettingsText(serverId: String, text: String): GameSettingsSaved = call(
+        request("${server(serverId)}/game-settings/raw").put(buildJsonObject { put("text", text) }.toBody()).build(),
+        GameSettingsSaved.serializer(),
+    )
+
+    // ------------------------------------------------------------ setup
+    suspend fun serverSettings(serverId: String): ServerSettings =
+        get("${server(serverId)}/settings", ServerSettings.serializer())
+
+    /** Saves [updates] (only what changed). Refused keys come back in
+     * [ServerSettingsSaved.rejected] with the agent's reason. */
+    suspend fun saveServerSettings(serverId: String, updates: JsonObject): ServerSettingsSaved = call(
+        request("${server(serverId)}/settings").put(buildJsonObject { put("updates", updates) }.toBody()).build(),
+        ServerSettingsSaved.serializer(),
+    )
+
+    suspend fun memory(serverId: String): MemoryOverview =
+        get("${server(serverId)}/memory", MemoryOverview.serializer())
+
+    /** Sets only the -Xmx limit; used from the next start. */
+    suspend fun setMemory(serverId: String, mb: Int): MemoryOverview = call(
+        request("${server(serverId)}/memory").put(buildJsonObject { put("memory_mb", mb) }.toBody()).build(),
+        MemoryOverview.serializer(),
+    )
+
+    suspend fun serverTypes(): ServerTypes = get("/api/server-types", ServerTypes.serializer())
+
+    /** The versions a type offers, from its official source (read through the PC). */
+    suspend fun typeVersions(typeId: String): TypeVersions =
+        get("/api/server-types/${path(typeId)}/versions", TypeVersions.serializer(), slow = true)
+
+    suspend fun serverVersion(serverId: String): ServerVersion =
+        get("${server(serverId)}/version", ServerVersion.serializer())
+
+    /** What a change would do, before anything happens. */
+    suspend fun versionPreflight(serverId: String, type: String, minecraft: String, loader: String?): VersionPreflight = call(
+        request("${server(serverId)}/version/preflight").post(versionBody(type, minecraft, loader, confirm = false).toBody()).build(),
+        VersionPreflight.serializer(),
+        slow = true,
+    )
+
+    /** Stops the server, takes a backup, installs and checks; answers once done. */
+    suspend fun changeVersion(serverId: String, type: String, minecraft: String, loader: String?): VersionChanged = call(
+        request("${server(serverId)}/version").post(versionBody(type, minecraft, loader, confirm = true).toBody()).build(),
+        VersionChanged.serializer(),
+        slow = true,
+    )
+
+    suspend fun rollBackVersion(serverId: String): VersionRolledBack = call(
+        request("${server(serverId)}/version/roll-back").post(JsonObject(emptyMap()).toBody()).build(),
+        VersionRolledBack.serializer(),
+        slow = true,
+    )
+
+    /** Only ever sent from the person's own tick. */
+    suspend fun acceptEula(serverId: String): EulaAccepted = call(
+        request("${server(serverId)}/eula").post(JsonObject(emptyMap()).toBody()).build(),
+        EulaAccepted.serializer(),
+    )
+
+    private fun versionBody(type: String, minecraft: String, loader: String?, confirm: Boolean) = buildJsonObject {
+        put("type", type)
+        put("minecraft_version", minecraft)
+        if (loader != null) put("loader_version", loader)
+        put("confirm", confirm)
+    }
+
+    suspend fun crossplay(serverId: String): CrossplayInfo =
+        get("${server(serverId)}/crossplay", CrossplayInfo.serializer())
+
+    /** Installs or moves aside Geyser and Floodgate; the server must be stopped. */
+    suspend fun setCrossplay(serverId: String, enabled: Boolean, port: Int?): CrossplayInfo = call(
+        request("${server(serverId)}/crossplay").put(buildJsonObject {
+            put("enabled", enabled)
+            if (port != null) put("port", port)
+        }.toBody()).build(),
+        CrossplayInfo.serializer(),
+        slow = true,
+    )
+
+    suspend fun duplicateOptions(serverId: String): DuplicateOptions =
+        get("${server(serverId)}/duplicate", DuplicateOptions.serializer())
+
+    /** Starts the copy as a task; the new server appears once it is checked. */
+    suspend fun duplicate(serverId: String, name: String, directory: String, world: String): DuplicateStarted = call(
+        request("${server(serverId)}/duplicate").post(buildJsonObject {
+            put("name", name)
+            put("directory", directory)
+            put("world", world)
+        }.toBody()).build(),
+        DuplicateStarted.serializer(),
+    )
+
+    suspend fun setColor(serverId: String, color: String): ColorSaved = call(
+        request("${server(serverId)}/color").put(buildJsonObject { put("color", color) }.toBody()).build(),
+        ColorSaved.serializer(),
+    )
+
+    // ------------------------------------------------------------------
+    /** Takes a server off the list. Nothing on the PC is deleted. */
+    suspend fun removeServer(serverId: String): ServerRemoved =
+        call(request(server(serverId)).delete().build(), ServerRemoved.serializer())
+
+    private fun server(id: String) = "/api/servers/${path(id)}"
+
+    private fun path(id: String) = java.net.URLEncoder.encode(id, "UTF-8").replace("+", "%20")
+
+    private fun request(path: String): Request.Builder =
+        Request.Builder().url(pairing.origin + path).header("Accept", "application/json")
+
+    private fun JsonObject.toBody(): RequestBody = toString().toRequestBody(jsonType)
+
+    private fun post(path: String, body: JsonObject): Request = request(path).post(body.toBody()).build()
+
+    private fun fileBody(filename: String) = buildJsonObject { put("filename", filename) }
+
+    /** A file picked on the phone, sent as a form upload. */
+    private fun upload(path: String, file: PickedFile, progress: ((Long, Long?) -> Unit)? = null): Request {
+        val form = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("file", file.name, file.body(progress))
+            .build()
+        return request(path).post(form).build()
+    }
+
+    private suspend fun <T> get(path: String, serializer: KSerializer<T>, signedIn: Boolean = true, slow: Boolean = false): T =
+        call(request(path).get().build(), serializer, signedIn, slow)
+
+    private suspend fun <T> call(request: Request, serializer: KSerializer<T>, signedIn: Boolean = true, slow: Boolean = false): T =
+        withContext(Dispatchers.IO) {
+            val withToken = if (signedIn) {
+                val current = token() ?: throw AgentException.SignedOut()
+                request.newBuilder().header("Authorization", "Bearer $current").build()
+            } else {
+                request
+            }
+            val started = System.nanoTime()
+            val response = try {
+                (if (slow) slowHttp else http).newCall(withToken).execute()
+            } catch (e: IOException) {
+                log.line("${request.method} ${request.url.encodedPath} -> no answer")
+                // Only the wait for the answer runs this long; a PC that is
+                // off fails to connect within seconds.
+                val waited = System.nanoTime() - started
+                if (slow && e is java.net.SocketTimeoutException && waited >= TimeUnit.SECONDS.toNanos(slowSeconds) * 9 / 10) {
+                    throw AgentException.StillWorking()
+                }
+                throw translate(e)
+            }
+            response.use { read(it, request, serializer, signedIn) }
+        }
+
+    private fun <T> read(response: Response, request: Request, serializer: KSerializer<T>, signedIn: Boolean): T {
+        log.line("${request.method} ${request.url.encodedPath} -> ${response.code}")
+        val text = response.body?.string().orEmpty()
+        val isJson = response.header("Content-Type").orEmpty().contains("application/json")
+        if (response.code == 401 && signedIn) {
+            onSignedOut()
+            throw AgentException.SignedOut()
+        }
+        if (!response.isSuccessful) {
+            val reason = if (isJson) detail(text) else null
+            when {
+                response.code == 401 || response.code == 429 ->
+                    throw AgentException.SignInRefused(reason ?: "")
+                response.code == 403 -> throw AgentException.NotAllowed(reason ?: "")
+                else -> throw AgentException.Failed(
+                    response.code,
+                    reason,
+                    response.header("X-Request-ID"),
+                    if (isJson) problems(text) else emptyMap(),
+                )
+            }
+        }
+        if (!isJson) throw AgentException.NotAnAgent()
+        return try {
+            AgentJson.decodeFromString(serializer, text)
+        } catch (e: IllegalArgumentException) {
+            throw AgentException.NotAnAgent()
+        }
+    }
+
+    private fun detail(text: String): String? = runCatching {
+        AgentJson.parseToJsonElement(text).let { it as? JsonObject }?.get("detail")?.jsonPrimitive?.contentOrNull
+    }.getOrNull()
+
+    private fun problems(text: String): Map<String, String> = runCatching {
+        val found = (AgentJson.parseToJsonElement(text) as JsonObject)["problems"] as? JsonObject
+        found?.mapNotNull { (key, value) -> (value as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.let { key to it } }?.toMap()
+    }.getOrNull().orEmpty()
+
+    internal fun translateFailure(e: IOException): AgentException = translate(e)
+
+    private fun translate(e: IOException): AgentException {
+        var cause: Throwable? = e
+        while (cause != null) {
+            when (cause) {
+                is CertificateMismatchException -> return AgentException.CertificateChanged(cause.presented)
+                is PinnedCertificateExpiredException -> return AgentException.CertificateExpired(cause.presented)
+                is CertificateNotTrustedException -> return AgentException.CertificateNotTrusted(cause.presented)
+            }
+            cause = cause.cause
+        }
+        if (e is SSLException) return AgentException.NotAnAgent()
+        return AgentException.Unreachable()
+    }
+
+    companion object {
+        val QUICK_ACTIONS = listOf("start", "stop", "restart")
+
+        const val SLOW_SECONDS = 30L * 60
+        const val SEARCH_PAGE = 20
+        val REC_ACTIONS = listOf("snooze", "dismiss", "restore")
+    }
+}

@@ -1,0 +1,833 @@
+import Core
+import Foundation
+import LocalAuthentication
+import Network
+import Observation
+import SwiftUI
+import UIKit
+import UserNotifications
+import WidgetKit
+
+enum AppTab: Hashable {
+    case servers
+    case notifications
+    case settings
+}
+
+/// Everything the screens share: which PC, whether the app is signed in and
+/// unlocked, the servers and alerts last read, and the wording and theme.
+/// The sign-in token is never held here; it is read from the Keychain for
+/// each request.
+@MainActor
+@Observable
+final class AppModel {
+    // Fixed for the app's life.
+    let strings: Strings
+    let store = SharedStore()
+    let requestLog = RequestLog()
+    /// Modrinth's pictures for mod search results, in the phone's Caches folder.
+    let icons = IconCache(
+        directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("modrinth-icons")
+    )
+    @ObservationIgnored private(set) var client: AgentClient? = nil
+    @ObservationIgnored private var liveTask: Task<Void, Never>? = nil
+    @ObservationIgnored private var refreshTask: Task<Void, Never>? = nil
+    @ObservationIgnored private var backgroundedAt: Date? = nil
+    @ObservationIgnored private var feed: LiveFeed? = nil
+    /// The server screens open now, newest last; the same server can be
+    /// open twice (its home and its Console) while one replaces the other.
+    @ObservationIgnored private var watchers: [String] = []
+    private var watching: String? = nil
+    @ObservationIgnored private var pagesById: [String: ServerPages] = [:]
+    /// The "+" on All servers, kept while the app runs so setting up shows its progress again.
+    @ObservationIgnored private(set) lazy var adding = AddServerPages(
+        client: { [weak self] in self?.client },
+        noted: { [weak self] problem in self?.note(problem) },
+        listChanged: { [weak self] in await self?.refreshServers() }
+    )
+
+    /// Settings > Moderators (owner only).
+    @ObservationIgnored private(set) lazy var moderators = makeModeratorPages()
+    /// Settings > Your account.
+    @ObservationIgnored private(set) lazy var yourAccount = makeAccountPages()
+    /// Settings > PC settings (owner only).
+    @ObservationIgnored private(set) lazy var pcSettings = makePcPages()
+
+    // The pages of the signed-in account, made again when it signs out so
+    // nothing of one PC or account shows on the next.
+    private func makeModeratorPages() -> ModeratorPages {
+        ModeratorPages(client: { [weak self] in self?.client }, noted: { [weak self] problem in self?.note(problem) }, strings: strings)
+    }
+
+    private func makeAccountPages() -> AccountPages {
+        AccountPages(client: { [weak self] in self?.client }, noted: { [weak self] problem in self?.note(problem) }, strings: strings)
+    }
+
+    private func makePcPages() -> PcPages {
+        PcPages(client: { [weak self] in self?.client }, noted: { [weak self] problem in self?.note(problem) }, strings: strings)
+    }
+
+    // Settings.
+    var technical: Bool
+    var theme: ThemeChoice
+    var unlockEnabled: Bool
+
+    // The PC and the sign-in.
+    var pairing: Pairing?
+    var signedIn: Bool
+    var locked: Bool
+    var signInNotice: String? = nil
+    /// A moderator's invite scanned or pasted: once the phone is paired with
+    /// its PC, they choose a password instead of signing in.
+    var pendingInvite: Invite? = nil
+    /// An invite opened while signed in to the same PC: the sign-in stays
+    /// until the invite is used, and Cancel goes back to the app (as on Android).
+    var inviteOverSignIn = false
+    /// The signed-in account, from /auth/me.
+    private var account: Me? = nil
+    /// The account on the server whose screen is open: what it may do there.
+    var me: Me? { account?.forServer(watching) }
+    var agentVersion: String?
+    var lastProblem: String? = nil
+
+    // What the PC last said.
+    var servers: [ServerRow] = []
+    var serversLoaded = false
+    var serversFresh = false
+    var serversCheckedAt: Double? = nil
+    var serversProblem: AgentError? = nil
+    var alertState: AlertState
+    var live = false
+    /// Lock-screen alerts on for this sign-in, and what went wrong turning them on.
+    var lockScreenAlerts: Bool
+    var phoneBusy = false
+    var phoneProblem: String? = nil
+    /// This device's alerts (GET /api/account/alerts); nil until read.
+    var deviceAlerts: DeviceAlerts? = nil
+    /// "Wake <PC>": what this phone kept, and where the waking is.
+    var keptWake: KeptWake?
+    var waking = false
+    var wakeFailed = false
+    /// Goes up whenever the live feed says something changed, so open
+    /// screens read again.
+    var liveTick = 0
+
+    // Navigation.
+    var tab: AppTab = .servers
+    var serversPath: [ServerRoute] = []
+
+    init() {
+        strings = Strings(Bundled.english)
+        let saved = SharedStore()
+        technical = saved.technical
+        theme = ThemeChoice(rawValue: saved.theme) ?? .system
+        unlockEnabled = saved.unlockEnabled
+        pairing = saved.pairing
+        alertState = saved.alertState
+        agentVersion = saved.agentVersion
+        lockScreenAlerts = saved.lockScreenAlerts
+        keptWake = saved.keptWake
+        let hasToken = TokenStore.read() != nil
+        signedIn = saved.pairing != nil && hasToken
+        locked = false
+        strings.technical = technical
+        if let pairing = pairing {
+            client = makeClient(pairing)
+        }
+        locked = signedIn && unlockEnabled && AppModel.deviceLockAvailable()
+        PushDelegate.gotAddress = { [weak self] address in self?.gotPushAddress(address) }
+        PushDelegate.opened = { [weak self] link in self?.open(link) }
+        if signedIn && lockScreenAlerts {
+            // Apple may have given a new address since; it comes to gotPushAddress.
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+    }
+
+    // MARK: - Words
+
+    /// The words for `key` in the chosen wording.
+    func t(_ key: String, _ values: [String: CustomStringConvertible] = [:]) -> String {
+        _ = technical
+        return strings.t(key, values)
+    }
+
+    func setTechnical(_ on: Bool) {
+        technical = on
+        strings.technical = on
+        store.technical = on
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    func setTheme(_ choice: ThemeChoice) {
+        theme = choice
+        store.theme = choice.rawValue
+    }
+
+    func setUnlock(_ on: Bool) {
+        unlockEnabled = on
+        store.unlockEnabled = on
+    }
+
+    func basePalette(_ scheme: ColorScheme) -> Palette {
+        Palette.base(Bundled.themes, theme.resolvedName(scheme))
+    }
+
+    func serverPalette(_ color: String?, _ scheme: ColorScheme) -> Palette {
+        Palette.server(color, Bundled.themes, theme.resolvedName(scheme))
+    }
+
+    /// The words for an alert's kind, when they need nothing filled in.
+    func feedWords(_ event: String) -> String? {
+        guard let key = Bundled.feed[event] else { return nil }
+        let words = t(key)
+        return words.contains("{") ? nil : words
+    }
+
+    // MARK: - Pairing and signing in
+
+    private func makeClient(_ pairing: Pairing) -> AgentClient {
+        AgentClient(
+            pairing: pairing,
+            token: { TokenStore.read() },
+            onSignedOut: { [weak self] in
+                // A 401: forget the token at once, in the app and the widget.
+                TokenStore.delete()
+                Task { @MainActor in
+                    self?.signedOutByPC()
+                }
+            },
+            log: requestLog
+        )
+    }
+
+    func makePairer() -> Pairer {
+        Pairer(range: Bundled.apiRange, log: requestLog)
+    }
+
+    /// "Scan the code again" found the agent. A new code for the same PC
+    /// (a renewed certificate) keeps the sign-in; for any other address the
+    /// app signs out of this PC first, so the sign-in is never sent there.
+    func rescanned(_ next: Pairing) async {
+        if let current = pairing, current.samePc(next), signedIn {
+            store.pairing = next
+            pairing = next
+            client = makeClient(next)
+            stopLive()
+            startLive()
+            // An invite is another account, but this one stays signed in
+            // until the invite is used.
+            if pendingInvite != nil { inviteOverSignIn = true }
+            return
+        }
+        stopLive()
+        if let client = client, signedIn {
+            await client.logout()
+        }
+        TokenStore.delete()
+        clearSignedIn()
+        paired(next)
+    }
+
+    /// Checking found the agent: remember it and ask for the sign-in.
+    func paired(_ pairing: Pairing) {
+        store.pairing = pairing
+        store.alertState = AlertState()
+        alertState = AlertState()
+        self.pairing = pairing
+        client = makeClient(pairing)
+        signedIn = false
+        signInNotice = nil
+        lastProblem = nil
+    }
+
+    /// "Command Block on iPhone": how the PC's Security page lists this phone.
+    var deviceLabel: String {
+        t("mobile.signin.device", ["app": t("mobile.app_name"), "model": UIDevice.current.model])
+    }
+
+    func signIn(username: String, password: String) async throws {
+        guard let client = client else { throw AgentError.unreachable }
+        let result = try await client.login(username: username, password: password, device: deviceLabel)
+        TokenStore.save(result.token)
+        locked = false
+        signInNotice = nil
+        // The main screen appears and reads everything (afterSignIn).
+        signedIn = true
+    }
+
+    /// The invited moderator chose a password: the account is theirs, and this phone signs in as them.
+    func acceptInvite(password: String) async throws {
+        guard let client = client, let invite = pendingInvite else { throw AgentError.unreachable }
+        let result = try await client.acceptInvite(token: invite.token, password: password, device: deviceLabel)
+        // Signed in as someone else before: that sign-in ends here.
+        if signedIn {
+            stopLive()
+            await client.logout()
+            clearSignedIn()
+        }
+        TokenStore.save(result.token)
+        pendingInvite = nil
+        inviteOverSignIn = false
+        locked = false
+        signInNotice = nil
+        signedIn = true
+    }
+
+    /// Opening the app signed in, or just signed in: read who this is, the
+    /// servers, the alerts, and follow the live feed.
+    func afterSignIn() async {
+        await loadAccount()
+        await refreshServers()
+        await syncAlerts()
+        startLive()
+    }
+
+    func loadAccount() async {
+        guard let client = client, signedIn else { return }
+        do {
+            let found = try await client.me()
+            account = found
+            alertState = alertState.onlyFor(found)
+            store.alertState = alertState
+            await keepWake(client, found)
+        } catch let problem as AgentError {
+            note(problem)
+        } catch {}
+        if let version = try? await client.version() {
+            agentVersion = version.version
+            store.agentVersion = version.version
+        }
+    }
+
+    /// Sign out here and on the PC.
+    func signOut() async {
+        stopLive()
+        if let client = client, signedIn {
+            await client.logout()
+        }
+        TokenStore.delete()
+        clearSignedIn()
+    }
+
+    /// Forget this PC: sign out, then forget the address, the pinned
+    /// certificate and the alerts.
+    func forgetPC() async {
+        stopLive()
+        if let client = client, signedIn {
+            await client.logout()
+        }
+        TokenStore.delete()
+        store.forgetPC()
+        clearSignedIn()
+        pendingInvite = nil
+        inviteOverSignIn = false
+        pairing = nil
+        client = nil
+        alertState = AlertState()
+        agentVersion = nil
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    /// Everyone was signed out from PC settings, this phone too: its
+    /// sign-in is already gone on the PC.
+    func signedOutEverywhere() {
+        stopLive()
+        TokenStore.delete()
+        clearSignedIn()
+    }
+
+    /// The PC ended the sign-in (signed out on its Security page, a helper
+    /// removed, expired).
+    func signedOutByPC() {
+        guard signedIn else { return }
+        stopLive()
+        TokenStore.delete()
+        clearSignedIn()
+        lastProblem = AgentError.signedOut.key
+        signInNotice = AgentError.signedOut.message(strings)
+    }
+
+    private func clearSignedIn() {
+        // The widget stops showing servers at once, as the app does.
+        store.widgetSnapshot = nil
+        WidgetCenter.shared.reloadAllTimelines()
+        signedIn = false
+        locked = false
+        account = nil
+        servers = []
+        serversLoaded = false
+        serversFresh = false
+        serversCheckedAt = nil
+        serversProblem = nil
+        serversPath = []
+        tab = .servers
+        live = false
+        pagesById = [:]
+        // The PC forgets this phone's push address and wake key with the sign-in.
+        lockScreenAlerts = false
+        store.lockScreenAlerts = false
+        deviceAlerts = nil
+        keptWake = nil
+        store.keptWake = nil
+        waking = false
+        wakeFailed = false
+        pcSettings.stop()
+        moderators = makeModeratorPages()
+        yourAccount = makeAccountPages()
+        pcSettings = makePcPages()
+    }
+
+    /// Cancel on an invite opened while signed in: back to the app as it was.
+    func cancelInvite() {
+        pendingInvite = nil
+        inviteOverSignIn = false
+    }
+
+    func note(_ problem: AgentError) {
+        lastProblem = problem.key
+    }
+
+    // MARK: - Servers and alerts
+
+    func refreshServers() async {
+        guard let client = client, signedIn else { return }
+        let now = Date().timeIntervalSince1970
+        do {
+            let list = try await client.servers()
+            servers = list.servers
+            serversFresh = true
+            serversCheckedAt = now
+            serversProblem = nil
+            store.widgetSnapshot = WidgetSnapshot.read(list, now: now)
+        } catch let problem as AgentError {
+            // Never show the last reading as current.
+            serversFresh = false
+            serversProblem = problem
+            note(problem)
+            store.widgetSnapshot = WidgetSnapshot.failed(store.widgetSnapshot, problem: problem, now: now)
+        } catch {
+            return
+        }
+        serversLoaded = true
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    func syncAlerts() async {
+        guard let client = client, signedIn else { return }
+        let sync = AlertSync { after, limit in
+            try await client.alerts(after: after, limit: limit)
+        }
+        do {
+            let caughtUp = try await sync.catchUp(alertState)
+            let next = account.map(caughtUp.onlyFor) ?? caughtUp
+            alertState = next
+            store.alertState = next
+        } catch let problem as AgentError {
+            note(problem)
+        } catch {}
+    }
+
+    func markAllRead() {
+        alertState = alertState.markAllRead()
+        store.alertState = alertState
+    }
+
+    func serverName(_ id: String?) -> String {
+        guard let id = id else { return t("mobile.alerts.pc") }
+        return servers.first(where: { $0.id == id })?.name ?? id
+    }
+
+    var canControl: Bool {
+        me?.can(Permissions.SERVER_CONTROL) ?? false
+    }
+
+    /// Start, stop or restart, and the words for what happened.
+    func perform(_ action: String, serverId: String) async -> String {
+        guard let client = client else { return AgentError.unreachable.message(strings) }
+        do {
+            _ = try await client.serverAction(serverId: serverId, action: action)
+            scheduleRefresh()
+            switch action {
+            case "start": return t("mobile.server.done_start")
+            case "stop": return t("mobile.server.done_stop")
+            default: return t("mobile.server.done_restart")
+            }
+        } catch let problem as AgentError {
+            note(problem)
+            return problem.message(strings)
+        } catch {
+            return AgentError.unreachable.message(strings)
+        }
+    }
+
+    // MARK: - One server's screens
+
+    /// What the Console, Chat, Players, Activity and Crashes screens show.
+    func pages(_ serverId: String) -> ServerPages {
+        if let known = pagesById[serverId] { return known }
+        let made = ServerPages(
+            serverId: serverId,
+            client: { [weak self] in self?.client },
+            noted: { [weak self] problem in self?.note(problem) },
+            listChanged: { [weak self] in await self?.refreshServers() }
+        )
+        pagesById[serverId] = made
+        return made
+    }
+
+    func can(_ permission: String) -> Bool {
+        me?.can(permission) ?? false
+    }
+
+    /// A screen of `serverId` opened: the live feed carries its console and chat.
+    func watch(_ serverId: String) {
+        watchers.append(serverId)
+        follow(serverId)
+    }
+
+    /// That screen closed.
+    func unwatch(_ serverId: String) {
+        if let index = watchers.firstIndex(of: serverId) {
+            watchers.remove(at: index)
+        }
+        follow(watchers.last)
+    }
+
+    private func follow(_ serverId: String?) {
+        guard watching != serverId else { return }
+        watching = serverId
+        // No server screen open: the feed can stay where it is.
+        guard let serverId = serverId else { return }
+        // Switch the open feed to it; reconnect only if it isn't open.
+        if feed?.tail(serverId: serverId) != true && liveTask != nil {
+            startLive()
+        }
+    }
+
+    // MARK: - Live feed
+
+    func startLive() {
+        guard let client = client, signedIn, !locked else { return }
+        liveTask?.cancel()
+        let feed = LiveFeed(client: client, token: { TokenStore.read() })
+        self.feed = feed
+        let watched = watching
+        liveTask = Task { [weak self] in
+            for await signal in feed.connect(serverId: watched) {
+                guard let self = self else { return }
+                switch signal {
+                case .ready:
+                    self.live = true
+                case .changed(let serverId, let type):
+                    self.scheduleRefresh()
+                    self.changed(serverId, type)
+                case .activity(let row):
+                    for pages in self.pagesById.values {
+                        pages.onEvent(row)
+                    }
+                case .console(let serverId, let line):
+                    if let serverId = serverId {
+                        self.pagesById[serverId]?.onConsoleLine(line)
+                    }
+                case .chat(let serverId, let message):
+                    if let serverId = serverId {
+                        self.pagesById[serverId]?.onChat(message)
+                    }
+                case .consoleTail(let serverId, let lines):
+                    self.pagesById[serverId]?.onConsoleTail(lines)
+                case .task(let serverId, let job):
+                    self.adding.onTask(job)
+                    if let serverId = serverId {
+                        self.pagesById[serverId]?.content.onTask(job)
+                        self.pagesById[serverId]?.world.onTask(job)
+                        self.pagesById[serverId]?.setup.onTask(job)
+                    }
+                case .closed:
+                    self.live = false
+                    // Ask who this is: a 401 there signs the app out.
+                    await self.loadAccount()
+                case .lost(let problem):
+                    self.live = false
+                    self.note(problem)
+                case .signedOut:
+                    self.live = false
+                    self.signedOutByPC()
+                }
+            }
+            self?.live = false
+        }
+    }
+
+    func stopLive() {
+        liveTask?.cancel()
+        liveTask = nil
+        feed = nil
+        live = false
+    }
+
+    /// A fresh read of what an event changed, for screens that showed it.
+    private func changed(_ serverId: String?, _ type: String) {
+        guard let serverId = serverId, let pages = pagesById[serverId] else { return }
+        switch type {
+        case "player_joined", "player_left", "player_action":
+            if pages.players.value != nil {
+                Task { await pages.loadPlayers() }
+            }
+        case "server_crashed":
+            if pages.crashes.value != nil {
+                Task { await pages.loadCrashes() }
+            }
+        case "state":
+            // Started or stopped: Players and Chat say whether their buttons
+            // work now, so they read it again rather than keep the old answer.
+            if pages.players.value != nil {
+                Task { await pages.loadPlayers() }
+            }
+            if pages.chat.value != nil {
+                Task { await pages.loadChat() }
+            }
+            // Restore world can only go back while the server is off.
+            if pages.world.timeline.value != nil {
+                Task { await pages.world.loadTimeline() }
+            }
+            // Mods change only while it is stopped.
+            pages.content.onStateChanged()
+        case _ where AppModel.BACKUP_EVENTS.contains(type):
+            // A backup made or removed elsewhere (a schedule, the desktop app).
+            let world = pages.world
+            if world.backups.value != nil && world.busy == nil {
+                Task { await world.loadBackups() }
+            }
+            if world.timeline.value != nil {
+                Task { await world.loadTimeline() }
+            }
+        case "schedule_finished":
+            if pages.world.schedules.value != nil {
+                Task { await pages.world.loadSchedules() }
+            }
+        default:
+            break
+        }
+    }
+
+    private static let BACKUP_EVENTS: Set<String> = [
+        "backup_completed", "backup_failed", "backup_deleted", "backup_restored", "backup_retention",
+    ]
+
+    /// Several events in a row (a server starting says a lot) read once.
+    func scheduleRefresh() {
+        refreshTask?.cancel()
+        refreshTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if Task.isCancelled { return }
+            guard let self = self else { return }
+            await self.refreshServers()
+            await self.syncAlerts()
+            self.liveTick += 1
+        }
+    }
+
+    // MARK: - Unlock and the app switcher
+
+    static func deviceLockAvailable() -> Bool {
+        var error: NSError?
+        return LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: &error)
+    }
+
+    func unlock() async {
+        let context = LAContext()
+        var error: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+            // No screen lock on the phone: the app can't lock itself.
+            locked = false
+            return
+        }
+        do {
+            let ok = try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: t("mobile.lock.reason"))
+            if ok {
+                // The main screen reads everything again (afterSignIn).
+                locked = false
+            }
+        } catch {
+            // Cancelled or failed: stay locked; the Unlock button asks again.
+        }
+    }
+
+    func scenePhaseChanged(_ phase: ScenePhase) {
+        switch phase {
+        case .background:
+            backgroundedAt = Date()
+            stopLive()
+        case .active:
+            if let at = backgroundedAt, signedIn, unlockEnabled, Date().timeIntervalSince(at) > 60, AppModel.deviceLockAvailable() {
+                locked = true
+            }
+            let wasAway = backgroundedAt != nil
+            backgroundedAt = nil
+            if wasAway && signedIn && !locked {
+                Task { await self.afterSignIn() }
+            }
+        default:
+            break
+        }
+    }
+
+    // MARK: - Lock-screen alerts and alerts per device
+
+    @ObservationIgnored private var addressWaiter: CheckedContinuation<String?, Never>? = nil
+
+    /// Lock-screen alerts on or off for this phone's sign-in.
+    func chooseLockScreenAlerts(_ on: Bool) async {
+        guard let client = client, signedIn else { return }
+        phoneBusy = true
+        phoneProblem = nil
+        defer { phoneBusy = false }
+        do {
+            if on {
+                guard try await client.phone().configured else {
+                    phoneProblem = t("mobile.settings.lock_alerts_not_set_up_ios")
+                    return
+                }
+                let allowed = (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+                guard allowed else {
+                    phoneProblem = t("mobile.settings.lock_alerts_blocked")
+                    return
+                }
+                let address = await withCheckedContinuation { waiter in
+                    addressWaiter = waiter
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+                guard let address = address else {
+                    phoneProblem = t("mobile.settings.lock_alerts_no_address")
+                    return
+                }
+                _ = try await client.registerPhone(pushToken: address, platform: "ios", label: deviceLabel)
+            } else {
+                _ = try await client.forgetPhone()
+                UIApplication.shared.unregisterForRemoteNotifications()
+            }
+            lockScreenAlerts = on
+            store.lockScreenAlerts = on
+        } catch let problem as AgentError {
+            note(problem)
+            phoneProblem = problem.message(strings)
+        } catch {}
+    }
+
+    /// Apple gave this iPhone its push address (on turning alerts on, or
+    /// at launch, when it may have changed).
+    func gotPushAddress(_ address: String?) {
+        if let waiter = addressWaiter {
+            addressWaiter = nil
+            waiter.resume(returning: address)
+            return
+        }
+        guard let address = address, lockScreenAlerts, let client = client, signedIn else { return }
+        Task {
+            do {
+                _ = try await client.registerPhone(pushToken: address, platform: "ios", label: deviceLabel)
+            } catch let problem as AgentError {
+                note(problem)
+            } catch {}
+        }
+    }
+
+    func loadDeviceAlerts() async {
+        guard let client = client, signedIn else { return }
+        deviceAlerts = try? await client.deviceAlerts()
+    }
+
+    /// Follow the shared list (`own` false), or only `events` on this phone.
+    func chooseDeviceAlerts(own: Bool, events: [String]) async {
+        guard let client = client, signedIn else { return }
+        phoneBusy = true
+        defer { phoneBusy = false }
+        do {
+            deviceAlerts = try await client.chooseDeviceAlerts(own: own, events: events)
+        } catch let problem as AgentError {
+            note(problem)
+            phoneProblem = problem.message(strings)
+        } catch {}
+    }
+
+    // MARK: - Wake-on-LAN
+
+    /// While the PC answers, keep what waking it needs (the owner, or a
+    /// moderator with "Start the agent"); anyone else keeps nothing.
+    private func keepWake(_ client: AgentClient, _ me: Me) async {
+        let allowed = me.isOwner || (me.accountPermissions ?? []).contains(Permissions.AGENT_START)
+        var kept: KeptWake? = nil
+        if allowed {
+            guard let found = try? await KeptWake.keep(client, before: keptWake) else { return }
+            kept = found
+        }
+        keptWake = kept
+        store.keptWake = kept
+    }
+
+    /// "Wake <PC>": the request to the helping PC over Tailscale, or the
+    /// router's wake page; then checks for 2 minutes whether the PC answers.
+    func wakePC() {
+        guard let kept = keptWake, kept.offered else { return }
+        if let helper = kept.helper, let request = kept.helperRequest, let port = NWEndpoint.Port(rawValue: UInt16(clamping: helper.port)) {
+            let connection = NWConnection(host: NWEndpoint.Host(helper.address), port: port, using: .udp)
+            connection.start(queue: .global())
+            connection.send(content: request, completion: .contentProcessed { _ in connection.cancel() })
+        } else if let page = kept.info.routerUrl, let url = URL(string: page), url.scheme == "https" {
+            UIApplication.shared.open(url)
+        }
+        waking = true
+        wakeFailed = false
+        Task {
+            let until = Date().addingTimeInterval(120)
+            while Date() < until, waking {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                if let client = client, (try? await client.health()) != nil {
+                    waking = false
+                    await afterSignIn()
+                    return
+                }
+            }
+            if waking {
+                waking = false
+                wakeFailed = true
+            }
+        }
+    }
+
+    // MARK: - Links
+
+    func open(_ url: URL) {
+        guard url.scheme?.lowercased() == DeepLink.scheme else { return }
+        tab = .servers
+        if let id = DeepLink.serverId(from: url) {
+            serversPath = [.server(id)]
+        } else {
+            serversPath = []
+        }
+    }
+
+    func openServer(_ id: String) {
+        tab = .servers
+        serversPath = [.server(id)]
+    }
+
+    // MARK: - Diagnostics
+
+    func diagnosticsText() -> String {
+        let facts = Diagnostics.Facts(
+            appVersion: Bundled.appVersion,
+            platform: "iOS",
+            osVersion: UIDevice.current.systemVersion,
+            device: UIDevice.current.model,
+            agentVersion: agentVersion,
+            agentApi: pairing?.apiVersion,
+            paired: pairing != nil,
+            pinned: pairing?.fingerprint != nil,
+            signedIn: signedIn,
+            lockScreenAlerts: lockScreenAlerts,
+            lastProblem: lastProblem
+        )
+        return Diagnostics.text(facts, log: requestLog.recent())
+    }
+}

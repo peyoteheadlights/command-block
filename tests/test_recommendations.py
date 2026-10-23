@@ -1,0 +1,468 @@
+"""The Recommendations card's rules, each checked against fake measured data,
+plus dismissing and snoozing. No rule may fire from an unknown value."""
+
+import pytest
+
+from agent import recommendations as rec
+from agent.minecraft.java import memory_limit_mb
+
+from .conftest import PASSWORD
+
+NOW = 1_800_000_000.0
+DAY = 86400.0
+
+
+def facts(**overrides) -> rec.Facts:
+    """A healthy server: a fresh checked backup, a backup schedule, nothing
+    measured that would worry anyone."""
+    base = dict(
+        now=NOW,
+        backups=[
+            {
+                "id": 7,
+                "name": "daily-1",
+                "created_at": NOW - 3600,
+                "status": "ok",
+                "copy": {"state": "ok"},
+            }
+        ],
+        schedules=[{"task": "backup", "enabled": 1}],
+        samples=[],
+        sample_interval=60.0,
+        memory_limit_mb=4096,
+        disk_free_gb=120.0,
+        disk_alert_gb=5.0,
+        tps_alert=15.0,
+        mod_updates=[],
+        java={
+            "verdict": "compatible",
+            "java_major": 21,
+            "required": 21,
+            "minecraft_version": "1.21.1",
+        },
+        auto_restart=True,
+        offsite_folder="E:\\Backups",
+    )
+    base.update(overrides)
+    return rec.Facts(**base)
+
+
+def ids(f: rec.Facts) -> list[str]:
+    return [r.id for r in rec.evaluate(f)]
+
+
+def samples(n, **values):
+    return [{"ts": NOW - 3600 + i * 60, **values} for i in range(n)]
+
+
+def test_a_healthy_server_has_no_recommendations():
+    assert ids(facts()) == []
+
+
+def test_every_recommendation_has_evidence_and_a_way_to_the_fix():
+    f = facts(
+        backups=[
+            {
+                "id": 3,
+                "name": "daily-3",
+                "created_at": NOW - 9 * DAY,
+                "status": "ok",
+                "copy": {"state": "unreachable", "reason": "drive not connected"},
+            }
+        ],
+        schedules=[],
+        disk_free_gb=1.0,
+        tps={"mode": "auto", "state": "unavailable", "tried": [{"command": "tick query"}]},
+        modrinth=True,
+        spark_installed=False,
+        memory={"total_mb": 8192, "together_mb": 12288, "names": ["Survival", "Creative"]},
+        power={"supported": True, "enabled": False, "still_sleeps": []},
+        auto_restart=False,
+        mod_updates=[{"mod_id": "lithium", "name": "Lithium"}],
+        java={
+            "verdict": "incompatible",
+            "java_major": 17,
+            "required": 21,
+            "minecraft_version": "1.21.1",
+        },
+        samples=samples(60, proc_ram_mb=4000, players=3, tps=9.0),
+        crashes=[oom(1)],
+        tailscale_down=True,
+    )
+    found = rec.evaluate(f)
+    assert len(found) == len(rec.RULES)
+    for r in found:
+        assert r.title and r.reason and r.evidence and r.fingerprint
+        assert r.action.get("page") or r.action.get("url", "").startswith("https://")
+
+
+# ------------------------------------------------------------------ backups
+def test_no_backup_at_all():
+    found = rec.evaluate(facts(backups=[]))
+    assert [r.id for r in found] == ["no_backup"]
+    assert "No checked backup" in found[0].evidence
+
+
+def test_an_unverified_backup_does_not_count():
+    f = facts(backups=[{"id": 1, "name": "x", "created_at": NOW, "status": "unverified"}])
+    assert ids(f) == ["no_backup"]
+
+
+def test_a_backup_older_than_a_week():
+    old = [{"id": 3, "name": "daily-3", "created_at": NOW - 9 * DAY, "status": "ok"}]
+    found = rec.evaluate(facts(backups=old))
+    assert [r.id for r in found] == ["old_backup"]
+    assert "9 days ago" in found[0].evidence
+
+
+def test_no_backup_schedule():
+    assert ids(facts(schedules=[{"task": "backup", "enabled": 0}])) == ["no_backup_schedule"]
+    assert ids(facts(schedules=[{"task": "restart", "enabled": 1}])) == ["no_backup_schedule"]
+
+
+# ------------------------------------------------------------------ crashes
+def oom(days_ago, crash_id=1, category="OutOfMemoryError", confidence="confirmed", mods=()):
+    return {
+        "id": crash_id,
+        "ts": NOW - days_ago * DAY,
+        "category": category,
+        "confidence": confidence,
+        "summary": f"{category} found in the log.",
+        "context": {"analysis": {"suspect_mods": list(mods)}},
+    }
+
+
+def crash_rec(**overrides):
+    found = [r for r in rec.evaluate(facts(**overrides)) if r.id == "crash"]
+    return found[0] if found else None
+
+
+def test_an_out_of_memory_crash_recommends_more_memory():
+    found = rec.evaluate(facts(crashes=[oom(0.5, 2), oom(3, 1)]))
+    assert [r.id for r in found] == ["crash"]
+    assert found[0].title == "Give the server more memory"
+    assert "under a day ago" in found[0].reason and "confirmed" in found[0].reason
+    assert found[0].details["fix"]["kind"] == "memory_up"
+    assert found[0].details["crash_id"] == 2  # the newest
+
+
+@pytest.mark.parametrize(
+    "category, confidence, kind",
+    [
+        ("OutOfMemoryError", "confirmed", "memory_up"),
+        ("JavaHeapError", "confirmed", "memory_down"),
+        ("JavaVersionIncompatible", "confirmed", "java"),
+        ("PortInUse", "confirmed", "port"),
+        ("EulaNotAccepted", "confirmed", "eula"),
+        ("ModDependencyError", "likely", "dependency"),
+        ("MissingMod", "likely", "dependency"),
+        ("DiskStorageError", "confirmed", None),  # nothing to press: say what was found
+        ("ClassNotFoundException", "possible", None),
+        ("NoSuchMethodError", "possible", None),
+        ("WorldChunkError", "possible", None),
+        ("NetworkError", "possible", None),
+        ("ServerThreadCrash", "possible", None),
+        ("Unknown", "unknown", None),
+    ],
+)
+def test_every_crash_cause_gets_its_fix_or_the_help_file(category, confidence, kind):
+    found = crash_rec(crashes=[oom(1, category=category, confidence=confidence)])
+    assert found is not None
+    fix = found.details["fix"]
+    assert (fix and fix["kind"]) == kind
+    assert found.details["confidence"] == confidence
+    if kind is None:
+        assert found.action["label"] == "Get help file"
+        assert "couldn't tell for sure" in found.reason
+        assert f"{category} found in the log." in found.evidence
+
+
+def test_a_fix_never_comes_from_a_possible_cause_even_if_it_has_one():
+    found = crash_rec(crashes=[oom(1, confidence="possible")])
+    assert found.details["fix"] is None
+
+
+@pytest.mark.parametrize("category", ["IncompatibleMod", "MixinError", "FabricLoaderError"])
+def test_a_broken_mod_is_updated_when_an_update_exists_else_turned_off(category):
+    sodium = {"mod_id": "sodium", "name": "Sodium", "filename": "sodium.jar", "enabled": True}
+    crash = oom(1, category=category, confidence="likely", mods=["sodium"])
+    off = crash_rec(crashes=[crash], mods=[sodium])
+    assert off.details["fix"]["kind"] == "mod_disable" and off.title == "Turn off Sodium"
+    assert off.details["fix"]["filename"] == "sodium.jar"
+    newer = {**sodium, "update_available": {"version_id": "abc123"}}
+    up = crash_rec(crashes=[crash], mods=[newer])
+    assert up.details["fix"]["kind"] == "mod_update" and up.title == "Update Sodium"
+    assert up.details["fix"]["version_id"] == "abc123"
+
+
+def test_a_broken_mod_gets_no_button_unless_exactly_one_mod_was_named():
+    a = {"mod_id": "a", "name": "A", "filename": "a.jar", "enabled": True}
+    b = {"mod_id": "b", "name": "B", "filename": "b.jar", "enabled": True}
+    two = oom(1, category="MixinError", confidence="likely", mods=["a", "b"])
+    assert crash_rec(crashes=[two], mods=[a, b]).details["fix"] is None
+    gone = oom(1, category="MixinError", confidence="likely", mods=["c"])
+    assert crash_rec(crashes=[gone], mods=[a, b]).details["fix"] is None
+    already_off = oom(1, category="MixinError", confidence="likely", mods=["a"])
+    assert crash_rec(crashes=[already_off], mods=[{**a, "enabled": False}]).details["fix"] is None
+
+
+def test_memory_use_near_the_limit_alone_is_not_a_recommendation():
+    # Java's own overhead comes on top of -Xmx, so process memory at or
+    # above the limit is normal for a healthy server.
+    assert ids(facts(samples=samples(60, proc_ram_mb=4600))) == []
+
+
+def test_crashes_older_than_a_week_do_not_count():
+    assert ids(facts(crashes=[oom(8)])) == []
+
+
+def test_a_good_start_after_the_crash_ends_it_except_running_out_of_memory():
+    eula = oom(1, category="EulaNotAccepted")
+    assert crash_rec(crashes=[eula], online_at=NOW - 0.5 * DAY) is None
+    assert crash_rec(crashes=[eula], online_at=NOW - 2 * DAY) is not None  # started before it
+    assert crash_rec(crashes=[oom(1)], online_at=NOW - 0.5 * DAY) is not None
+
+
+def test_a_new_crash_ends_a_snooze():
+    db = FakeDb()
+    rec.act(db, rec.evaluate(facts(crashes=[oom(2, 1)])), "crash", "snooze")
+    assert rec.visible(db, rec.evaluate(facts(crashes=[oom(2, 1)])))["recommendations"] == []
+    shown = rec.visible(db, rec.evaluate(facts(crashes=[oom(0.1, 2), oom(2, 1)])))
+    assert [r["id"] for r in shown["recommendations"]] == ["crash"]
+
+
+# ------------------------------------------------------------------ speed
+def test_slow_while_several_players_are_on():
+    f = facts(samples=samples(30, players=4, tps=19.9) + samples(15, players=4, tps=11.0))
+    found = rec.evaluate(f)
+    assert [r.id for r in found] == ["slow_while_busy"]
+    assert "lowest 11.0" in found[0].evidence
+
+
+def test_slow_with_nobody_on_is_not_a_recommendation():
+    assert ids(facts(samples=samples(60, players=0, tps=5.0))) == []
+
+
+@pytest.mark.parametrize("unknown", [{"players": None, "tps": 5.0}, {"players": 5, "tps": None}])
+def test_speed_is_never_judged_from_unknown_values(unknown):
+    assert ids(facts(samples=samples(60, **unknown))) == []
+
+
+# ------------------------------------------------------------------ the rest
+def test_disk_space_low_and_unknown():
+    found = rec.evaluate(facts(disk_free_gb=2.5))
+    assert [r.id for r in found] == ["disk_low"]
+    assert "2.5 GB free" in found[0].evidence
+    assert ids(facts(disk_free_gb=None)) == []
+
+
+def test_mods_with_updates():
+    updates = [{"mod_id": f"m{i}", "name": f"Mod {i}"} for i in range(5)]
+    found = rec.evaluate(facts(mod_updates=updates))
+    assert found[0].title == "Update 5 mods"
+    assert "Mod 0, Mod 1, Mod 2 and 2 more" in found[0].evidence
+
+
+def test_java_too_old_only_when_both_versions_are_known():
+    old = {
+        "verdict": "incompatible",
+        "java_major": 17,
+        "required": 21,
+        "minecraft_version": "1.21.1",
+    }
+    found = rec.evaluate(facts(java=old))
+    assert [r.id for r in found] == ["java_too_old"]
+    assert "needs Java 21" in found[0].evidence and "Java 17" in found[0].evidence
+    unknown = {"verdict": "unknown", "java_major": 17, "required": None, "minecraft_version": None}
+    assert ids(facts(java=unknown)) == []
+    assert ids(facts(java=None)) == []
+    assert "Start menu" not in found[0].reason  # a setup.ps1 copy has no setup entry
+    installed = rec.evaluate(facts(java=old, installed=True))[0]
+    assert '"Command Block setup" from the Start menu' in installed.reason
+
+
+def test_automatic_restart_turned_off():
+    assert ids(facts(auto_restart=False)) == ["auto_restart_off"]
+
+
+@pytest.mark.parametrize(
+    ("args", "mb"),
+    [(["-Xmx6G"], 6144), (["-Xms1G", "-Xmx2048M"], 2048), (["-Xmx512m"], 512), ([], None)],
+)
+def test_memory_limit_is_read_from_the_launch_arguments(args, mb):
+    assert memory_limit_mb(args) == mb
+
+
+# ------------------------------------------------------------------ dismiss and snooze
+class FakeDb:
+    def __init__(self):
+        self.store = {}
+
+    def get_setting(self, key, default=None):
+        return self.store.get(key, default)
+
+    def set_setting(self, key, value):
+        self.store[key] = value
+
+
+def test_dismissed_stays_hidden_until_restored():
+    db, found = FakeDb(), rec.evaluate(facts(auto_restart=False))
+    rec.act(db, found, "auto_restart_off", "dismiss")
+    view = rec.visible(db, found)
+    assert view["recommendations"] == []
+    assert view["hidden"][0]["dismissed"] is True
+    rec.act(db, found, "auto_restart_off", "restore")
+    assert [r["id"] for r in rec.visible(db, found)["recommendations"]] == ["auto_restart_off"]
+
+
+def test_snoozed_comes_back_when_the_evidence_changes():
+    db = FakeDb()
+    old = [{"id": 3, "name": "a", "created_at": NOW - 9 * DAY, "status": "ok"}]
+    found = rec.evaluate(facts(backups=old))
+    rec.act(db, found, "old_backup", "snooze")
+    assert rec.visible(db, found)["recommendations"] == []
+    # the same evidence a day later: still snoozed
+    later = rec.evaluate(facts(backups=old, now=NOW + DAY))
+    assert rec.visible(db, later)["recommendations"] == []
+    # different evidence: back
+    older = [{"id": 2, "name": "b", "created_at": NOW - 20 * DAY, "status": "ok"}]
+    changed = rec.evaluate(facts(backups=older))
+    assert [r["id"] for r in rec.visible(db, changed)["recommendations"]] == ["old_backup"]
+
+
+def test_a_snooze_ends_when_the_problem_goes_away():
+    db = FakeDb()
+    found = rec.evaluate(facts(auto_restart=False))
+    rec.act(db, found, "auto_restart_off", "snooze")
+    rec.visible(db, rec.evaluate(facts()))  # fixed
+    again = rec.evaluate(facts(auto_restart=False))  # and broken again later
+    assert [r["id"] for r in rec.visible(db, again)["recommendations"]] == ["auto_restart_off"]
+
+
+def test_acting_on_a_recommendation_that_no_longer_applies():
+    with pytest.raises(LookupError):
+        rec.act(FakeDb(), [], "disk_low", "snooze")
+
+
+# ------------------------------------------------------------------ API
+def test_the_api_lists_and_dismisses(client):
+    token = client.post("/api/auth/login", json={"username": "admin", "password": PASSWORD})
+    client.headers["Authorization"] = f"Bearer {token.json()['token']}"
+    data = client.get("/api/servers/test/recommendations").json()
+    found = {r["id"] for r in data["recommendations"]}
+    assert "no_backup" in found  # a fresh test server has never been backed up
+    assert all(r["evidence"] for r in data["recommendations"])
+    after = client.post("/api/servers/test/recommendations/no_backup", json={"action": "dismiss"})
+    assert after.status_code == 200
+    assert "no_backup" not in {r["id"] for r in after.json()["recommendations"]}
+    assert (
+        client.post(
+            "/api/servers/test/recommendations/no_backup", json={"action": "explode"}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/servers/test/recommendations/java_too_old", json={"action": "snooze"}
+        ).status_code
+        == 404
+    )
+
+
+def test_a_real_crash_carries_its_fix_on_the_list_the_event_and_the_suggestion(agent_http):
+    import time
+
+    login = agent_http.post("/api/auth/login", json={"username": "admin", "password": PASSWORD})
+    headers = {"Authorization": f"Bearer {login.json()['token']}"}
+    base = "/api/servers/survival"
+
+    def state():
+        return agent_http.get(f"{base}/status", headers=headers).json()["state"]
+
+    agent_http.post(f"{base}/server/start", json={}, headers=headers)
+    deadline = time.time() + 30
+    while state() != "ONLINE" and time.time() < deadline:
+        time.sleep(0.2)
+    agent_http.post(
+        f"{base}/server/command", json={"command": "crash", "confirm": True}, headers=headers
+    )
+    crashes: list = []
+    while not crashes and time.time() < deadline + 30:
+        time.sleep(0.2)
+        crashes = agent_http.get(f"{base}/crashes", headers=headers).json()["crashes"]
+    assert crashes[0]["fix"]["kind"] == "memory_up"
+    events = agent_http.get(f"{base}/events?limit=200", headers=headers).json()["events"]
+    crashed = next(e for e in events if e["type"] == "server_crashed")
+    assert '"memory_up"' in str(crashed["data"])  # the event carries the fix
+    found = agent_http.get(f"{base}/recommendations", headers=headers).json()["recommendations"]
+    assert next(r for r in found if r["id"] == "crash")["details"]["fix"]["kind"] == "memory_up"
+
+
+# ------------------------------------------------------------------ first run and safety rules
+NO_ANSWER = {"mode": "auto", "state": "unavailable", "tried": [{"command": "tick query"}]}
+
+
+def test_spark_is_suggested_only_when_nothing_answered():
+    found = rec.evaluate(facts(tps=NO_ANSWER, modrinth=True, spark_installed=False))
+    assert [r.id for r in found] == ["install_spark"]
+    spark = found[0]
+    assert spark.action == {"label": "Find spark", "page": "mods", "search": "spark"}
+    # it never claims to fix anything
+    text = f"{spark.title} {spark.reason} {spark.evidence}".lower()
+    assert "fix" not in text and "faster" not in text
+    assert "tick query" in spark.evidence
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"tps": {**NO_ANSWER, "mode": "manual"}, "modrinth": True, "spark_installed": False},
+        {"tps": {**NO_ANSWER, "state": "active"}, "modrinth": True, "spark_installed": False},
+        {"tps": {**NO_ANSWER, "tried": []}, "modrinth": True, "spark_installed": False},
+        {"tps": NO_ANSWER, "modrinth": True, "spark_installed": True},
+        {"tps": NO_ANSWER, "modrinth": False, "spark_installed": None},
+        {"tps": None, "modrinth": True, "spark_installed": False},
+    ],
+)
+def test_spark_is_not_suggested_otherwise(overrides):
+    assert ids(facts(**overrides)) == []
+
+
+def test_memory_over_the_pc_uses_measured_totals_only():
+    over = {"total_mb": 8192, "together_mb": 12288, "names": ["A", "B"]}
+    found = rec.evaluate(facts(memory=over))
+    assert [r.id for r in found] == ["memory_over_pc"]
+    assert "8.0 GB" in found[0].evidence and "12.0 GB" in found[0].evidence
+    # unknown total: nothing is said
+    assert ids(facts(memory=None)) == []
+    assert ids(facts(memory={**over, "total_mb": None})) == []
+    assert ids(facts(memory={**over, "together_mb": 4096})) == []
+
+
+def test_pc_may_sleep():
+    off = {"supported": True, "enabled": False, "still_sleeps": []}
+    assert ids(facts(power=off)) == ["pc_may_sleep"]
+    on = {"supported": True, "enabled": True, "still_sleeps": []}
+    assert ids(facts(power=on)) == []
+    battery = {**on, "still_sleeps": ["on_battery"]}
+    assert "battery" in rec.evaluate(facts(power=battery))[0].evidence
+    assert ids(facts(power={**off, "supported": False})) == []
+    assert ids(facts(power=None)) == []
+
+
+def test_offsite_rules():
+    assert ids(facts(offsite_folder="")) == ["offsite_backups"]
+    failed = [
+        {
+            "id": 9,
+            "name": "daily-9",
+            "created_at": NOW - 60,
+            "status": "ok",
+            "copy": {"state": "failed", "reason": "the drive is full"},
+        }
+    ]
+    found = rec.evaluate(facts(backups=failed))
+    assert [r.id for r in found] == ["offsite_copy_failed"]
+    assert "the drive is full" in found[0].evidence
+    # with no backup at all, only "take a first backup" is shown
+    assert ids(facts(backups=[], offsite_folder="")) == ["no_backup"]

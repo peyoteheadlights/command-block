@@ -1,0 +1,254 @@
+"""Player presence and playtime tracking.
+
+Only a username, the UUID printed by the server, which edition the player
+joined from, and timestamps are stored. IP addresses are deliberately not
+captured: the server prints them on connect, and this tracker drops them.
+
+With crossplay on, Floodgate gives Bedrock players a name prefix (".Name").
+That prefix is what marks them as Bedrock players, and their name is always
+shown exactly as the server printed it: a Bedrock player's Java name is
+never guessed, because they may not have one.
+
+On a Bedrock server everyone is a Bedrock player, the id kept is the
+player's xuid (Xbox account id, from "Player connected: Name, xuid: ..."),
+and the answer to "list" comes on two lines: "There are 1/10 players
+online:" and then the names.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any
+
+from ..events import Event, EventBus
+
+log = logging.getLogger("msc.players")
+
+
+class PlayerTracker:
+    def __init__(self, config, bus: EventBus, db, server_id: str = "main"):
+        self.config = config
+        self.bus = bus
+        self.db = db
+        self.server_id = server_id
+        self._pending_uuid: dict[str, str] = {}
+        # The online list is only trustworthy once we have a source for it:
+        # either a /list reply, an observed join/leave, or an observed server
+        # stop. Until then the count is UNKNOWN, not zero.
+        self.verified_at: float | None = None
+        self.verified_source: str | None = None
+        # Bedrock: the count from a "list" header, until its names line.
+        self._list_expected: int | None = None
+
+    # ------------------------------------------------------------------
+    async def handle_signals(self, sig, line) -> None:
+        """Hook called by MinecraftServer for every console line."""
+        if self._list_expected is not None and line.source == "stdout":
+            expected, self._list_expected = self._list_expected, None
+            text = (line.message or line.raw).strip()
+            names = [n.strip() for n in text.split(",") if n.strip()]
+            if len(names) == expected:
+                await self.reconcile(names)
+                return
+        if sig.list_header:
+            online, _max = sig.list_header
+            if online == 0:
+                await self.reconcile([])
+            else:
+                self._list_expected = online
+        if sig.player_uuid:
+            name, uuid = sig.player_uuid
+            self._pending_uuid[name] = uuid
+        if sig.player_joined:
+            await self.player_joined(sig.player_joined)
+        if sig.player_left:
+            await self.player_left(sig.player_left)
+        if sig.player_list:
+            online, _max, names = sig.player_list
+            await self.reconcile(names)
+
+    # ------------------------------------------------------------------
+    def mark_verified(self, source: str) -> None:
+        self.verified_at = time.time()
+        self.verified_source = source
+
+    @property
+    def verified(self) -> bool:
+        return self.verified_at is not None
+
+    def online_count(self) -> int | None:
+        """Player count, or None when it has not been established."""
+        return len(self.online()) if self.verified else None
+
+    def edition_of(self, username: str) -> str | None:
+        """ "bedrock", "java", or None when it cannot be told.
+
+        With crossplay off every player came in through the Java port, so
+        "java" is a fact. With it on, Floodgate's prefix marks a Bedrock
+        player; a name without it came through the Java port.
+        """
+        from ..crossplay import is_bedrock_name
+
+        if self.config.server_type.edition == "bedrock":
+            return "bedrock"
+        if not getattr(self.config.server, "crossplay", False):
+            return "java"
+        return "bedrock" if is_bedrock_name(username) else "java"
+
+    async def player_joined(self, username: str) -> None:
+        now = time.time()
+        self.mark_verified("join observed in console")
+        uuid = self._pending_uuid.pop(username, None)
+        edition = self.edition_of(username)
+        row = self.db.query_one(
+            "SELECT * FROM players WHERE server_id = ? AND username = ?", (self.server_id, username)
+        )
+        if row:
+            self.db.execute(
+                "UPDATE players SET online = 1, session_started = ?, last_seen = ?, "
+                "sessions = sessions + 1, uuid = COALESCE(?, uuid), edition = ? "
+                "WHERE server_id = ? AND username = ?",
+                (now, now, uuid, edition, self.server_id, username),
+            )
+        else:
+            self.db.insert(
+                "players",
+                {
+                    "server_id": self.server_id,
+                    "username": username,
+                    "uuid": uuid,
+                    "first_seen": now,
+                    "last_seen": now,
+                    "total_seconds": 0,
+                    "sessions": 1,
+                    "online": 1,
+                    "session_started": now,
+                    "edition": edition,
+                },
+            )
+        self.db.insert(
+            "player_sessions",
+            {
+                "server_id": self.server_id,
+                "username": username,
+                "uuid": uuid,
+                "joined_at": now,
+                "left_at": None,
+            },
+        )
+        await self.bus.publish(
+            Event(
+                type="player_joined",
+                message=f"{username} joined",
+                data={
+                    "username": username,
+                    "uuid": uuid,
+                    "edition": edition,
+                    "online": len(self.online()),
+                },
+            )
+        )
+
+    async def player_left(self, username: str) -> None:
+        now = time.time()
+        self.mark_verified("leave observed in console")
+        row = self.db.query_one(
+            "SELECT * FROM players WHERE server_id = ? AND username = ?", (self.server_id, username)
+        )
+        session_seconds = 0.0
+        if row and row.get("session_started"):
+            session_seconds = max(now - float(row["session_started"]), 0.0)
+        self.db.execute(
+            "UPDATE players SET online = 0, session_started = NULL, last_seen = ?, "
+            "total_seconds = total_seconds + ? WHERE server_id = ? AND username = ?",
+            (now, session_seconds, self.server_id, username),
+        )
+        self.db.execute(
+            "UPDATE player_sessions SET left_at = ? WHERE id = ("
+            "  SELECT id FROM player_sessions WHERE server_id = ? AND username = ? AND left_at IS NULL"
+            "  ORDER BY joined_at DESC LIMIT 1)",
+            (now, self.server_id, username),
+        )
+        await self.bus.publish(
+            Event(
+                type="player_left",
+                message=f"{username} left",
+                data={
+                    "username": username,
+                    "session_seconds": session_seconds,
+                    "online": len(self.online()),
+                },
+            )
+        )
+
+    async def reconcile(self, usernames: list[str]) -> None:
+        """Align stored state with an authoritative /list reply."""
+        self.mark_verified("/list reply from the server")
+        current = {p["username"] for p in self.online()}
+        for name in usernames:
+            if name not in current:
+                await self.player_joined(name)
+        for name in current - set(usernames):
+            await self.player_left(name)
+        # Joins and leaves above record themselves; the list reply is still
+        # what established the count.
+        self.mark_verified("/list reply from the server")
+
+    async def clear_online(self) -> None:
+        """Called when the server stops or crashes: nobody is online any more.
+
+        Closing these sessions is itself a verified fact - the process is
+        gone, so no one can be connected to it.
+        """
+        for player in self.online():
+            await self.player_left(player["username"])
+        self.mark_verified("server process is not running")
+
+    def names_by_id(self) -> dict[str, str]:
+        """The name each id (uuid, or a Bedrock player's xuid) last joined with."""
+        rows = self.db.query(
+            "SELECT username, uuid FROM players WHERE server_id = ? AND uuid IS NOT NULL "
+            "ORDER BY last_seen ASC",
+            (self.server_id,),
+        )
+        return {str(row["uuid"]): row["username"] for row in rows}
+
+    # ------------------------------------------------------------------
+    def online(self) -> list[dict[str, Any]]:
+        rows = self.db.query(
+            "SELECT username, uuid, session_started, total_seconds, sessions, first_seen, "
+            "last_seen, edition FROM players WHERE server_id = ? AND online = 1 "
+            "ORDER BY session_started ASC",
+            (self.server_id,),
+        )
+        now = time.time()
+        for row in rows:
+            row["session_seconds"] = (
+                now - float(row["session_started"]) if row.get("session_started") else 0
+            )
+        return rows
+
+    def all_players(self, limit: int = 200) -> list[dict[str, Any]]:
+        rows = self.db.query(
+            "SELECT * FROM players WHERE server_id = ? ORDER BY last_seen DESC LIMIT ?",
+            (self.server_id, limit),
+        )
+        now = time.time()
+        for row in rows:
+            extra = now - float(row["session_started"]) if row.get("session_started") else 0
+            row["session_seconds"] = extra
+            row["total_seconds_live"] = float(row.get("total_seconds") or 0) + extra
+        return rows
+
+    def sessions(self, username: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        if username:
+            return self.db.query(
+                "SELECT * FROM player_sessions WHERE server_id = ? AND username = ? "
+                "ORDER BY joined_at DESC LIMIT ?",
+                (self.server_id, username, limit),
+            )
+        return self.db.query(
+            "SELECT * FROM player_sessions WHERE server_id = ? ORDER BY joined_at DESC LIMIT ?",
+            (self.server_id, limit),
+        )
