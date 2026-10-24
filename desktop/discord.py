@@ -40,6 +40,7 @@ KINDS = ("alerts", "status", "chat", "quests", "events")
 PER_SERVER = ("status", "chat")
 # Shared, and a server may have its own instead (None: the shared one).
 OWN_IF_WANTED = ("alerts",)
+OPT_IN = ("console",)  # never made by setup: the owner picks a private channel
 
 
 class Discord(Moderators):
@@ -293,6 +294,7 @@ class Discord(Moderators):
         layout.addWidget(label(text("discord.set_up_hint"), "muted"))
         if tied and report.get("channels") is not None:
             layout.addWidget(self.channels(gid, report, servers, tied))
+            layout.addWidget(self.leaving(guild))
             layout.addWidget(self.roles(guild, report, servers))
             layout.addWidget(self.levels(guild, report))
         return frame
@@ -322,7 +324,7 @@ class Discord(Moderators):
             if s["id"] in tied:
                 rows += [
                     (k, s["id"], f"{text(f'discord.kind.{k}')}: {s['name']}")
-                    for k in (*PER_SERVER, *OWN_IF_WANTED)
+                    for k in (*PER_SERVER, *OWN_IF_WANTED, *OPT_IN)
                 ]
         no_chat = set(self.state.get("no_game_chat") or [])
         i = 0
@@ -345,11 +347,33 @@ class Discord(Moderators):
                 )
             )
             grid.addWidget(pick, i, 1)
+            if kind in OPT_IN:
+                i += 1
+                grid.addWidget(label(text("discord.console_hint"), "muted"), i, 1)
             if kind == "chat" and sid in no_chat:
                 i += 1
                 name = next((s["name"] for s in servers if s["id"] == sid), sid)
                 grid.addWidget(label(text("discord.no_game_chat", server=name), "muted"), i, 1)
         grid.setColumnStretch(1, 1)
+        return box
+
+    def leaving(self, guild: dict) -> QWidget:
+        """Take people off the whitelist when they leave this Discord server."""
+        box = QWidget()
+        grid = QGridLayout(box)
+        grid.setContentsMargins(0, 8, 0, 0)
+        tick = QCheckBox(text("discord.remove_on_leave"))
+        tick.setChecked(bool((guild.get("options") or {}).get("remove_on_leave")))
+        tick.toggled.connect(
+            lambda on: self.call(
+                "PUT",
+                f"/discord/guilds/{guild['id']}/options",
+                self.done(text("settings.saved")),
+                body={"remove_on_leave": on},
+            )
+        )
+        grid.addWidget(tick, 0, 0)
+        grid.addWidget(label(text("discord.remove_on_leave_hint"), "muted"), 1, 0)
         return box
 
     def roles(self, guild: dict, report: dict, servers: list[dict]) -> QWidget:

@@ -206,3 +206,97 @@ def test_a_players_stats_and_level_show_on_the_players_page(qapp, fake, discord_
     )
     stats_button().click()
     wait_for_window(qapp, lambda: "Deaths 2" not in shown_text(page))
+
+
+def test_whitelist_requests_and_new_addresses_on_the_players_page(
+    qapp,
+    fake,  # noqa: F811
+    discord_http,
+    monkeypatch,
+):
+    from agent import whitelist as wl
+
+    from .test_desktop_app import signed_in_on
+
+    monkeypatch.setattr(wl, "installed", lambda ctx: {"ipwl"})
+    core = discord_http.agent.app.state.core
+    ctx = core.servers["survival"]
+    (ctx.config.server_dir / "server.properties").write_text("online-mode=false\n")
+    core.whitelist.ask(ctx, "Bob", "Sam's friend", MEMBER_ID, "sam", None)
+    core.db.execute(
+        "INSERT INTO ip_addresses (server_id, name, address, masked, digest, why, seen_at) "
+        "VALUES ('survival', 'Alex', 'sealed', '203.0.x.x', 'd1', 'changed', 1)"
+    )
+    window = signed_in_on(qapp, discord_http)
+    page = open_page(qapp, window, "Players and chat")
+    wait_for_window(
+        qapp, lambda: 'sam on Discord asks to join as Bob: "Sam\'s friend"' in shown_text(page)
+    )
+    words = shown_text(page)
+    assert "Alex tried to join from a new address (203.0.x.x)" in words
+    assert "EasyWhitelist, Zero Whitelist, TextWhitelist" in words
+    for technical, size in ((False, (760, 520)), (True, (1600, 1000))):
+        window.set_mode(technical)
+        window.resize(*size)
+        qapp.processEvents()
+        page.grab()  # paints, small and large, in both modes
+    window.set_mode(False)
+    wait_for_window(qapp, lambda: "asks to join as Bob" in shown_text(page))
+
+    def pressed(name: str) -> None:
+        wait_for_window(
+            qapp,
+            lambda: any(
+                b.accessibleName() == name and b.isVisibleTo(page)
+                for b in page.findChildren(QtWidgets.QPushButton)
+            ),
+        )
+        next(
+            b
+            for b in page.findChildren(QtWidgets.QPushButton)
+            if b.accessibleName() == name and b.isVisibleTo(page)
+        ).click()
+
+    pressed("Say no: Bob")
+    wait_for_window(qapp, lambda: "asks to join as Bob" not in shown_text(page))
+    assert core.whitelist.forms("survival") == []
+    pressed("Ignore: Alex 203.0.x.x")
+    wait_for_window(qapp, lambda: "left as it was" in shown_text(page))
+    pressed("Remove: Alex 203.0.x.x")
+    wait_for_window(qapp, lambda: "203.0.x.x" not in shown_text(page))
+    assert core.db.query("SELECT * FROM ip_addresses") == []
+
+
+def test_the_console_channel_and_leaving_are_set_on_the_discord_page(qapp, fake, discord_http):  # noqa: F811
+    from agent.discord import layout
+
+    from .fake_discord import GUILD_ID
+    from .test_desktop_app import owner
+
+    discord_http.post(
+        f"/api/discord/guilds/{GUILD_ID}/setup",
+        json={"servers": ["survival"]},
+        headers=owner(discord_http),
+    )
+    core = discord_http.agent.app.state.core
+    window, page = gear(qapp, discord_http, "discord")
+    wait_for_window(qapp, lambda: "The server's console, read only." in shown_text(page))
+    pick = next(
+        b
+        for b in page.findChildren(QtWidgets.QComboBox)
+        if b.accessibleName() == "Console: Survival"
+    )
+    assert pick.currentData() is None  # off until the owner picks one
+    pick.setCurrentIndex(pick.findText("#general"))
+    pick.activated.emit(pick.currentIndex())
+    wait_for_window(qapp, lambda: layout.consoles(core.db, {GUILD_ID}))
+    assert layout.consoles(core.db, {GUILD_ID}) == {"survival": ["2000000000000000010"]}
+    wait_for_window(qapp, lambda: "Everyone can see #general" in shown_text(page))
+    tick = next(
+        b
+        for b in page.findChildren(QtWidgets.QCheckBox)
+        if b.text().startswith("Take people off the whitelist") and b.isVisibleTo(page)
+    )
+    assert not tick.isChecked()
+    tick.setChecked(True)
+    wait_for_window(qapp, lambda: layout.guild_options(core.db, GUILD_ID)["remove_on_leave"])

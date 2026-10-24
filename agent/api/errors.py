@@ -46,6 +46,7 @@ from ..servertypes.bedrock import BedrockError
 from ..servertypes.install import InstallError
 from ..servertypes.versions import VersionError
 from ..transfer import TransferError
+from ..whitelist import WhitelistError
 from ..worldimport import WorldImportError
 from ..worldundo import WorldUndoError
 from .deps import audit
@@ -83,6 +84,7 @@ ERROR_STATUS: dict[type[Exception], int] = {
     AddonError: 400,
     BedrockError: 400,
     HoldError: 409,  # the running server didn't get its files ready to copy
+    WhitelistError: 400,
 }
 DOMAIN_ERRORS: tuple[type[Exception], ...] = tuple(ERROR_STATUS)
 

@@ -370,7 +370,7 @@ class DiscordSetup(BaseModel):
 
 
 class DiscordTie(BaseModel):
-    kind: Literal["alerts", "quests", "events", "chat", "status"]
+    kind: Literal["alerts", "quests", "events", "chat", "status", "console"]
     server_id: str = Field(default="", max_length=64)
     channel_id: str | None = Field(None, pattern=r"^\d{1,25}$")
 
@@ -401,6 +401,18 @@ class DiscordAddress(BaseModel):
 
 class StartRequestAnswer(BaseModel):
     answer: Literal["start", "no"]
+
+
+class WhitelistAnswer(BaseModel):
+    answer: Literal["approve", "refuse"]
+
+
+class AddressAnswer(BaseModel):
+    answer: Literal["allow", "ignore"]
+
+
+class DiscordGuildOptions(BaseModel):
+    remove_on_leave: bool
 
 
 class DiscordLinkAnswer(BaseModel):

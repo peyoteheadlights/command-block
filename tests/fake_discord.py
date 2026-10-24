@@ -134,6 +134,7 @@ class FakeDiscord:
         # Members the bot can look up: id -> their role ids.
         self.members: dict[str, list[str]] = {MEMBER_ID: []}
         self.messages: list[dict] = []
+        self.thread_members: dict[str, set[str]] = {}  # private threads: who is in
         self.files: dict[str, bytes] = {}  # the image server's files, by path
         self.cdn_headers: list[dict] = []
 
@@ -337,6 +338,15 @@ class FakeDiscord:
             message = {"id": str(next(self._ids)), "channel_id": path.split("/")[2], **body}
             self.messages.append(message)
             return httpx.Response(200, json=message)
+        if request.method == "POST" and path.startswith("/channels/") and path.endswith("/threads"):
+            thread = {"id": str(next(self._ids)), "parent_id": path.split("/")[2], **body}
+            self.channels.append(thread)
+            self.thread_members[thread["id"]] = set()
+            return httpx.Response(201, json=thread)
+        if request.method == "PUT" and "/thread-members/" in path:
+            parts = path.split("/")  # "", channels, thread, thread-members, user
+            self.thread_members[parts[2]].add(parts[4])
+            return httpx.Response(204)
         if request.method == "PUT" and "/reactions/" in path:
             return httpx.Response(204)
         if request.method == "PATCH" and path.startswith("/channels/") and "/messages/" in path:

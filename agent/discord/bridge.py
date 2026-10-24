@@ -13,10 +13,12 @@ nothing in this folder reaches the console.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import unicodedata
 
 from ..events import Event
+from ..minecraft.console import ANSI_RE
 
 LIMIT = 220  # characters of a Discord message shown in the game
 POST_LIMIT = 2000  # characters in one Discord message
@@ -70,10 +72,57 @@ def game_line(event: Event) -> str | None:
 
 def batches(lines: list[str]) -> list[str]:
     """Lines gathered into as few posts as fit."""
+    return batches_of(lines, POST_LIMIT)
+
+
+# -- the console channel ----------------------------------------------------------
+CONSOLE_LINE = 300  # characters of one console line shown
+IPV4_RE = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
+# Something that may be an IPv6 address; checked with ipaddress before it's
+# hidden, so a time like 12:34:56 stays.
+IPV6_RE = re.compile(r"(?<![\w:])[0-9A-Fa-f:]*:[0-9A-Fa-f:]*:[0-9A-Fa-f]*(?:%\w+)?(?![\w:])")
+# A Windows user folder names the person who owns the PC.
+USER_FOLDER_RE = re.compile(r"([A-Za-z]:[\\/]Users[\\/])[^\\/\s]+", re.IGNORECASE)
+# "<Alex> K7P2QX": a player typing a /link code. Never shown, used or not.
+# Any 6 letters from the code alphabet go, which also hides a few real words.
+CODE_LINE_RE = re.compile(r"<[^>]{1,20}> [A-HJKMNP-Z2-9]{6}\s*$", re.IGNORECASE)
+HIDDEN = "[address hidden]"
+
+
+def _ipv6(m: re.Match) -> str:
+    found = m.group(0).split("%")[0]
+    # Also with a port after it: 2001:db8::1:25565.
+    for wanted in (found, found.rsplit(":", 1)[0]):
+        try:
+            ipaddress.IPv6Address(wanted)
+        except ValueError:
+            continue
+        return HIDDEN
+    return m.group(0)
+
+
+def console_line(raw: str) -> str | None:
+    """A console line as the read-only console channel shows it: addresses
+    and the PC's user folder hidden, link codes left out, one capped line."""
+    line = ANSI_RE.sub("", raw).replace("`", "'").strip()
+    if not line or CODE_LINE_RE.search(line):
+        return None
+    line = USER_FOLDER_RE.sub(r"\1...", IPV6_RE.sub(_ipv6, IPV4_RE.sub(HIDDEN, line)))
+    return line[:CONSOLE_LINE]
+
+
+def console_posts(lines: list[str], left_out: int = 0) -> list[str]:
+    """Console lines as code blocks (nothing in them is Discord formatting)."""
+    if left_out:
+        lines = [f"({left_out} lines left out: the console was too busy)", *lines]
+    return [f"```\n{chunk}\n```" for chunk in batches_of(lines, POST_LIMIT - 8)]
+
+
+def batches_of(lines: list[str], limit: int) -> list[str]:
     out: list[str] = []
     for line in lines:
-        line = line[:POST_LIMIT]
-        if out and len(out[-1]) + 1 + len(line) <= POST_LIMIT:
+        line = line[:limit]
+        if out and len(out[-1]) + 1 + len(line) <= limit:
             out[-1] += "\n" + line
         else:
             out.append(line)

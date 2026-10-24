@@ -35,13 +35,14 @@ from ..game_events import ANSWERS
 from ..jobs import JobConflict
 from ..minecraft.chat import ChatError, relay
 from ..minecraft.commands import CommandError
-from ..minecraft.playeractions import DONE, SENT, PlayerActionError
+from ..minecraft.playeractions import DONE, SENT, PlayerActionError, check_name
 from ..minecraft.process import ServerError
 from ..quests import MAX_STACK, QuestError
 from ..security import permissions as P
 from ..security.auth import AuthError, Principal, RateLimiter
 from ..startrequests import STOPPED, StartRequest, StartRequestError
 from ..stats import player_stats
+from ..whitelist import WhitelistError, settled, settled_words
 from . import bridge, client, layout, live, progress
 from .links import CODE_LIFE, LinkError
 
@@ -71,6 +72,12 @@ SEEN_KEY = "discord_levels_seen"  # member id -> the Level their roles were last
 BOARDS_KEY = "discord_leaderboards"  # guild id -> the day its leaderboard was last posted
 BOARD_HOUR = 18  # on the PC's clock
 QUEST_BOARDS_KEY = "discord_quest_boards"  # quests channel id -> {"message", "words"}
+CONSOLE_BATCH = 2.0  # seconds console lines are gathered before they're posted
+CONSOLE_KEPT = 40  # console lines waiting per channel; older ones are left out
+REPORT_LINES = 20  # chat lines in a report
+REPORTS_AN_HOUR = 3  # per member
+REPORT_LIFE = 30 * 86400.0
+PRIVATE_THREAD = 12
 # A quest's screenshot only comes from Discord's own image servers.
 SCREENSHOT_HOSTS = ("cdn.discordapp.com", "media.discordapp.net")
 MAX_SCREENSHOT = 8 * 1024 * 1024
@@ -81,7 +88,15 @@ class Refused(Exception):
 
 
 # Refusals whose words are safe to show in Discord as they are.
-SAYS_WHY = (Refused, LinkError, StartRequestError, PlayerActionError, JobConflict, QuestError)
+SAYS_WHY = (
+    Refused,
+    LinkError,
+    StartRequestError,
+    PlayerActionError,
+    JobConflict,
+    QuestError,
+    WhitelistError,
+)
 
 
 @dataclass
@@ -172,8 +187,15 @@ class Bot:
         self._levels_lock = asyncio.Lock()
         # Event and poll posts: two quick presses can't leave older counts showing.
         self._posts_lock = asyncio.Lock()
+        self._console_lock = asyncio.Lock()
         self._resync = False  # set when the Level roles changed: everyone's are set again
+        # Each server's console channels, read from the database once a
+        # minute and on a change, never per console line.
+        self.consoles: dict[str, list[str]] = {}
+        self._console_out: dict[str, list[str]] = {}  # channel id -> lines to post
+        self._left_out: dict[str, int] = {}  # channel id -> lines dropped while busy
         core.start_requests.on_close = self.request_closed
+        core.whitelist.on_answer = self.form_answered
         core.bus.subscribe(self.from_game)
 
     # -- running -------------------------------------------------------------
@@ -194,6 +216,8 @@ class Bot:
     async def stop(self) -> None:
         if self.core.start_requests.on_close == self.request_closed:
             self.core.start_requests.on_close = None
+        if self.core.whitelist.on_answer == self.form_answered:
+            self.core.whitelist.on_answer = None
         self.core.bus.unsubscribe(self.from_game)
         for task in [self._task, self._live, *self._jobs]:
             if task:
@@ -223,7 +247,19 @@ class Bot:
         """Before each fresh login: read the switches, ask for what's on."""
         self.app = await self.rest.request("GET", "/applications/@me")
         on = self.switches()["message_content"]
-        self.gateway.intents = INTENTS | (MESSAGE_INTENTS if on else 0)
+        self.gateway.intents = (
+            INTENTS
+            | (MESSAGE_INTENTS if on else 0)
+            | (client.GUILD_MEMBERS if self.wants_members() else 0)
+        )
+
+    def wants_members(self) -> bool:
+        """The Server Members switch is on and a Discord server takes people
+        off the whitelist when they leave (only then is "left" asked for)."""
+        options = self.core.db.get_setting(layout.OPTIONS_KEY, {}) or {}
+        return bool(self.switches()["members"]) and any(
+            o.get("remove_on_leave") for o in options.values()
+        )
 
     async def _event(self, name: str, data: dict) -> None:
         if name == "READY":
@@ -242,6 +278,8 @@ class Bot:
             self.spawn(self.interaction(data))
         elif name == "MESSAGE_CREATE":
             self.spawn(self.from_discord(data))
+        elif name == "GUILD_MEMBER_REMOVE":
+            self.spawn(self.member_left(data))
 
     # -- the status messages and the presence line ------------------------------
     async def _live_loop(self) -> None:
@@ -267,6 +305,7 @@ class Bot:
     async def update_live(self) -> None:
         """Edit what changed, and nothing else (weak mini PCs, and Discord's
         rate limits)."""
+        self.consoles = layout.consoles(self.core.db, set(self.guilds))
         tied = sorted({sid for gid in self.guilds for sid in self.server_names(gid)})
         line = live.presence([self.core.servers[sid] for sid in tied])
         if line and line != self.gateway.presence:
@@ -747,8 +786,12 @@ class Bot:
 
     async def from_game(self, event: Event) -> None:
         """A bus event: chat and player lines go to the server's chat
-        channels, gathered for a moment so a busy chat is one post."""
+        channels, gathered for a moment so a busy chat is one post; console
+        lines to its console channels."""
         if self.gateway.state != "connected" or event.server_id not in self.core.servers:
+            return
+        if event.type == "console":
+            self._to_console(event)
             return
         line = bridge.game_line(event)
         if line is None:
@@ -768,6 +811,71 @@ class Bot:
                 f"/channels/{channel_id}/messages",
                 {"content": words, "allowed_mentions": {"parse": []}},
             )
+
+    # -- the console channel ---------------------------------------------------------
+    def _to_console(self, event: Event) -> None:
+        """Read only: nothing typed in a console channel goes anywhere."""
+        channels = self.consoles.get(event.server_id or "")
+        if not channels:
+            return
+        line = bridge.console_line(str((event.data or {}).get("raw") or event.message))
+        if line is None:
+            return
+        for channel_id in channels:
+            waiting = self._console_out.setdefault(channel_id, [])
+            waiting.append(line)
+            if len(waiting) > CONSOLE_KEPT:
+                del waiting[0]
+                self._left_out[channel_id] = self._left_out.get(channel_id, 0) + 1
+            if len(waiting) == 1:
+                self.spawn(self._post_console(channel_id))
+
+    async def _post_console(self, channel_id: str) -> None:
+        await asyncio.sleep(CONSOLE_BATCH)
+        async with self._console_lock:  # posts stay in the console's order
+            lines = self._console_out.pop(channel_id, [])
+            left_out = self._left_out.pop(channel_id, 0)
+            for words in bridge.console_posts(lines, left_out):
+                await self.rest.request(
+                    "POST",
+                    f"/channels/{channel_id}/messages",
+                    {"content": words, "allowed_mentions": {"parse": []}},
+                )
+
+    # -- the whitelist ------------------------------------------------------------------
+    async def member_left(self, data: dict) -> None:
+        """Someone left a Discord server that takes people off the whitelist
+        when they leave: each of their linked accounts on its Minecraft
+        servers goes (once the server is online, if it's stopped)."""
+        gid = str(data.get("guild_id") or "")
+        member = str((data.get("user") or {}).get("id") or "")
+        db = self.core.db
+        if gid not in self.guilds or not layout.guild_options(db, gid)["remove_on_leave"]:
+            return
+        servers = set(layout.servers_of(db, gid))
+        for row in self.core.links.of_member(member):
+            ctx = self.core.servers.get(row["server_id"])
+            if ctx is None or row["server_id"] not in servers:
+                continue
+            try:
+                await self.core.whitelist.remove(
+                    ctx, row["name"], f"{row['discord_name']} (left Discord)"
+                )
+            except PlayerActionError as exc:
+                log.info("couldn't take someone who left Discord off the whitelist: %s", exc)
+
+    async def form_answered(self, ctx: ServerContext, form: dict, pending: Any) -> None:
+        """A whitelist request was answered (here or in the app): the asker
+        hears it in the channel they asked in, once the server answered."""
+        if form.get("channel_id"):
+            self.spawn(self._tell_form(ctx, form, pending))
+
+    async def _tell_form(self, ctx: ServerContext, form: dict, pending: Any) -> None:
+        if pending is None:
+            words = f"your request to join {ctx.name} was turned down."
+        else:
+            words = settled_words(ctx, form["name"], await settled(pending))
+        await self.tell(str(form["channel_id"]), str(form["discord_id"]), words)
 
     async def from_discord(self, message: dict) -> None:
         """A message in a chat channel goes into the game, cleaned to one
@@ -830,6 +938,7 @@ class Bot:
 
     async def refresh(self, guild_id: str) -> None:
         """Register the commands in a Discord server, then check it."""
+        self.consoles = layout.consoles(self.core.db, set(self.guilds))
         names = self.server_names(guild_id)
         await self.rest.request(
             "PUT",
@@ -896,6 +1005,7 @@ class Bot:
                     "servers": layout.servers_of(self.core.db, guild["id"]),
                     "grants": layout.grants(self.core.db, guild["id"]),
                     "levels": self.levels_of(guild["id"]),
+                    "options": layout.guild_options(self.core.db, guild["id"]),
                     "report": self.reports.get(guild["id"]),
                 }
                 for guild in sorted(self.guilds.values(), key=lambda g: g["name"].lower())
@@ -922,7 +1032,12 @@ class Bot:
             return {"id": self.gateway.state}
         for gid, report in self.reports.items():
             for problem in report.get("problems") or []:
-                if problem["id"] in ("manage_roles", "role_too_low", "channel_blocked"):
+                if problem["id"] in (
+                    "manage_roles",
+                    "role_too_low",
+                    "channel_blocked",
+                    "console_public",
+                ):
                     return {**problem, "guild": self.guilds.get(gid, {}).get("name", "")}
         return None
 
@@ -1155,10 +1270,16 @@ def command_list(names: dict[str, str]) -> list[dict]:
     return out
 
 
+BUTTON_ARGS = ("username", "claim_id", "form_id", "address_id", "report_id")
+
+
 def alert_buttons(event: Event, ctx: ServerContext) -> list[dict]:
     """The buttons under an alert in the alerts channel."""
     data = event.data or {}
-    name = str(data.get("username") or data.get("claim_id") or "")
+    # The button's argument: a player, or the claim, request, address or report.
+    name = str(
+        next((data[k] for k in BUTTON_ARGS if data.get(k)), "")  # first one the alert has
+    )
     wanted = {
         "player_joined": ("kick", "ban"),
         "player_left": ("ban",),
@@ -1170,11 +1291,16 @@ def alert_buttons(event: Event, ctx: ServerContext) -> list[dict]:
         "backup_copy_failed": ("backup",),
         "start_request": ("start_yes", "start_no"),
         "quest_claim": ("claim_yes", "claim_no"),
+        "whitelist_form": ("form_yes", "form_no"),
+        "new_address": ("address_allow", "address_ignore"),
+        "player_report": ("report_see",),
     }.get(event.type, ())
     if not ctx.config.server_type.bans:
         wanted = tuple(a for a in wanted if a != "ban")
     if event.type.startswith("player_") and not name:
         wanted = ()
+    if event.type == "new_address":
+        name = str(data.get("address_id") or "")
     row = [
         {
             "type": 2,
@@ -1315,10 +1441,7 @@ async def kick_or_ban(bot: Bot, call: Call) -> str:
     action = str(call.interaction["data"]["custom_id"]).removeprefix("sure:").split(":")[0]
     pending = await ctx.player_actions.send(action, call.arg, confirm=True)
     # "Sent" until the server's console confirms it (like the Players page).
-    for _ in range(50):
-        if pending.state != SENT:
-            break
-        await asyncio.sleep(0.1)
+    await settled(pending, 5)
     done = {"kick": "was kicked", "ban": "was banned"}[action]
     if pending.state == DONE:
         return f"{pending.name} {done} from {ctx.name}."
@@ -1633,6 +1756,172 @@ async def vote(bot: Bot, call: Call) -> str:
     return words
 
 
+# -- the whitelist and reports --------------------------------------------------------
+async def whitelist_add(bot: Bot, call: Call) -> str:
+    """/whitelist add, for Discord roles with Players: "Sent" until the
+    server's console says it's done (the add-on's command where one is used)."""
+    from ..whitelist import online_mode
+
+    ctx = call.ctx
+    assert ctx is not None
+    call.arg = str(call.options.get("name") or "").strip()
+    pending = await ctx.player_actions.send("whitelist_add", call.arg)
+    await bot.rest.request(
+        "PATCH",
+        bot.original(call.interaction),
+        {"content": f"Sent to {ctx.name}; waiting for the server to confirm it."},
+    )
+    words = settled_words(ctx, pending.name, await settled(pending))
+    if online_mode(ctx) is False:
+        words += (
+            f"\n{ctx.name} doesn't check accounts (offline mode), so anyone can join "
+            "with a name that's on the whitelist."
+        )
+    return words
+
+
+async def whitelist_ask(bot: Bot, call: Call) -> str:
+    """/whitelist ask: a request the owner and moderators answer."""
+    ctx = call.ctx
+    assert ctx is not None
+    form = bot.core.whitelist.ask(
+        ctx,
+        str(call.options.get("name") or ""),
+        str(call.options.get("why") or ""),
+        call.member_id,
+        call.member_name,
+        call.channel_id,
+    )
+    call.arg = form["name"]
+    await ctx.bus.publish(
+        Event(
+            type="whitelist_form",
+            message=f"{call.member_name} on Discord asks to join as {form['name']}: {form['why']}",
+            data={
+                "form_id": form["id"],
+                "name": form["name"],
+                "discord_name": call.member_name,
+                "why": form["why"],
+            },
+        )
+    )
+    return (
+        f"Sent. The owner and moderators of {ctx.name} will see your request; "
+        "you'll hear here when they answer."
+    )
+
+
+async def answer_form(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    form, pending = await bot.core.whitelist.answer(ctx, call.arg, _button_id(call) == "form_yes")
+    if pending is None:
+        return f"Turned down: {form['name']}."
+    return settled_words(ctx, form["name"], await settled(pending))
+
+
+async def answer_address(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    found = bot.core.whitelist
+    if _button_id(call) == "address_ignore":
+        found.ignore(ctx, call.arg, call.principal.user)
+        return "Left as it was. Nobody will be asked about that address again."
+    pending = await settled(await found.allow(ctx, call.arg, call.principal.user))
+    if pending.state == DONE:
+        return f"Allowed: {pending.name} can join {ctx.name} from the new address."
+    if pending.state == SENT:
+        return f"Sent to {ctx.name}; the add-on hasn't confirmed it yet."
+    said = pending.to_dict()["message"]  # with the address masked
+    return f"{ctx.name} answered: {said or 'it did nothing.'}"
+
+
+async def report(bot: Bot, call: Call) -> str:
+    """/report: a private thread off the alerts channel with the reason and
+    the last 20 chat lines. The reporter is in it; the owner and moderators
+    get an alert whose "See the report" button adds them."""
+    from ..whitelist import one_line
+
+    ctx = call.ctx
+    assert ctx is not None
+    try:
+        player = check_name(str(call.options.get("player") or ""), ctx.config.server_type.dialect)
+    except PlayerActionError as exc:
+        raise Refused(str(exc)) from None
+    reason = one_line(call.options.get("reason"), 300)
+    if not reason:
+        raise Refused("Say what happened.")
+    db, now = bot.core.db, time.time()
+    db.execute("DELETE FROM discord_reports WHERE created_at < ?", (now - REPORT_LIFE,))
+    recent = db.query_one(
+        "SELECT COUNT(*) AS n FROM discord_reports WHERE reporter_id = ? AND created_at > ?",
+        (call.member_id, now - 3600),
+    )
+    if recent and recent["n"] >= REPORTS_AN_HOUR:
+        raise Refused(f"You've sent {REPORTS_AN_HOUR} reports in the last hour. Try later.")
+    parent = next(iter(layout.alert_channels(db, ctx.server_id, [call.guild_id])), None)
+    if parent is None:
+        raise Refused(
+            f"There's no alerts channel for {ctx.name} here yet, so there's nowhere private "
+            "to put a report. Ask the owner to pick one."
+        )
+    thread = await bot.rest.request(
+        "POST",
+        f"/channels/{parent}/threads",
+        {
+            "name": f"Report: {player}"[:100],
+            "type": PRIVATE_THREAD,
+            "invitable": False,
+            "auto_archive_duration": 10080,
+        },
+    )
+    thread_id = str(thread["id"])
+    await bot.rest.request("PUT", f"/channels/{thread_id}/thread-members/{call.member_id}")
+    lines = ctx.chat.tail(REPORT_LINES) if ctx.config.server_type.reads_chat else None
+    await bot.rest.request(
+        "POST",
+        f"/channels/{thread_id}/messages",
+        {
+            "content": progress.report(ctx.name, player, call.member_id, reason, lines),
+            "allowed_mentions": {"parse": []},
+        },
+    )
+    made = db.execute(
+        "INSERT INTO discord_reports (server_id, guild_id, thread_id, reporter_id, player, "
+        "created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (ctx.server_id, call.guild_id, thread_id, call.member_id, player, now),
+    ).lastrowid
+    call.arg = player
+    await ctx.bus.publish(
+        Event(
+            type="player_report",
+            level="warn",
+            message=f"{call.member_name} reported {player} on Discord: {reason}",
+            data={"report_id": made, "player": player, "reason": reason},
+        )
+    )
+    return f"Thanks. Your report is in a private thread for you and the moderators: <#{thread_id}>"
+
+
+async def see_report(bot: Bot, call: Call) -> str:
+    """Adds whoever pressed it (with Players on that server) to the thread."""
+    ctx = call.ctx
+    assert ctx is not None
+    try:
+        wanted = int(call.arg)
+    except ValueError:
+        wanted = 0
+    found = bot.core.db.query_one(
+        "SELECT * FROM discord_reports WHERE id = ? AND server_id = ?", (wanted, ctx.server_id)
+    )
+    if found is None:
+        raise Refused("That report isn't there any more (reports are kept 30 days).")
+    if found["guild_id"] != call.guild_id:
+        raise Refused("That report is in another Discord server.")
+    await bot.rest.request("PUT", f"/channels/{found['thread_id']}/thread-members/{call.member_id}")
+    return f"Added you to the report: <#{found['thread_id']}>"
+
+
 # The quest kinds for /quest create (Discord's choices: name shown, value sent).
 KIND_CHOICES = [
     {"name": "A stat count (goal: mined:diamond_ore)", "value": "stat"},
@@ -1653,6 +1942,7 @@ GROUPS = {
     "quest": "Quests: join one, see your progress, say you're done",
     "event": "Events: make one (if your Discord role may)",
     "poll": "Polls: make one (if your Discord role may)",
+    "whitelist": "Whitelist: add a player (if your Discord role may), or ask to join",
 }
 EVENT_KINDS = [
     {"name": "Online 15 minutes during it", "value": "online"},
@@ -1920,6 +2210,52 @@ COMMANDS: dict[str, Command] = {
             ],
         ),
         Command(
+            "whitelist add",
+            "Put a player on the whitelist (if your Discord role may)",
+            P.PLAYERS_MANAGE,
+            whitelist_add,
+            slow=True,
+            options=[{**NAME_OPTION, "description": "Their Minecraft name", "max_length": 20}],
+        ),
+        Command(
+            "whitelist ask",
+            "Ask the owner and moderators to let you in",
+            P.SERVER_VIEW,
+            whitelist_ask,
+            options=[
+                {**NAME_OPTION, "max_length": 20},
+                {
+                    "type": 3,
+                    "name": "why",
+                    "description": "Why you'd like to join",
+                    "required": True,
+                    "max_length": 300,
+                },
+            ],
+        ),
+        Command(
+            "report",
+            "Report a player to the owner and moderators, privately",
+            P.SERVER_VIEW,
+            report,
+            slow=True,
+            options=[
+                {
+                    **NAME_OPTION,
+                    "name": "player",
+                    "description": "Who you're reporting",
+                    "max_length": 20,
+                },
+                {
+                    "type": 3,
+                    "name": "reason",
+                    "description": "What happened",
+                    "required": True,
+                    "max_length": 300,
+                },
+            ],
+        ),
+        Command(
             "unlink",
             "Remove one of your linked Minecraft accounts",
             P.SERVER_VIEW,
@@ -1945,5 +2281,10 @@ BUTTONS: dict[str, Button] = {
         Button("rsvp_maybe", "Maybe", P.SERVER_VIEW, rsvp),
         Button("rsvp_no", "Can't", P.SERVER_VIEW, rsvp),
         Button("vote", "Vote", P.SERVER_VIEW, vote),
+        Button("form_yes", "Approve", P.PLAYERS_MANAGE, answer_form, style=3),
+        Button("form_no", "Say no", P.PLAYERS_MANAGE, answer_form),
+        Button("address_allow", "Allow", P.PLAYERS_MANAGE, answer_address, style=3),
+        Button("address_ignore", "Ignore", P.PLAYERS_MANAGE, answer_address),
+        Button("report_see", "See the report", P.PLAYERS_MANAGE, see_report, style=1),
     )
 }

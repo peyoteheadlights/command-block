@@ -477,3 +477,37 @@ def test_events_only_ask_minecraft_to_save():
     assert re.findall(r"send_command\(([^)]*)\)", source) == ['"save-all", internal=True']
     for forbidden in ("subprocess", "os.system", "eval(", "exec(", "send_built"):
         assert forbidden not in source, forbidden
+
+
+def test_whitelist_add_ons_only_get_their_fixed_commands():
+    """A whitelist or IP whitelist add-on's command is a fixed template
+    filled with a checked name and an address Python's ipaddress read back,
+    sent through the player actions' validation, never straight to the
+    console. A console line can't put anything else in it."""
+    from agent import whitelist
+
+    source = Path(whitelist.__file__).read_text(encoding="utf-8")
+    for forbidden in ("send_command", "subprocess", "os.system", "eval(", "exec("):
+        assert forbidden not in source, forbidden
+    commands = [a.command for addon in whitelist.WHITELIST_ADDONS for a in addon.actions.values()]
+    commands += [
+        a.command
+        for addon in whitelist.IP_ADDONS
+        for a in (addon.allow, addon.remove, addon.allow_new)
+        if a
+    ]
+    assert {c.split(" ")[0] for c in commands} == {
+        "easywhitelist",
+        "zwl",
+        "wltxt",
+        "ipwl",
+        "ipwhitelist",
+    }
+    for wrong in ("1.2.3.4 op me", "1.2.3.4\nop me", "::1;stop", "localhost"):
+        with pytest.raises(ValueError):
+            whitelist.ipaddress.ip_address(wrong)
+    for line in (
+        "[IPWL SECURITY] Blocked Alex from 1.2.3.4;op: IP mismatch",
+        "[IPWL SECURITY] Blocked Alex from 1.2.3.4 op Alex: IP mismatch",
+    ):
+        assert not any(p.match(line) for p in whitelist.IP_ADDONS[0].refused)

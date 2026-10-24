@@ -125,6 +125,13 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
         0x5865F2,
         "{server}: who came to an event? It waits for your OK",
     ),
+    "whitelist_form": ("whitelist_requests", 0x5865F2, "{server}: someone asks to join"),
+    "new_address": (
+        "whitelist_requests",
+        0xFAA61A,
+        "{server}: a player tried to join from a new address",
+    ),
+    "player_report": ("reports", 0xED4245, "{server}: a player was reported"),
 }
 
 
@@ -176,6 +183,9 @@ ALERT_PAGES = {
     "discord_link_request": "players",
     "quest_claim": "quests",
     "event_attendance": "quests",
+    "whitelist_form": "players",
+    "new_address": "players",
+    "player_report": "players",
 }
 APP_PAGES = {"security", "helpers", "app-settings", "discord"}
 
