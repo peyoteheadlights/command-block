@@ -182,7 +182,8 @@ explicit folder is never moved.
 ## Environment variables
 
 Secrets: `MCSC_ADMIN_USERNAME`, `MCSC_ADMIN_PASSWORD_HASH`, `MCSC_API_TOKEN`,
-`MCSC_DISCORD_WEBHOOK`, `MCSC_SMTP_USERNAME`, `MCSC_SMTP_PASSWORD`.
+`MCSC_DISCORD_WEBHOOK`, `MCSC_DISCORD_BOT_TOKEN` (the bot, see
+[discord.md](discord.md)), `MCSC_SMTP_USERNAME`, `MCSC_SMTP_PASSWORD`.
 
 Overrides: `MCSC_HOST`, `MCSC_PORT`, `MCSC_SERVER_DIR` (the first server's
 folder), `MCSC_DATA_DIR`.

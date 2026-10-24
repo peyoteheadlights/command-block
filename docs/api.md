@@ -303,6 +303,20 @@ A version change does **not** set the version. The chosen one is kept as
 `pending_version` and becomes `minecraft_version` only when that server's own
 console reports it (see `docs/honesty.md`).
 
+## Discord bot
+
+Owner only (`discord.manage`): `GET /api/discord` (connection, switches,
+invite link, each Discord server's checks, channels, roles and grants),
+`PUT|DELETE /api/discord/token`, `POST /api/discord/check`,
+`PUT /api/discord/profile` (`name`, `avatar` as base64 or `"logo"`),
+`POST /api/discord/guilds/{id}/setup` (`servers`),
+`PUT /api/discord/guilds/{id}/channels` (`kind`, `server_id`, `channel_id`),
+`PUT /api/discord/guilds/{id}/roles/{role}` (`grants`: server id to
+permissions). Per server, with Players (`players.manage`):
+`GET /api/servers/{id}/discord-links`, `DELETE .../discord-links/{uuid}`,
+`POST .../discord-links/requests/{id}` (`answer`, `uuid`). See
+[discord.md](discord.md).
+
 ## TPS monitoring
 
 `GET /api/tps` (state, command, how it was detected, what was tried),

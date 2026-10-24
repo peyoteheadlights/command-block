@@ -241,6 +241,9 @@ agent/
   servertypes/         what each kind of server is, its versions, installs,
                        version and type changes, and making a new one
   monitoring/          metrics, players
+  discord/             the Discord bot: client (gateway + REST), bot
+                       (commands), layout (channels, roles, grants,
+                       checks), links (linked accounts)
   notifications/       dispatcher.py (Discord, email, alerts in the apps),
                        fcm.py and apns.py (waking the phone apps)
   scheduler/scheduler.py
