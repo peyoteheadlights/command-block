@@ -127,6 +127,6 @@ def test_every_copy_of_a_link_matches_shared_links():
     assert repo
     android = android.replace("$REPO", repo[1])
     iphone = swift.read_text(encoding="utf-8")
-    for name in ("report", "suggest"):
+    for name in ("report", "suggest", "sponsors", "kofi"):
         assert f'{name.upper()} = "{links[name]}"' in android, f"{kotlin.name}: update {name}"
         assert f'{name} = "{links[name]}"' in iphone, f"{swift.name}: update {name}"

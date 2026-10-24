@@ -107,11 +107,11 @@ class About(Section):
         self.fill("about", frame)
         # The addresses live only in shared/links.json, so they're easy to change.
         to = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
-        support, inside = card(text("desktop.about.support"))
-        inside.addWidget(label(text("desktop.about.support_text"), "sub"))
+        support, inside = card(text("mobile.about.support"))
+        inside.addWidget(label(text("mobile.about.support_text"), "sub"))
         inside.addLayout(
             self.links(
-                [("desktop.about.sponsors", to["sponsors"]), ("desktop.about.kofi", to["kofi"])]
+                [("mobile.about.sponsors", to["sponsors"]), ("mobile.about.kofi", to["kofi"])]
             )
         )
         inside.addLayout(

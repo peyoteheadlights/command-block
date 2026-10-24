@@ -351,4 +351,7 @@ enum Links {
     static let privacy = "https://github.com/peyoteheadlights/command-block/blob/main/PRIVACY.md"
     static let report = "https://github.com/peyoteheadlights/command-block/issues/new?template=bug_report.yml"
     static let suggest = "https://github.com/peyoteheadlights/command-block/issues/new?template=feature_request.yml"
+    // Placeholders until the accounts exist; shared/links.json has the same.
+    static let sponsors = "https://github.com/sponsors/peyoteheadlights"
+    static let kofi = "https://ko-fi.com/peyoteheadlights"
 }
