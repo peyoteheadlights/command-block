@@ -222,7 +222,8 @@ class Header(QFrame):
         control = bool(self.row) and self.window_.may(self.row["id"], "server.control")
         words, actions = self.paused, ["clear-crash-block"]
         if self.deadline is not None:
-            left = math.ceil(self.deadline - time.monotonic())
+            # Rounded first: (t + 30) - t can come out a hair over 30 in floats.
+            left = math.ceil(round(self.deadline - time.monotonic(), 3))
             words = text("hero.restarting_in", s=left) if left > 0 else text("hero.starting_now")
             actions = ["cancel-restart", "restart-now"]
         self.notice.setText(words)

@@ -33,8 +33,10 @@ def gear(qapp, agent_http, section, pc=None, user=("admin", None)):
         sign_in(qapp, window)
         on_all_servers(qapp, window)
         wait_for(qapp, lambda: window.role == "owner")
+    # The section first, so the page loads once: a second load could swap a
+    # card out from under a click.
+    window.pc.set_setting("section:PC settings", section)
     window.tools["gear"].click()
-    window.open_list("PC settings", section)
     return window, window.gear.sections[section]
 
 
