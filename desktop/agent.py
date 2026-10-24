@@ -303,6 +303,12 @@ class AgentClient:
     def dismiss_checklist(self, server_id: str) -> dict:
         return self.call("POST", f"/servers/{server_id}/getting-started/dismiss", {})
 
+    def support_ask(self) -> dict:
+        return self.call("GET", "/support-ask")
+
+    def answer_support_ask(self, answer: str) -> dict:
+        return self.call("POST", "/support-ask", {"answer": answer})
+
     def join(self, server_id: str) -> dict:
         return self.call("GET", f"/servers/{server_id}/join")
 

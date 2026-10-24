@@ -1,5 +1,6 @@
 """The Overview. Simple: Suggested actions, the setup checklist on a new
-server, and four cards (Server address, Last backup, Mods, Your world).
+server, the owner's one Donate / No thanks card (agent/supportask.py), and
+four cards (Server address, Last backup, Mods, Your world).
 Technical: graphs, the console's last lines, details and mods.
 
 Everything shown comes from the agent; a value it doesn't know is left out
@@ -8,6 +9,7 @@ or said to be unknown, never guessed.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -28,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from .fixes import get_help, run_fix, sure
 from .graphs import Graph
+from .theme import SHARED
 from .ui import Note, clock, content_page, label, push, refill
 from .words import text
 
@@ -118,6 +121,21 @@ class SimpleOverview(QWidget):
         layout.addWidget(hide, 0, Qt.AlignmentFlag.AlignRight)
         self.checklist.hide()
         column.addWidget(self.checklist)
+
+        self.ask, layout = card(text("desktop.ask.title"))
+        layout.addWidget(label(text("desktop.ask.text"), "sub"))
+        answers = QHBoxLayout()
+        for answer, words, kind in (
+            ("donate", "desktop.ask.donate", "primary"),
+            ("no_thanks", "desktop.ask.no", "plain"),
+        ):
+            choice = push(text(words), kind)
+            choice.clicked.connect(lambda _=False, a=answer: self.answer_ask(a))
+            answers.addWidget(choice)
+        answers.addStretch()
+        layout.addLayout(answers)
+        self.ask.hide()
+        column.addWidget(self.ask)
 
         self.grid = grid = QGridLayout()
         grid.setSpacing(12)
@@ -297,6 +315,16 @@ class SimpleOverview(QWidget):
     def hide_checklist(self) -> None:
         sid = self.row["id"]
         self.window_.run(lambda: self.window_.agent.dismiss_checklist(sid), self.show_checklist)
+
+    def show_ask(self, data: dict) -> None:
+        self.ask.setVisible(bool(data.get("show")))
+
+    def answer_ask(self, answer: str) -> None:
+        self.ask.hide()
+        if answer == "donate":
+            links = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
+            self.window_.pc.open_link(links["sponsors"])
+        self.window_.run(lambda: self.window_.agent.answer_support_ask(answer), self.show_ask)
 
     def show_address(self, join: dict) -> None:
         java = join.get("java") or {}

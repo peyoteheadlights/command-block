@@ -18,7 +18,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from . import __version__, colors, memory
+from . import __version__, colors, memory, supportask
 from .autosleep import AutoSleep
 from .backups.manager import BackupManager
 from .config import ConfigError
@@ -308,6 +308,7 @@ class AgentCore:
         self.bus.subscribe(self.notifier.handle)
         self.bus.subscribe(self._dispatch)
         self.bus.subscribe(self.keepawake.handle)
+        self.bus.subscribe(supportask.handler(self.db))
         self._cert_task: asyncio.Task | None = None
         self._cert_alerted: str | None = None
         self._servers_lock = asyncio.Lock()

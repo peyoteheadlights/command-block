@@ -113,6 +113,8 @@ moderator gets 403 from each of these. See [security.md](security.md#permissions
 | GET | `/api/help-bundle` | The Get help file's list of files, before it is made |
 | POST | `/api/help-bundle` | `{confirm: true}` makes it; returns a token |
 | GET | `/api/help-bundle/{token}` | The Get help file |
+| GET | `/api/support-ask` | `{show, reason}`: whether to show the one Donate / No thanks card now. Shown after 14 days from the first real server start, never while something is wrong |
+| POST | `/api/support-ask` | `{answer: "donate" \| "no_thanks"}` hides it for good |
 
 Per server, under `/api/servers/{id}/`:
 

@@ -340,3 +340,7 @@ class ExportRequest(BaseModel):
 
 class HelpBundleRequest(BaseModel):
     confirm: bool = False
+
+
+class SupportAskAnswer(BaseModel):
+    answer: Literal["donate", "no_thanks"]
