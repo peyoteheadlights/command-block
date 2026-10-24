@@ -34,6 +34,9 @@ android {
         versionCode = versionNumber
         versionName = appVersion
         buildConfigField("boolean", "HAS_FIREBASE", hasFirebase.toString())
+        // Google Play builds set COMMAND_BLOCK_STORE_BUILD=1: Play doesn't allow
+        // outside donation links, so only GitHub builds show Support the project.
+        buildConfigField("boolean", "STORE_BUILD", (System.getenv("COMMAND_BLOCK_STORE_BUILD") == "1").toString())
     }
 
     // Release signing only where the key is: CI secrets or the PC that

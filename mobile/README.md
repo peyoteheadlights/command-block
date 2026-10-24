@@ -88,6 +88,12 @@ release. `android/app/build.gradle.kts` signs a release only when
 `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`
 and `ANDROID_KEY_PASSWORD` are set. Store releases come later.
 
+The stores don't allow links to outside donation pages, so "Support the
+project" (Help & About) is only in GitHub builds. A Google Play build sets
+`COMMAND_BLOCK_STORE_BUILD=1`; on the iPhone, archives (the Release config,
+for TestFlight and the App Store) leave it out. Store builds get a tip jar
+instead, later.
+
 ## House rules, in the apps too
 
 - A value the agent didn't measure shows as Unknown, never 0 or a guess,
