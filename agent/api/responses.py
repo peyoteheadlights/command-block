@@ -2064,3 +2064,22 @@ class QuestsPage(Open):
 class QuestScreenshot(Open):
     type: str = Field(description="png or jpg")
     image: str = Field(description="The picture, base64")
+
+
+class EventsPage(Open):
+    """The events and polls on the Quests and events page for one server."""
+
+    events: list[dict[str, Any]] = Field(
+        description="Events coming up or ended in the last 8 days: id, title, details, kind "
+        "(advancement, online, approval), goal, starts_at, ends_at, start_server, rewards, "
+        "state (coming, on, counting, approving, ended, cancelled), answers (going, maybe, no "
+        "counts), going (discord_id, discord_name, answer), attendance (discord_id, "
+        "discord_name, minutes, attended, how: measured, suggested or fixed, fixed_by) and "
+        "fixable (attendance can still be fixed)"
+    )
+    polls: list[dict[str, Any]] = Field(
+        description="Polls open or closed in the last 8 days: id, question, answers, votes "
+        "(a count per answer), total, closes_at, closed_at, open"
+    )
+    kinds: list[str] = Field(description="The event kinds this server can check")
+    bot: bool = Field(description="The Discord bot is connected (events are answered there)")

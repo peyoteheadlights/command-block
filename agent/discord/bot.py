@@ -31,6 +31,7 @@ import httpx
 from .. import levels
 from ..config import PROJECT_ROOT
 from ..events import OWNER_ONLY_EVENTS, Event
+from ..game_events import ANSWERS
 from ..jobs import JobConflict
 from ..minecraft.chat import ChatError, relay
 from ..minecraft.commands import CommandError
@@ -169,6 +170,8 @@ class Bot:
         self._live: asyncio.Task | None = None
         self._jobs: set[asyncio.Task] = set()
         self._levels_lock = asyncio.Lock()
+        # Event and poll posts: two quick presses can't leave older counts showing.
+        self._posts_lock = asyncio.Lock()
         self._resync = False  # set when the Level roles changed: everyone's are set again
         core.start_requests.on_close = self.request_closed
         core.bus.subscribe(self.from_game)
@@ -251,6 +254,7 @@ class Bot:
                 self.update_levels,
                 self.post_leaderboards,
                 self.update_quests,
+                self.update_events,
             ):
                 try:
                     await work()
@@ -289,8 +293,16 @@ class Bot:
         if changed:
             self.core.db.set_setting(POSTS_KEY, posts)
 
-    async def _post_or_edit(self, channel_id: str, message_id: str | None, words: str) -> str:
-        body = {"content": words, "allowed_mentions": {"parse": []}}
+    async def _post_or_edit(
+        self,
+        channel_id: str,
+        message_id: str | None,
+        words: str,
+        components: list[dict] | None = None,
+    ) -> str:
+        body: dict[str, Any] = {"content": words, "allowed_mentions": {"parse": []}}
+        if components is not None:
+            body["components"] = components
         if message_id:
             try:
                 await self.rest.request(
@@ -506,7 +518,11 @@ class Bot:
             if why:  # given powers in Discord since the quest was made
                 quests.set_reward(reward["id"], "failed", why)
                 continue
-            times = min(quests.times_finished(reward["quest_id"], reward["discord_id"]), MAX_STACK)
+            times = (
+                1  # an event's role doesn't stack
+                if reward["event_id"]
+                else min(quests.times_finished(reward["quest_id"], reward["discord_id"]), MAX_STACK)
+            )
             try:
                 wanted = await self._stack_role(gid, base, times, found[gid])
                 held = await self.rest.request(
@@ -550,6 +566,105 @@ class Bot:
             (guild_id, kind, created["id"]),
         )
         return str(created["id"])
+
+    # -- events and polls -----------------------------------------------------------
+    async def update_events(self) -> None:
+        """Each event's and poll's message in the events channels (edited
+        only when its words change), the reminder an hour before, and a
+        poll's result when it closes."""
+        async with self._posts_lock:
+            found = self.core.game_events
+            now = time.time()
+            # recent() and polls() only list servers that are still there.
+            servers = self.core.servers
+            for event in found.recent():
+                view = found.view(event)
+                if view["state"] == "coming" and not event["reminded_at"]:
+                    await self._remind(event, view, now)
+                await self._show(
+                    "game_events",
+                    event,
+                    progress.event_post(view, servers[event["server_id"]].name),
+                    rsvp_buttons(view),
+                    new=view["state"] in ("coming", "on"),
+                )
+            for poll in found.polls():
+                view = found.poll_view(poll)
+                await self._show(
+                    "polls",
+                    poll,
+                    progress.poll_post(view, servers[poll["server_id"]].name),
+                    vote_buttons(view),
+                    None if view["open"] else progress.poll_result(view),
+                    new=view["open"],
+                )
+
+    async def _show(
+        self,
+        table: str,
+        row: dict[str, Any],
+        words: str,
+        buttons: list[dict],
+        result: str | None = None,
+        new: bool = True,
+    ) -> None:
+        """Post or edit one event's or poll's message in each events channel
+        of the Discord servers set up for its server; ``result`` is posted
+        once below it. With ``new`` False only an earlier message is edited
+        (a Discord server set up later doesn't get last week's events)."""
+        db = self.core.db
+        posts = json.loads(row["posts"] or "{}")
+        before = json.dumps(posts, sort_keys=True)
+        for gid in list(self.guilds):
+            channel = layout.shared_channel(db, gid, "events")
+            if not channel or row["server_id"] not in layout.servers_of(db, gid):
+                continue
+            post = posts.get(channel) or {}
+            if not post and not new:
+                continue
+            if post.get("words") != words:
+                message = await self._post_or_edit(channel, post.get("message"), words, buttons)
+                post = posts[channel] = {**post, "message": message, "words": words}
+            if result and not post.get("result"):
+                await self.rest.request(
+                    "POST",
+                    f"/channels/{channel}/messages",
+                    {"content": result, "allowed_mentions": {"parse": []}},
+                )
+                post["result"] = True
+        if json.dumps(posts, sort_keys=True) != before:
+            db.execute(f"UPDATE {table} SET posts = ? WHERE id = ?", (json.dumps(posts), row["id"]))
+
+    async def _remind(self, event: dict[str, Any], view: dict[str, Any], now: float) -> None:
+        """An hour before: one message pinging only the members who said
+        Going. An event made less than an hour ahead gets none."""
+        from ..game_events import REMIND_BEFORE
+
+        if now < event["starts_at"] - REMIND_BEFORE:
+            return
+        db = self.core.db
+        if not db.execute(
+            "UPDATE game_events SET reminded_at = ? WHERE id = ? AND reminded_at IS NULL",
+            (now, event["id"]),
+        ).rowcount:
+            return
+        going = [r["discord_id"] for r in view["going"]]
+        if not going or event["created_at"] > event["starts_at"] - REMIND_BEFORE:
+            return
+        for gid in list(self.guilds):
+            channel = layout.shared_channel(db, gid, "events")
+            if not channel or event["server_id"] not in layout.servers_of(db, gid):
+                continue
+            for i in range(0, len(going), 50):  # Discord pings at most 100 a message
+                some = going[i : i + 50]
+                await self.rest.request(
+                    "POST",
+                    f"/channels/{channel}/messages",
+                    {
+                        "content": progress.reminder(event, some),
+                        "allowed_mentions": {"users": some},
+                    },
+                )
 
     async def screenshot(self, attachment: dict) -> tuple[bytes, str]:
         """A screenshot sent with /quest done, from Discord's own image
@@ -1073,6 +1188,46 @@ def alert_buttons(event: Event, ctx: ServerContext) -> list[dict]:
     return [{"type": 1, "components": row}] if row else []
 
 
+def rsvp_buttons(event: dict[str, Any]) -> list[dict]:
+    """Going / Maybe / Can't, until the event ends or is called off."""
+    if event["state"] not in ("coming", "on"):
+        return []
+    return [
+        {
+            "type": 1,
+            "components": [
+                {
+                    "type": 2,
+                    "style": BUTTONS[f"rsvp_{a}"].style,
+                    "label": BUTTONS[f"rsvp_{a}"].label,
+                    "custom_id": f"rsvp_{a}:{event['server_id']}:{event['id']}",
+                }
+                for a in ANSWERS
+            ],
+        }
+    ]
+
+
+def vote_buttons(poll: dict[str, Any]) -> list[dict]:
+    """One button per answer while the poll is open."""
+    if not poll["open"]:
+        return []
+    return [
+        {
+            "type": 1,
+            "components": [
+                {
+                    "type": 2,
+                    "style": 1,
+                    "label": answer[:80],
+                    "custom_id": f"vote:{poll['server_id']}:{poll['id']}.{i}",
+                }
+                for i, answer in enumerate(poll["answers"])
+            ],
+        }
+    ]
+
+
 def sure_buttons(button: Button, call: Call) -> list[dict]:
     assert call.ctx is not None
     return [
@@ -1371,16 +1526,7 @@ async def quest_create(bot: Bot, call: Call) -> str:
     ctx = call.ctx
     assert ctx is not None
     o = call.options
-    rewards: list[dict[str, Any]] = []
-    if o.get("role"):
-        await bot.reward_role(ctx.server_id, str(o["role"]))
-        rewards.append({"kind": "role", "role_id": str(o["role"])})
-    if o.get("item"):
-        rewards.append({"kind": "item", "item": o["item"], "count": o.get("item_count") or 1})
-    if o.get("xp_levels"):
-        rewards.append({"kind": "xp", "levels": o["xp_levels"]})
-    if o.get("level_xp"):
-        rewards.append({"kind": "level_xp", "amount": o["level_xp"]})
+    rewards = await rewards_from(bot, ctx.server_id, o)
     quest = await bot.core.quests.make(
         ctx,
         {
@@ -1398,12 +1544,94 @@ async def quest_create(bot: Bot, call: Call) -> str:
     return f"Made {progress.quest_line(bot.core.quests.view(quest))}. It's on the board within a minute."
 
 
+async def rewards_from(bot: Bot, server_id: str, o: dict[str, Any]) -> list[dict[str, Any]]:
+    """The reward options of /quest create and /event create, as templates."""
+    rewards: list[dict[str, Any]] = []
+    if o.get("role"):
+        await bot.reward_role(server_id, str(o["role"]))
+        rewards.append({"kind": "role", "role_id": str(o["role"])})
+    if o.get("item"):
+        rewards.append({"kind": "item", "item": o["item"], "count": o.get("item_count") or 1})
+    if o.get("xp_levels"):
+        rewards.append({"kind": "xp", "levels": o["xp_levels"]})
+    if o.get("level_xp"):
+        rewards.append({"kind": "level_xp", "amount": o["level_xp"]})
+    return rewards
+
+
 async def answer_claim(bot: Bot, call: Call) -> str:
     ctx = call.ctx
     assert ctx is not None
     yes = str(call.interaction["data"]["custom_id"]).removeprefix("sure:").startswith("claim_yes")
     claim = await bot.core.quests.answer_claim(ctx, call.arg, yes, call.principal.user)
     return f"{'Approved' if yes else 'Refused'}: {claim['discord_name']}, {claim['title']}."
+
+
+# -- events and polls -------------------------------------------------------------------
+async def event_create(bot: Bot, call: Call) -> str:
+    """/event create: the same checks as the apps; the start is typed on the
+    PC's clock."""
+    from ..game_events import parse_time
+
+    ctx = call.ctx
+    assert ctx is not None
+    o = call.options
+    starts = parse_time(o.get("start"))
+    made = await bot.core.game_events.make(
+        ctx,
+        {
+            "title": o.get("title"),
+            "details": o.get("details"),
+            "kind": o.get("kind"),
+            "goal": o.get("goal"),
+            "starts_at": starts,
+            "ends_at": starts + 60 * int(o.get("minutes") or 60),
+            "start_server": bool(o.get("start_server")),
+            "rewards": await rewards_from(bot, ctx.server_id, o),
+        },
+        call.principal.user,
+    )
+    bot.spawn(bot.update_events())
+    return f"Made the event {made['title']}, <t:{int(starts)}:F>. It's in the events channel now."
+
+
+async def poll_create(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    o = call.options
+    made = await bot.core.game_events.make_poll(
+        ctx,
+        {
+            "question": o.get("question"),
+            "answers": [o.get(f"answer{i}") for i in range(1, 6)],
+            "closes_at": time.time() + 3600 * int(o.get("hours") or 24),
+        },
+        call.principal.user,
+    )
+    bot.spawn(bot.update_events())
+    return f"Made the poll {made['question']}. It's in the events channel now."
+
+
+def _button_id(call: Call) -> str:
+    return str(call.interaction["data"]["custom_id"]).split(":", 1)[0]
+
+
+async def rsvp(bot: Bot, call: Call) -> str:
+    assert call.ctx is not None
+    answer = _button_id(call).removeprefix("rsvp_")
+    words = bot.core.game_events.rsvp(
+        call.ctx.server_id, call.arg, call.member_id, call.member_name, answer
+    )
+    bot.spawn(bot.update_events())
+    return words
+
+
+async def vote(bot: Bot, call: Call) -> str:
+    assert call.ctx is not None
+    poll_id, _, answer = call.arg.partition(".")
+    words = bot.core.game_events.vote(call.ctx.server_id, poll_id, call.member_id, answer)
+    bot.spawn(bot.update_events())
+    return words
 
 
 # The quest kinds for /quest create (Discord's choices: name shown, value sent).
@@ -1422,7 +1650,47 @@ QUEST_OPTION = {
     "required": True,
     "min_value": 1,
 }
-GROUPS = {"quest": "Quests: join one, see your progress, say you're done"}
+GROUPS = {
+    "quest": "Quests: join one, see your progress, say you're done",
+    "event": "Events: make one (if your Discord role may)",
+    "poll": "Polls: make one (if your Discord role may)",
+}
+EVENT_KINDS = [
+    {"name": "Online 15 minutes during it", "value": "online"},
+    {"name": "Earn an advancement during it (goal: end/kill_dragon)", "value": "advancement"},
+    {"name": "A moderator says who came", "value": "approval"},
+]
+
+REWARD_OPTIONS = [
+    {"type": 8, "name": "role", "description": "Reward: a Discord role"},
+    {
+        "type": 3,
+        "name": "item",
+        "description": "Reward: an item, like diamond",
+        "max_length": 100,
+    },
+    {
+        "type": 4,
+        "name": "item_count",
+        "description": "How many of the item (1-64)",
+        "min_value": 1,
+        "max_value": 64,
+    },
+    {
+        "type": 4,
+        "name": "xp_levels",
+        "description": "Reward: Minecraft XP levels (1-30)",
+        "min_value": 1,
+        "max_value": 30,
+    },
+    {
+        "type": 4,
+        "name": "level_xp",
+        "description": "Reward: Level XP (1-500)",
+        "min_value": 1,
+        "max_value": 500,
+    },
+]
 
 COMMANDS: dict[str, Command] = {
     c.name: c
@@ -1568,33 +1836,87 @@ COMMANDS: dict[str, Command] = {
                     "max_length": 10,
                 },
                 {"type": 3, "name": "details", "description": "More about it", "max_length": 300},
-                {"type": 8, "name": "role", "description": "Reward: a Discord role"},
+                *REWARD_OPTIONS,
+            ],
+        ),
+        Command(
+            "event create",
+            "Make an event (if your Discord role may)",
+            P.QUESTS_MANAGE,
+            event_create,
+            slow=True,
+            options=[
                 {
                     "type": 3,
-                    "name": "item",
-                    "description": "Reward: an item, like diamond",
+                    "name": "title",
+                    "description": "The event",
+                    "required": True,
+                    "max_length": 80,
+                },
+                {
+                    "type": 3,
+                    "name": "start",
+                    "description": "When, on the PC's clock, like 2026-10-30 20:00",
+                    "required": True,
+                    "max_length": 16,
+                },
+                {
+                    "type": 4,
+                    "name": "minutes",
+                    "description": "How long (15 to 1440 minutes, 60 if left out)",
+                    "min_value": 15,
+                    "max_value": 1440,
+                },
+                {
+                    "type": 3,
+                    "name": "kind",
+                    "description": "How attendance is counted",
+                    "choices": EVENT_KINDS,
+                },
+                {
+                    "type": 3,
+                    "name": "goal",
+                    "description": "The advancement, for that kind",
                     "max_length": 100,
                 },
                 {
-                    "type": 4,
-                    "name": "item_count",
-                    "description": "How many of the item (1-64)",
-                    "min_value": 1,
-                    "max_value": 64,
+                    "type": 5,
+                    "name": "start_server",
+                    "description": "Start the server 10 minutes before",
                 },
+                {"type": 3, "name": "details", "description": "More about it", "max_length": 300},
+                *REWARD_OPTIONS,
+            ],
+        ),
+        Command(
+            "poll create",
+            "Make a poll (if your Discord role may)",
+            P.QUESTS_MANAGE,
+            poll_create,
+            options=[
+                {
+                    "type": 3,
+                    "name": "question",
+                    "description": "The question",
+                    "required": True,
+                    "max_length": 150,
+                },
+                *(
+                    {
+                        "type": 3,
+                        "name": f"answer{i}",
+                        "description": f"Answer {i}",
+                        "required": i <= 2,
+                        "max_length": 55,
+                    }
+                    for i in range(1, 6)
+                ),
                 {
                     "type": 4,
-                    "name": "xp_levels",
-                    "description": "Reward: Minecraft XP levels (1-30)",
+                    "name": "hours",
+                    "description": "Open for how many hours (1 to 168, 24 if left out)",
                     "min_value": 1,
-                    "max_value": 30,
-                },
-                {
-                    "type": 4,
-                    "name": "level_xp",
-                    "description": "Reward: Level XP (1-500)",
-                    "min_value": 1,
-                    "max_value": 500,
+                    "max_value": 168,
                 },
             ],
         ),
@@ -1620,5 +1942,9 @@ BUTTONS: dict[str, Button] = {
         Button("start_no", "Say no", P.SERVER_CONTROL, answer_request),
         Button("claim_yes", "Approve", P.QUESTS_MANAGE, answer_claim, style=3),
         Button("claim_no", "Refuse", P.QUESTS_MANAGE, answer_claim),
+        Button("rsvp_going", "Going", P.SERVER_VIEW, rsvp, style=3),
+        Button("rsvp_maybe", "Maybe", P.SERVER_VIEW, rsvp),
+        Button("rsvp_no", "Can't", P.SERVER_VIEW, rsvp),
+        Button("vote", "Vote", P.SERVER_VIEW, vote),
     )
 }

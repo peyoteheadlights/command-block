@@ -845,8 +845,10 @@ class Quests:
     # -- rewards -------------------------------------------------------------------------
     def rewards(self, server_id: str, states=("waiting", "sending", "sent", "failed")) -> list:
         marks = ",".join("?" * len(states))
+        # Event rewards (agent/game_events.py) wait here too, with an event_id.
         return self.db.query(
-            "SELECT r.*, q.title FROM quest_rewards r JOIN quests q ON q.id = r.quest_id "
+            "SELECT r.*, COALESCE(q.title, e.title) AS title FROM quest_rewards r "
+            "LEFT JOIN quests q ON q.id = r.quest_id LEFT JOIN game_events e ON e.id = r.event_id "
             f"WHERE r.server_id = ? AND r.state IN ({marks}) ORDER BY r.created_at",
             (server_id, *states),
         )

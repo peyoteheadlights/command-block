@@ -52,9 +52,9 @@ This is a student project I've been working on as a hobby for my personal use, a
 
 This app is in no way done and will be supported for a good long while. Here's everything that's planned, roughly in order (no dates, it's a hobby project):
 
-**Discord bot** (a lot is in already: setup, Discord role permissions, status and alerts, starting, account linking, the chat bridge, /stats, Levels with Level roles, a weekly leaderboard and quests with rewards, see [docs/discord.md](docs/discord.md))
+**Discord bot** (a lot is in already: setup, Discord role permissions, status and alerts, starting, account linking, the chat bridge, /stats, Levels with Level roles, a weekly leaderboard, quests with rewards, and events and polls, see [docs/discord.md](docs/discord.md))
 
-- Events with RSVPs and reminders, simple polls, and `/report` for reporting a player to the owners.
+- `/report` for reporting a player to the owners.
 - Whitelist from Discord: `/whitelist add`, or an application form owners approve with a button.
 - Kick, ban, backup and restart buttons on alerts, and a read-only console channel (off by default).
 - `/store` to show the server's store, and store ranks that become Discord roles.

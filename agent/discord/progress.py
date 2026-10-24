@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from .. import levels
+from ..game_events import ATTEND_XP
 from .bridge import escape
 from .live import duration
 
@@ -191,3 +192,77 @@ def my_quests(found: list[dict[str, Any]], server: str) -> str:
             line += f", as last saved <t:{int(quest['saved_at'])}:R>"
         lines.append(line)
     return "\n".join(lines)
+
+
+# -- events and polls (agent/game_events.py) ---------------------------------------------
+ATTENDANCE = {
+    "advancement": "earn **{goal}** during the event",
+    "online": "be online at least 15 minutes during the event",
+    "approval": "the owner or a moderator says who came",
+}
+
+
+def event_post(event: dict[str, Any], server: str) -> str:
+    """An event's message in the events channel, edited as answers come in."""
+    start, end = int(event["starts_at"]), int(event["ends_at"])
+    lines = [
+        f"**{escape(event['title'])}** on {escape(server)}",
+        f"<t:{start}:F> to <t:{end}:t> (<t:{start}:R>)",
+    ]
+    if event["details"]:
+        lines.append(escape(event["details"]))
+    goal = short_id(event["goal"]) if event["goal"] else ""
+    lines.append("To count as there: " + ATTENDANCE[event["kind"]].format(goal=goal))
+    extra = [r for r in event["rewards"] if r["kind"] != "level_xp"]
+    xp = ATTEND_XP + sum(r["amount"] for r in event["rewards"] if r["kind"] == "level_xp")
+    lines.append(f"For coming: {xp} Level XP" + (f", {rewards(extra)}" if extra else ""))
+    if event["start_server"] and event["state"] == "coming":
+        lines.append(f"{escape(server)} starts 10 minutes before.")
+    answers = event["answers"]
+    lines.append(f"Going {answers['going']} · Maybe {answers['maybe']} · Can't {answers['no']}")
+    came = sum(a["attended"] for a in event["attendance"])
+    lines.append(
+        {
+            "coming": "",
+            "on": "-# On now!",
+            "counting": "-# Ended. Counting who came…",
+            "approving": "-# Ended. Who came waits for the owner or a moderator.",
+            "ended": f"-# Ended. {came} came.",
+            "cancelled": "-# Called off.",
+        }[event["state"]]
+    )
+    return "\n".join(line for line in lines if line)
+
+
+def reminder(event: dict[str, Any], members: list[str]) -> str:
+    pings = " ".join(f"<@{m}>" for m in members)
+    return f"**{escape(event['title'])}** starts <t:{int(event['starts_at'])}:R>. {pings}"
+
+
+def poll_post(poll: dict[str, Any], server: str) -> str:
+    """A poll's message: how many voted while it's open (so early votes
+    don't sway later ones), every answer's count once it's closed."""
+    lines = [f"**{escape(poll['question'])}** (poll on {escape(server)})"]
+    if poll["open"]:
+        lines += [f"{i + 1}. {escape(a)}" for i, a in enumerate(poll["answers"])]
+        lines.append(
+            f"-# {poll['total']} voted so far. Closes <t:{int(poll['closes_at'])}:R>; "
+            "you can change your vote until then."
+        )
+        return "\n".join(lines)
+    for answer, votes in zip(poll["answers"], poll["votes"], strict=True):
+        share = round(100 * votes / poll["total"]) if poll["total"] else 0
+        lines.append(f"{escape(answer)}: {votes} ({share}%)")
+    lines.append(f"-# Closed. {poll['total']} voted.")
+    return "\n".join(lines)
+
+
+def poll_result(poll: dict[str, Any]) -> str:
+    question = escape(poll["question"])
+    if not poll["total"]:
+        return f"The poll **{question}** closed. Nobody voted."
+    top = max(poll["votes"])
+    won = [escape(a) for a, v in zip(poll["answers"], poll["votes"], strict=True) if v == top]
+    if len(won) > 1:
+        return f"The poll **{question}** closed: a tie between **" + "** and **".join(won) + "**."
+    return f"The poll **{question}** closed: **{won[0]}** won with {top} of {poll['total']} votes."

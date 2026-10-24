@@ -432,3 +432,24 @@ class NewQuest(BaseModel):
 
 class QuestAnswer(BaseModel):
     answer: Literal["approve", "refuse"]
+
+
+class NewEvent(BaseModel):
+    title: str = Field(max_length=200)
+    details: str = Field("", max_length=600)
+    kind: Literal["advancement", "online", "approval"] = "online"
+    goal: str = Field("", max_length=100)
+    starts_at: float
+    ends_at: float
+    start_server: bool = False
+    rewards: list[QuestReward] = Field(default_factory=list, max_length=4)
+
+
+class EventFix(BaseModel):
+    attended: bool
+
+
+class NewPoll(BaseModel):
+    question: str = Field(max_length=300)
+    answers: list[str] = Field(max_length=5)
+    closes_at: float

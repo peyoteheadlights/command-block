@@ -120,6 +120,11 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "discord_link_request": ("discord_bot", 0x5865F2, "{server}: a Discord member asks to link"),
     "start_request": ("start_requests", 0xFAA61A, "{server}: start request"),
     "quest_claim": ("quests", 0x5865F2, "{server}: a quest is waiting for approval"),
+    "event_attendance": (
+        "quests",
+        0x5865F2,
+        "{server}: who came to an event? It waits for your OK",
+    ),
 }
 
 
@@ -170,6 +175,7 @@ ALERT_PAGES = {
     "discord_token_rejected": "discord",
     "discord_link_request": "players",
     "quest_claim": "quests",
+    "event_attendance": "quests",
 }
 APP_PAGES = {"security", "helpers", "app-settings", "discord"}
 

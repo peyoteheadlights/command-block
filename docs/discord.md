@@ -7,9 +7,9 @@ awake** (PC settings) if friends should reach it at night.
 
 It's still being built. So far it connects, sets up a Discord server, gives
 Discord roles permissions, links accounts, keeps a status message, posts
-alerts with buttons, starts servers and carries chat both ways. `/status`,
-`/players`, `/ip`, `/start`, `/request-start`, `/link`, `/links` and
-`/unlink` work; stats, Levels, quests and events come next.
+alerts with buttons, starts servers, carries chat both ways, and runs
+stats, Levels, quests, events and polls. The whitelist from Discord and
+`/report` come next.
 
 ## Setting it up
 
@@ -159,7 +159,7 @@ on the Players and chat page.
 Every Discord member with a linked account has a **Level**. XP only comes
 from what Command Block measures: 10 per hour played (our own player
 sessions, added up over all their linked accounts and servers), plus XP
-for events (coming in the next part) and quests. Nothing for Discord
+for events attended (50 each) and quests. Nothing for Discord
 messages. Level n needs 8 × n² XP: Level 5 after 20 hours, 10 after 80,
 25 after 500. `/level` shows yours and your next Level role.
 
@@ -228,6 +228,40 @@ the form and **No thanks** turns it down, and the player hears back in
 Discord. Moderators with Quests and events also change the Level roles
 there.
 
+## Events and polls
+
+Our own, not Discord's built-in ones. The owner, and anyone with **Quests
+and events** on a server, makes an event on the Quests and events page or
+with `/event create` (the start typed on the PC's clock, like
+`2026-10-30 20:00`; Discord shows it in each reader's own time). It's
+posted in the events channel with **Going**, **Maybe** and **Can't**
+buttons, and the post edits itself as answers come in. An hour before, one
+message pings only the members who said Going. An event can start the
+server 10 minutes before (skipped in maintenance mode).
+
+Who came is worked out from real data, by the event's kind:
+
+- **Online 15 minutes**: from our own player sessions, added up over the
+  member's linked accounts, only the minutes inside the event.
+- **An advancement**: earned inside the event's time. The advancement file
+  keeps when each part was earned; the agent asks Minecraft to save at the
+  end and counts a minute later. Not on Bedrock (no advancement files).
+- **You decide**: a suggested list (who was online during it, ticked from
+  15 minutes, and who said Going, unticked) waits on the Quests and events
+  page for **Approve list**.
+
+Everyone who came gets 50 Level XP plus the event's rewards (the same
+templates as quests; items wait for the next join). For 7 days after the
+end, the ticks can be changed: ticking gives the rewards, unticking takes
+back the Level XP and anything not given yet. Every change is in the audit
+log with who made it.
+
+A poll (`/poll create` or the page) has 2 to 5 answers and closes at a set
+time. Everyone in the Discord server votes once with the buttons and can
+change their vote until it closes. While it's open the post only says how
+many voted, so early votes don't sway later ones; when it closes the post
+shows every count and the result is posted below it.
+
 ## The code
 
 `agent/discord/client.py` is our own small Discord client (gateway and REST,
@@ -236,7 +270,7 @@ token and never retries it, leaves a channel alone for 10 minutes after a
 403, waits as long as Discord asks on a 429 and resumes after a drop with
 growing waits. `bot.py` holds the commands and buttons, `live.py` what the status
 commands, status message and presence say, `bridge.py` the chat bridge's words, `progress.py` what /stats, /level, the leaderboard and the quest board say, `layout.py` the channels, roles,
-Level roles, grants and checks, `links.py` the linked accounts. The stats reader is `agent/stats.py`, Levels are `agent/levels.py` and quests `agent/quests.py`, with no Discord inside. Without a token none of it
+Level roles, grants and checks, `links.py` the linked accounts. The stats reader is `agent/stats.py`, Levels are `agent/levels.py`, quests `agent/quests.py` and events and polls `agent/game_events.py`, with no Discord inside. Without a token none of it
 runs and the client isn't imported.
 
 Tests use a fake Discord (`tests/fake_discord.py`). There's also an opt-in

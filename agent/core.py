@@ -27,6 +27,7 @@ from .database.db import Database, ServerDb
 from .database.event_writer import EventWriter
 from .discord.links import Links
 from .events import AGENT_SCOPE, Event, EventBus, ServerBus
+from .game_events import GameEvents
 from .jobs import JobConflict, JobHandle, JobTracker
 from .keepawake import KeepAwake
 from .minecraft.chat import ChatLog, parse_chat
@@ -315,6 +316,7 @@ class AgentCore:
         self.links = Links(self.db)
         self.start_requests = StartRequests(self)
         self.quests = Quests(self)
+        self.game_events = GameEvents(self)
         self.discord: Any = None
         # The bot posts alerts in its alerts channel (and the webhook steps aside).
         self.notifier.bot = lambda: self.discord
@@ -419,6 +421,7 @@ class AgentCore:
         await self.updates.start()
         self.tailscale.start()
         self.wake.start()
+        self.game_events.start()
         self.start_discord()
         for ctx in list(self.servers.values()):
             await ctx.autostart()
@@ -516,6 +519,7 @@ class AgentCore:
             await self.discord.stop()
         self.start_requests.stop()
         self.quests.stop()
+        await self.game_events.stop()
         await self.jobs.stop()
         for ctx in list(self.servers.values()):
             await ctx.stop()

@@ -463,3 +463,17 @@ def test_quests_only_send_commands_built_from_their_templates():
     for wrong in ("diamond 1\nop me", "diamond;op", "op me", "diamond 64"):
         with pytest.raises(quests.QuestError):
             quests.check_rewards([{"kind": "item", "item": wrong, "count": 1}])
+
+
+def test_events_only_ask_minecraft_to_save():
+    """Events and polls hold no command: their rewards go through the quest
+    templates, and the only thing sent to the console is a fixed save-all
+    when an advancement event ends."""
+    import re
+
+    from agent import game_events
+
+    source = Path(game_events.__file__).read_text(encoding="utf-8")
+    assert re.findall(r"send_command\(([^)]*)\)", source) == ['"save-all", internal=True']
+    for forbidden in ("subprocess", "os.system", "eval(", "exec(", "send_built"):
+        assert forbidden not in source, forbidden
