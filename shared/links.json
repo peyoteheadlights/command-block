@@ -1,0 +1,7 @@
+{
+ "_note": "sponsors and kofi are placeholders until those accounts exist. After changing a link here, run tests/test_strings.py: it names the README and phone app lines that copy it.",
+ "sponsors": "https://github.com/sponsors/peyoteheadlights",
+ "kofi": "https://ko-fi.com/peyoteheadlights",
+ "report": "https://github.com/peyoteheadlights/command-block/issues/new?template=bug_report.yml",
+ "suggest": "https://github.com/peyoteheadlights/command-block/issues/new?template=feature_request.yml"
+}

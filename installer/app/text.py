@@ -95,6 +95,11 @@ TEXT = {
     "done_connect_sub": "Open Command Block to connect. It sets up Tailscale first, then "
     "takes the link you were given.",
     "open_app": "Open Command Block",
+    "support": "Support the project (it unlocks nothing):",
+    "sponsors": "GitHub Sponsors",
+    "kofi": "Ko-fi",
+    "disclaimer": "NOT AN OFFICIAL MINECRAFT PRODUCT. "
+    "NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.",
     "on_phone": "On your phone, scan this code with the camera, or type:",
     "no_qr": "The code for your phone isn't ready yet:",
     "players_one": "1 player is online. Update now or wait?",

@@ -1,13 +1,15 @@
 """The "?" screen: Getting started (the few things to know, each with a
 button to where it's done) and About (version, licences, the Mojang
-disclaimer and a link to the full help online)."""
+disclaimer, links to the full help online, and Support the project with
+the two GitHub forms)."""
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QHBoxLayout, QWidget
 
 from agent import __version__ as APP_VERSION
 
@@ -83,7 +85,7 @@ class About(Section):
     WORDS = "desktop.about.title"
 
     def __init__(self, window: MainWindow) -> None:
-        super().__init__(window, ["about", "licences"])
+        super().__init__(window, ["about", "support", "licences"])
 
     def load(self) -> None:
         window = self.window_
@@ -100,16 +102,25 @@ class About(Section):
             ("desktop.about.docs", f"{REPO}#readme"),
             ("mobile.about.source", REPO),
             ("mobile.about.privacy", f"{REPO}/blob/main/PRIVACY.md"),
-            ("mobile.about.report", f"{REPO}/issues/new?template=bug_report.yml"),
         ]
-        shown = []
-        for words, url in links:
-            button = push(text(words), "plain")
-            button.clicked.connect(lambda _=False, u=url: window.pc.open_link(u))
-            shown.append(button)
-        layout.addLayout(buttons(*shown))
-        layout.addWidget(label(text("mobile.about.forms_hint"), "muted"))
+        layout.addLayout(self.links(links))
         self.fill("about", frame)
+        # The addresses live only in shared/links.json, so they're easy to change.
+        to = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
+        support, inside = card(text("desktop.about.support"))
+        inside.addWidget(label(text("desktop.about.support_text"), "sub"))
+        inside.addLayout(
+            self.links(
+                [("desktop.about.sponsors", to["sponsors"]), ("desktop.about.kofi", to["kofi"])]
+            )
+        )
+        inside.addLayout(
+            self.links(
+                [("mobile.about.report", to["report"]), ("mobile.about.suggest", to["suggest"])]
+            )
+        )
+        inside.addWidget(label(text("mobile.about.forms_hint"), "muted"))
+        self.fill("support", support)
         licences, inside = card(text("mobile.about.licenses"))
         inside.addWidget(label(text("mobile.about.licenses_lead"), "sub"))
         try:
@@ -120,3 +131,12 @@ class About(Section):
         notes.setTextFormat(Qt.TextFormat.PlainText)
         inside.addWidget(notes)
         self.fill("licences", licences)
+
+    def links(self, links: list[tuple[str, str]]) -> QHBoxLayout:
+        """A row of buttons, each opening its web page."""
+        shown = []
+        for words, url in links:
+            button = push(text(words), "plain")
+            button.clicked.connect(lambda _=False, u=url: self.window_.pc.open_link(u))
+            shown.append(button)
+        return buttons(*shown)
