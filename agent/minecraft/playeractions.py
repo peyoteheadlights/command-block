@@ -249,6 +249,11 @@ class PlayerActions:
         action = ACTION_SETS[dialect][kind]
         if action.confirm and not confirm:
             raise PlayerActionError("This needs to be confirmed first.")
+        return await self.send_built(kind, check_name(name, dialect), command, action)
+
+    async def send_built(self, kind: str, name: str, command: str, action: Action):
+        """Send a command built from a fixed template (a player button, a
+        quest reward) and watch the console for ``action``'s answers."""
         # The same validation every console command passes. The buttons are
         # the person's explicit choice, so the "are you sure" part is the
         # app's dialog (for kick and ban) rather than a second prompt.
@@ -257,7 +262,6 @@ class PlayerActions:
             raise PlayerActionError(
                 "The server has to be running for this. Start it, then try again."
             )
-        name = check_name(name, dialect)
         escaped = re.escape(name)
         pending = PendingAction(
             id=uuid.uuid4().hex[:12],
@@ -320,7 +324,7 @@ class PlayerActions:
         pending.state = {"done": DONE, "unchanged": UNCHANGED, "failed": FAILED}[state]
         pending.message = text.strip()[:300]
         pending.answered_at = time.time()
-        if pending.state != DONE:
+        if pending.state != DONE or pending.kind not in DONE_MESSAGES:
             return
         await self.bus.publish(
             Event(

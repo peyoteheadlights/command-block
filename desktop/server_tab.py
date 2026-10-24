@@ -32,6 +32,7 @@ from .mods import AddonsPage, ModsPage
 from .overview import SimpleOverview, TechnicalOverview
 from .performance import PerformancePage
 from .players import PlayersPage
+from .quests import QuestsPage
 from .schedules import SchedulesPage
 from .settings import SettingsPage
 from .ui import Page, clock, content_page, has_packs, label, push, refill
@@ -61,6 +62,7 @@ PAGES = [
     ("Backups", "page.backups", "backups", False),
     ("Mods", "page.mods", "mods", False),
     ("Schedules", "page.schedules", "schedules", False),
+    ("Quests and events", "desktop.page.quests", "quests", False),
     ("Performance", "page.performance", "performance", True),
     ("Settings", "desktop.page.settings", "settings", False),
 ]
@@ -72,6 +74,7 @@ PAGE_CLASSES: dict[str, type[Page]] = {
     "Performance": PerformancePage,
     "Schedules": SchedulesPage,
     "Settings": SettingsPage,
+    "Quests and events": QuestsPage,
 }
 
 
@@ -405,7 +408,8 @@ class ServerScreen(QWidget):
         self.place_panel()
 
     def build_tabs(self) -> None:
-        """The page tabs for the mode: 6 in Simple, 8 in Technical."""
+        """The page tabs for the mode: 7 in Simple, 9 in Technical (one fewer
+        without Quests and events)."""
         for button in self.tabs.buttons():
             self.tabs.removeButton(button)
             button.setParent(None)
@@ -417,7 +421,10 @@ class ServerScreen(QWidget):
         shown = [
             p
             for p in PAGES
-            if (mode["technical"] or not p[3]) and (p[0] != "Mods" or content is not None)
+            if (mode["technical"] or not p[3])
+            and (p[0] != "Mods" or content is not None)
+            # Only for people who may run quests here (the owner, Quests and events).
+            and (p[0] != "Quests and events" or self.window_.may(self.row["id"], "quests.manage"))
         ]
         if self.current_page not in [self.real(p[0]) for p in shown] + ["Activity"]:
             self.current_page = "Overview"

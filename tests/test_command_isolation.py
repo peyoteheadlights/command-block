@@ -446,3 +446,20 @@ def test_the_discord_bot_never_reaches_the_console_or_a_program():
     source = "\n".join(p.read_text(encoding="utf-8") for p in folder.glob("*.py"))
     for forbidden in ("send_command", "subprocess", "os.system", "eval(", "exec("):
         assert forbidden not in source, forbidden
+
+
+def test_quests_only_send_commands_built_from_their_templates():
+    """A quest never holds a command (ADR 0004): rewards and the item count
+    are fixed templates filled with checked values, sent through the player
+    actions' validation, never straight to the console."""
+    from agent import quests
+
+    source = Path(quests.__file__).read_text(encoding="utf-8")
+    for forbidden in ("send_command", "subprocess", "os.system", "eval(", "exec("):
+        assert forbidden not in source, forbidden
+    templates = [*quests.JAVA_REWARDS.values(), *quests.BEDROCK_REWARDS.values(), quests.ITEM_CHECK]
+    assert {t.command.split(" ")[0] for t in templates} == {"give", "xp", "clear"}
+    assert quests.ITEM_CHECK.command.endswith(" 0")  # counts, never takes
+    for wrong in ("diamond 1\nop me", "diamond;op", "op me", "diamond 64"):
+        with pytest.raises(quests.QuestError):
+            quests.check_rewards([{"kind": "item", "item": wrong, "count": 1}])

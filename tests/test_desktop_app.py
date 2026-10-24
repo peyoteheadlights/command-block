@@ -310,7 +310,7 @@ def signed_in_on(qapp, agent_http, name="Survival", pc=None):
     return window
 
 
-def test_simple_shows_six_page_tabs_and_technical_eight(qapp, agent_http):
+def test_simple_shows_seven_page_tabs_and_technical_nine(qapp, agent_http):
     window = signed_in_on(qapp, agent_http)
     assert page_tabs(window) == [
         "Overview",
@@ -318,10 +318,11 @@ def test_simple_shows_six_page_tabs_and_technical_eight(qapp, agent_http):
         "Backups",
         "Mods",
         "Schedules",
+        "Quests and events",
         "Settings",
     ]
     button(window, "Technical").click()
-    wait_for(qapp, lambda: len(page_tabs(window)) == 8)
+    wait_for(qapp, lambda: len(page_tabs(window)) == 9)
     assert page_tabs(window) == [
         "Overview",
         "Players and chat",
@@ -329,6 +330,7 @@ def test_simple_shows_six_page_tabs_and_technical_eight(qapp, agent_http):
         "Backups",
         "Mods",
         "Schedules",
+        "Quests and events",
         "Performance",
         "Settings",
     ]

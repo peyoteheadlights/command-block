@@ -56,20 +56,42 @@ def _load(path: Path) -> dict | None:
     return found if isinstance(found, dict) else None
 
 
+def raw_files(world: Path, uuid: str) -> tuple[dict, dict, float | None]:
+    """One player's files as Minecraft wrote them: the stats sections
+    ("minecraft:mined" -> {"minecraft:stone": 12}), the advancements and
+    the newest file's saved time. Empty when there's no file (yet)."""
+    sections: dict = {}
+    earned: dict = {}
+    saved: list[float] = []
+    if not UUID_RE.match(uuid):
+        return sections, earned, None
+    for folder in ("stats", "advancements"):
+        path = world / folder / f"{uuid}.json"
+        data = _load(path)
+        if folder == "stats":
+            data = (data or {}).get("stats")
+        if isinstance(data, dict):
+            saved.append(path.stat().st_mtime)
+            if folder == "stats":
+                sections = data
+            else:
+                earned = data
+    return sections, earned, max(saved) if saved else None
+
+
+def advancement_done(earned: dict, name: str) -> bool:
+    found = earned.get(name)
+    return isinstance(found, dict) and bool(found.get("done"))
+
+
 def read_files(world: Path, uuid: str) -> dict[str, Any]:
     """The numbers in one player's files: ``values`` (playtime in seconds,
     deaths, mobs, blocks, advancements), ``other`` (a mod's stats by name)
     and ``saved_at`` (None when there's no file yet)."""
     values: dict[str, int] = {}
     other: list[dict[str, Any]] = []
-    saved: list[float] = []
-    if not UUID_RE.match(uuid):
-        return {"values": values, "other": other, "saved_at": None}
-    stats_path = world / "stats" / f"{uuid}.json"
-    data = _load(stats_path)
-    sections = (data or {}).get("stats")
-    if isinstance(sections, dict):
-        saved.append(stats_path.stat().st_mtime)
+    sections, earned, saved_at = raw_files(world, uuid)
+    if sections:
         custom = sections.get("minecraft:custom")
         custom = custom if isinstance(custom, dict) else {}
         for key, names in CUSTOM.items():
@@ -85,17 +107,12 @@ def read_files(world: Path, uuid: str) -> dict[str, Any]:
             if isinstance(v, int) and not k.startswith("minecraft:")
         ]
         other = sorted(mods, key=lambda x: -x["value"])[:OTHER_SHOWN]
-    advancements_path = world / "advancements" / f"{uuid}.json"
-    earned = _load(advancements_path)
-    if earned is not None:
-        saved.append(advancements_path.stat().st_mtime)
+    if earned:
         # Recipes are "advancements" too in the file; nobody counts those.
         values["advancements"] = sum(
-            1
-            for k, v in earned.items()
-            if isinstance(v, dict) and v.get("done") and "recipes/" not in k
+            1 for k in earned if advancement_done(earned, k) and "recipes/" not in k
         )
-    return {"values": values, "other": other, "saved_at": max(saved) if saved else None}
+    return {"values": values, "other": other, "saved_at": saved_at}
 
 
 async def player_stats(ctx: ServerContext, name: str) -> dict[str, Any] | None:

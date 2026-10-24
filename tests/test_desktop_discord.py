@@ -136,10 +136,17 @@ def test_level_settings_are_changed_and_saved_on_the_discord_page(qapp, fake, di
         qapp.processEvents()
         page.grab()  # paints, small and large, in both modes
     window.set_mode(False)
-    wait_for_window(qapp, lambda: "Members get XP for playing" in shown_text(page))
-    tick = next(
-        b for b in page.findChildren(QtWidgets.QCheckBox) if b.text().startswith("Post level-ups")
-    )
+
+    def ticks() -> list:
+        return [
+            b
+            for b in page.findChildren(QtWidgets.QCheckBox)
+            if b.isVisibleTo(page) and b.text().startswith("Post level-ups")
+        ]
+
+    # the mode switch refills the page; wait until only the new box is left
+    wait_for_window(qapp, lambda: len(ticks()) == 1)
+    tick = ticks()[0]
     tick.setChecked(False)
     day = next(
         b
@@ -199,5 +206,12 @@ def test_a_players_stats_and_level_show_on_the_players_page(qapp, fake, discord_
 
     stats_button().click()
     wait_for_window(qapp, lambda: "Deaths 2  ·  Last saved" in shown_text(page))
+    # the list can refill while the stats show, so find the button again
+    wait_for_window(
+        qapp,
+        lambda: any(
+            b.accessibleName() == "Stats: Alex" for b in page.findChildren(QtWidgets.QPushButton)
+        ),
+    )
     stats_button().click()
     wait_for_window(qapp, lambda: "Deaths 2" not in shown_text(page))

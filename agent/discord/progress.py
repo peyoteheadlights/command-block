@@ -82,3 +82,112 @@ def leaderboard(servers: str, played: list[dict[str, Any]], top: list[tuple[str,
         f"{i}. <@{member}>: Level {levels.level_of(xp)}" for i, (member, xp) in enumerate(top, 1)
     ] or ["Nobody has linked an account yet. /link adds yours."]
     return "\n".join(lines)
+
+
+# -- quests ------------------------------------------------------------------
+REPEAT_WORDS = {
+    "once": "",
+    "daily": "every day",
+    "weekly": "every week",
+    "monthly": "every month",
+    "yearly": "every year",
+}
+
+
+def short_id(name: str) -> str:
+    return escape(name.removeprefix("minecraft:").replace("_", " "))
+
+
+def task(quest: dict[str, Any]) -> str:
+    """What the quest asks for, in a few words."""
+    count, goal = quest["count"], quest["goal"]
+    if quest["kind"] == "stat":
+        section, _, name = goal.partition(" ")
+        return f"{short_id(section)} {short_id(name)} ×{count:,}"
+    return {
+        "advancement": f"earn the advancement {short_id(goal)}",
+        "playtime": f"play {count:,} h",
+        "joins": f"join {count:,} times",
+        "items": f"bring {count:,} {short_id(goal)} (/quest done)",
+        "approval": "show the owner or a moderator (/quest done)",
+    }[quest["kind"]]
+
+
+def rewards(given: list[dict[str, Any]]) -> str:
+    words = {
+        "role": lambda r: f"<@&{r['role_id']}>",
+        "item": lambda r: f"{r['count']} {short_id(r['item'])}",
+        "xp": lambda r: f"{r['levels']} Minecraft XP levels",
+        "level_xp": lambda r: f"{r['amount']} Level XP",
+    }
+    return ", ".join(words[r["kind"]](r) for r in given) or "bragging rights"
+
+
+def needed(quest: dict[str, Any], progress: int) -> str:
+    unit = " h" if quest["kind"] == "playtime" else ""
+    return f"{min(progress, quest['count']):,}/{quest['count']:,}{unit}"
+
+
+def quest_line(quest: dict[str, Any]) -> str:
+    parts = [task(quest)]
+    if REPEAT_WORDS[quest["repeat"]]:
+        parts.append(REPEAT_WORDS[quest["repeat"]])
+    if quest.get("ends_at"):
+        parts.append(f"until <t:{int(quest['ends_at']) - 1}:f>")
+    parts.append(f"reward: {rewards(quest['rewards'])}")
+    return f"**{quest['id']}. {escape(quest['title'])}**: " + " · ".join(parts)
+
+
+def board(servers: list[tuple[str, list[dict[str, Any]]]]) -> str:
+    """The quests channel's message, edited when something changes."""
+    lines = ["**Quests**", "Join one with /quest join and its number."]
+    shown = 0
+    for server, quests in servers:
+        if not quests:
+            continue
+        lines += ["", f"__{escape(server)}__"]
+        for quest in quests:
+            shown += 1
+            lines.append(quest_line(quest))
+            if quest["details"]:
+                lines.append(escape(quest["details"]))
+            finished = [m for m in quest["members"] if m["finished_at"]]
+            going = [m for m in quest["members"] if not m["finished_at"]][:3]
+            if going:
+                lines.append(
+                    "Closest: "
+                    + ", ".join(
+                        f"<@{m['discord_id']}> {needed(quest, m['progress'])}" for m in going
+                    )
+                )
+            if finished:
+                lines.append("Done: " + ", ".join(f"<@{m['discord_id']}>" for m in finished[:10]))
+            note = f"{quest['joined']} joined"
+            if quest.get("saved_at"):
+                note += f", progress as last saved <t:{int(quest['saved_at'])}:R>"
+            lines.append(f"-# {note}")
+    if not shown:
+        lines += ["", "No quests right now. Got an idea? /quest suggest"]
+    words = "\n".join(lines)
+    return words if len(words) <= 2000 else words[:1950].rsplit("\n", 1)[0] + "\n…and more."
+
+
+def my_quests(found: list[dict[str, Any]], server: str) -> str:
+    """/quest progress: the member's quests on one server."""
+    if not found:
+        return f"You aren't on any quests on {server}. The quests channel lists them."
+    lines = [f"Your quests on {server}:"]
+    for quest in found:
+        if quest["finished_at"]:
+            state = "done!"
+        elif quest["kind"] == "approval":
+            state = "waiting for /quest done"
+        else:
+            state = needed(quest, quest["progress"])
+        line = f"**{quest['id']}. {escape(quest['title'])}**: {state}"
+        if quest["times"] > 1:
+            line += f" (finished {quest['times']} times)"
+        if quest.get("saved_at") and quest["kind"] in ("stat", "advancement"):
+            line += f", as last saved <t:{int(quest['saved_at'])}:R>"
+        lines.append(line)
+    return "\n".join(lines)
