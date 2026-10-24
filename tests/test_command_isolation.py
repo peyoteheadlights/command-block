@@ -438,9 +438,10 @@ def test_the_bedrock_exception_is_documented():
 
 
 def test_the_discord_bot_never_reaches_the_console_or_a_program():
-    """Nothing a Discord member types runs on the PC: the bot doesn't send
-    console commands (later features go through commands.validate like the
-    chat box) and starts no program."""
+    """Nothing a Discord member types runs on the PC: the bot sends no console
+    command of its own (Kick and Ban go through the Players page's player
+    actions, built from a fixed list and validated) and starts no program
+    (Start is the server's own start, like the apps' button)."""
     folder = Path(__file__).resolve().parent.parent / "agent" / "discord"
     source = "\n".join(p.read_text(encoding="utf-8") for p in folder.glob("*.py"))
     for forbidden in ("send_command", "subprocess", "os.system", "eval(", "exec("):

@@ -3,8 +3,8 @@
 It plugs into the Discord client's two seams: REST calls go to ``handle``
 (an httpx.MockTransport), the gateway to ``connect``. It keeps one Discord
 server's roles and channels, records every REST call, answers 401 for a
-wrong token, and lets a test push gateway events (a slash command) or drop
-the connection. No test touches the network.
+wrong token, and lets a test push gateway events (a slash command, a button
+press) or drop the connection. No test touches the network.
 """
 
 from __future__ import annotations
@@ -177,6 +177,39 @@ class FakeDiscord:
         )
         return token
 
+    def press(
+        self,
+        custom_id: str,
+        roles=(),
+        member: str = MEMBER_ID,
+        username: str = "sam",
+        channel: str | None = None,
+    ) -> str:
+        """A member presses a button; returns the interaction's token."""
+        token = f"itoken{next(self._ids)}"
+        self.socket.dispatch(
+            "INTERACTION_CREATE",
+            {
+                "id": str(next(self._ids)),
+                "type": 3,
+                "token": token,
+                "guild_id": GUILD_ID,
+                "channel_id": channel or "2000000000000000010",
+                "member": {"user": {"id": member, "username": username}, "roles": list(roles)},
+                "data": {"custom_id": custom_id, "component_type": 2},
+            },
+        )
+        return token
+
+    def answers(self, token: str) -> list[dict]:
+        """Everything the bot sent for one interaction: callbacks, then edits."""
+        return [body for _m, path, body in self.calls if token in path and isinstance(body, dict)]
+
+    def in_channel(self, name: str) -> list[dict]:
+        """The messages the bot posted in a channel, as they are now."""
+        found = next(c["id"] for c in self.channels if c["name"] == name)
+        return [m for m in self.messages if m["channel_id"] == found]
+
     def replies(self, token: str) -> list[str]:
         """What the bot answered to one interaction, first reply then edits."""
         out = []
@@ -249,6 +282,12 @@ class FakeDiscord:
         ):
             message = {"id": str(next(self._ids)), "channel_id": path.split("/")[2], **body}
             self.messages.append(message)
+            return httpx.Response(200, json=message)
+        if request.method == "PATCH" and path.startswith("/channels/") and "/messages/" in path:
+            message = next((m for m in self.messages if m["id"] == path.split("/")[-1]), None)
+            if message is None:
+                return httpx.Response(404, json={"message": "Unknown Message", "code": 10008})
+            message.update(body)
             return httpx.Response(200, json=message)
         return httpx.Response(404, json={"message": "Unknown", "code": 10000})
 

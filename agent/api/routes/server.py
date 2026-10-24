@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...minecraft.commands import CommandError, validate
 from ...minecraft.java import memory_limit_mb
+from ...minecraft.process import ServerError
 from ...minecraft.state import ExitReason
 from ...security.auth import Principal
 from ...security.permissions import (
@@ -18,6 +19,7 @@ from ...security.permissions import (
     SETTINGS_SERVER,
     require,
 )
+from ...startrequests import StartRequestError
 from ..deps import audit, get_server
 from ..errors import audit_failure
 from ..responses import (
@@ -29,10 +31,12 @@ from ..responses import (
     ServerAction,
     ServerHealth,
     ServerStatus,
+    StartRequestAnswered,
+    StartRequestOpen,
     TpsStatus,
     WorldList,
 )
-from .models import CommandRequest, StopRequest, TpsCommandRequest
+from .models import CommandRequest, StartRequestAnswer, StopRequest, TpsCommandRequest
 
 router = APIRouter()
 
@@ -98,6 +102,35 @@ async def server_start(
         "state": ctx.server.state.value,
         "startup_confirmed": ctx.server.startup_confirmed,
     }
+
+
+@router.get("/start-request", response_model=StartRequestOpen)
+async def start_request(
+    principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
+):
+    """A start request someone sent from Discord, while it's open."""
+    found = ctx.core.start_requests.get(ctx.server_id)
+    return {"request": found.to_dict() if found else None}
+
+
+@router.post("/start-request", response_model=StartRequestAnswered)
+async def answer_start_request(
+    payload: StartRequestAnswer,
+    request: Request,
+    principal: Principal = Depends(require(SERVER_CONTROL)),
+    ctx=Depends(get_server),
+):
+    """Start (the same start as the Start button) or Say no."""
+    try:
+        answer = await ctx.core.start_requests.answer(
+            ctx, payload.answer == "start", principal.user
+        )
+    except StartRequestError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except ServerError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    audit(ctx, request, "start_request", detail=answer)
+    return {"answer": answer}
 
 
 @router.post("/server/stop", response_model=ServerAction)

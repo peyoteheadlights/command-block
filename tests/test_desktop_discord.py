@@ -56,3 +56,60 @@ def test_linked_accounts_show_on_the_players_page(qapp, fake, discord_http):  # 
     wait_for_window(qapp, lambda: "Alex: sam on Discord" in shown_text(page))
     button(page, "Remove").click()
     wait_for_window(qapp, lambda: not core.links.of_server("survival"))
+
+
+def test_the_address_to_share_and_the_webhook_switch_are_saved(qapp, fake, discord_http):  # noqa: F811
+    window, page = gear(qapp, discord_http, "discord")
+    wait_for_window(qapp, lambda: "Address to share for Survival" in shown_text(page))
+    box = next(
+        b
+        for b in page.findChildren(QtWidgets.QLineEdit)
+        if b.accessibleName() == "Address to share for Survival"
+    )
+    box.setText("play.example.com")
+    save = next(
+        b
+        for b in page.findChildren(QtWidgets.QPushButton)
+        if b.accessibleName() == "Save: Address to share for Survival"
+    )
+    save.click()
+    core = discord_http.agent.app.state.core
+    wait_for_window(qapp, lambda: core.db.get_setting("discord_addresses", {}))
+    assert core.db.get_setting("discord_addresses", {}) == {"survival": "play.example.com"}
+    both = next(
+        b for b in page.findChildren(QtWidgets.QCheckBox) if b.text().startswith("Also send")
+    )
+    both.setChecked(True)
+    wait_for_window(qapp, lambda: core.config.notifications.webhook_with_bot)
+
+
+def test_a_start_request_alert_has_start_and_say_no(qapp, fake, discord_http):  # noqa: F811
+    from .fake_discord import GUILD_ID
+    from .fake_pc import FakePC
+    from .test_desktop_app import on_all_servers, open_window, owner, server_state, sign_in
+
+    pc = FakePC()
+    window = open_window(qapp, discord_http, pc)
+    sign_in(qapp, window)
+    on_all_servers(qapp, window)
+    headers = owner(discord_http)
+    made = discord_http.post(
+        f"/api/discord/guilds/{GUILD_ID}/setup", json={"servers": ["survival"]}, headers=headers
+    )
+    assert made.status_code == 200, made.text
+    window.hide()
+    token = fake.command("request-start", {"server": "survival"})
+    assert wait_for(lambda: fake.replies(token))[0].startswith("Asked.")
+    wait_for_window(qapp, lambda: any("start request" in t for t, _b in pc.alerts), 30)
+    asked = next(i for i, (t, _b) in enumerate(pc.alerts) if "start request" in t)
+    assert pc.buttons(asked) == ["Open", "Start", "Say no"]
+    pc.click_alert("Start", asked)
+    wait_for_window(
+        qapp,
+        lambda: server_state(discord_http, "survival", headers) in ("STARTING", "ONLINE"),
+        30,
+        0.2,
+    )
+    told = wait_for(lambda: [m for m in fake.messages if "is starting" in m.get("content", "")])
+    assert told[0]["content"].startswith(f"<@{MEMBER_ID}>")
+    discord_http.post("/api/servers/survival/server/stop", json={}, headers=headers)

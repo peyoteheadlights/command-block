@@ -206,6 +206,7 @@ class Gateway:
         self._seq: int | None = None
         self._acked = True
         self._socket: Any = None
+        self.presence: str | None = None  # the line under the bot's name
 
     async def run(self) -> None:
         """Until stopped, the token is rejected or a switch is refused."""
@@ -284,19 +285,24 @@ class Gateway:
                 pass
 
     async def _identify(self, socket: Any) -> None:
-        await self._send(
-            socket,
-            2,
-            {
-                "token": self._token,
-                "intents": self.intents,
-                "properties": {
-                    "os": "windows",
-                    "browser": "command-block",
-                    "device": "command-block",
-                },
+        hello: dict[str, Any] = {
+            "token": self._token,
+            "intents": self.intents,
+            "properties": {
+                "os": "windows",
+                "browser": "command-block",
+                "device": "command-block",
             },
-        )
+        }
+        if self.presence:
+            hello["presence"] = _presence(self.presence)
+        await self._send(socket, 2, hello)
+
+    async def set_presence(self, words: str) -> None:
+        """The bot's status line; kept for the next login too."""
+        self.presence = words
+        if self.state == "connected" and self._socket is not None:
+            await self._send(self._socket, 3, _presence(words))
 
     async def _handle(self, socket: Any, message: dict) -> None:
         op = message.get("op")
@@ -347,6 +353,16 @@ class Gateway:
     @staticmethod
     async def _send(socket: Any, op: int, data: Any) -> None:
         await socket.send(json.dumps({"op": op, "d": data}))
+
+
+def _presence(words: str) -> dict[str, Any]:
+    # A custom status (type 4): the words alone, no "Playing" in front.
+    return {
+        "since": None,
+        "activities": [{"name": "Custom Status", "type": 4, "state": words[:128]}],
+        "status": "online",
+        "afk": False,
+    }
 
 
 def _reason(exc: BaseException) -> str:

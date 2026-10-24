@@ -6,9 +6,10 @@ It's offline whenever the PC is asleep or off, so turn on **Keep this PC
 awake** (PC settings) if friends should reach it at night.
 
 It's still being built. So far it connects, sets up a Discord server, gives
-Discord roles permissions and links accounts. `/status`, `/link`, `/links`
-and `/unlink` work; status messages, alerts, `/start`, the chat bridge,
-stats, Levels, quests and events come next.
+Discord roles permissions, links accounts, keeps a status message, posts
+alerts with buttons and starts servers. `/status`, `/players`, `/ip`,
+`/start`, `/request-start`, `/link`, `/links` and `/unlink` work; the chat
+bridge, stats, Levels, quests and events come next.
 
 ## Setting it up
 
@@ -53,7 +54,8 @@ a role problem also shows in Recommendations and Getting started, and
 ## Who may do what
 
 Everyone in a Discord server set up for a Minecraft server can use the
-self-service commands there (`/status`, `/link`, `/links`, `/unlink`). For
+self-service commands there (`/status`, `/players`, `/ip`,
+`/request-start`, `/link`, `/links`, `/unlink`). For
 the rest, give a Discord role a permission level per Minecraft server on the
 Discord page: the same levels and switches as moderators. A Discord role can
 never get more than a moderator could, and never anything owner-only. Each
@@ -63,6 +65,35 @@ member, and written to the audit log with the member's name.
 
 The new "Quests and events" permission is in no level: tick it for a
 moderator or a Discord role on purpose.
+
+## Status, alerts and starting
+
+- `/status`, `/players` and `/ip` only say what the agent measured: a player
+  count nobody checked says Unknown, a stopped server says offline. `/ip`
+  shows the **Address to share** you typed on the Discord page (like your
+  No-IP name), or else your home network and Tailscale addresses. The
+  internet address is never guessed.
+- Each server's status channel has one message the bot edits when something
+  changes (checked once a minute). The line under the bot's name says how
+  many are playing.
+- Once an alerts channel is picked, alerts go there and the webhook stops,
+  unless you tick **Also send alerts to the webhook**. A server can have its
+  own alerts channel ("Alerts: <server>"). Alerts about the PC itself
+  (sign-ins, certificate, updates, Tailscale) never go to Discord.
+- Alerts have buttons: Kick and Ban on player alerts, Restart on crashes and
+  a slow game, Back up on a failed backup. Each checks the presser's Discord
+  role and asks "Are you sure?" first.
+- `/start` works for Discord roles with Start, only while the server is
+  stopped, with 5 minutes between starts from Discord. If the server refuses
+  to start, Discord only hears that it didn't (the reason can name folders
+  on the PC); the app shows why.
+- `/request-start` (a start request) is for everyone else: only while the
+  server is stopped, one open request per server, 10 minutes between
+  requests, 15 minutes to answer. The owner and moderators with Start get
+  Start / Say no on the Discord alert, the desktop app's Windows alert and
+  in the bell's list (phones in a later part). The asker is told what
+  happened. Requests are kept in memory, so restarting the agent drops an
+  open one (`agent/startrequests.py`).
 
 ## Linking accounts
 
@@ -88,7 +119,8 @@ removed. They're in Export everything and never in Get help.
 API v10, not discord.py, to keep weak PCs light). It stops on a rejected
 token and never retries it, leaves a channel alone for 10 minutes after a
 403, waits as long as Discord asks on a 429 and resumes after a drop with
-growing waits. `bot.py` holds the commands, `layout.py` the channels, roles,
+growing waits. `bot.py` holds the commands and buttons, `live.py` what the status
+commands, status message and presence say, `layout.py` the channels, roles,
 grants and checks, `links.py` the linked accounts. Without a token none of it
 runs and the client isn't imported.
 

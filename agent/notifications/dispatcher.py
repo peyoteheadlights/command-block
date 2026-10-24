@@ -1,4 +1,5 @@
-"""Notifications: Discord webhooks, SMTP email and phone alerts.
+"""Notifications: the Discord bot's alerts channel, Discord webhooks, SMTP
+email and phone alerts.
 
 Nothing in this module may take the agent down. Every send is wrapped, every
 failure is recorded in notifications_log and published as an event, and the
@@ -117,6 +118,7 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "tailscale_key_expiring": ("tailscale", 0xFAA61A, "The Tailscale key runs out soon"),
     "discord_token_rejected": ("discord_bot", 0xED4245, "Discord refused the bot's token"),
     "discord_link_request": ("discord_bot", 0x5865F2, "{server}: a Discord member asks to link"),
+    "start_request": ("start_requests", 0xFAA61A, "{server}: start request"),
 }
 
 
@@ -217,6 +219,8 @@ class Notifier:
         # Whether an account may see a server's alerts (user, server id);
         # set by AgentCore from the accounts. None: everyone sees everything.
         self.can_see: Callable[[str, str | None], bool] | None = None
+        # The Discord bot, when there is one (set by AgentCore).
+        self.bot: Callable[[], Any] | None = None
 
     # ------------------------------------------------------------------
     def enabled_for(self, event_type: str) -> bool:
@@ -386,30 +390,29 @@ class Notifier:
         return fields[:8]
 
     # ------------------------------------------------------------------
-    async def send_discord(self, event: Event) -> bool:
-        webhook = self.config.discord_webhook
-        if not webhook:
-            self._log("discord", event.type, "skipped", "No webhook URL is configured")
-            return False
+    def embed(self, event: Event) -> dict[str, Any]:
+        """The alert as a Discord embed, for the webhook and the bot."""
         colour, title = self.title(event)
         footer = (
             self.server_name(event)
             if event.server_id is not None or self.servers is None
             else "Command Block"
         )
-        payload = {
-            "username": "Command Block",
-            "embeds": [
-                {
-                    "title": title,
-                    "description": event.message[:2000] or title,
-                    "color": colour,
-                    "fields": self._fields(event),
-                    "footer": {"text": f"{footer} · {time.strftime('%d %b %H:%M')}"},
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(event.ts)),
-                }
-            ],
+        return {
+            "title": title,
+            "description": event.message[:2000] or title,
+            "color": colour,
+            "fields": self._fields(event),
+            "footer": {"text": f"{footer} · {time.strftime('%d %b %H:%M')}"},
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(event.ts)),
         }
+
+    async def send_discord(self, event: Event) -> bool:
+        webhook = self.config.discord_webhook
+        if not webhook:
+            self._log("discord", event.type, "skipped", "No webhook URL is configured")
+            return False
+        payload = {"username": "Command Block", "embeds": [self.embed(event)]}
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 response = await client.post(webhook, json=payload)
@@ -423,6 +426,16 @@ class Notifier:
             self._log("discord", event.type, "failed", str(exc))
             await self._report_failure("Discord", str(exc))
             return False
+
+    async def send_bot(self, bot: Any, event: Event) -> bool:
+        try:
+            sent = await bot.post_alert(event, self.embed(event))
+        except Exception as exc:
+            self._log("discord_bot", event.type, "failed", str(exc))
+            await self._report_failure("Discord bot", str(exc))
+            return False
+        self._log("discord_bot", event.type, "sent", f"{sent} channel(s)")
+        return True
 
     # ------------------------------------------------------------------
     def _build_email(self, event: Event) -> EmailMessage:
@@ -650,7 +663,14 @@ class Notifier:
                 )
             # Queued for a device's own list alone: no shared channel gets it.
             shared = self.enabled_for(event.type)
-            if shared and self.config.notifications.discord_enabled:
+            bot = self.bot() if self.bot else None
+            by_bot = shared and bot is not None and bot.posts_alert(event)
+            if by_bot:
+                tasks.append(self.send_bot(bot, event))
+            # The bot's alerts channel takes over from the webhook, unless the
+            # owner wants both. Alerts the bot doesn't post still use it.
+            notes = self.config.notifications
+            if shared and notes.discord_enabled and (not by_bot or notes.webhook_with_bot):
                 tasks.append(self.send_discord(event))
             if shared and self.config.notifications.email_enabled:
                 tasks.append(self.send_email(event))

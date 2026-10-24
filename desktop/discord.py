@@ -28,13 +28,17 @@ STEPS = 6  # discord.steps.1 to .6
 SERVER_STEPS = 3
 KINDS = ("alerts", "status", "chat", "quests", "events")
 PER_SERVER = ("status", "chat")
+# Shared, and a server may have its own instead (None: the shared one).
+OWN_IF_WANTED = ("alerts",)
 
 
 class Discord(Moderators):
     WORDS = "discord.title"
 
     def __init__(self, window: MainWindow) -> None:
-        Section.__init__(self, window, ["status", "token", "invite", "profile", "guilds"])
+        Section.__init__(
+            self, window, ["status", "token", "invite", "profile", "sharing", "guilds"]
+        )
         self.data: dict = {}  # the moderators' catalogue and the servers (GET /accounts)
         self.state: dict = {}
         self.role_names: dict[str, str] = {}
@@ -58,6 +62,7 @@ class Discord(Moderators):
         connected = state.get("state") == "connected"
         self.fill("invite", *([self.invite_card(state)] if connected else []))
         self.fill("profile", *([self.profile_card(state)] if connected else []))
+        self.fill("sharing", *([self.sharing_card(state)] if connected else []))
         self.fill("guilds", *[self.guild_card(g) for g in state.get("guilds") or []])
 
     def done(self, words: str):
@@ -182,6 +187,48 @@ class Discord(Moderators):
             data = Path(path).read_bytes()
             self.profile({"avatar": base64.b64encode(data).decode()})
 
+    def sharing_card(self, state: dict) -> QFrame:
+        """What /ip shows for each server, and whether the webhook keeps
+        sending once the bot posts the alerts."""
+        frame, layout = card(text("discord.sharing_title"))
+        saved = state.get("addresses") or {}
+        grid = QGridLayout()
+        for i, s in enumerate(self.data.get("servers") or []):
+            words = text("discord.address", server=s["name"])
+            grid.addWidget(label(words), i, 0)
+            address = QLineEdit(saved.get(s["id"], ""))
+            address.setMaxLength(253)
+            address.setPlaceholderText("play.example.com")
+            address.setAccessibleName(words)
+            grid.addWidget(address, i, 1)
+            save = push(text("discord.address_save"))
+            save.setAccessibleName(f"{text('discord.address_save')}: {words}")
+            save.clicked.connect(
+                lambda _c=False, sid=s["id"], box=address: self.call(
+                    "PUT",
+                    "/discord/addresses",
+                    self.done(text("discord.address_saved")),
+                    body={"server_id": sid, "address": box.text().strip() or None},
+                )
+            )
+            grid.addWidget(save, i, 2)
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+        layout.addWidget(label(text("discord.address_hint"), "muted"))
+        both = QCheckBox(text("discord.webhook_with_bot"))
+        both.setChecked(bool(state.get("webhook_with_bot")))
+        both.toggled.connect(
+            lambda on: self.call(
+                "PUT",
+                "/settings",
+                lambda _r: self.say(text("settings.saved")),
+                body={"updates": {"notifications.webhook_with_bot": on}},
+            )
+        )
+        layout.addWidget(both)
+        layout.addWidget(label(text("discord.alerts_hint"), "muted"))
+        return frame
+
     # ------------------------------------------------------------ a Discord server
     def guild_card(self, guild: dict) -> QFrame:
         gid = guild["id"]
@@ -251,13 +298,15 @@ class Discord(Moderators):
         for s in servers:
             if s["id"] in tied:
                 rows += [
-                    (k, s["id"], f"{text(f'discord.kind.{k}')}: {s['name']}") for k in PER_SERVER
+                    (k, s["id"], f"{text(f'discord.kind.{k}')}: {s['name']}")
+                    for k in (*PER_SERVER, *OWN_IF_WANTED)
                 ]
         for i, (kind, sid, words) in enumerate(rows, start=1):
             grid.addWidget(label(words), i, 0)
             pick = QComboBox()
             pick.setAccessibleName(words)
-            pick.addItem(text("discord.no_channel"), None)
+            shared = sid and kind in OWN_IF_WANTED
+            pick.addItem(text("discord.same_alerts" if shared else "discord.no_channel"), None)
             for channel in report.get("channels") or []:
                 pick.addItem(f"#{channel['name']}", channel["id"])
             pick.setCurrentIndex(max(pick.findData(current.get((kind, sid))), 0))

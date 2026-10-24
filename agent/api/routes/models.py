@@ -380,6 +380,16 @@ class DiscordRoleGrants(BaseModel):
     grants: dict[str, list[str]] = Field(max_length=50)
 
 
+class DiscordAddress(BaseModel):
+    server_id: str = Field(max_length=64)
+    # A name or address and maybe a port, as friends type it into Minecraft.
+    address: str | None = Field(None, max_length=253, pattern=r"^[A-Za-z0-9.\-]+(:\d{1,5})?$")
+
+
+class StartRequestAnswer(BaseModel):
+    answer: Literal["start", "no"]
+
+
 class DiscordLinkAnswer(BaseModel):
     answer: Literal["approve", "refuse"]
     uuid: str | None = Field(None, max_length=64)

@@ -41,6 +41,7 @@ from .notifications.dispatcher import Notifier
 from .ports import PortManager
 from .scheduler.scheduler import Scheduler
 from .security.auth import AuthManager
+from .startrequests import StartRequests
 from .tailscale_watch import TailscaleWatch
 from .updates import Updater
 from .wake import Wake
@@ -311,13 +312,17 @@ class AgentCore:
         # Linked accounts work without the bot (the apps list and remove
         # them); the bot itself only exists while a token is set.
         self.links = Links(self.db)
+        self.start_requests = StartRequests(self)
         self.discord: Any = None
+        # The bot posts alerts in its alerts channel (and the webhook steps aside).
+        self.notifier.bot = lambda: self.discord
 
         self.bus.subscribe(self._persist_event)
         self.bus.subscribe(self.notifier.handle)
         self.bus.subscribe(self._dispatch)
         self.bus.subscribe(self.keepawake.handle)
         self.bus.subscribe(supportask.handler(self.db))
+        self.bus.subscribe(self.start_requests.handle)
         self._cert_task: asyncio.Task | None = None
         self._cert_alerted: str | None = None
         self._servers_lock = asyncio.Lock()
@@ -499,6 +504,7 @@ class AgentCore:
         self.wake.stop()
         if self.discord is not None:
             await self.discord.stop()
+        self.start_requests.stop()
         await self.jobs.stop()
         for ctx in list(self.servers.values()):
             await ctx.stop()
