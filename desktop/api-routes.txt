@@ -188,3 +188,8 @@ POST /api/servers/{server_id}/quests/events/{event_id}/approve
 PUT /api/servers/{server_id}/quests/events/{event_id}/attendance/{discord_id}
 POST /api/servers/{server_id}/quests/polls
 DELETE /api/servers/{server_id}/quests/polls/{poll_id}
+GET /api/servers/{server_id}/whitelist
+POST /api/servers/{server_id}/whitelist/forms/{form_id}
+POST /api/servers/{server_id}/whitelist/addresses/{address_id}
+DELETE /api/servers/{server_id}/whitelist/addresses/{address_id}
+PUT /api/discord/guilds/{guild_id}/options

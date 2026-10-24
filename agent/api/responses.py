@@ -2034,6 +2034,23 @@ class DiscordLinks(Open):
     reads_chat: bool
 
 
+class WhitelistHelp(Open):
+    """The Players page's whitelist help for one server."""
+
+    online_mode: bool | None = Field(None, description="null when server.properties isn't there")
+    addon: str | None = Field(None, description="The whitelist add-on used (offline mode only)")
+    suggested: list[str] = Field(description="Whitelist add-ons for an offline-mode server")
+    ip_addon: str | None = Field(None, description="The IP whitelist add-on installed, if any")
+    forms: list[dict[str, Any]] = Field(
+        description="Requests to join: id, name, why, discord_name, created_at"
+    )
+    addresses: list[dict[str, Any]] = Field(
+        description="Addresses turned away: id, name, masked (never the whole address), why "
+        "(changed or new), state (new, allowed, ignored), seen_at, answered_by, answered_at"
+    )
+    action: PlayerAction | None = Field(None, description="The command an answer sent")
+
+
 class QuestsPage(Open):
     """Everything the Quests and events page shows for one server."""
 

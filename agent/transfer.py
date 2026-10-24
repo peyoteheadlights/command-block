@@ -76,6 +76,8 @@ DATA_TABLES = (
     "event_attendance",
     "polls",
     "poll_votes",
+    "whitelist_forms",
+    "ip_addresses",
 )
 ACCOUNT_COLUMNS = (
     "username",

@@ -8,8 +8,8 @@ awake** (PC settings) if friends should reach it at night.
 It's still being built. So far it connects, sets up a Discord server, gives
 Discord roles permissions, links accounts, keeps a status message, posts
 alerts with buttons, starts servers, carries chat both ways, and runs
-stats, Levels, quests, events and polls. The whitelist from Discord and
-`/report` come next.
+stats, Levels, quests, events and polls, adds players to the whitelist,
+shows the console in a private channel and takes `/report`s.
 
 ## Setting it up
 
@@ -57,7 +57,8 @@ a role problem also shows in Recommendations and Getting started, and
 
 Everyone in a Discord server set up for a Minecraft server can use the
 self-service commands there (`/status`, `/players`, `/ip`,
-`/request-start`, `/link`, `/links`, `/unlink`). For
+`/request-start`, `/link`, `/links`, `/unlink`, `/whitelist ask`,
+`/report`). For
 the rest, give a Discord role a permission level per Minecraft server on the
 Discord page: the same levels and switches as moderators. A Discord role can
 never get more than a moderator could, and never anything owner-only. Each
@@ -262,6 +263,52 @@ change their vote until it closes. While it's open the post only says how
 many voted, so early votes don't sway later ones; when it closes the post
 shows every count and the result is posted below it.
 
+## Whitelist, addresses, the console and reports
+
+`/whitelist add <name>` is for Discord roles with **Players**. It sends the
+normal whitelist command and says "Sent" until the server's console
+confirms it, like the Players page. Anyone else can use `/whitelist ask`
+with their Minecraft name and why they'd like to join. The request shows in
+the alerts channel with **Approve** and **Say no**, and on the Players page
+(requests are kept 7 days, one per member, 30 per server). Approving sends
+the whitelist command; the asker hears the answer where they asked.
+
+On an offline-mode server Minecraft can't check whose account a name is, so
+anyone can join with a name on the whitelist. If EasyWhitelist, Zero
+Whitelist or TextWhitelist is installed there, every whitelist button
+(Players page, phone, Discord) uses its command instead, and the Players
+page suggests them when none is. Online-mode servers always use
+Minecraft's own whitelist.
+
+A Discord server can **take people off the whitelist when they leave** it
+(a tick on the Discord page, off by default). It needs the Server Members
+switch, and only works for linked accounts. A stopped server gets the change
+when it's started.
+
+**New addresses.** With an IP whitelist add-on (IPWL, or the IP Whitelist
+Fabric mod) a friend whose home address changed is turned away. When the
+console says so for a player the server knows (played there, linked or
+whitelisted), the address is kept encrypted with a key in `.env`
+(`MCSC_ADDRESS_KEY`) and only ever shown masked (`203.0.x.x`). The alert
+"tried to join from a new address" has **Allow** (sends the add-on's
+command) and **Ignore**. Addresses are deleted when the player is taken off
+the whitelist, when the add-on is removed, or with **Remove** on the
+Players page. Strangers' addresses are never kept. They're in Export
+everything and never in Get help.
+
+**The console channel** is off by default and never made by setup. The
+owner picks a channel for a server on the Discord page; pick one only you
+can see (the checks warn when everyone can). It's read only: nothing typed
+there reaches the server. Lines are posted every 2 seconds in code blocks,
+with addresses, link codes and Windows user names hidden. A busy console
+keeps the newest 40 lines per post and says how many were left out.
+
+**`/report <player> <reason>`** opens a private thread off the alerts
+channel with the reason and the last 20 chat lines; the reporter is in it.
+The alert has **See the report**, which adds whoever presses it (it needs
+Players on that server), because a role can't be added to a private thread.
+Three reports an hour per member; reports are kept 30 days.
+
 ## The code
 
 `agent/discord/client.py` is our own small Discord client (gateway and REST,
@@ -270,7 +317,7 @@ token and never retries it, leaves a channel alone for 10 minutes after a
 403, waits as long as Discord asks on a 429 and resumes after a drop with
 growing waits. `bot.py` holds the commands and buttons, `live.py` what the status
 commands, status message and presence say, `bridge.py` the chat bridge's words, `progress.py` what /stats, /level, the leaderboard and the quest board say, `layout.py` the channels, roles,
-Level roles, grants and checks, `links.py` the linked accounts. The stats reader is `agent/stats.py`, Levels are `agent/levels.py`, quests `agent/quests.py` and events and polls `agent/game_events.py`, with no Discord inside. Without a token none of it
+Level roles, grants and checks, `links.py` the linked accounts. The stats reader is `agent/stats.py`, Levels are `agent/levels.py`, quests `agent/quests.py`, events and polls `agent/game_events.py` and whitelist requests and addresses `agent/whitelist.py`, with no Discord inside. Without a token none of it
 runs and the client isn't imported.
 
 Tests use a fake Discord (`tests/fake_discord.py`). There's also an opt-in

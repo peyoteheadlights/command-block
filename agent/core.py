@@ -47,6 +47,7 @@ from .startrequests import StartRequests
 from .tailscale_watch import TailscaleWatch
 from .updates import Updater
 from .wake import Wake
+from .whitelist import Whitelist, whitelist_addon
 
 log = logging.getLogger("msc.core")
 
@@ -89,6 +90,7 @@ class ServerContext:
         )
 
         self.player_actions = PlayerActions(self.server, self.bus)
+        self.player_actions.addon = self._whitelist_addon
         # In-game chat as the console printed it, and the watcher that stops
         # a server nobody is playing on (off unless this server turns it on).
         self.chat = ChatLog()
@@ -104,9 +106,14 @@ class ServerContext:
         ]
         self._update_task: asyncio.Task | None = None
 
+    def _whitelist_addon(self, kind: str):
+        addon = whitelist_addon(self)
+        return addon.actions.get(kind) if addon else None
+
     async def _console_signals(self, sig, line) -> None:
         await self.players.handle_signals(sig, line)
         await self.player_actions.handle(sig, line)
+        await self.core.whitelist.heard(self, line)
         said = parse_chat(line)
         if said and said[0] == "player" and self.core.links.hear(self, said[1] or "", said[2]):
             return  # a link code: kept out of the chat log, so never bridged to Discord
@@ -317,6 +324,7 @@ class AgentCore:
         self.start_requests = StartRequests(self)
         self.quests = Quests(self)
         self.game_events = GameEvents(self)
+        self.whitelist = Whitelist(self)
         self.discord: Any = None
         # The bot posts alerts in its alerts channel (and the webhook steps aside).
         self.notifier.bot = lambda: self.discord
@@ -519,6 +527,7 @@ class AgentCore:
             await self.discord.stop()
         self.start_requests.stop()
         self.quests.stop()
+        self.whitelist.stop()
         await self.game_events.stop()
         await self.jobs.stop()
         for ctx in list(self.servers.values()):

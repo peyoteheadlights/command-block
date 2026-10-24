@@ -623,6 +623,51 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE quest_rewards ADD COLUMN event_id INTEGER;
         """,
     ),
+    (
+        20,
+        # agent/whitelist.py and /report. whitelist_forms: requests to join
+        # (/whitelist ask), one open per member per server. ip_addresses:
+        # an address an IP whitelist add-on turned a player away from,
+        # encrypted (address), masked for showing, digest (a keyed hash) to
+        # find it again; state new, allowed or ignored. discord_reports:
+        # /report's private threads, for the "See the report" button.
+        """
+        CREATE TABLE whitelist_forms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            why TEXT NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            channel_id TEXT,
+            created_at REAL NOT NULL,
+            UNIQUE (server_id, discord_id)
+        );
+        CREATE TABLE ip_addresses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            address TEXT NOT NULL,
+            masked TEXT NOT NULL,
+            digest TEXT NOT NULL,
+            why TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'new',
+            seen_at REAL NOT NULL,
+            answered_by TEXT,
+            answered_at REAL,
+            UNIQUE (server_id, digest)
+        );
+        CREATE TABLE discord_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            guild_id TEXT NOT NULL,
+            thread_id TEXT NOT NULL,
+            reporter_id TEXT NOT NULL,
+            player TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        """,
+    ),
 ]
 
 

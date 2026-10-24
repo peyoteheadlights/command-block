@@ -39,6 +39,7 @@ CONNECT: Callable[[str], Awaitable[Any]] | None = None
 
 # Gateway intents (https://discord.com/developers/docs/events/gateway#gateway-intents).
 GUILDS = 1 << 0
+GUILD_MEMBERS = 1 << 1  # privileged: the Server Members switch; for "left the server"
 GUILD_MESSAGES = 1 << 9
 MESSAGE_CONTENT = 1 << 15  # privileged: the switch must be on in the portal
 # The application's flags that say a privileged switch is on in the
@@ -303,6 +304,12 @@ class Gateway:
         if self.presence:
             hello["presence"] = _presence(self.presence)
         await self._send(socket, 2, hello)
+
+    async def relogin(self) -> None:
+        """Log in afresh (not resume), so changed intents are asked for."""
+        self._session = None
+        if self._socket is not None:
+            await self._socket.close()
 
     async def set_presence(self, words: str) -> None:
         """The bot's status line; kept for the next login too."""

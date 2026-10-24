@@ -19,6 +19,7 @@ from ..deps import audit, get_core
 from ..responses import DiscordLevels, DiscordSetupDone, DiscordStatus
 from .models import (
     DiscordAddress,
+    DiscordGuildOptions,
     DiscordLevelSettings,
     DiscordProfile,
     DiscordRoleGrants,
@@ -152,7 +153,7 @@ async def tie_channel(
 ):
     bot = bot_of(core)
     guild_of(bot, guild_id)
-    if payload.kind in layout.SERVER_CHANNELS and not payload.server_id:
+    if payload.kind in (*layout.SERVER_CHANNELS, *layout.OPT_IN_CHANNELS) and not payload.server_id:
         raise HTTPException(status_code=400, detail="Pick the Minecraft server for this channel.")
     if payload.server_id and payload.server_id not in core.servers:
         raise HTTPException(
@@ -161,6 +162,34 @@ async def tie_channel(
     layout.tie(core.db, guild_id, payload.kind, payload.server_id, payload.channel_id)
     audit(core, request, "discord_channel", target=f"{payload.kind}:{payload.server_id}")
     await discord_call(bot.refresh(guild_id))
+    return status_of(core)
+
+
+@router.put("/guilds/{guild_id}/options", response_model=DiscordStatus)
+async def set_options(
+    guild_id: str,
+    payload: DiscordGuildOptions,
+    request: Request,
+    principal: Principal = Depends(require(DISCORD_MANAGE)),
+    core=Depends(get_core),
+):
+    """Per Discord server choices. Taking people off the whitelist when they
+    leave needs Discord to say who left, which the bot only asks for while
+    one Discord server uses it, so the bot logs in again to ask."""
+    from ...discord import client
+
+    bot = bot_of(core)
+    guild_of(bot, guild_id)
+    layout.set_guild_options(core.db, guild_id, remove_on_leave=payload.remove_on_leave)
+    audit(
+        core,
+        request,
+        "discord_options",
+        target=guild_id,
+        detail=f"remove_on_leave={payload.remove_on_leave}",
+    )
+    if bot.wants_members() != bool(bot.gateway.intents & client.GUILD_MEMBERS):
+        await bot.gateway.relogin()
     return status_of(core)
 
 

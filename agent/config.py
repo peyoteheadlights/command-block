@@ -320,6 +320,8 @@ class NotificationSettings(Section):
             "discord_bot": True,
             "start_requests": True,
             "quests": True,
+            "whitelist_requests": True,
+            "reports": True,
         }
     )
     email: EmailSettings = field(default_factory=EmailSettings)
@@ -406,6 +408,8 @@ SECRET_ENV_KEYS = (
     "MCSC_SECRET_KEY",
     "MCSC_DISCORD_WEBHOOK",
     "MCSC_DISCORD_BOT_TOKEN",
+    # The key the stored IP addresses are encrypted with (agent/whitelist.py).
+    "MCSC_ADDRESS_KEY",
     "MCSC_SMTP_USERNAME",
     "MCSC_SMTP_PASSWORD",
     # The browser alerts' keys: gone with the web pages, but older installs

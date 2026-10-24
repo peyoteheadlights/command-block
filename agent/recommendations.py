@@ -420,6 +420,10 @@ DISCORD_WORDS = {
         "The Discord bot can't post in a channel",
         "In {guild}, let the bot see, post and add reactions in #{channel}.",
     ),
+    "console_public": (
+        "Everyone can see a console channel",
+        "In {guild}, make #{channel} private: it shows everything {server} prints.",
+    ),
 }
 
 
@@ -430,7 +434,7 @@ def discord_problem(f: Facts) -> Recommendation | None:
     return Recommendation(
         id="discord_problem",
         title=title,
-        reason=reason.format(**{"guild": "", "role": "", "channel": "", **f.discord}),
+        reason=reason.format(**{"guild": "", "role": "", "channel": "", "server": "", **f.discord}),
         evidence="Checked against Discord when the bot connected or the Discord page was opened.",
         action={"label": "Open the Discord page", "page": "discord"},
         fingerprint=f"discord:{f.discord['id']}:{f.discord.get('role') or f.discord.get('channel') or ''}",

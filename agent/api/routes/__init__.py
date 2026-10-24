@@ -52,6 +52,7 @@ from . import (
     transfer,
     updates,
     wake,
+    whitelist,
     world,
 )
 from .settings import SETTABLE_PREFIXES
@@ -73,6 +74,7 @@ PER_SERVER = (
     discord_links,
     quests,
     events,
+    whitelist,
 )
 GLOBAL = (
     auth,

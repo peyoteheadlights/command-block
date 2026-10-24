@@ -43,7 +43,11 @@ async def players(principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depe
         "bans": ctx.config.server_type.bans,
         "edition": ctx.config.server_type.edition,
         "running": ctx.server.running and ctx.server.state.value == "ONLINE",
-        "actions": [a.to_dict() for a in ctx.player_actions.recent()[:10]],
+        # The page's own buttons only (a quest reward or an IP whitelist
+        # add-on's command goes through the same sender).
+        "actions": [
+            a.to_dict() for a in ctx.player_actions.recent() if a.kind in playeractions.ACTIONS
+        ][:10],
     }
 
 

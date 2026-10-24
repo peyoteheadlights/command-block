@@ -9,12 +9,15 @@ members are shown as mentions, which the bot posts with no pings allowed.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .. import levels
 from ..game_events import ATTEND_XP
 from .bridge import escape
 from .live import duration
+
+if TYPE_CHECKING:
+    from ..minecraft.chat import ChatMessage
 
 LABELS = {
     "playtime": "Playtime",
@@ -266,3 +269,28 @@ def poll_result(poll: dict[str, Any]) -> str:
     if len(won) > 1:
         return f"The poll **{question}** closed: a tie between **" + "** and **".join(won) + "**."
     return f"The poll **{question}** closed: **{won[0]}** won with {top} of {poll['total']} votes."
+
+
+def report(
+    server: str, player: str, reporter: str, reason: str, lines: list[ChatMessage] | None
+) -> str:
+    """The first message in a /report thread: who, why, and the chat just
+    before it, newest last. Older lines are dropped to fit one message."""
+    head = (
+        f"<@{reporter}> reported **{escape(player)}** on {escape(server)}.\n"
+        f"Reason: {escape(reason)}"
+    )
+    if lines is None:
+        return f"{head}\n-# {escape(server)} doesn't show its chat, so there are no chat lines."
+    if not lines:
+        return f"{head}\n-# Nobody said anything in the chat before this."
+    said = []
+    room = 1900 - len(head)
+    for m in reversed(lines):
+        who = f"**{escape(m.name)}**" if m.name else "Server"
+        line = f"> <t:{int(m.ts)}:t> {who}: {escape(m.text)}"
+        room -= len(line) + 1
+        if room < 0:
+            break
+        said.append(line)
+    return "\n".join([head, "Chat just before:", *reversed(said)])

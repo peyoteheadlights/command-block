@@ -30,6 +30,7 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -189,8 +190,10 @@ def check_name(name: str, dialect: str = "java") -> str:
     return name
 
 
-def build_command(kind: str, name: str, reason: str = "", dialect: str = "java") -> str:
-    action = ACTION_SETS[dialect].get(kind)
+def build_command(
+    kind: str, name: str, reason: str = "", dialect: str = "java", action: Action | None = None
+) -> str:
+    action = action or ACTION_SETS[dialect].get(kind)
     if action is None:
         raise PlayerActionError(
             "Bedrock servers have no ban list, so players can't be banned. Take them off "
@@ -223,10 +226,16 @@ class PendingAction:
     message: str | None = None  # the console line that answered
     answered_at: float | None = None
     patterns: dict[str, list[str]] = field(default_factory=dict, repr=False)
+    # Text never shown in the apps, with what is shown instead (an address).
+    hide: dict[str, str] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data.pop("patterns", None)
+        for secret, shown in data.pop("hide").items():
+            for key in ("command", "message"):
+                if data[key]:
+                    data[key] = data[key].replace(secret, shown)
         return data
 
 
@@ -238,6 +247,9 @@ class PlayerActions:
         self.server = server
         self.bus = bus
         self._actions: dict[str, PendingAction] = {}
+        # A whitelist add-on's own commands, when the server uses one
+        # (agent/whitelist.py): kind -> Action, or None for Minecraft's own.
+        self.addon: Callable[[str], Action | None] | None = None
 
     @property
     def dialect(self) -> str:
@@ -245,8 +257,9 @@ class PlayerActions:
 
     async def send(self, kind: str, name: str, reason: str = "", confirm: bool = False):
         dialect = self.dialect
-        command = build_command(kind, name, reason, dialect)
-        action = ACTION_SETS[dialect][kind]
+        addon = self.addon(kind) if self.addon and kind.startswith("whitelist_") else None
+        command = build_command(kind, name, reason, dialect, addon)
+        action = addon or ACTION_SETS[dialect][kind]
         if action.confirm and not confirm:
             raise PlayerActionError("This needs to be confirmed first.")
         return await self.send_built(kind, check_name(name, dialect), command, action)

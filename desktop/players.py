@@ -42,6 +42,8 @@ ACTION_WORDS = {
     "kick": "players.do_kick",
     "ban": "players.do_ban",
     "pardon": "players.do_pardon",
+    "address_allow": "whitelist.do_address_allow",
+    "address_remove": "whitelist.do_address_remove",
 }
 # Bedrock calls its whitelist the allowlist (the glossary's words).
 ALLOWLIST = {
@@ -50,6 +52,7 @@ ALLOWLIST = {
     "players.whitelist": "desktop.players.allowlist",
     "players.whitelist_empty": "desktop.players.allowlist_empty",
     "players.tag_whitelisted": "desktop.players.tag_allowlisted",
+    "whitelist.title": "whitelist.title_allowlist",
 }
 STATE_WORDS = {
     "sent": "players.state_sent",
@@ -167,6 +170,12 @@ class PlayersPage(Page):
         layout.addLayout(self.link_rows)
         self.links_card.hide()
         self.column.addWidget(self.links_card)
+        # Whitelist requests, new addresses and the add-on note (agent/whitelist.py).
+        self.help_card, layout = card(text("whitelist.title"))
+        self.help_rows = QVBoxLayout()
+        layout.addLayout(self.help_rows)
+        self.help_card.hide()
+        self.column.addWidget(self.help_card)
         self.column.addWidget(label(text("players.no_ip"), "sub"))
         self.column.addStretch()
 
@@ -187,8 +196,10 @@ class PlayersPage(Page):
         self.chat_card.setVisible(self.may("console.read"))
         if self.may("players.manage"):
             self.ask("GET", "/discord-links", self.show_links, lambda _e: None)
+            self.ask("GET", "/whitelist", self.show_help, lambda _e: None)
         else:
             self.links_card.hide()
+            self.help_card.hide()
 
     def show_links(self, data: dict) -> None:
         rows: list[QWidget] = []
@@ -216,6 +227,84 @@ class PlayersPage(Page):
             rows.append(line)
         refill(self.link_rows, rows)
         self.links_card.setVisible(bool(rows))
+
+    def show_help(self, data: dict) -> None:
+        """Requests to join, addresses an IP whitelist add-on turned away,
+        and what an offline-mode server uses for its whitelist."""
+        title_of(self.help_card).setText(self.words("whitelist.title"))
+        rows: list[QWidget] = []
+        if data.get("online_mode") is False and data.get("suggested"):
+            words = (
+                text("whitelist.addon_used", addon=data["addon"])
+                if data.get("addon")
+                else text("whitelist.no_addon", addons=", ".join(data["suggested"]))
+            )
+            rows.append(label(words, "notice" if not data.get("addon") else "sub"))
+        for form in data.get("forms") or []:
+            rows.append(self.form_row(form))
+        addresses = data.get("addresses") or []
+        for address in addresses:
+            rows.append(self.address_row(address))
+        if addresses:
+            rows.append(label(text("whitelist.addresses_hint", addon=data["ip_addon"]), "muted"))
+        refill(self.help_rows, rows)
+        self.help_card.setVisible(bool(rows))
+        if data.get("action"):
+            self.sent(data)
+
+    def form_row(self, form: dict) -> QWidget:
+        line = QWidget()
+        h = QHBoxLayout(line)
+        h.setContentsMargins(0, 0, 0, 0)
+        words = text(
+            "whitelist.asks", member=form["discord_name"], name=form["name"], why=form["why"]
+        )
+        h.addWidget(label(words), 1)
+        for verdict, key, style in (
+            ("approve", "discord.links.approve", "primary"),
+            ("refuse", "discord.links.refuse", "plain"),
+        ):
+            button = push(text(key), style)
+            button.setAccessibleName(f"{text(key)}: {form['name']}")
+            button.clicked.connect(
+                lambda _=False, v=verdict: self.ask(
+                    "POST", f"/whitelist/forms/{form['id']}", self.show_help, body={"answer": v}
+                )
+            )
+            h.addWidget(button)
+        return line
+
+    def address_row(self, address: dict) -> QWidget:
+        line = QWidget()
+        h = QHBoxLayout(line)
+        h.setContentsMargins(0, 0, 0, 0)
+        words = text(
+            f"whitelist.address_{address['state']}",
+            name=address["name"],
+            masked=address["masked"],
+            time=clock(address["seen_at"]),
+        )
+        h.addWidget(label(words), 1)
+        path = f"/whitelist/addresses/{address['id']}"
+        choices = [("allow", "whitelist.allow", "primary"), ("ignore", "whitelist.ignore", "plain")]
+        if address["state"] != "new":
+            choices = []
+        for verdict, key, style in choices:
+            button = push(text(key), style)
+            button.setAccessibleName(f"{text(key)}: {address['name']} {address['masked']}")
+            button.clicked.connect(
+                lambda _=False, v=verdict: self.ask(
+                    "POST", path, self.show_help, body={"answer": v}
+                )
+            )
+            h.addWidget(button)
+        remove = push(text("whitelist.remove"), "plain")
+        remove.setAccessibleName(
+            f"{text('whitelist.remove')}: {address['name']} {address['masked']}"
+        )
+        remove.clicked.connect(lambda: self.ask("DELETE", path, self.show_help))
+        h.addWidget(remove)
+        return line
 
     def link_request(self, asked: dict, players: list[dict]) -> QWidget:
         """A Bedrock player's link request: pick who they are, then approve."""

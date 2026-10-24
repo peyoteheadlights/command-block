@@ -77,7 +77,10 @@ CHATS = POSTS | ADD_REACTIONS | READ_MESSAGE_HISTORY
 # the ones each of them gets. A shared kind can also be tied per server.
 SHARED_CHANNELS = ("alerts", "quests", "events")
 SERVER_CHANNELS = ("chat", "status")
-KINDS = (*SHARED_CHANNELS, *SERVER_CHANNELS)
+# Never made by "Set up this Discord server": the owner picks one on purpose.
+# The console channel shows a server's console, read only.
+OPT_IN_CHANNELS = ("console",)
+KINDS = (*SHARED_CHANNELS, *SERVER_CHANNELS, *OPT_IN_CHANNELS)
 CATEGORY = "Command Block"
 # The Discord roles setup makes: kind -> (name, colour). The mod role gets
 # the default permission level; a "level_<n>" role goes to members at Level
@@ -185,6 +188,33 @@ def set_address(db, server_id: str, address: str | None) -> None:
 def our_roles(db, guild_id: str) -> dict[str, str]:
     rows = db.query("SELECT kind, role_id FROM discord_roles WHERE guild_id = ?", (guild_id,))
     return {r["kind"]: r["role_id"] for r in rows}
+
+
+def consoles(db, guild_ids) -> dict[str, list[str]]:
+    """Each server's console channels in these Discord servers."""
+    out: dict[str, list[str]] = {}
+    for row in db.query(
+        "SELECT guild_id, server_id, channel_id FROM discord_channels WHERE kind = 'console'"
+    ):
+        if row["guild_id"] in guild_ids:
+            out.setdefault(row["server_id"], []).append(row["channel_id"])
+    return out
+
+
+OPTIONS_KEY = "discord_guild_options"  # guild id -> its options
+
+
+def guild_options(db, guild_id: str) -> dict[str, Any]:
+    """remove_on_leave: take someone off the whitelist when they leave."""
+    saved = (db.get_setting(OPTIONS_KEY, {}) or {}).get(guild_id) or {}
+    return {"remove_on_leave": False, **saved}
+
+
+def set_guild_options(db, guild_id: str, **changes: Any) -> dict[str, Any]:
+    everything = db.get_setting(OPTIONS_KEY, {}) or {}
+    everything[guild_id] = {**guild_options(db, guild_id), **changes}
+    db.set_setting(OPTIONS_KEY, everything)
+    return everything[guild_id]
 
 
 # -- Levels ------------------------------------------------------------------
@@ -378,6 +408,11 @@ async def inspect(rest, db, guild_id: str, bot_id: str, names: dict[str, str]) -
         if row["kind"] == "category":
             continue
         needs = CHATS if row["kind"] == "chat" else POSTS
+        if row["kind"] == "console" and has(
+            channel_permissions(guild_id, roles, "", [], channel), VIEW_CHANNEL
+        ):
+            # Everyone in the Discord server could read the console.
+            problems.append({"id": "console_public", "channel": channel["name"], "server": where})
         if not has(channel_permissions(guild_id, roles, bot_id, mine, channel), needs):
             problems.append(
                 {
