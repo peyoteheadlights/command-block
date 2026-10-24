@@ -48,20 +48,45 @@ Windows may say "Unknown publisher" because the setup file isn't signed yet (I'm
 
 This is a student project I've been working on as a hobby for my personal use, and my friends suggested I release it. The app is a work in progress and may have a few bugs. If you run into any, please let me know by [reporting a bug](https://github.com/peyoteheadlights/command-block/issues/new?template=bug_report.yml).
 
-## It would be cool if Command Block could...
+## Planned features
 
-This app is in no way done and will be supported for a good long while, with these next features already being worked on:
+This app is in no way done and will be supported for a good long while. Here's everything that's planned, roughly in order (no dates, it's a hobby project):
 
-- **Discord bot:** control servers from Discord, and friends can "Ask to start" a server, which goes to you and your moderators. Setup, Discord role permissions, status and alerts, starting, account linking, the chat bridge, /stats, Levels with Level roles, a weekly leaderboard and quests with rewards are in already ([docs/discord.md](docs/discord.md)).
+**Discord bot** (a lot is in already: setup, Discord role permissions, status and alerts, starting, account linking, the chat bridge, /stats, Levels with Level roles, a weekly leaderboard and quests with rewards, see [docs/discord.md](docs/discord.md))
+
+- Events with RSVPs and reminders, simple polls, and `/report` for reporting a player to the owners.
+- Whitelist from Discord: `/whitelist add`, or an application form owners approve with a button.
+- Kick, ban, backup and restart buttons on alerts, and a read-only console channel (off by default).
+- `/store` to show the server's store, and store ranks that become Discord roles.
+
+**Bigger servers and safety**
+
+- Safety notes and saved version lists that stay up to date without a new release.
 - Manage servers on several PCs under one owner account.
-- Support for Spigot, Leaf and custom jars, with type switching.
-- Add mods from a link or file, including CurseForge, plus recommended add-ons, performance mods and QoL mods.
-- Attack protection, a changeable port, and sign-in help for offline mode.
-- Editing mod config files inside the app.
-- playit.gg support.
+- Help picking a server type, support for Spigot, Leaf and custom jars, and switching a server's type (for example Vanilla to Paper).
+- Add mods from a link or file, including CurseForge, plus recommended add-ons, performance and QoL suggestions, and guides for popular add-ons.
+- Editing add-on config files inside the app.
+- Bring a server in from a folder or zip, or bring servers back from a backup folder on a new PC.
+- Test servers, and "New season" (keep the old world, start a fresh one with the same settings).
+- A server store through Tebex, cosmetics only by default.
+- Attack protection, a changeable port, and sign-in for offline-mode servers.
+- Start a sleeping server when someone tries to join, a "new version is out" alert, a player activity graph and your own command buttons.
 - Controlling servers on rented hosts that have an official API.
-- Guided phone setup, a Tailscale share for moderators, and a "First run and friends joining" guide.
-- Store releases and code signing.
+- playit.gg support.
+
+**Getting it ready for 1.0**
+
+- Cleaner, smaller code and a simpler README.
+- Testing the whole app as a first-time player, a guided phone setup, a Tailscale share for moderators and a "First run and friends joining" guide.
+- A security check of the whole project, the phone apps in the App Store and Google Play, and a signed setup file.
+
+**After 1.0**
+
+- Your own server store run inside Command Block (no Tebex needed).
+- Server networks (a lobby plus other servers, with Velocity or BungeeCord).
+- Folia and Minecraft Education servers.
+- Running the server side on Linux, Raspberry Pi and Mac.
+- Translations.
 - A Mac desktop app (maybe).
 
 Got more ideas? Make a [feature request](https://github.com/peyoteheadlights/command-block/issues/new?template=feature_request.yml).
