@@ -348,3 +348,38 @@ class HelpBundleRequest(BaseModel):
 
 class SupportAskAnswer(BaseModel):
     answer: Literal["donate", "no_thanks"]
+
+
+class DiscordToken(BaseModel):
+    # A bot token is three dot-separated parts of base64; never logged.
+    token: str = Field(
+        min_length=50,
+        max_length=120,
+        pattern=r"^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$",
+    )
+
+
+class DiscordProfile(BaseModel):
+    name: str | None = Field(None, min_length=2, max_length=32)
+    # A PNG or JPEG as base64, or "logo" for the Command Block logo.
+    avatar: str | None = Field(None, max_length=11_000_000)
+
+
+class DiscordSetup(BaseModel):
+    servers: list[str] = Field(min_length=1, max_length=50)
+
+
+class DiscordTie(BaseModel):
+    kind: Literal["alerts", "quests", "events", "chat", "status"]
+    server_id: str = Field(default="", max_length=64)
+    channel_id: str | None = Field(None, pattern=r"^\d{1,25}$")
+
+
+class DiscordRoleGrants(BaseModel):
+    role_name: str = Field(default="", max_length=100)
+    grants: dict[str, list[str]] = Field(max_length=50)
+
+
+class DiscordLinkAnswer(BaseModel):
+    answer: Literal["approve", "refuse"]
+    uuid: str | None = Field(None, max_length=64)

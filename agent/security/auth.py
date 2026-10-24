@@ -148,7 +148,7 @@ class Access:
 @dataclass
 class Principal:
     user: str
-    kind: str  # session | api_token
+    kind: str  # session | api_token | discord (a Discord member using the bot)
     token_hash: str | None = None
     expires_at: float | None = None
     role: str = "owner"  # owner | helper (a moderator, renamed later)

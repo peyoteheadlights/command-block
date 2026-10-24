@@ -406,6 +406,62 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE accounts ADD COLUMN pc_grants TEXT;
         """,
     ),
+    (
+        16,
+        # The Discord bot (agent/discord). discord_channels: the channels
+        # it uses in each Discord server, server_id '' for one shared by
+        # every Minecraft server (alerts) and for the category.
+        # discord_roles: the Discord roles it made and hands out.
+        # discord_role_grants: what a Discord role may do on a server (a
+        # JSON list, like a moderator's grants). discord_links: Linked
+        # accounts, one Discord member per Minecraft account (its uuid, or
+        # a Bedrock player's xuid). discord_link_requests: Bedrock players
+        # waiting for the owner or a moderator to approve their link.
+        """
+        CREATE TABLE discord_channels (
+            guild_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            server_id TEXT NOT NULL DEFAULT '',
+            channel_id TEXT NOT NULL,
+            PRIMARY KEY (guild_id, kind, server_id)
+        );
+        CREATE TABLE discord_roles (
+            guild_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            PRIMARY KEY (guild_id, kind)
+        );
+        CREATE TABLE discord_role_grants (
+            guild_id TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            role_name TEXT NOT NULL DEFAULT '',
+            permissions TEXT NOT NULL,
+            PRIMARY KEY (guild_id, role_id, server_id)
+        );
+        CREATE TABLE discord_links (
+            uuid TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            edition TEXT,
+            server_id TEXT NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            linked_at REAL NOT NULL,
+            linked_by TEXT
+        );
+        CREATE INDEX discord_links_member ON discord_links(discord_id);
+        CREATE TABLE discord_link_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            channel_id TEXT,
+            created_at REAL NOT NULL,
+            UNIQUE (server_id, discord_id)
+        );
+        """,
+    ),
 ]
 
 

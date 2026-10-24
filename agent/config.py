@@ -315,6 +315,7 @@ class NotificationSettings(Section):
             "helper_added": True,
             "helper_removed": True,
             "tailscale": True,
+            "discord_bot": True,
         }
     )
     email: EmailSettings = field(default_factory=EmailSettings)
@@ -400,6 +401,7 @@ SECRET_ENV_KEYS = (
     "MCSC_API_TOKEN",
     "MCSC_SECRET_KEY",
     "MCSC_DISCORD_WEBHOOK",
+    "MCSC_DISCORD_BOT_TOKEN",
     "MCSC_SMTP_USERNAME",
     "MCSC_SMTP_PASSWORD",
     # The browser alerts' keys: gone with the web pages, but older installs
@@ -1001,6 +1003,10 @@ class Config:
     @property
     def discord_webhook(self) -> str:
         return os.environ.get("MCSC_DISCORD_WEBHOOK", "")
+
+    @property
+    def discord_bot_token(self) -> str:
+        return os.environ.get("MCSC_DISCORD_BOT_TOKEN", "")
 
     @property
     def smtp_username(self) -> str:

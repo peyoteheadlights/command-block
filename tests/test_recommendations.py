@@ -88,6 +88,7 @@ def test_every_recommendation_has_evidence_and_a_way_to_the_fix():
         samples=samples(60, proc_ram_mb=4000, players=3, tps=9.0),
         crashes=[oom(1)],
         tailscale_down=True,
+        discord={"id": "role_too_low", "guild": "Friends", "role": "Legend"},
     )
     found = rec.evaluate(f)
     assert len(found) == len(rec.RULES)

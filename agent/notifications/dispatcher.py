@@ -115,6 +115,8 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "phones_can_reach": ("tailscale", 0x3BA55D, "Phones can now reach this PC"),
     "tailscale_stopped": ("tailscale", 0xED4245, "Phones can't reach this PC: Tailscale stopped"),
     "tailscale_key_expiring": ("tailscale", 0xFAA61A, "The Tailscale key runs out soon"),
+    "discord_token_rejected": ("discord_bot", 0xED4245, "Discord refused the bot's token"),
+    "discord_link_request": ("discord_bot", 0x5865F2, "{server}: a Discord member asks to link"),
 }
 
 
@@ -162,8 +164,10 @@ ALERT_PAGES = {
     "phones_can_reach": "app-settings",
     "tailscale_stopped": "app-settings",
     "tailscale_key_expiring": "helpers",
+    "discord_token_rejected": "discord",
+    "discord_link_request": "players",
 }
-APP_PAGES = {"security", "helpers", "app-settings"}
+APP_PAGES = {"security", "helpers", "app-settings", "discord"}
 
 # How many alerts the agent keeps for the phone app to read.
 APP_ALERTS_KEPT = 200

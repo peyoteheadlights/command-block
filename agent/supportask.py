@@ -29,6 +29,7 @@ STATE_KEY = "support_ask"
 WAIT_DAYS = 14
 # Recommendations that mean something is wrong, not just a tip.
 PROBLEMS = {
+    "discord_problem",
     "crash",
     "no_backup",
     "old_backup",

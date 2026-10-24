@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -24,10 +25,11 @@ from .backups.manager import BackupManager
 from .config import ConfigError
 from .database.db import Database, ServerDb
 from .database.event_writer import EventWriter
+from .discord.links import Links
 from .events import AGENT_SCOPE, Event, EventBus, ServerBus
 from .jobs import JobConflict, JobHandle, JobTracker
 from .keepawake import KeepAwake
-from .minecraft.chat import ChatLog
+from .minecraft.chat import ChatLog, parse_chat
 from .minecraft.crash import CrashReporter
 from .minecraft.playeractions import PlayerActions
 from .minecraft.process import MinecraftServer, ServerError
@@ -102,6 +104,9 @@ class ServerContext:
     async def _console_signals(self, sig, line) -> None:
         await self.players.handle_signals(sig, line)
         await self.player_actions.handle(sig, line)
+        said = parse_chat(line)
+        if said and said[0] == "player" and self.core.links.hear(self, said[1] or "", said[2]):
+            return  # a link code: kept out of the chat log, so never bridged to Discord
         message = self.chat.add(line)
         if message is not None:
             # Not stored in the database: chat is as chatty as the console
@@ -303,6 +308,10 @@ class AgentCore:
         # Moves the agent onto Tailscale and checks it every minute after.
         self.tailscale = TailscaleWatch(self)
         self.wake = Wake(self)
+        # Linked accounts work without the bot (the apps list and remove
+        # them); the bot itself only exists while a token is set.
+        self.links = Links(self.db)
+        self.discord: Any = None
 
         self.bus.subscribe(self._persist_event)
         self.bus.subscribe(self.notifier.handle)
@@ -395,8 +404,33 @@ class AgentCore:
         await self.updates.start()
         self.tailscale.start()
         self.wake.start()
+        self.start_discord()
         for ctx in list(self.servers.values()):
             await ctx.autostart()
+
+    def start_discord(self) -> None:
+        """Start the bot when a token is set. Without one the Discord client
+        isn't even imported (weak mini PCs come first)."""
+        token = self.config.discord_bot_token
+        if token and self.discord is None:
+            from .discord.bot import Bot
+
+            self.discord = Bot(self, token)
+            self.discord.start()
+
+    async def set_discord_token(self, token: str | None) -> None:
+        """Save a new bot token in .env (or remove it), then reconnect."""
+        from installer.setup_tool import write_env_value
+
+        from .appinfo import default_env_path
+
+        path = self.config.env_path or default_env_path()
+        await asyncio.to_thread(write_env_value, path, "MCSC_DISCORD_BOT_TOKEN", token or "")
+        os.environ["MCSC_DISCORD_BOT_TOKEN"] = token or ""
+        if self.discord is not None:
+            await self.discord.stop()
+            self.discord = None
+        self.start_discord()
 
     async def check_certificate(self) -> dict:
         """Read the certificate and alert on approaching expiry.
@@ -463,6 +497,8 @@ class AgentCore:
         await self.updates.stop()
         self.tailscale.stop()
         self.wake.stop()
+        if self.discord is not None:
+            await self.discord.stop()
         await self.jobs.stop()
         for ctx in list(self.servers.values()):
             await ctx.stop()

@@ -290,13 +290,14 @@ def main() -> int:
             )
             continue
         if cmd.startswith("fakejoin "):
-            name = cmd.split(" ", 1)[1]
+            # "fakejoin Name", or "fakejoin Name <uuid>" for a second account.
+            name, _, uuid = cmd.split(" ", 1)[1].partition(" ")
             players.append(name)
             out(
                 stamp(
                     "User Authenticator #1",
                     "INFO",
-                    f"UUID of player {name} is 069a79f4-44e9-4726-a5be-fca90e38aaf5",
+                    f"UUID of player {name} is {uuid or FAKE_UUID}",
                 )
             )
             out(stamp("Server thread", "INFO", f"{name} joined the game"))

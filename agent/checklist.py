@@ -3,8 +3,9 @@
 A few things worth doing once, each ticked off from something the app
 measured rather than from a click on the item (house rule 1): the server is
 set up, a backup has really run and checked out, somebody has really
-joined, alerts are really switched on and, if the desktop app's Tailscale
-step was skipped, the agent really listens on Tailscale. Pressing an item only takes you
+joined, alerts are really switched on, if the desktop app's Tailscale
+step was skipped, the agent really listens on Tailscale and, once a Discord
+bot token is set, the bot is connected and set up without problems. Pressing an item only takes you
 to the page where it is done.
 
 The card can be dismissed, which is remembered per server. Once every item
@@ -105,7 +106,37 @@ def _phones(ctx: ServerContext) -> dict[str, Any] | None:
     }
 
 
-ITEMS = (_server_ready, _backup_taken, _friend_joined, _alerts_on, _phones)
+def _discord(ctx: ServerContext) -> dict[str, Any] | None:
+    """Only once a bot token is set: done when the bot is connected, this
+    server has a Discord server set up for it, and nothing there is wrong."""
+    bot = ctx.core.discord
+    if bot is None:
+        return None
+    from .discord import layout
+
+    connected = bot.gateway.state == "connected"
+    guilds = [g for g in bot.guilds if ctx.server_id in layout.servers_of(ctx.core.db, g)]
+    problem = bot.problem()
+    done = connected and bool(guilds) and problem is None
+    key = (
+        "discord_done"
+        if done
+        else "discord_offline"
+        if not connected
+        else "discord_not_set_up"
+        if not guilds
+        else "discord_problem"
+    )
+    return {
+        "id": "discord",
+        "done": done,
+        "page": "discord",
+        "evidence_key": key,
+        "evidence": {"name": bot.guilds[guilds[0]]["name"] if guilds else None},
+    }
+
+
+ITEMS = (_server_ready, _backup_taken, _friend_joined, _alerts_on, _phones, _discord)
 
 
 def status(ctx: ServerContext) -> dict[str, Any]:
