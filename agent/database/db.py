@@ -479,6 +479,79 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        18,
+        # Quests (agent/quests.py). quests: what to do and the rewards (a
+        # JSON list of reward templates, never a command). quest_progress:
+        # a member's progress in one period ('once', a day, a Monday, a
+        # month or a year), counted from the numbers when it began
+        # (baseline, account id -> number). quest_claims: "done" claims
+        # waiting for approval. quest_suggestions: /quest suggest.
+        # quest_rewards: each reward owed, until it's given.
+        """
+        CREATE TABLE quests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            goal TEXT NOT NULL DEFAULT '',
+            count INTEGER NOT NULL DEFAULT 1,
+            repeat TEXT NOT NULL DEFAULT 'once',
+            ends_at REAL,
+            rewards TEXT NOT NULL DEFAULT '[]',
+            created_at REAL NOT NULL,
+            created_by TEXT NOT NULL,
+            ended_at REAL
+        );
+        CREATE TABLE quest_progress (
+            quest_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            period TEXT NOT NULL,
+            baseline TEXT NOT NULL DEFAULT '{}',
+            progress INTEGER NOT NULL DEFAULT 0,
+            saved_at REAL,
+            finished_at REAL,
+            PRIMARY KEY (quest_id, discord_id, period)
+        );
+        CREATE TABLE quest_claims (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quest_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            period TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            screenshot TEXT,
+            channel_id TEXT,
+            created_at REAL NOT NULL,
+            UNIQUE (quest_id, discord_id)
+        );
+        CREATE TABLE quest_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            title TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '',
+            channel_id TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE TABLE quest_rewards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quest_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            period TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            value TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'waiting',
+            answer TEXT,
+            created_at REAL NOT NULL,
+            given_at REAL,
+            UNIQUE (quest_id, discord_id, period, kind)
+        );
+        """,
+    ),
 ]
 
 

@@ -67,6 +67,7 @@ def eula_accepted() -> bool:
 # Players page's buttons are answered the way a real server answers them.
 LISTS = {"whitelist": "whitelist.json", "ops": "ops.json", "banned": "banned-players.json"}
 FAKE_UUID = "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+INVENTORY: dict[tuple[str, str], int] = {}  # (player, item id) -> count, from "fakeitem"
 
 
 def read_list(which: str) -> list[dict]:
@@ -139,6 +140,25 @@ def player_command(cmd: str, players: list[str]) -> str | None:
         if name in players:
             players.remove(name)
         return f"Banned {name}: {reason}"
+    # Quest rewards and the "bring items" count (clear with 0 takes nothing).
+    if word == "give" and len(parts) == 4:
+        if parts[1] not in players:
+            return "No player was found"
+        if parts[2] == "minecraft:nothing":
+            return f"Unknown item '{parts[2]}'"
+        name = parts[2].split(":")[-1].replace("_", " ").title()
+        return f"Gave {parts[3]} [{name}] to {parts[1]}"
+    if word == "xp" and len(parts) == 5 and parts[1] == "add":
+        if parts[2] not in players:
+            return "No player was found"
+        return f"Gave {parts[3]} experience levels to {parts[2]}"
+    if word == "clear" and len(parts) == 4 and parts[3] == "0":
+        if parts[1] not in players:
+            return "No player was found"
+        held = INVENTORY.get((parts[1], parts[2]), 0)
+        if not held:
+            return f"No items were found on player {parts[1]}"
+        return f"Found {held} matching item(s) on player {parts[1]}"
     if word == "pardon" and len(parts) == 2:
         name = parts[1]
         entries = read_list("banned")
@@ -312,6 +332,11 @@ def main() -> int:
         if cmd.startswith("fakeline "):
             # A line of the server's own, like a death or an advancement.
             out(stamp("Server thread", "INFO", cmd.split(" ", 1)[1]))
+            continue
+        if cmd.startswith("fakeitem "):
+            # "fakeitem Name minecraft:diamond 5": what the player carries.
+            name, item, count = cmd.split(" ")[1:]
+            INVENTORY[(name, item)] = int(count)
             continue
         if cmd.startswith("fakeleave "):
             name = cmd.split(" ", 1)[1]

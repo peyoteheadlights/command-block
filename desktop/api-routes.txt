@@ -175,3 +175,9 @@ PUT /api/tailscale/share-key
 DELETE /api/tailscale/share-key
 POST /api/tailscale/share-link
 PUT /api/discord/guilds/{guild_id}/levels
+GET /api/servers/{server_id}/quests
+POST /api/servers/{server_id}/quests
+DELETE /api/servers/{server_id}/quests/{quest_id}
+POST /api/servers/{server_id}/quests/claims/{claim_id}
+GET /api/servers/{server_id}/quests/claims/{claim_id}/screenshot
+DELETE /api/servers/{server_id}/quests/suggestions/{suggestion_id}

@@ -39,6 +39,7 @@ from .monitoring.players import PlayerTracker
 from .monitoring.tps import TpsMonitor
 from .notifications.dispatcher import Notifier
 from .ports import PortManager
+from .quests import Quests
 from .scheduler.scheduler import Scheduler
 from .security.auth import AuthManager
 from .startrequests import StartRequests
@@ -313,6 +314,7 @@ class AgentCore:
         # them); the bot itself only exists while a token is set.
         self.links = Links(self.db)
         self.start_requests = StartRequests(self)
+        self.quests = Quests(self)
         self.discord: Any = None
         # The bot posts alerts in its alerts channel (and the webhook steps aside).
         self.notifier.bot = lambda: self.discord
@@ -513,6 +515,7 @@ class AgentCore:
         if self.discord is not None:
             await self.discord.stop()
         self.start_requests.stop()
+        self.quests.stop()
         await self.jobs.stop()
         for ctx in list(self.servers.values()):
             await ctx.stop()

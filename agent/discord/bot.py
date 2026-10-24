@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime
+import json
 import logging
 import math
 import re
@@ -25,6 +26,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import httpx
+
 from .. import levels
 from ..config import PROJECT_ROOT
 from ..events import OWNER_ONLY_EVENTS, Event
@@ -33,6 +36,7 @@ from ..minecraft.chat import ChatError, relay
 from ..minecraft.commands import CommandError
 from ..minecraft.playeractions import DONE, SENT, PlayerActionError
 from ..minecraft.process import ServerError
+from ..quests import MAX_STACK, QuestError
 from ..security import permissions as P
 from ..security.auth import AuthError, Principal, RateLimiter
 from ..startrequests import STOPPED, StartRequest, StartRequestError
@@ -65,6 +69,10 @@ REFUSED = "\N{NO ENTRY SIGN}"  # the reaction on a message that didn't go into t
 SEEN_KEY = "discord_levels_seen"  # member id -> the Level their roles were last set for
 BOARDS_KEY = "discord_leaderboards"  # guild id -> the day its leaderboard was last posted
 BOARD_HOUR = 18  # on the PC's clock
+QUEST_BOARDS_KEY = "discord_quest_boards"  # quests channel id -> {"message", "words"}
+# A quest's screenshot only comes from Discord's own image servers.
+SCREENSHOT_HOSTS = ("cdn.discordapp.com", "media.discordapp.net")
+MAX_SCREENSHOT = 8 * 1024 * 1024
 
 
 class Refused(Exception):
@@ -72,7 +80,7 @@ class Refused(Exception):
 
 
 # Refusals whose words are safe to show in Discord as they are.
-SAYS_WHY = (Refused, LinkError, StartRequestError, PlayerActionError, JobConflict)
+SAYS_WHY = (Refused, LinkError, StartRequestError, PlayerActionError, JobConflict, QuestError)
 
 
 @dataclass
@@ -114,6 +122,11 @@ class Command:
     # Answered "thinking..." first, for work that can take longer than the
     # 3 seconds Discord waits for an answer.
     slow: bool = False
+
+    @property
+    def group(self) -> str:
+        """ "quest" for "quest join": Discord shows it as /quest join."""
+        return self.name.split(" ")[0] if " " in self.name else ""
 
 
 @dataclass
@@ -233,7 +246,12 @@ class Bot:
         and the weekly leaderboards. One failing doesn't stop the others."""
         await asyncio.sleep(LIVE_FIRST)
         while True:
-            for work in (self.update_live, self.update_levels, self.post_leaderboards):
+            for work in (
+                self.update_live,
+                self.update_levels,
+                self.post_leaderboards,
+                self.update_quests,
+            ):
                 try:
                     await work()
                 except client.DiscordError as exc:
@@ -416,6 +434,146 @@ class Bot:
             )
             posted[gid] = today
             db.set_setting(BOARDS_KEY, posted)
+
+    # -- quests ------------------------------------------------------------------
+    async def update_quests(self) -> None:
+        """Everyone's quest progress, the Discord roles quests gave, then
+        each Discord server's board, edited only when its words changed."""
+        quests = self.core.quests
+        await quests.check()
+        await self.give_roles()
+        db = self.core.db
+        boards = db.get_setting(QUEST_BOARDS_KEY, {}) or {}
+        changed = False
+        for gid in list(self.guilds):
+            channel = layout.shared_channel(db, gid, "quests")
+            names = self.server_names(gid)
+            if not channel or not names:
+                continue
+            words = progress.board([(names[sid], quests.board(sid)) for sid in sorted(names)])
+            post = boards.get(channel) or {}
+            if post.get("words") == words:
+                continue
+            boards[channel] = {
+                "message": await self._post_or_edit(channel, post.get("message"), words),
+                "words": words,
+            }
+            changed = True
+        if changed:
+            db.set_setting(QUEST_BOARDS_KEY, boards)
+
+    async def reward_role(self, server_id: str, role_id: str) -> None:
+        """A Discord role may be a quest reward: it's in a Discord server set
+        up for this Minecraft server and gives no power in Discord."""
+        db = self.core.db
+        for gid in list(self.guilds):
+            if server_id not in layout.servers_of(db, gid):
+                continue
+            roles = {r["id"]: r for r in await self.rest.request("GET", f"/guilds/{gid}/roles")}
+            if role_id in roles:
+                why = layout.level_role_refused(
+                    gid, roles[role_id], layout.our_roles(db, gid), "a quest reward"
+                )
+                if why:
+                    raise Refused(why)
+                return
+        raise Refused("That Discord role isn't in a Discord server set up for this server.")
+
+    async def give_roles(self) -> None:
+        """Discord roles owed for quests. Finishing a quest again stacks the
+        role: "Dragon Slayer ×2" (same colour, made the first time it's
+        needed) replaces "Dragon Slayer", up to ×10."""
+        db, quests = self.core.db, self.core.quests
+        owed = quests.rewards_everywhere("role")
+        found: dict[str, dict[str, dict]] = {}  # guild -> its roles, read once
+        for reward in owed:
+            base = json.loads(reward["value"])["role_id"]
+            gid = None
+            for guild in list(self.guilds):
+                if reward["server_id"] not in layout.servers_of(db, guild):
+                    continue
+                if guild not in found:
+                    roles = await self.rest.request("GET", f"/guilds/{guild}/roles")
+                    found[guild] = {r["id"]: r for r in roles}
+                if base in found[guild]:
+                    gid = guild
+                    break
+            if gid is None:
+                quests.set_reward(reward["id"], "failed", "The Discord role isn't there any more.")
+                continue
+            ours = layout.our_roles(db, gid)
+            why = layout.level_role_refused(gid, found[gid][base], ours, "a quest reward")
+            if why:  # given powers in Discord since the quest was made
+                quests.set_reward(reward["id"], "failed", why)
+                continue
+            times = min(quests.times_finished(reward["quest_id"], reward["discord_id"]), MAX_STACK)
+            try:
+                wanted = await self._stack_role(gid, base, times, found[gid])
+                held = await self.rest.request(
+                    "GET", f"/guilds/{gid}/members/{reward['discord_id']}"
+                )
+                path = f"/guilds/{gid}/members/{reward['discord_id']}/roles"
+                stack = {base, *(rid for k, rid in ours.items() if k.startswith(f"stack_{base}_"))}
+                for role_id in set(held.get("roles") or []) & stack - {wanted}:
+                    await self.rest.request("DELETE", f"{path}/{role_id}")
+                await self.rest.request("PUT", f"{path}/{wanted}")
+            except client.DiscordError as exc:
+                if exc.status in (403, 404):
+                    quests.set_reward(reward["id"], "failed", str(exc))
+                # Anything else: Discord or the network, tried again next minute.
+                log.info("couldn't give a quest's Discord role: %s", exc)
+                continue
+            quests.set_reward(reward["id"], "done")
+
+    async def _stack_role(self, guild_id: str, base: str, times: int, roles: dict) -> str:
+        if times <= 1:
+            return base
+        kind = f"stack_{base}_{times}"
+        made = layout.our_roles(self.core.db, guild_id).get(kind)
+        if made in roles:
+            return str(made)
+        role = roles[base]
+        created = await self.rest.request(
+            "POST",
+            f"/guilds/{guild_id}/roles",
+            {
+                "name": f"{role['name']} ×{times}"[:100],
+                "color": role.get("color") or 0,
+                "permissions": "0",
+                "mentionable": False,
+            },
+        )
+        roles[created["id"]] = created
+        self.core.db.execute(
+            "INSERT INTO discord_roles (guild_id, kind, role_id) VALUES (?, ?, ?) "
+            "ON CONFLICT(guild_id, kind) DO UPDATE SET role_id = excluded.role_id",
+            (guild_id, kind, created["id"]),
+        )
+        return str(created["id"])
+
+    async def screenshot(self, attachment: dict) -> tuple[bytes, str]:
+        """A screenshot sent with /quest done, from Discord's own image
+        servers only, at most 8 MB, and only a real PNG or JPEG."""
+        url = str(attachment.get("url") or "")
+        where = urllib.parse.urlsplit(url)
+        if where.scheme != "https" or where.hostname not in SCREENSHOT_HOSTS:
+            raise Refused("That picture didn't come from Discord.")
+        if int(attachment.get("size") or 0) > MAX_SCREENSHOT:
+            raise Refused("The screenshot is too big: 8 MB at most.")
+        data = bytearray()
+        async with httpx.AsyncClient(transport=client.TRANSPORT, timeout=20) as http:
+            async with http.stream("GET", url) as answer:
+                if answer.status_code != 200:
+                    raise Refused("Discord didn't hand over the screenshot. Try again.")
+                async for chunk in answer.aiter_bytes():
+                    data += chunk
+                    if len(data) > MAX_SCREENSHOT:
+                        raise Refused("The screenshot is too big: 8 MB at most.")
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return bytes(data), "png"
+        if data.startswith(b"\xff\xd8\xff"):
+            return bytes(data), "jpg"
+        raise Refused("The screenshot has to be a PNG or JPEG picture.")
 
     # -- alerts ------------------------------------------------------------------
     def posts_alert(self, event: Event) -> bool:
@@ -701,7 +859,14 @@ class Bot:
         asking: Button | None = None  # a button that asks "Are you sure?" first
         on_prompt = False  # pressed on the "Are you sure?" message: edit it in place
         if kind == 2:
-            command = COMMANDS.get(str(body.get("name")))
+            name = str(body.get("name"))
+            if name in GROUPS:  # "/quest join": the part after the group is an option
+                sub: dict = next(iter(body.get("options") or []), {})
+                name = f"{name} {sub.get('name')}"
+                call.options = {
+                    o["name"]: o.get("value") for o in sub.get("options") or [] if "name" in o
+                }
+            command = COMMANDS.get(name)
             if command is None:
                 return
             name, permission, handler = f"/{command.name}", command.permission, command.handler
@@ -848,25 +1013,37 @@ def command_list(names: dict[str, str]) -> list[dict]:
         "required": False,
         "choices": [{"name": name[:100], "value": sid} for sid, name in sorted(names.items())][:25],
     }
-    out = []
+    out: list[dict] = []
     for command in COMMANDS.values():
         options = list(command.options)
         if command.needs_server and server["choices"]:
             options.append(server)
-        out.append(
-            {
-                "name": command.name,
-                "description": command.description,
+        entry = {
+            "name": command.name.split(" ")[-1],
+            "description": command.description,
+            "type": 1,
+            "options": options,
+        }
+        if not command.group:
+            out.append(entry)
+            continue
+        group = next((c for c in out if c["name"] == command.group), None)
+        if group is None:
+            group = {
+                "name": command.group,
+                "description": GROUPS[command.group],
                 "type": 1,
-                "options": options,
+                "options": [],
             }
-        )
+            out.append(group)
+        group["options"].append(entry)  # a subcommand: an option of type 1
     return out
 
 
 def alert_buttons(event: Event, ctx: ServerContext) -> list[dict]:
     """The buttons under an alert in the alerts channel."""
-    name = str((event.data or {}).get("username") or "")
+    data = event.data or {}
+    name = str(data.get("username") or data.get("claim_id") or "")
     wanted = {
         "player_joined": ("kick", "ban"),
         "player_left": ("ban",),
@@ -877,6 +1054,7 @@ def alert_buttons(event: Event, ctx: ServerContext) -> list[dict]:
         "backup_failed": ("backup",),
         "backup_copy_failed": ("backup",),
         "start_request": ("start_yes", "start_no"),
+        "quest_claim": ("claim_yes", "claim_no"),
     }.get(event.type, ())
     if not ctx.config.server_type.bans:
         wanted = tuple(a for a in wanted if a != "ban")
@@ -1125,6 +1303,126 @@ async def unlink(bot: Bot, call: Call) -> str:
     raise Refused(f"{name} isn't one of your linked accounts. /links lists them.")
 
 
+# -- quests ---------------------------------------------------------------------------
+async def quest_join(bot: Bot, call: Call) -> str:
+    assert call.ctx is not None
+    quest = await bot.core.quests.join(call.ctx, call.options.get("quest"), call.member_id)
+    return (
+        f"You're on quest {quest['id']}, {quest['title']}: {progress.task(bot.core.quests.view(quest))}. "
+        "It counts from now. /quest progress shows how far you are."
+    )
+
+
+async def quest_progress(bot: Bot, call: Call) -> str:
+    assert call.ctx is not None
+    found = bot.core.quests.of_member(call.ctx.server_id, call.member_id)
+    wanted = call.options.get("quest")
+    if wanted is not None:
+        found = [q for q in found if str(q["id"]) == str(wanted)]
+    return progress.my_quests(found, call.ctx.name)
+
+
+async def quest_done(bot: Bot, call: Call) -> str:
+    assert call.ctx is not None
+    picture = None
+    wanted = call.options.get("screenshot")
+    if wanted:
+        attachments = ((call.interaction.get("data") or {}).get("resolved") or {}).get(
+            "attachments"
+        ) or {}
+        if str(wanted) not in attachments:
+            raise Refused("That screenshot didn't come through. Try again.")
+        picture = await bot.screenshot(attachments[str(wanted)])
+    return await bot.core.quests.done(
+        call.ctx,
+        call.options.get("quest"),
+        call.member_id,
+        call.member_name,
+        str(call.options.get("note") or ""),
+        call.channel_id,
+        picture,
+    )
+
+
+async def quest_suggest(bot: Bot, call: Call) -> str:
+    assert call.ctx is not None
+    bot.core.quests.suggest(
+        call.ctx,
+        call.member_id,
+        call.member_name,
+        str(call.options.get("title") or ""),
+        str(call.options.get("details") or ""),
+        call.channel_id,
+    )
+    await call.ctx.bus.publish(
+        Event(
+            type="quest_suggested",
+            message=f"{call.member_name} suggested a quest on Discord",
+            data={"discord_name": call.member_name, "title": call.options.get("title")},
+        )
+    )
+    return "Thanks! The owner and moderators will see your idea in Command Block."
+
+
+async def quest_create(bot: Bot, call: Call) -> str:
+    """/quest create, for Discord roles given "Quests and events": the same
+    checks as the apps, rewards only from the templates."""
+    ctx = call.ctx
+    assert ctx is not None
+    o = call.options
+    rewards: list[dict[str, Any]] = []
+    if o.get("role"):
+        await bot.reward_role(ctx.server_id, str(o["role"]))
+        rewards.append({"kind": "role", "role_id": str(o["role"])})
+    if o.get("item"):
+        rewards.append({"kind": "item", "item": o["item"], "count": o.get("item_count") or 1})
+    if o.get("xp_levels"):
+        rewards.append({"kind": "xp", "levels": o["xp_levels"]})
+    if o.get("level_xp"):
+        rewards.append({"kind": "level_xp", "amount": o["level_xp"]})
+    quest = await bot.core.quests.make(
+        ctx,
+        {
+            "title": o.get("title"),
+            "details": o.get("details"),
+            "kind": o.get("kind"),
+            "goal": o.get("goal"),
+            "count": o.get("count"),
+            "repeat": o.get("repeat"),
+            "ends": o.get("ends"),
+            "rewards": rewards,
+        },
+        call.principal.user,
+    )
+    return f"Made {progress.quest_line(bot.core.quests.view(quest))}. It's on the board within a minute."
+
+
+async def answer_claim(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    yes = str(call.interaction["data"]["custom_id"]).removeprefix("sure:").startswith("claim_yes")
+    claim = await bot.core.quests.answer_claim(ctx, call.arg, yes, call.principal.user)
+    return f"{'Approved' if yes else 'Refused'}: {claim['discord_name']}, {claim['title']}."
+
+
+# The quest kinds for /quest create (Discord's choices: name shown, value sent).
+KIND_CHOICES = [
+    {"name": "A stat count (goal: mined:diamond_ore)", "value": "stat"},
+    {"name": "An advancement (goal: end/kill_dragon)", "value": "advancement"},
+    {"name": "Hours played", "value": "playtime"},
+    {"name": "Joins", "value": "joins"},
+    {"name": "Bring items (goal: diamond)", "value": "items"},
+    {"name": "Needs approval", "value": "approval"},
+]
+QUEST_OPTION = {
+    "type": 4,
+    "name": "quest",
+    "description": "The quest's number on the board",
+    "required": True,
+    "min_value": 1,
+}
+GROUPS = {"quest": "Quests: join one, see your progress, say you're done"}
+
 COMMANDS: dict[str, Command] = {
     c.name: c
     for c in (
@@ -1181,6 +1479,124 @@ COMMANDS: dict[str, Command] = {
             needs_server=False,
             slow=True,
         ),
+        Command("quest join", "Join a quest", P.SERVER_VIEW, quest_join, options=[QUEST_OPTION]),
+        Command(
+            "quest progress",
+            "How far you are on your quests",
+            P.SERVER_VIEW,
+            quest_progress,
+            options=[{**QUEST_OPTION, "required": False}],
+        ),
+        Command(
+            "quest done",
+            "Say you've done a quest (items are counted, never taken)",
+            P.SERVER_VIEW,
+            quest_done,
+            slow=True,
+            options=[
+                QUEST_OPTION,
+                {"type": 3, "name": "note", "description": "What you did", "max_length": 300},
+                {"type": 11, "name": "screenshot", "description": "A screenshot, if it helps"},
+            ],
+        ),
+        Command(
+            "quest suggest",
+            "Suggest a quest to the owner and moderators",
+            P.SERVER_VIEW,
+            quest_suggest,
+            options=[
+                {
+                    "type": 3,
+                    "name": "title",
+                    "description": "The quest",
+                    "required": True,
+                    "max_length": 80,
+                },
+                {"type": 3, "name": "details", "description": "More about it", "max_length": 300},
+            ],
+        ),
+        Command(
+            "quest create",
+            "Make a quest (if your Discord role may)",
+            P.QUESTS_MANAGE,
+            quest_create,
+            slow=True,
+            options=[
+                {
+                    "type": 3,
+                    "name": "title",
+                    "description": "The quest",
+                    "required": True,
+                    "max_length": 80,
+                },
+                {
+                    "type": 3,
+                    "name": "kind",
+                    "description": "What it asks for",
+                    "required": True,
+                    "choices": KIND_CHOICES,
+                },
+                {
+                    "type": 3,
+                    "name": "goal",
+                    "description": "The stat, advancement or item",
+                    "max_length": 100,
+                },
+                {
+                    "type": 4,
+                    "name": "count",
+                    "description": "How many (hours for playtime)",
+                    "min_value": 1,
+                },
+                {
+                    "type": 3,
+                    "name": "repeat",
+                    "description": "How often it comes back (00:00 on the PC's clock)",
+                    "choices": [
+                        {"name": "Once", "value": "once"},
+                        {"name": "Every day", "value": "daily"},
+                        {"name": "Every week (Monday)", "value": "weekly"},
+                        {"name": "Every month", "value": "monthly"},
+                        {"name": "Every year", "value": "yearly"},
+                    ],
+                },
+                {
+                    "type": 3,
+                    "name": "ends",
+                    "description": "Last day, like 2026-12-31",
+                    "max_length": 10,
+                },
+                {"type": 3, "name": "details", "description": "More about it", "max_length": 300},
+                {"type": 8, "name": "role", "description": "Reward: a Discord role"},
+                {
+                    "type": 3,
+                    "name": "item",
+                    "description": "Reward: an item, like diamond",
+                    "max_length": 100,
+                },
+                {
+                    "type": 4,
+                    "name": "item_count",
+                    "description": "How many of the item (1-64)",
+                    "min_value": 1,
+                    "max_value": 64,
+                },
+                {
+                    "type": 4,
+                    "name": "xp_levels",
+                    "description": "Reward: Minecraft XP levels (1-30)",
+                    "min_value": 1,
+                    "max_value": 30,
+                },
+                {
+                    "type": 4,
+                    "name": "level_xp",
+                    "description": "Reward: Level XP (1-500)",
+                    "min_value": 1,
+                    "max_value": 500,
+                },
+            ],
+        ),
         Command(
             "unlink",
             "Remove one of your linked Minecraft accounts",
@@ -1201,5 +1617,7 @@ BUTTONS: dict[str, Button] = {
         Button("backup", "Back up", P.BACKUPS_CREATE, backup, "Back up {server} now?"),
         Button("start_yes", "Start", P.SERVER_CONTROL, answer_request, style=3),
         Button("start_no", "Say no", P.SERVER_CONTROL, answer_request),
+        Button("claim_yes", "Approve", P.QUESTS_MANAGE, answer_claim, style=3),
+        Button("claim_no", "Refuse", P.QUESTS_MANAGE, answer_claim),
     )
 }

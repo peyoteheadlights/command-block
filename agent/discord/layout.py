@@ -219,10 +219,13 @@ def set_level_settings(db, guild_id: str, **changes: Any) -> dict[str, Any]:
     return everything[guild_id]
 
 
-def level_role_refused(guild_id: str, role: dict, ours: dict[str, str]) -> str | None:
-    """Why a Discord role can't be a Level role, or None when it can."""
+def level_role_refused(
+    guild_id: str, role: dict, ours: dict[str, str], use: str = "a Level role"
+) -> str | None:
+    """Why a Discord role can't be handed out for playing (a Level role, a
+    quest reward), or None when it can."""
     if role["id"] == guild_id or role.get("managed") or role["id"] == ours.get("mod"):
-        return f"{role['name']} can't be a Level role."
+        return f"{role['name']} can't be {use}."
     if int(role.get("permissions") or 0) & POWERS:
         return (
             f"{role['name']} gives power in Discord (like kicking or managing), so it can't be "

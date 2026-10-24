@@ -134,6 +134,8 @@ class FakeDiscord:
         # Members the bot can look up: id -> their role ids.
         self.members: dict[str, list[str]] = {MEMBER_ID: []}
         self.messages: list[dict] = []
+        self.files: dict[str, bytes] = {}  # the image server's files, by path
+        self.cdn_headers: list[dict] = []
 
     # -- seams -----------------------------------------------------------------
     def transport(self) -> httpx.MockTransport:
@@ -157,9 +159,17 @@ class FakeDiscord:
         channel: str | None = None,
         member: str = MEMBER_ID,
         username: str = "sam",
+        resolved: dict | None = None,
     ) -> str:
         """A member runs a slash command; returns the interaction's token."""
         token = f"itoken{next(self._ids)}"
+        given = [{"name": k, "value": v, "type": 3} for k, v in (options or {}).items()]
+        group, _, sub = name.partition(" ")
+        data: dict = {"name": group, "options": given}
+        if sub:  # "quest join": a subcommand, its options inside it
+            data["options"] = [{"name": sub, "type": 1, "options": given}]
+        if resolved:
+            data["resolved"] = resolved
         self.socket.dispatch(
             "INTERACTION_CREATE",
             {
@@ -169,12 +179,7 @@ class FakeDiscord:
                 "guild_id": GUILD_ID,
                 "channel_id": channel or "2000000000000000010",
                 "member": {"user": {"id": member, "username": username}, "roles": list(roles)},
-                "data": {
-                    "name": name,
-                    "options": [
-                        {"name": k, "value": v, "type": 3} for k, v in (options or {}).items()
-                    ],
-                },
+                "data": data,
             },
         )
         return token
@@ -258,6 +263,10 @@ class FakeDiscord:
 
     # -- REST ----------------------------------------------------------------
     def handle(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host == "cdn.discordapp.com":  # attachments: no token sent
+            self.cdn_headers.append(dict(request.headers))
+            found = self.files.get(request.url.path)
+            return httpx.Response(200, content=found) if found else httpx.Response(404)
         path = request.url.path.removeprefix("/api/v10")
         body = json.loads(request.content) if request.content else None
         with self.lock:

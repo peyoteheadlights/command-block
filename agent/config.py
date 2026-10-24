@@ -319,6 +319,7 @@ class NotificationSettings(Section):
             "tailscale": True,
             "discord_bot": True,
             "start_requests": True,
+            "quests": True,
         }
     )
     email: EmailSettings = field(default_factory=EmailSettings)

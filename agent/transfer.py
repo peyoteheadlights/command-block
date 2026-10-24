@@ -67,6 +67,10 @@ DATA_TABLES = (
     "discord_role_grants",
     "discord_links",
     "level_xp",
+    "quests",
+    "quest_progress",
+    "quest_suggestions",
+    "quest_rewards",
 )
 ACCOUNT_COLUMNS = (
     "username",
@@ -474,7 +478,8 @@ def import_all(
                     db,
                     table,
                     row,
-                    drop=() if table in ("servers", "settings", "players") else ("id",),
+                    # Quests keep their ids: their progress points at them.
+                    drop=() if table in ("servers", "settings", "players", "quests") else ("id",),
                 )
         backups = 0
         for entry in manifest["servers"]:

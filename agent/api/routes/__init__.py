@@ -39,6 +39,7 @@ from . import (
     phoneapp,
     players,
     pushalerts,
+    quests,
     recommendations,
     schedules,
     security,
@@ -69,6 +70,7 @@ PER_SERVER = (
     addons,
     changes,
     discord_links,
+    quests,
 )
 GLOBAL = (
     auth,

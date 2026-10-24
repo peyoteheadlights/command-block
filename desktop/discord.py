@@ -9,6 +9,7 @@ What a Discord role may do uses the moderators' level and switch rows
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -297,90 +298,16 @@ class Discord(Moderators):
         return frame
 
     def levels(self, guild: dict, report: dict) -> QWidget:
-        """Level-ups on or off, the weekly leaderboard's day, and which
-        Discord role goes with which Level. Saved together."""
-        gid = guild["id"]
-        saved = guild.get("levels") or {}
-        box = QWidget()
-        grid = QGridLayout(box)
-        grid.setContentsMargins(0, 8, 0, 0)
-        grid.addWidget(label(text("discord.levels"), "step"), 0, 0, 1, 3)
-        grid.addWidget(label(text("discord.levels_hint"), "muted"), 1, 0, 1, 3)
-        announce = QCheckBox(text("discord.level_ups"))
-        announce.setChecked(bool(saved.get("announce", True)))
-        grid.addWidget(announce, 2, 0, 1, 3)
-        grid.addWidget(label(text("discord.leaderboard")), 3, 0)
-        day = QComboBox()
-        day.setAccessibleName(text("discord.leaderboard"))
-        day.addItem(text("discord.leaderboard_off"), None)
-        for i in range(7):  # Monday first, in the PC's language
-            day.addItem(QLocale().dayName(i + 1), i)
-        day.setCurrentIndex(max(day.findData(saved.get("leaderboard_day")), 0))
-        grid.addWidget(day, 3, 1, 1, 2)
-        grid.addWidget(label(text("discord.leaderboard_hint"), "muted"), 4, 0, 1, 3)
-        roles = [r for r in report.get("roles") or [] if r["id"] != gid]
-        rows: list[tuple[QSpinBox, QComboBox]] = []
-        lines = [5]  # the grid line the next row goes on
-
-        def add_row(level: int, role_id: str | None) -> None:
-            at = lines[0]
-            lines[0] += 1
-            number = QSpinBox()
-            number.setRange(1, 1000)
-            number.setValue(level)
-            number.setPrefix(text("discord.level_role") + " ")
-            number.setAccessibleName(text("discord.level_role"))
-            pick = QComboBox()
-            pick.setAccessibleName(f"{text('discord.level_role')} {level}")
-            for role in roles:
-                pick.addItem(role["name"], role["id"])
-            pick.setCurrentIndex(max(pick.findData(role_id), 0))
-            grid.addWidget(number, at, 0)
-            grid.addWidget(pick, at, 1)
-            remove = push(text("discord.level_remove"), "plain")
-            remove.setAccessibleName(
-                f"{text('discord.level_remove')}: {text('discord.level_role')} {level}"
-            )
-            entry = (number, pick)
-            rows.append(entry)
-
-            def gone() -> None:
-                rows.remove(entry)
-                for widget in (number, pick, remove):
-                    widget.hide()
-                    widget.deleteLater()
-
-            remove.clicked.connect(gone)
-            grid.addWidget(remove, at, 2)
-
-        for row in saved.get("roles") or []:
-            add_row(row["level"], row["role_id"])
-        add = push(text("discord.level_add"), "plain")
-        add.clicked.connect(lambda: add_row(max((n.value() for n, _ in rows), default=0) + 5, None))
-        save = push(text("discord.level_save"), "primary")
-
-        def send() -> None:
-            body: dict[str, Any] = {
-                "announce": announce.isChecked(),
-                "leaderboard_day": day.currentData(),
-            }
-            wanted = sorted(
-                (n.value(), p.currentData()) for n, p in rows if p.currentData() is not None
-            )
-            # Only sent when changed: once changed, setup leaves Level roles alone.
-            if wanted != sorted((r["level"], r["role_id"]) for r in saved.get("roles") or []):
-                body["roles"] = [{"level": at, "role_id": rid} for at, rid in wanted]
-            self.call(
+        return levels_box(
+            guild,
+            report.get("roles") or [],
+            lambda body: self.call(
                 "PUT",
-                f"/discord/guilds/{gid}/levels",
+                f"/discord/guilds/{guild['id']}/levels",
                 self.then_reload(text("discord.levels_saved")),
                 body=body,
-            )
-
-        save.clicked.connect(send)
-        grid.addLayout(buttons(add, save), 100, 0, 1, 3)
-        grid.setColumnStretch(1, 1)
-        return box
+            ),
+        )
 
     def channels(self, gid: str, report: dict, servers: list[dict], tied: set[str]) -> QWidget:
         box = QWidget()
@@ -485,3 +412,86 @@ class Discord(Moderators):
             self.done(text("discord.role_saved")),
             body={"role_name": self.role_names.get(role, ""), "grants": body.get("grants") or {}},
         )
+
+
+def levels_box(guild: dict, roles: list[dict], save: Callable[[dict], None]) -> QWidget:
+    """Level-ups on or off, the weekly leaderboard's day, and which Discord
+    role goes with which Level, saved together. On the owner's Discord page
+    and, for moderators with Quests and events, the Quests and events page."""
+    gid = guild["id"]
+    saved = guild.get("levels") or {}
+    box = QWidget()
+    grid = QGridLayout(box)
+    grid.setContentsMargins(0, 8, 0, 0)
+    grid.addWidget(label(text("discord.levels"), "step"), 0, 0, 1, 3)
+    grid.addWidget(label(text("discord.levels_hint"), "muted"), 1, 0, 1, 3)
+    announce = QCheckBox(text("discord.level_ups"))
+    announce.setChecked(bool(saved.get("announce", True)))
+    grid.addWidget(announce, 2, 0, 1, 3)
+    grid.addWidget(label(text("discord.leaderboard")), 3, 0)
+    day = QComboBox()
+    day.setAccessibleName(text("discord.leaderboard"))
+    day.addItem(text("discord.leaderboard_off"), None)
+    for i in range(7):  # Monday first, in the PC's language
+        day.addItem(QLocale().dayName(i + 1), i)
+    day.setCurrentIndex(max(day.findData(saved.get("leaderboard_day")), 0))
+    grid.addWidget(day, 3, 1, 1, 2)
+    grid.addWidget(label(text("discord.leaderboard_hint"), "muted"), 4, 0, 1, 3)
+    roles = [r for r in roles if r["id"] != gid]
+    rows: list[tuple[QSpinBox, QComboBox]] = []
+    lines = [5]  # the grid line the next row goes on
+
+    def add_row(level: int, role_id: str | None) -> None:
+        at = lines[0]
+        lines[0] += 1
+        number = QSpinBox()
+        number.setRange(1, 1000)
+        number.setValue(level)
+        number.setPrefix(text("discord.level_role") + " ")
+        number.setAccessibleName(text("discord.level_role"))
+        pick = QComboBox()
+        pick.setAccessibleName(f"{text('discord.level_role')} {level}")
+        for role in roles:
+            pick.addItem(role["name"], role["id"])
+        pick.setCurrentIndex(max(pick.findData(role_id), 0))
+        grid.addWidget(number, at, 0)
+        grid.addWidget(pick, at, 1)
+        remove = push(text("discord.level_remove"), "plain")
+        remove.setAccessibleName(
+            f"{text('discord.level_remove')}: {text('discord.level_role')} {level}"
+        )
+        entry = (number, pick)
+        rows.append(entry)
+
+        def gone() -> None:
+            rows.remove(entry)
+            for widget in (number, pick, remove):
+                widget.hide()
+                widget.deleteLater()
+
+        remove.clicked.connect(gone)
+        grid.addWidget(remove, at, 2)
+
+    for row in saved.get("roles") or []:
+        add_row(row["level"], row["role_id"])
+    add = push(text("discord.level_add"), "plain")
+    add.clicked.connect(lambda: add_row(max((n.value() for n, _ in rows), default=0) + 5, None))
+    save_button = push(text("discord.level_save"), "primary")
+
+    def send() -> None:
+        body: dict[str, Any] = {
+            "announce": announce.isChecked(),
+            "leaderboard_day": day.currentData(),
+        }
+        wanted = sorted(
+            (n.value(), p.currentData()) for n, p in rows if p.currentData() is not None
+        )
+        # Only sent when changed: once changed, setup leaves Level roles alone.
+        if wanted != sorted((r["level"], r["role_id"]) for r in saved.get("roles") or []):
+            body["roles"] = [{"level": at, "role_id": rid} for at, rid in wanted]
+        save(body)
+
+    save_button.clicked.connect(send)
+    grid.addLayout(buttons(add, save_button), 100, 0, 1, 3)
+    grid.setColumnStretch(1, 1)
+    return box

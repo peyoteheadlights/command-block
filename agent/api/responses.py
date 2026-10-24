@@ -2032,3 +2032,35 @@ class DiscordLinks(Open):
     requests: list[dict[str, Any]] = Field(description="Bedrock players waiting for approval")
     players: list[dict[str, Any]] = Field(description="Recent players to pick from: name and uuid")
     reads_chat: bool
+
+
+class QuestsPage(Open):
+    """Everything the Quests and events page shows for one server."""
+
+    quests: list[dict[str, Any]] = Field(
+        description="Quests going on: id, title, details, kind, goal, count, repeat, ends_at, "
+        "rewards, period, joined, saved_at (null unless from the stats files) and members "
+        "(discord_id, name, progress, finished_at)"
+    )
+    claims: list[dict[str, Any]] = Field(
+        description="/quest done claims waiting: id, quest_id, title, discord_name, note, "
+        "screenshot (null for none), created_at"
+    )
+    suggestions: list[dict[str, Any]] = Field(
+        description="/quest suggest ideas: id, discord_name, title, details, created_at"
+    )
+    rewards: list[dict[str, Any]] = Field(
+        description="Rewards not given yet, or sent without the server confirming: id, title, "
+        "kind, value, state (waiting, sending, sent, failed), answer"
+    )
+    kinds: list[str] = Field(description="The quest kinds this server can check")
+    bot: bool = Field(description="The Discord bot is connected (needed for Discord roles)")
+    guilds: list[dict[str, Any]] = Field(
+        description="The Discord servers set up for this server: id, name, roles (id, name) "
+        "and levels (as GET /discord/guilds/{id}/levels)"
+    )
+
+
+class QuestScreenshot(Open):
+    type: str = Field(description="png or jpg")
+    image: str = Field(description="The picture, base64")

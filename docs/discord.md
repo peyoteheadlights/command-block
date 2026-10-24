@@ -159,7 +159,7 @@ on the Players and chat page.
 Every Discord member with a linked account has a **Level**. XP only comes
 from what Command Block measures: 10 per hour played (our own player
 sessions, added up over all their linked accounts and servers), plus XP
-for events and quests (coming in the next parts). Nothing for Discord
+for events (coming in the next part) and quests. Nothing for Discord
 messages. Level n needs 8 × n² XP: Level 5 after 20 hours, 10 after 80,
 25 after 500. `/level` shows yours and your next Level role.
 
@@ -183,6 +183,51 @@ quests channel at 18:00 on the PC's clock: the top 10 by playtime in the
 last 7 days on that Discord server's Minecraft servers, and the top 10
 Levels. It's remembered, so a restart doesn't post it twice.
 
+## Quests
+
+The owner, and anyone with **Quests and events** on a server, makes quests
+on that server's **Quests and events** page in the desktop app or with
+`/quest create` in Discord. Players join with `/quest join <number>` (the
+number is on the board), see how far they are with `/quest progress`, and
+the quests channel has one board message that edits itself (at most once a
+minute, only when something changed).
+
+What a quest can ask for, all from things Command Block can measure:
+
+- **A stat count**, like `mined:diamond_ore` ×500, from the stats files.
+- **An advancement**, like `end/kill_dragon` (once only; it counts whenever
+  it was earned).
+- **Hours played** or **joins**, from our own player sessions.
+- **Bring items**: the player types `/quest done` while in the game, and
+  the agent asks the server with `clear <name> <item> 0`, which counts and
+  never takes anything.
+- **Needs approval**: `/quest done` with a note and maybe a screenshot. It
+  goes to the owner and moderators as an alert (with Approve / Refuse
+  buttons in the alerts channel) and on the Quests and events page.
+
+Progress counts from when a player joins the quest, added up over their
+linked accounts on that server, and stats-file progress says when the file
+was last saved. A quest can come back every day, week (Monday), month or
+year at 00:00 on the PC's clock, and can have a last day. Bedrock servers
+get hours played, joins and approval only, and the page says why.
+
+**Rewards only come from a fixed list** (ADR: a quest never holds a
+command): a Discord role, an item (up to 64), Minecraft XP (up to 30
+levels) and Level XP (up to 500). The item and XP commands are built from
+checked values and pass the console's validation. A player who is offline
+gets them on their next join, and a reward is "sent" until the server's
+answer confirms it (one without an answer is never sent twice). A Discord
+role reward can't be one with power in Discord, checked again before each
+give. Finishing a repeating quest again stacks the role: "Dragon Slayer ×2"
+(made the first time it's needed, same colour) replaces "Dragon Slayer",
+up to ×10.
+
+Players can suggest a quest with `/quest suggest`; the owner and moderators
+see the idea on the Quests and events page, where **Make it a quest** fills
+the form and **No thanks** turns it down, and the player hears back in
+Discord. Moderators with Quests and events also change the Level roles
+there.
+
 ## The code
 
 `agent/discord/client.py` is our own small Discord client (gateway and REST,
@@ -190,8 +235,8 @@ API v10, not discord.py, to keep weak PCs light). It stops on a rejected
 token and never retries it, leaves a channel alone for 10 minutes after a
 403, waits as long as Discord asks on a 429 and resumes after a drop with
 growing waits. `bot.py` holds the commands and buttons, `live.py` what the status
-commands, status message and presence say, `bridge.py` the chat bridge's words, `progress.py` what /stats, /level and the leaderboard say, `layout.py` the channels, roles,
-Level roles, grants and checks, `links.py` the linked accounts. The stats reader is `agent/stats.py` and Levels are `agent/levels.py`, with no Discord inside. Without a token none of it
+commands, status message and presence say, `bridge.py` the chat bridge's words, `progress.py` what /stats, /level, the leaderboard and the quest board say, `layout.py` the channels, roles,
+Level roles, grants and checks, `links.py` the linked accounts. The stats reader is `agent/stats.py`, Levels are `agent/levels.py` and quests `agent/quests.py`, with no Discord inside. Without a token none of it
 runs and the client isn't imported.
 
 Tests use a fake Discord (`tests/fake_discord.py`). There's also an opt-in

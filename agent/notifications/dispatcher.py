@@ -119,6 +119,7 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "discord_token_rejected": ("discord_bot", 0xED4245, "Discord refused the bot's token"),
     "discord_link_request": ("discord_bot", 0x5865F2, "{server}: a Discord member asks to link"),
     "start_request": ("start_requests", 0xFAA61A, "{server}: start request"),
+    "quest_claim": ("quests", 0x5865F2, "{server}: a quest is waiting for approval"),
 }
 
 
@@ -168,6 +169,7 @@ ALERT_PAGES = {
     "tailscale_key_expiring": "helpers",
     "discord_token_rejected": "discord",
     "discord_link_request": "players",
+    "quest_claim": "quests",
 }
 APP_PAGES = {"security", "helpers", "app-settings", "discord"}
 

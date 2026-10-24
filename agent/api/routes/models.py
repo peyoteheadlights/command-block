@@ -406,3 +406,29 @@ class StartRequestAnswer(BaseModel):
 class DiscordLinkAnswer(BaseModel):
     answer: Literal["approve", "refuse"]
     uuid: str | None = Field(None, max_length=64)
+
+
+class QuestReward(BaseModel):
+    kind: Literal["role", "item", "xp", "level_xp"]
+    role_id: str | None = Field(None, pattern=r"^\d{5,25}$")
+    item: str | None = Field(None, max_length=100)
+    count: int | None = Field(None, ge=1, le=64)
+    levels: int | None = Field(None, ge=1, le=30)
+    amount: int | None = Field(None, ge=1, le=500)
+
+
+class NewQuest(BaseModel):
+    title: str = Field(max_length=200)
+    details: str = Field("", max_length=600)
+    kind: Literal["stat", "advancement", "playtime", "joins", "items", "approval"]
+    goal: str = Field("", max_length=100)
+    count: int = Field(1, ge=1, le=100_000)
+    repeat: Literal["once", "daily", "weekly", "monthly", "yearly"] = "once"
+    ends: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    rewards: list[QuestReward] = Field(default_factory=list, max_length=4)
+    # Made from a member's /quest suggest: that idea is answered and removed.
+    suggestion_id: int | None = None
+
+
+class QuestAnswer(BaseModel):
+    answer: Literal["approve", "refuse"]
