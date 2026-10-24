@@ -383,7 +383,15 @@ class AgentCore:
 
     # ------------------------------------------------------------------
     async def _persist_event(self, event: Event) -> None:
-        if event.type in ("console", "metrics", "job", "chat", "alert"):
+        if event.type in (
+            "console",
+            "metrics",
+            "job",
+            "chat",
+            "alert",
+            "player_died",
+            "player_advancement",
+        ):
             return  # far too chatty for the database, or kept elsewhere (alerts)
         self.events.add(
             event.server_id or AGENT_SCOPE,

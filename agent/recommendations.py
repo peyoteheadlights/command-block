@@ -418,7 +418,7 @@ DISCORD_WORDS = {
     ),
     "channel_blocked": (
         "The Discord bot can't post in a channel",
-        "In {guild}, let the bot see and post in #{channel}.",
+        "In {guild}, let the bot see, post and add reactions in #{channel}.",
     ),
 }
 

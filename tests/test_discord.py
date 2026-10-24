@@ -108,9 +108,11 @@ def test_the_bot_connects_names_itself_and_registers_its_commands(agent, fake):
     registered = wait_for(lambda: fake.made("PUT", "/applications/"))
     assert {c["name"] for c in registered[-1]} == set(COMMANDS)
     assert status["guilds"][0]["name"] == "Friends"
-    # Only the guilds intent: no privileged switch is needed so far.
+    # The message intents only because the Message Content switch is on.
     identify = next(m for m in fake.gateway_sent if m["op"] == 2)
-    assert identify["d"]["intents"] == discord_client.GUILDS
+    assert identify["d"]["intents"] == (
+        discord_client.GUILDS | discord_client.GUILD_MESSAGES | discord_client.MESSAGE_CONTENT
+    )
 
 
 def test_the_token_is_never_shown_logged_or_kept_in_the_config(agent, fake, caplog):
@@ -134,11 +136,12 @@ def test_a_rejected_token_stops_the_bot_tells_the_owner_and_is_never_retried(
     client = signed_in(build_config(tmp_path), monkeypatch)
     try:
         wait_for(lambda: client.get("/api/discord").json()["state"] == "token_rejected")
-        asked = len(fake.made("GET", "/gateway/bot"))
+        asked = len(fake.calls)
         import time
 
         time.sleep(0.5)
-        assert len(fake.made("GET", "/gateway/bot")) == asked == 1
+        # One call answered 401 (reading the switches), then nothing more.
+        assert len(fake.calls) == asked == 1
         alerts = wait_for(lambda: client.get("/api/alerts?after=0").json()["alerts"])
         assert any("token" in a["title"].lower() for a in alerts)
         found = client.get("/api/servers/test/recommendations").json()
@@ -257,6 +260,9 @@ def test_missing_switches_only_turn_their_features_off(fake, tmp_path, monkeypat
         )
         assert status["state"] == "connected"
         assert set(status["features_off"]) == {"chat_from_discord", "remove_on_leave"}
+        # Asking for a switch that's off would stop the bot: only guild events.
+        identify = next(m for m in fake.gateway_sent if m["op"] == 2)
+        assert identify["d"]["intents"] == discord_client.GUILDS
     finally:
         client.__exit__(None, None, None)
 

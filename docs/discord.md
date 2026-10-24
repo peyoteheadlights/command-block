@@ -7,9 +7,9 @@ awake** (PC settings) if friends should reach it at night.
 
 It's still being built. So far it connects, sets up a Discord server, gives
 Discord roles permissions, links accounts, keeps a status message, posts
-alerts with buttons and starts servers. `/status`, `/players`, `/ip`,
-`/start`, `/request-start`, `/link`, `/links` and `/unlink` work; the chat
-bridge, stats, Levels, quests and events come next.
+alerts with buttons, starts servers and carries chat both ways. `/status`,
+`/players`, `/ip`, `/start`, `/request-start`, `/link`, `/links` and
+`/unlink` work; stats, Levels, quests and events come next.
 
 ## Setting it up
 
@@ -20,13 +20,15 @@ Everything is on the desktop app's gear → **Discord**.
 2. **Bot** → **Reset Token** → **Copy**.
 3. Optional: on the same page turn on **Server Members Intent** and
    **Message Content Intent**. The bot works without them; the page lists
-   what stays off.
+   what stays off. The bot only asks Discord for Message Content when it's
+   on here, because asking for a switch that's off would stop it.
 4. Paste the token on the Discord page and press **Save**. It's written to
    `.env` as `MCSC_DISCORD_BOT_TOKEN`, never to `config.yaml`, the logs or
    the Get help file.
 5. Press **Invite the bot**, pick your Discord server, **Authorize**. The
    invite only asks for what the bot uses: see and post in channels, embed
-   links, read history, manage roles and channels, and private threads.
+   links, read history, add reactions, manage roles and channels, and
+   private threads.
 6. Tick which Minecraft servers that Discord server is for and press **Set
    up this Discord server**. It adds a "Command Block" category with
    alerts, quests and events channels, a chat and status channel for each
@@ -47,7 +49,7 @@ server; anywhere else it asks which one when there are several.
 The page checks, against Discord itself, that the token works, which
 switches are on, that the bot has Manage Roles and Manage Channels, that its
 role is above every Discord role it hands out, and that it can see and post
-in each channel it uses. Each problem says what to fix. A rejected token or
+in each channel it uses (and add reactions in the chat channels). Each problem says what to fix. A rejected token or
 a role problem also shows in Recommendations and Getting started, and
 `python -m agent --check` asks Discord whether the token works.
 
@@ -95,6 +97,34 @@ moderator or a Discord role on purpose.
   happened. Requests are kept in memory, so restarting the agent drops an
   open one (`agent/startrequests.py`).
 
+## The chat bridge
+
+Each Minecraft server's chat channel and its game chat are joined.
+
+- **Game to Discord:** chat, `/me`, messages you sent as "Server", joins,
+  leaves, deaths and advancements. Deaths and advancements are read from
+  the console's own lines (vanilla's wording) and only count for a player
+  who's online. Lines are gathered for a second and posted together. The
+  bot never pings anyone and Discord formatting in game chat shows as
+  typed. Link codes never reach Discord.
+- **Discord to game:** `[Discord] Sam: hi`, sent with `tellraw`. Letters of
+  any language stay, emoji go, mentions become plain names, formatting
+  marks go, and it's one line of at most 220 characters. A message that
+  starts like a command (`/`) or a console line (`[12:00:00`, `[Server]`,
+  `<Name>`) gets a 🚫 reaction and stays out of the game. Each member can
+  send 5 messages in 10 seconds; the rest are dropped. Bots and webhooks
+  are left out, and nothing goes in while the server isn't online.
+
+Discord to game needs the **Message Content** switch; without it the bridge
+is game to Discord only and the Discord page says so. A Bedrock server
+doesn't print chat to its console, so there only joins and leaves reach
+Discord (the page says that too); Discord messages still reach the game.
+
+The `tellraw` text is JSON our code writes, with every character outside a
+small safe set written as a `\u` escape, so the command still passes the
+console check's character set (house rule 2). It's built and sent in
+`agent/minecraft/chat.py`; nothing in `agent/discord/` reaches the console.
+
 ## Linking accounts
 
 `/link <Minecraft name>` gives a 6-letter code only you can see. Type it in
@@ -120,7 +150,7 @@ API v10, not discord.py, to keep weak PCs light). It stops on a rejected
 token and never retries it, leaves a channel alone for 10 minutes after a
 403, waits as long as Discord asks on a 429 and resumes after a drop with
 growing waits. `bot.py` holds the commands and buttons, `live.py` what the status
-commands, status message and presence say, `layout.py` the channels, roles,
+commands, status message and presence say, `bridge.py` the chat bridge's words, `layout.py` the channels, roles,
 grants and checks, `links.py` the linked accounts. Without a token none of it
 runs and the client isn't imported.
 

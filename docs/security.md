@@ -119,6 +119,13 @@ narrower character set still: letters, digits and basic punctuation, up to
 become two commands. Chat shown in the apps is read from the server's
 own console output; nothing is reconstructed from what this app sent.
 
+The Discord chat bridge sends Discord messages as a `tellraw` command built
+in `agent/minecraft/chat.py`, never in `agent/discord/`. The message is one
+line, and every character outside a small safe set is written as a JSON
+`\u` escape, so the command passes the console check's character set and
+shell characters never appear in it. It has its own length limit (4,096)
+because escapes are long; everything else about the check is the same.
+
 Auto-sleep adds no new way to run anything either: it stops a server through
 the same code path as a scheduled stop.
 

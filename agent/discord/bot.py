@@ -19,6 +19,7 @@ import logging
 import math
 import re
 import time
+import urllib.parse
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -26,12 +27,14 @@ from typing import TYPE_CHECKING, Any
 from ..config import PROJECT_ROOT
 from ..events import OWNER_ONLY_EVENTS, Event
 from ..jobs import JobConflict
+from ..minecraft.chat import ChatError, relay
+from ..minecraft.commands import CommandError
 from ..minecraft.playeractions import DONE, SENT, PlayerActionError
 from ..minecraft.process import ServerError
 from ..security import permissions as P
 from ..security.auth import AuthError, Principal, RateLimiter
 from ..startrequests import STOPPED, StartRequest, StartRequestError
-from . import client, layout, live
+from . import bridge, client, layout, live
 from .links import CODE_LIFE, LinkError
 
 if TYPE_CHECKING:
@@ -41,9 +44,11 @@ log = logging.getLogger("msc.discord")
 
 DEFAULT_NAME = "Command Block"
 LOGO = PROJECT_ROOT / "desktop" / "images" / "icon-192.png"
-# Only guild events: the bot needs no privileged switch for what it does so
-# far. The chat bridge (PR 4) adds the message intents.
+# Guild events, plus messages when the Message Content switch is on (the
+# chat bridge's Discord to game half). Asking for a switch that's off would
+# stop the bot, so it's only asked for once Discord says it's on.
 INTENTS = client.GUILDS
+MESSAGE_INTENTS = client.GUILD_MESSAGES | client.MESSAGE_CONTENT
 EPHEMERAL = 64
 # Minecraft names as the server prints them; Floodgate's "." is kept.
 NAME_RE = re.compile(r"^\.?[A-Za-z0-9_]{1,16}$")
@@ -52,6 +57,8 @@ POSTS_KEY = "discord_status_posts"  # status channel id -> {"message", "words"}
 LIVE_FIRST = 5.0  # seconds after logging in (the Discord servers arrive first)
 LIVE_EVERY = 60.0  # seconds between status message and presence checks
 START_COOLDOWN = 300.0  # seconds between starts of one server from Discord
+BATCH = 1.0  # seconds game lines are gathered before they're posted
+REFUSED = "\N{NO ENTRY SIGN}"  # the reaction on a message that didn't go into the game
 
 
 class Refused(Exception):
@@ -129,18 +136,21 @@ class Bot:
     def __init__(self, core: AgentCore, token: str):
         self.core = core
         self.rest = client.Rest(token)
-        self.gateway = client.Gateway(self.rest, token, INTENTS, self._event)
+        self.gateway = client.Gateway(self.rest, token, INTENTS, self._event, self._before_login)
         self.user: dict = {}
         self.app: dict = {}  # the application, with its switches (flags)
         self.guilds: dict[str, dict] = {}  # id -> {"id", "name"}
         self.reports: dict[str, dict] = {}  # id -> layout.inspect's answer
         # Per member, like the sign-in limiter: a burst is fine, a flood isn't.
         self.rate = RateLimiter(8, 60.0)
+        self.chat_rate = RateLimiter(5, 10.0)  # the chat bridge, per member
+        self._outbox: dict[str, list[str]] = {}  # chat channel id -> game lines to post
         self.started: dict[str, float] = {}  # server id -> last /start from Discord
         self._task: asyncio.Task | None = None
         self._live: asyncio.Task | None = None
         self._jobs: set[asyncio.Task] = set()
         core.start_requests.on_close = self.request_closed
+        core.bus.subscribe(self.from_game)
 
     # -- running -------------------------------------------------------------
     def start(self) -> None:
@@ -160,6 +170,7 @@ class Bot:
     async def stop(self) -> None:
         if self.core.start_requests.on_close == self.request_closed:
             self.core.start_requests.on_close = None
+        self.core.bus.unsubscribe(self.from_game)
         for task in [self._task, self._live, *self._jobs]:
             if task:
                 task.cancel()
@@ -184,10 +195,15 @@ class Bot:
                 exc if isinstance(exc, client.DiscordError) else type(exc).__name__,
             )
 
+    async def _before_login(self) -> None:
+        """Before each fresh login: read the switches, ask for what's on."""
+        self.app = await self.rest.request("GET", "/applications/@me")
+        on = self.switches()["message_content"]
+        self.gateway.intents = INTENTS | (MESSAGE_INTENTS if on else 0)
+
     async def _event(self, name: str, data: dict) -> None:
         if name == "READY":
             self.user = data.get("user") or {}
-            self.app = {"id": str((data.get("application") or {}).get("id", ""))}
             self.spawn(self._after_ready())
             if self._live is None:
                 self._live = asyncio.create_task(self._live_loop(), name="discord-live")
@@ -200,6 +216,8 @@ class Bot:
             self.reports.pop(data["id"], None)
         elif name == "INTERACTION_CREATE":
             self.spawn(self.interaction(data))
+        elif name == "MESSAGE_CREATE":
+            self.spawn(self.from_discord(data))
 
     # -- the status messages and the presence line ------------------------------
     async def _live_loop(self) -> None:
@@ -302,8 +320,89 @@ class Bot:
                 )
             )
 
+    # -- the chat bridge ------------------------------------------------------------
+    def chat_channels(self, guild_ids) -> list[dict[str, Any]]:
+        return [
+            row
+            for gid in guild_ids
+            for row in layout.channels(self.core.db, gid)
+            if row["kind"] == "chat"
+        ]
+
+    async def from_game(self, event: Event) -> None:
+        """A bus event: chat and player lines go to the server's chat
+        channels, gathered for a moment so a busy chat is one post."""
+        if self.gateway.state != "connected" or event.server_id not in self.core.servers:
+            return
+        line = bridge.game_line(event)
+        if line is None:
+            return
+        for row in self.chat_channels(list(self.guilds)):
+            if row["server_id"] == event.server_id:
+                waiting = self._outbox.setdefault(row["channel_id"], [])
+                waiting.append(line)
+                if len(waiting) == 1:
+                    self.spawn(self._post_lines(row["channel_id"]))
+
+    async def _post_lines(self, channel_id: str) -> None:
+        await asyncio.sleep(BATCH)
+        for words in bridge.batches(self._outbox.pop(channel_id, [])):
+            await self.rest.request(
+                "POST",
+                f"/channels/{channel_id}/messages",
+                {"content": words, "allowed_mentions": {"parse": []}},
+            )
+
+    async def from_discord(self, message: dict) -> None:
+        """A message in a chat channel goes into the game, cleaned to one
+        plain line. Bots and webhooks (the alerts webhook too) are left out."""
+        guild_id, author = message.get("guild_id"), message.get("author") or {}
+        if (
+            not guild_id
+            or author.get("bot")
+            or message.get("webhook_id")
+            or message.get("type") not in (0, 19)  # a plain message or a reply
+        ):
+            return
+        channel_id = str(message.get("channel_id"))
+        server_id = next(
+            (
+                r["server_id"]
+                for r in self.chat_channels([str(guild_id)])
+                if r["channel_id"] == channel_id
+            ),
+            None,
+        )
+        ctx = self.core.servers.get(server_id or "")
+        if ctx is None or ctx.server.state.value != "ONLINE":
+            return
+        roles = [str(r) for r in (message.get("member") or {}).get("roles") or []]
+        try:
+            principal = layout.member_principal(self.core.db, str(guild_id), author, roles)
+            P.check(principal, P.SERVER_VIEW, ctx.server_id)
+            self.chat_rate.check(f"chat:{author.get('id')}")
+        except AuthError:
+            return  # too fast: dropped, quietly (a reaction each would be a flood too)
+        report = self.reports.get(str(guild_id)) or {}
+        names = {
+            x["id"]: x["name"] for x in [*report.get("roles", []), *report.get("channels", [])]
+        }
+        text = bridge.to_game(message, names)
+        if not text:
+            return
+        if bridge.looks_like_console(text):
+            emoji = urllib.parse.quote(REFUSED)
+            await self.rest.request(
+                "PUT", f"/channels/{channel_id}/messages/{message['id']}/reactions/{emoji}/@me"
+            )
+            return
+        dialect = ctx.config.server_type.dialect
+        try:
+            await relay(ctx.server, dialect, "Discord", bridge.display_name(message), text)
+        except (ChatError, CommandError, ServerError) as exc:
+            log.info("a Discord message didn't reach %s: %s", ctx.name, exc)
+
     async def _after_ready(self) -> None:
-        self.app = await self.rest.request("GET", "/applications/@me")
         saved = self.core.db.get_setting(PROFILE_KEY, {}) or {}
         if saved.get("user") != self.user.get("id"):
             # Named "Command Block" with the logo the first time, once per bot.
@@ -368,6 +467,11 @@ class Bot:
             "invite_url": layout.invite_url(app_id) if app_id else None,
             "switches": switches,
             "features_off": off,
+            "no_game_chat": sorted(
+                sid
+                for sid, ctx in self.core.servers.items()
+                if not ctx.config.server_type.reads_chat
+            ),
             "addresses": layout.addresses(self.core.db),
             "webhook_with_bot": self.core.config.notifications.webhook_with_bot,
             "guilds": [

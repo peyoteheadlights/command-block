@@ -1973,6 +1973,10 @@ class DiscordStatus(Open):
         description="message_content and members: on, off, or null until read from Discord",
     )
     features_off: list[str] = Field(default_factory=list)
+    no_game_chat: list[str] = Field(
+        default_factory=list,
+        description="Servers whose game chat can't reach Discord (their console prints none)",
+    )
     addresses: dict[str, str] = Field(
         default_factory=dict, description="The address to share in Discord, per server id"
     )

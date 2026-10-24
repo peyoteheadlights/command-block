@@ -301,7 +301,10 @@ class Discord(Moderators):
                     (k, s["id"], f"{text(f'discord.kind.{k}')}: {s['name']}")
                     for k in (*PER_SERVER, *OWN_IF_WANTED)
                 ]
-        for i, (kind, sid, words) in enumerate(rows, start=1):
+        no_chat = set(self.state.get("no_game_chat") or [])
+        i = 0
+        for kind, sid, words in rows:
+            i += 1
             grid.addWidget(label(words), i, 0)
             pick = QComboBox()
             pick.setAccessibleName(words)
@@ -319,6 +322,10 @@ class Discord(Moderators):
                 )
             )
             grid.addWidget(pick, i, 1)
+            if kind == "chat" and sid in no_chat:
+                i += 1
+                name = next((s["name"] for s in servers if s["id"] == sid), sid)
+                grid.addWidget(label(text("discord.no_game_chat", server=name), "muted"), i, 1)
         grid.setColumnStretch(1, 1)
         return box
 

@@ -39,6 +39,8 @@ CONNECT: Callable[[str], Awaitable[Any]] | None = None
 
 # Gateway intents (https://discord.com/developers/docs/events/gateway#gateway-intents).
 GUILDS = 1 << 0
+GUILD_MESSAGES = 1 << 9
+MESSAGE_CONTENT = 1 << 15  # privileged: the switch must be on in the portal
 # The application's flags that say a privileged switch is on in the
 # developer portal. The _LIMITED ones are for bots under 100 servers.
 FLAG_MEMBERS = (1 << 14) | (1 << 15)
@@ -190,11 +192,13 @@ class Gateway:
         token: str,
         intents: int,
         on_event: Callable[[str, dict], Awaitable[None]],
+        before_login: Callable[[], Awaitable[None]] | None = None,
     ):
         self.rest = rest
         self._token = token
         self.intents = intents
         self.on_event = on_event
+        self.before_login = before_login  # may change the intents
         self.state = (
             "connecting"  # connecting | connected | token_rejected | intents_refused | stopped
         )
@@ -240,6 +244,8 @@ class Gateway:
         if self._session and self._resume_url:
             url = self._resume_url
         else:
+            if self.before_login:
+                await self.before_login()
             info = await self.rest.request("GET", "/gateway/bot")
             limit = info.get("session_start_limit") or {}
             if limit.get("remaining") == 0:

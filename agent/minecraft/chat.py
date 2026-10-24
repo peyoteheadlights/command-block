@@ -38,6 +38,13 @@ ACTION_RE = re.compile(r"^\*\s(?P<name>\.?[A-Za-z0-9_]{1,16})\s(?P<text>.+)$")
 MESSAGE_RE = re.compile(r"^[A-Za-z0-9 _:,.\-=+*/@~^\[\]()'\"!?#%]{1,220}$")
 
 KEEP = 400
+# A message from somewhere else (the Discord chat bridge) is shown with
+# tellraw. Its text may hold letters of any language, so it goes out as
+# JSON with every character outside this set written as a \u escape: the
+# command then still passes the console check's character set. Escapes
+# make it long (6 characters per letter), hence its own length limit.
+JSON_SAFE_RE = re.compile(r"[A-Za-z0-9 _:,.\-=+*/@~^\[\]()'!?#%]")
+TELLRAW_MAX = 4096
 
 
 class ChatError(ValueError):
@@ -107,6 +114,41 @@ async def say(server, text: str) -> str:
         raise ChatError("The server has to be running to send a message.")
     await server.send_command(validated.raw)
     return message
+
+
+def _json_string(text: str) -> str:
+    out = []
+    for ch in text:
+        if JSON_SAFE_RE.fullmatch(ch):
+            out.append(ch)
+        else:  # UTF-16 units, as JSON writes letters outside the first 65,536
+            units = ch.encode("utf-16-be")
+            out += [f"\\u{units[i]:02x}{units[i + 1]:02x}" for i in range(0, len(units), 2)]
+    return '"' + "".join(out) + '"'
+
+
+def tellraw(dialect: str, source: str, name: str, text: str) -> str:
+    """``[source] name: text`` for everyone in the game, as a tellraw
+    command. Java takes a list of text parts (the first one's style is
+    passed on to the rest, hence the empty first part); Bedrock takes its
+    own rawtext form, which has no colours."""
+    if dialect == "bedrock":
+        line = _json_string(f"[{source}] {name}: {text}")
+        return f'tellraw @a {{"rawtext":[{{"text":{line}}}]}}'
+    tag, said = _json_string(f"[{source}] "), _json_string(f"{name}: {text}")
+    return f'tellraw @a ["",{{"text":{tag},"color":"blue"}},{{"text":{said}}}]'
+
+
+async def relay(server, dialect: str, source: str, name: str, text: str) -> None:
+    """Show a message from elsewhere in the game chat. The caller has
+    already cleaned it to one line; the command is checked like any other
+    before it reaches the server."""
+    from .commands import validate
+
+    validated = validate(tellraw(dialect, source, name, text), max_length=TELLRAW_MAX)
+    if not server.running or server.state.value != "ONLINE":
+        raise ChatError("The server has to be running to send a message.")
+    await server.send_command(validated.raw)
 
 
 class ChatLog:
