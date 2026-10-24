@@ -38,6 +38,7 @@ body:
     attributes:
       label: Details
       description: |
+        In the desktop app, open the server's Activity and select **Get help file**, then drag the saved zip in here. It has no password or key in it, but its logs can show your PC's name and addresses, so look through it first.
         In the phone app, "Copy details for a problem report" (Settings, Help & About) copies what helps, with no password, address or sign-in code in it. Check what you paste anyway.
       render: text
   - type: checkboxes

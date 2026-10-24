@@ -315,6 +315,30 @@ def test_about_has_the_version_licences_and_disclaimer(qapp, agent_http):
     assert pc.opened[-1].startswith("https://github.com/")
 
 
+def test_about_has_support_the_project_and_the_two_forms(qapp, agent_http):
+    import json
+
+    from desktop.theme import SHARED
+
+    links = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
+    pc = FakePC()
+    window = open_window(qapp, agent_http, pc)
+    sign_in(qapp, window)
+    on_all_servers(qapp, window)
+    window.open_list("Help", "about")
+    about = window.help.sections["about"]
+    wait_for(qapp, lambda: "Support the project" in shown_text(about))
+    assert "unlocks nothing" in shown_text(about)
+    for words, link in [
+        ("GitHub Sponsors", "sponsors"),
+        ("Ko-fi", "kofi"),
+        ("Report a problem", "report"),
+        ("Suggest a feature", "suggest"),
+    ]:
+        button(about, words).click()
+        assert pc.opened[-1] == links[link]
+
+
 # ------------------------------------------------------------ alerts per device
 def checkbox(page, words):
     return next(b for b in page.findChildren(QtWidgets.QCheckBox) if b.text() == words)
