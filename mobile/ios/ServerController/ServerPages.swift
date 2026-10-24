@@ -23,6 +23,8 @@ enum ServerRoute: Hashable {
     case content(String)
     case game(String)
     case settings(String)
+    /// Quests and events (the Discord bot's).
+    case quests(String)
     /// The "+" on All servers.
     case add
 }
@@ -52,6 +54,8 @@ final class ServerPages {
     let content: ContentPages
     /// Server settings.
     let setup: SetupPages
+    /// Quests and events.
+    let quests: QuestPages
 
     init(serverId: String, client: @escaping () -> AgentClient?, noted: @escaping (AgentError) -> Void,
          listChanged: @escaping () async -> Void = {}) {
@@ -61,6 +65,7 @@ final class ServerPages {
         world = WorldPages(serverId: serverId, client: client, noted: noted)
         content = ContentPages(serverId: serverId, client: client, noted: noted)
         setup = SetupPages(serverId: serverId, client: client, noted: noted, listChanged: listChanged)
+        quests = QuestPages(serverId: serverId, client: client, noted: noted)
     }
 
     // MARK: - Console
@@ -233,6 +238,82 @@ final class ServerPages {
 
     private func track(_ action: PlayerAction) {
         pressed = Array(([action] + pressed.filter { $0.id != action.id }).prefix(10))
+    }
+
+    // MARK: - Linked accounts and whitelist help
+
+    /// Nil until read, and while it can't be (no Players permission, an older agent).
+    private(set) var links: DiscordLinks? = nil
+    private(set) var whitelist: WhitelistHelp? = nil
+
+    /// Read beside the players for someone with Players; they are personal data.
+    func loadCommunity() async {
+        guard let client = client() else { return }
+        links = try? await client.discordLinks(serverId: serverId)
+        whitelist = try? await client.whitelistHelp(serverId: serverId)
+    }
+
+    func unlink(_ uuid: String, _ strings: Strings) async {
+        await answer("unlink:\(uuid)", strings) { [weak self] client, id in
+            self?.links = try await client.unlink(serverId: id, uuid: uuid)
+        }
+    }
+
+    func answerLink(_ requestId: Int64, approve: Bool, uuid: String?, _ strings: Strings) async {
+        await answer("link:\(requestId)", strings) { [weak self] client, id in
+            self?.links = try await client.answerLinkRequest(serverId: id, requestId: requestId, approve: approve, uuid: uuid)
+        }
+    }
+
+    /// Approve sends the whitelist command, followed like a player button until the console says so.
+    func answerForm(_ formId: Int64, approve: Bool, _ strings: Strings) async {
+        var sent: WhitelistHelp? = nil
+        await answer("form:\(formId)", strings) { [weak self] client, id in
+            sent = try await client.answerWhitelistForm(serverId: id, formId: formId, approve: approve)
+            self?.whitelist = sent
+        }
+        await follow(sent)
+    }
+
+    /// Allow sends the IP whitelist add-on's command, followed the same way.
+    func answerAddress(_ addressId: Int64, allow: Bool, _ strings: Strings) async {
+        var sent: WhitelistHelp? = nil
+        await answer("address:\(addressId)", strings) { [weak self] client, id in
+            sent = try await client.answerAddress(serverId: id, addressId: addressId, allow: allow)
+            self?.whitelist = sent
+        }
+        await follow(sent)
+    }
+
+    func removeAddress(_ addressId: Int64, _ strings: Strings) async {
+        await answer("address:\(addressId)", strings) { [weak self] client, id in
+            self?.whitelist = try await client.removeAddress(serverId: id, addressId: addressId)
+        }
+    }
+
+    /// Follows the command an answer sent, once the buttons are free again.
+    private func follow(_ help: WhitelistHelp?) async {
+        guard let sent = help?.action, let client = client() else { return }
+        track(sent)
+        let id = serverId
+        let watch = PlayerActionWatch { actionId in
+            try await client.playerActionStatus(serverId: id, actionId: actionId).action
+        }
+        track(await watch.follow(sent))
+    }
+
+    /// One answer at a time, in `playerBusy`; what went wrong in `playerProblem`.
+    private func answer(_ busy: String, _ strings: Strings, _ call: (AgentClient, String) async throws -> Void) async {
+        guard let client = client(), playerBusy == nil else { return }
+        playerBusy = busy
+        playerProblem = nil
+        do {
+            try await call(client, serverId)
+        } catch let problem as AgentError {
+            noted(problem)
+            playerProblem = problem.message(strings)
+        } catch {}
+        playerBusy = nil
     }
 
     // MARK: - Activity

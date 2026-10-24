@@ -163,6 +163,9 @@ data class AppAlerts(
 )
 
 @Serializable
+data class AlertsRead(@SerialName("read_up_to") val readUpTo: Long = 0)
+
+@Serializable
 data class AppPhone(
     val configured: Boolean = false,
     val registered: Boolean = false,
@@ -230,4 +233,6 @@ object Permissions {
     const val SERVERS_MANAGE = "servers.manage"
     const val FILES_BROWSE = "files.browse"
     const val WORLD_REPLACE = "world.replace"
+    /** "Quests and events": quests, events, polls and Level roles on a server. */
+    const val QUESTS_MANAGE = "quests.manage"
 }

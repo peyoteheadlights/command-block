@@ -63,6 +63,7 @@ fun NotificationsScreen(vm: AppViewModel, onOpenServer: (String) -> Unit) {
                     AlertRow(alert, isNew = alert.id > newAbove, server = alert.serverId?.let { names[it] ?: it }, now = now) {
                         alert.serverId?.let(onOpenServer)
                     }
+                    StartRequestButtons(vm, alert, now)
                 }
             }
         }
@@ -87,4 +88,22 @@ private fun AlertRow(alert: AppAlert, isNew: Boolean, server: String?, now: Doub
             },
         )
     }
+}
+
+/** Start / Say no under a start request from Discord, while it can still
+ * be open, for someone who may start that server; then what it did. */
+@Composable
+private fun StartRequestButtons(vm: AppViewModel, alert: AppAlert, now: Double) {
+    vm.startAnswers[alert.id]?.let {
+        SaidNote(it)
+        return
+    }
+    if (!vm.answersStartRequest(alert, now)) return
+    val waiting = vm.answering != null
+    Presses(
+        listOf(
+            Press(t("desktop.start_request.start"), { vm.answerStartRequest(alert, true) }, enabled = !waiting),
+            Press(t("desktop.start_request.no"), { vm.answerStartRequest(alert, false) }, enabled = !waiting),
+        ),
+    )
 }

@@ -17,6 +17,7 @@ import io.github.peyoteheadlights.mcsc.R
 import io.github.peyoteheadlights.mcsc.core.AgentException
 import io.github.peyoteheadlights.mcsc.core.AlertSync
 import io.github.peyoteheadlights.mcsc.core.AppAlert
+import io.github.peyoteheadlights.mcsc.core.Community
 import io.github.peyoteheadlights.mcsc.graph
 
 /** Alerts on the lock screen: read from the PC, then shown by the phone. */
@@ -50,12 +51,20 @@ object Alerts {
             show(context, 0, graph.strings.t("mobile.alerts.new"), graph.strings.t("mobile.alerts.open_to_read"), null)
             return
         }
-        for (alert in fresh.takeLast(MAX_SHOWN)) show(context, alert.id.toInt(), alert.title, alert.body, alert.serverId)
+        for (alert in fresh.takeLast(MAX_SHOWN)) {
+            val startRequest = Community.answersStartRequest(alert, System.currentTimeMillis() / 1000.0, mayStart = true)
+            show(context, alert.id.toInt(), alert.title, alert.body, alert.serverId, startRequest)
+        }
         fresh.maxOfOrNull { it.id }?.let { graph.prefs.notifiedUpTo = it }
     }
 
+    /**
+     * Shows an alert. A start request gets Start and Say no, which need the
+     * phone unlocked first and are answered by [StartRequestReceiver] (the
+     * PC says no itself to anyone who may not start that server).
+     */
     @SuppressLint("MissingPermission") // checked just below
-    private fun show(context: Context, id: Int, title: String, body: String, serverId: String?) {
+    fun show(context: Context, id: Int, title: String, body: String, serverId: String?, startRequest: Boolean = false) {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -87,6 +96,12 @@ object Alerts {
             .setPublicVersion(public)
             .setContentIntent(tap)
             .setAutoCancel(true)
+            .apply {
+                if (startRequest && serverId != null) {
+                    addAction(StartRequestReceiver.action(context, id, serverId, start = true))
+                    addAction(StartRequestReceiver.action(context, id, serverId, start = false))
+                }
+            }
             .build()
         NotificationManagerCompat.from(context).notify(id, notification)
     }

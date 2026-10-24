@@ -43,6 +43,12 @@ final class NotificationService: UNNotificationServiceExtension {
                     content.threadIdentifier = alert.serverId ?? "pc"
                     let link = alert.serverId.flatMap(DeepLink.server) ?? DeepLink.home
                     content.userInfo["link"] = link.absoluteString
+                    // A start request from Discord: Start and Say no on the alert
+                    // itself (PushDelegate sends them; the agent checks the permission).
+                    if Community.answersStartRequest(alert, now: Date().timeIntervalSince1970, mayStart: true) {
+                        content.categoryIdentifier = Community.START_REQUEST_CATEGORY
+                        content.userInfo["server"] = alert.serverId
+                    }
                 }
             }
             finish()

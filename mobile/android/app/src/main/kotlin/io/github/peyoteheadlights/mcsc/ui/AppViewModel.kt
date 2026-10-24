@@ -10,6 +10,8 @@ import io.github.peyoteheadlights.mcsc.core.AgentClient
 import io.github.peyoteheadlights.mcsc.core.AgentException
 import io.github.peyoteheadlights.mcsc.core.AlertState
 import io.github.peyoteheadlights.mcsc.core.AlertSync
+import io.github.peyoteheadlights.mcsc.core.AppAlert
+import io.github.peyoteheadlights.mcsc.core.Community
 import io.github.peyoteheadlights.mcsc.core.Compatibility
 import io.github.peyoteheadlights.mcsc.core.DeviceAlerts
 import io.github.peyoteheadlights.mcsc.core.Invite
@@ -189,6 +191,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var pcSettings = PcPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         private set
 
+    /** Settings > Discord bot (owner only). */
+    var discord = DiscordPages(accountScope, { client() }, { prefs.lastProblem = it.key })
+        private set
+
     private fun newAccountScope() = CoroutineScope(viewModelScope.coroutineContext + SupervisorJob(viewModelScope.coroutineContext[Job]))
 
     /** Drops every page of the account that was signed in. */
@@ -199,6 +205,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         moderators = ModeratorPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         yourAccount = AccountPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         pcSettings = PcPages(accountScope, { client() }, { prefs.lastProblem = it.key })
+        discord = DiscordPages(accountScope, { client() }, { prefs.lastProblem = it.key })
     }
 
     /** An invite scanned or pasted: opened once the phone is paired with its PC. */
@@ -596,9 +603,45 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Read here is read on the PC too, so the desktop app's count and the
+     * donation card know (an older agent without the route is left alone). */
     fun markAllRead() {
         alerts = graph.alerts.update { it.markAllRead() }
+        val upTo = alerts.readUpTo
+        val client = client() ?: return
+        if (upTo <= 0) return
+        viewModelScope.launch { runCatching { client.markAlertsRead(upTo) } }
     }
+
+    /** What Start or Say no on each start request alert did, by alert id. */
+    var startAnswers: Map<Long, Said> by mutableStateOf(emptyMap())
+        private set
+    var answering: Long? by mutableStateOf(null)
+        private set
+
+    /** Start (the Start button's own start) or Say no to a start request from Discord. */
+    fun answerStartRequest(alert: AppAlert, start: Boolean) {
+        val client = client() ?: return
+        val serverId = alert.serverId ?: return
+        if (answering != null) return
+        answering = alert.id
+        viewModelScope.launch {
+            val said = try {
+                Said(Community.answered(strings, client.answerStartRequest(serverId, start).answer), good = true)
+            } catch (e: AgentException) {
+                prefs.lastProblem = e.key
+                Said(Message.of(e).text(strings), good = false)
+            }
+            // Only the newest few: the list is the last 200 alerts.
+            startAnswers = (startAnswers + (alert.id to said)).entries.toList().takeLast(20).associate { it.key to it.value }
+            answering = null
+            refreshServer(serverId)
+        }
+    }
+
+    /** Whether this account may answer that alert's start request now. */
+    fun answersStartRequest(alert: AppAlert, now: Double): Boolean =
+        Community.answersStartRequest(alert, now, account?.forServer(alert.serverId)?.can(Permissions.SERVER_CONTROL) == true)
 
     // ------------------------------------------------------------ live feed
     private fun startLive() {
@@ -662,6 +705,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         when (signal.type) {
             "player_joined", "player_left", "player_action" -> if (pages.players.loaded) pages.loadPlayers()
             "server_crashed" -> if (pages.crashes.loaded) pages.loadCrashes()
+            // Asked from Discord while the screen is open.
+            "discord_link_request", "whitelist_form", "new_address" -> if (pages.links != null || pages.whitelist != null) pages.loadCommunity()
+            "quest_claim", "quest_suggested", "event_attendance" -> if (pages.quests.page.loaded) pages.quests.load()
         }
         // Started or stopped: Players and Chat say whether their buttons
         // work now, so they read it again rather than keep the old answer.
