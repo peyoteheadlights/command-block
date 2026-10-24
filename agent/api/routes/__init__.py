@@ -26,6 +26,8 @@ from . import (
     changes,
     chat,
     console,
+    discord,
+    discord_links,
     duplicate,
     files,
     friends,
@@ -66,6 +68,7 @@ PER_SERVER = (
     world,
     addons,
     changes,
+    discord_links,
 )
 GLOBAL = (
     auth,
@@ -81,6 +84,7 @@ GLOBAL = (
     helpdesk,
     updates,
     wake,
+    discord,
 )
 MODULES = (*GLOBAL, *PER_SERVER)
 SERVER_PREFIX = "/servers/{server_id}"

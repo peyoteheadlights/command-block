@@ -295,6 +295,8 @@ class SimpleOverview(QWidget):
             get_help(self.window_, self.say)
         elif action.get("url"):
             self.window_.pc.open_link(action["url"])
+        elif action.get("page") == "discord":
+            self.window_.open_list("PC settings", "discord")
         elif action.get("page") in PAGE_FOR:
             self.window_.open_page(PAGE_FOR[action["page"]])
 
@@ -325,7 +327,11 @@ class SimpleOverview(QWidget):
             words.addWidget(label(("✓ " if item.get("done") else "") + title, "step"))
             words.addWidget(label(text(f"start.{item['evidence_key']}").format(**values), "sub"))
             h.addLayout(words, 1)
-            if not item.get("done") and item.get("page") in PAGE_FOR:
+            if not item.get("done") and item.get("page") == "discord":
+                go = push(text(f"start.{item['id']}_action"))
+                go.clicked.connect(lambda: self.window_.open_list("PC settings", "discord"))
+                h.addWidget(go)
+            elif not item.get("done") and item.get("page") in PAGE_FOR:
                 go = push(text(f"start.{item['id']}_action"))
                 go.clicked.connect(
                     lambda _=False, p=PAGE_FOR[item["page"]]: self.window_.open_page(p)

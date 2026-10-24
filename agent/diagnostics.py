@@ -867,6 +867,42 @@ def _authentication(report: Report, config) -> None:
         )
 
 
+def _discord_bot(config) -> Check:
+    """Asks Discord whether the bot's token works: the only way to know."""
+    token = config.discord_bot_token
+    if not token:
+        return Check("Discord bot", SKIP, "no bot token set")
+    import httpx
+
+    from .discord import client
+
+    try:
+        answer = httpx.get(
+            f"{client.API}/applications/@me",
+            headers={"Authorization": f"Bot {token}"},
+            timeout=10,
+        )
+    except httpx.HTTPError as exc:
+        return Check("Discord bot", UNKNOWN, "Discord couldn't be reached", type(exc).__name__)
+    if answer.status_code == 401:
+        return Check(
+            "Discord bot", FAIL, "Discord refused the token", "Paste a new one on the Discord page."
+        )
+    if answer.status_code != 200:
+        return Check("Discord bot", UNKNOWN, f"Discord answered {answer.status_code}")
+    flags = int(answer.json().get("flags") or 0)
+    off = [
+        name
+        for name, bit in (
+            ("Message Content", client.FLAG_MESSAGE_CONTENT),
+            ("Server Members", client.FLAG_MEMBERS),
+        )
+        if not flags & bit
+    ]
+    detail = f"switches off: {', '.join(off)}" if off else "both switches on"
+    return Check("Discord bot", OK, "token works", detail)
+
+
 def _notifications(report: Report, config) -> None:
     """Whether enabled alert channels are fully configured."""
     section = "Notifications"
@@ -890,6 +926,7 @@ def _notifications(report: Report, config) -> None:
             )
     else:
         report.add(section, Check("Discord", SKIP, "disabled"))
+    report.add(section, _discord_bot(config))
     if config.notifications.email_enabled:
         email = config.notifications.email
         missing = [k for k in ("host", "from_address") if not getattr(email, k)]

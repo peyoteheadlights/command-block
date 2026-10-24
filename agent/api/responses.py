@@ -1955,3 +1955,38 @@ class TailscaleState(Open):
     connected: bool | None = Field(None, description="what Tailscale says; null when unknown")
     account: str | None = None
     error: str | None = None
+
+
+# ------------------------------------------------------------ Discord bot
+class DiscordStatus(Open):
+    token_set: bool
+    state: str = Field(
+        description="off (no token), connecting, connected, token_rejected, intents_refused or stopped"
+    )
+    detail: str = ""
+    connected_at: float | None = None
+    name: str | None = Field(None, description="The bot's name on Discord, once connected")
+    application_id: str | None = None
+    invite_url: str | None = None
+    switches: dict[str, bool | None] = Field(
+        default_factory=dict,
+        description="message_content and members: on, off, or null until read from Discord",
+    )
+    features_off: list[str] = Field(default_factory=list)
+    guilds: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Each Discord server: id, name, servers it's for, grants, and report "
+        "(problems, roles, channels, tied, checked_at) once checked",
+    )
+
+
+class DiscordSetupDone(Open):
+    made: list[str]
+    status: DiscordStatus
+
+
+class DiscordLinks(Open):
+    links: list[dict[str, Any]]
+    requests: list[dict[str, Any]] = Field(description="Bedrock players waiting for approval")
+    players: list[dict[str, Any]] = Field(description="Recent players to pick from: name and uuid")
+    reads_chat: bool
