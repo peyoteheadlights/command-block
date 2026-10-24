@@ -94,7 +94,8 @@ moderator or a Discord role on purpose.
   server is stopped, one open request per server, 10 minutes between
   requests, 15 minutes to answer. The owner and moderators with Start get
   Start / Say no on the Discord alert, the desktop app's Windows alert and
-  in the bell's list (phones in a later part). The asker is told what
+  in the bell's list, and the phone apps (in Alerts and on the lock-screen
+  alert, which needs the phone unlocked). The asker is told what
   happened. Requests are kept in memory, so restarting the agent drops an
   open one (`agent/startrequests.py`).
 
@@ -308,6 +309,26 @@ channel with the reason and the last 20 chat lines; the reporter is in it.
 The alert has **See the report**, which adds whoever presses it (it needs
 Players on that server), because a role can't be added to a private thread.
 Three reports an hour per member; reports are kept 30 days.
+
+## On the phone
+
+The Android and iPhone apps look after what the bot brings in; setting the
+bot up (the token, inviting it, channels, Discord roles, Level roles) stays
+in the desktop app.
+
+- **Alerts**: Start / Say no under a start request while it can still be
+  open, for someone with Start on that server. Read marks go to the PC.
+- **Settings > Discord** (owner): whether the bot is connected, what Discord
+  switched off, each Discord server's checks with Check again, Remove on
+  leave, and the webhook-too switch.
+- **Players**: Linked accounts (with Remove and Bedrock link requests to
+  approve), whitelist requests, and addresses the IP whitelist add-on
+  turned away, for someone with Players.
+- **Quests and events** (a server's screen, for someone with Quests and
+  events): the quests, claims with their screenshot, ideas, a new quest
+  (with no end date; set one in the desktop app), events with who came, and
+  polls. Events and polls are made in the desktop app or with `/event` and
+  `/poll`.
 
 ## The code
 

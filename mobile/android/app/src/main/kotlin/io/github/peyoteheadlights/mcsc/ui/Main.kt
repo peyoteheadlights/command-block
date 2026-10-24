@@ -128,6 +128,9 @@ fun Main(vm: AppViewModel) {
                     onRemoved = { nav.popBackStack("servers", inclusive = false) },
                 )
             }
+            composable("server/{id}/quests") { back ->
+                QuestsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+            }
             composable("server/{id}/events") { back ->
                 EventsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
             }
@@ -149,8 +152,10 @@ fun Main(vm: AppViewModel) {
                     onAccount = { nav.navigate("settings/account") },
                     onModerators = { nav.navigate("settings/moderators") },
                     onPc = { nav.navigate("settings/pc") },
+                    onDiscord = { nav.navigate("settings/discord") },
                 )
             }
+            composable("settings/discord") { DiscordScreen(vm, onBack = { nav.popBackStack() }) }
             composable("settings/account") { AccountScreen(vm, onBack = { nav.popBackStack() }) }
             composable("settings/pc") {
                 PcSettingsScreen(

@@ -23,6 +23,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import io.github.peyoteheadlights.mcsc.core.Community
 import io.github.peyoteheadlights.mcsc.core.Display
 import io.github.peyoteheadlights.mcsc.core.PlayerActions
 import io.github.peyoteheadlights.mcsc.core.PlayerButtons
@@ -45,7 +46,10 @@ fun PlayersScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
     val canManage = vm.canDo(Permissions.PLAYERS_MANAGE)
     val canOp = vm.canDo(Permissions.PLAYERS_OP)
     var asking by remember { mutableStateOf<Asking?>(null) }
-    LaunchedEffect(serverId) { pages.loadPlayers() }
+    LaunchedEffect(serverId) {
+        pages.loadPlayers()
+        if (canManage) pages.loadCommunity()
+    }
     val press: (String, String) -> Unit = { action, name ->
         if (action in PlayerActions.CONFIRM) {
             asking = Asking(action, name)
@@ -59,7 +63,10 @@ fun PlayersScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
         title = t("page.players"),
         onBack = onBack,
         refreshing = false,
-        onRefresh = pages::loadPlayers,
+        onRefresh = {
+            pages.loadPlayers()
+            if (canManage) pages.loadCommunity()
+        },
         overlay = {
             asking?.let { ask ->
                 AskWithReason(ask, onDismiss = { asking = null }) { reason ->
@@ -132,6 +139,8 @@ private fun LazyListScope.playersPage(
         listCard("players.banned", "players.banned_empty", lists.banned, "banned", canManage, busy, press)
         item { Note(t("players.whitelist_note"), color = LocalColors.current.text3) }
     }
+
+    if (canManage) communityCards(vm, pages)
 
     item { SectionTitle(t("players.everyone")) }
     if (page.known.isEmpty()) item { Card { Item(t("players.none"), subtitle = t("players.none_hint")) } }
@@ -295,4 +304,84 @@ private fun AskWithReason(ask: Asking, onDismiss: () -> Unit, onConfirm: (String
         titleContentColor = colors.text,
         textContentColor = colors.text2,
     )
+}
+
+/**
+ * Linked accounts (Discord members and their Minecraft accounts, with
+ * Bedrock players' link requests to approve) and the whitelist help:
+ * requests to join from Discord, addresses an IP whitelist add-on turned
+ * away (always partly hidden), and what an offline-mode server uses.
+ * Shown once there is something in them.
+ */
+private fun LazyListScope.communityCards(vm: AppViewModel, pages: ServerPages) {
+    val busy = pages.playerBusy != null
+    pages.links?.takeIf { it.links.isNotEmpty() || it.requests.isNotEmpty() }?.let { links ->
+        item { SectionTitle(t("discord.links.title")) }
+        items(links.requests, key = { "r${it.id}" }) { request ->
+            var picked by remember(request.id) { mutableStateOf(Community.likelyPlayer(request, links.players)?.uuid) }
+            Card {
+                Item(t("discord.links.asks", "member" to request.discordName, "name" to request.name))
+                if (links.players.isEmpty()) {
+                    Note(t("discord.links.no_players"), color = LocalColors.current.text3)
+                } else {
+                    Column(Modifier.padding(horizontal = 16.dp)) {
+                        Picker(
+                            t("discord.links.pick"),
+                            links.players.firstOrNull { it.uuid == picked }?.name ?: t("value.unknown"),
+                            links.players.map { it.uuid to it.name },
+                        ) { picked = it }
+                    }
+                }
+                Presses(
+                    listOf(
+                        Press(t("discord.links.approve"), { pages.answerLink(request.id, true, picked) }, enabled = !busy && picked != null),
+                        Press(t("discord.links.refuse"), { pages.answerLink(request.id, false, null) }, enabled = !busy),
+                    ),
+                )
+            }
+        }
+        item {
+            Card {
+                for (link in links.links) {
+                    Item(
+                        Community.linkLine(vm.strings, link),
+                        trailing = {
+                            TextButton(onClick = { pages.unlink(link.uuid) }, enabled = !busy) {
+                                Text(t("discord.links.remove"), color = LocalColors.current.accentInk)
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+    val help = pages.whitelist ?: return
+    val note = Community.whitelistNote(vm.strings, help)
+    if (note == null && help.forms.isEmpty() && help.addresses.isEmpty()) return
+    item { SectionTitle(t("whitelist.title")) }
+    note?.let { item { Note(it, color = if (help.addon == null) LocalColors.current.danger else LocalColors.current.text2) } }
+    items(help.forms, key = { "f${it.id}" }) { form ->
+        Card {
+            Item(t("whitelist.asks", "member" to form.discordName, "name" to form.name, "why" to form.why))
+            Presses(
+                listOf(
+                    Press(t("discord.links.approve"), { pages.answerForm(form.id, true) }, enabled = !busy),
+                    Press(t("discord.links.refuse"), { pages.answerForm(form.id, false) }, enabled = !busy),
+                ),
+            )
+        }
+    }
+    items(help.addresses, key = { "a${it.id}" }) { address ->
+        Card {
+            Item(Community.addressLine(vm.strings, address))
+            Presses(
+                listOfNotNull(
+                    Press(t("whitelist.allow"), { pages.answerAddress(address.id, true) }, enabled = !busy).takeIf { address.state == "new" },
+                    Press(t("whitelist.ignore"), { pages.answerAddress(address.id, false) }, enabled = !busy).takeIf { address.state == "new" },
+                    Press(t("whitelist.remove"), { pages.removeAddress(address.id) }, enabled = !busy),
+                ),
+            )
+        }
+    }
+    if (help.addresses.isNotEmpty()) item { Note(t("whitelist.addresses_hint", "addon" to (help.ipAddon ?: "")), color = LocalColors.current.text3) }
 }

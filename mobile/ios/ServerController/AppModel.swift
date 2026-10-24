@@ -52,6 +52,8 @@ final class AppModel {
     @ObservationIgnored private(set) lazy var yourAccount = makeAccountPages()
     /// Settings > PC settings (owner only).
     @ObservationIgnored private(set) lazy var pcSettings = makePcPages()
+    /// Settings > Discord bot (owner only).
+    @ObservationIgnored private(set) lazy var discord = makeDiscordPages()
 
     // The pages of the signed-in account, made again when it signs out so
     // nothing of one PC or account shows on the next.
@@ -65,6 +67,10 @@ final class AppModel {
 
     private func makePcPages() -> PcPages {
         PcPages(client: { [weak self] in self?.client }, noted: { [weak self] problem in self?.note(problem) }, strings: strings)
+    }
+
+    private func makeDiscordPages() -> DiscordPages {
+        DiscordPages(client: { [weak self] in self?.client }, noted: { [weak self] problem in self?.note(problem) }, strings: strings)
     }
 
     // Settings.
@@ -375,6 +381,8 @@ final class AppModel {
         moderators = makeModeratorPages()
         yourAccount = makeAccountPages()
         pcSettings = makePcPages()
+        discord = makeDiscordPages()
+        startAnswers = [:]
     }
 
     /// Cancel on an invite opened while signed in: back to the app as it was.
@@ -427,9 +435,43 @@ final class AppModel {
         } catch {}
     }
 
+    /// Read here is read on the PC too, so the desktop app's count and the
+    /// donation card know (an older agent without the route is left alone).
     func markAllRead() {
         alertState = alertState.markAllRead()
         store.alertState = alertState
+        let upTo = alertState.readUpTo
+        guard let client = client, upTo > 0 else { return }
+        Task { _ = try? await client.markAlertsRead(upTo: upTo) }
+    }
+
+    /// What Start or Say no on each start request alert did, by alert id.
+    private(set) var startAnswers: [Int64: Said] = [:]
+    private(set) var answering: Int64? = nil
+
+    /// Start (the Start button's own start) or Say no to a start request from Discord.
+    func answerStartRequest(_ alert: AppAlert, start: Bool) async {
+        guard let client = client, let serverId = alert.serverId, answering == nil else { return }
+        answering = alert.id
+        let said: Said
+        do {
+            said = Said(text: Community.answered(strings, try await client.answerStartRequest(serverId: serverId, start: start).answer), good: true)
+        } catch let problem as AgentError {
+            note(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {
+            said = Said(text: AgentError.unreachable.message(strings), good: false)
+        }
+        // Only the newest few: the list is the last 200 alerts.
+        startAnswers[alert.id] = said
+        for old in startAnswers.keys.sorted().dropLast(20) { startAnswers[old] = nil }
+        answering = nil
+        scheduleRefresh()
+    }
+
+    /// Whether this account may answer that alert's start request now.
+    func answersStartRequest(_ alert: AppAlert, now: Double) -> Bool {
+        Community.answersStartRequest(alert, now: now, mayStart: account?.forServer(alert.serverId).can(Permissions.SERVER_CONTROL) == true)
     }
 
     func serverName(_ id: String?) -> String {
@@ -604,6 +646,15 @@ final class AppModel {
         case "schedule_finished":
             if pages.world.schedules.value != nil {
                 Task { await pages.world.loadSchedules() }
+            }
+        // Asked from Discord while the screen is open.
+        case "discord_link_request", "whitelist_form", "new_address":
+            if pages.links != nil || pages.whitelist != nil {
+                Task { await pages.loadCommunity() }
+            }
+        case "quest_claim", "quest_suggested", "event_attendance":
+            if pages.quests.page.value != nil {
+                Task { await pages.quests.load() }
             }
         default:
             break

@@ -494,4 +494,5 @@ public enum Permissions {
     public static let SERVERS_MANAGE = "servers.manage"
     public static let FILES_BROWSE = "files.browse"
     public static let WORLD_REPLACE = "world.replace"
+    public static let QUESTS_MANAGE = "quests.manage"
 }

@@ -52,6 +52,11 @@
                 android:resource="@xml/server_widget_info" />
         </receiver>
 
+        <!-- Start / Say no on a start request's lock-screen alert. -->
+        <receiver
+            android:name=".push.StartRequestReceiver"
+            android:exported="false" />
+
         <service
             android:name=".push.AlertsService"
             android:exported="false">

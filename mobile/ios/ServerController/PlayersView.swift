@@ -44,7 +44,7 @@ struct PlayersView: View {
                 .frame(maxWidth: 640)
                 .frame(maxWidth: .infinity)
             }
-            .refreshable { await pages.loadPlayers() }
+            .refreshable { await load(pages) }
             .alert(
                 askTitle,
                 isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }),
@@ -53,7 +53,12 @@ struct PlayersView: View {
                 message: { ask in Text(model.t("players.\(ask.action)_body", ["name": ask.name])) }
             )
         }
-        .task(id: serverId) { await pages.loadPlayers() }
+        .task(id: serverId) { await load(pages) }
+    }
+
+    private func load(_ pages: ServerPages) async {
+        await pages.loadPlayers()
+        if canManage { await pages.loadCommunity() }
     }
 
     // MARK: - The page
@@ -70,6 +75,10 @@ struct PlayersView: View {
             listCard("players.ops", "players.ops_empty", lists.ops, "ops", canRemove: canManage && canOp, palette)
             listCard("players.banned", "players.banned_empty", lists.banned, "banned", canRemove: canManage, palette)
             hint(model.t("players.whitelist_note"), palette)
+        }
+        if canManage {
+            linkedAccounts(palette)
+            whitelistHelp(palette)
         }
         everyone(page, palette)
         hint(model.t("players.no_ip"), palette)
@@ -262,6 +271,97 @@ struct PlayersView: View {
         }
     }
 
+    // MARK: - Linked accounts and whitelist help
+
+    /// Discord members and their Minecraft accounts, with Bedrock players'
+    /// link requests to approve. Shown once there is something in it.
+    @ViewBuilder
+    private func linkedAccounts(_ palette: Palette) -> some View {
+        if let links = pages.links, !links.links.isEmpty || !links.requests.isEmpty {
+            let busy = pages.playerBusy != nil
+            section(model.t("discord.links.title"), palette)
+            ForEach(links.requests) { request in
+                LinkRequestCard(request: request, players: links.players, busy: busy, palette: palette) { approve, uuid in
+                    let pages = self.pages
+                    Task { await pages.answerLink(request.id, approve: approve, uuid: uuid, model.strings) }
+                }
+            }
+            if !links.links.isEmpty {
+                CardBox(palette: palette) {
+                    ForEach(links.links) { link in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(Community.linkLine(model.strings, link)).foregroundStyle(palette.textPrimary)
+                            Spacer()
+                            Button(model.t("discord.links.remove")) {
+                                let pages = self.pages
+                                Task { await pages.unlink(link.uuid, model.strings) }
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(busy)
+                        }
+                        .frame(minHeight: 44)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Requests to join from Discord, addresses an IP whitelist add-on
+    /// turned away (always partly hidden), and what an offline-mode server uses.
+    @ViewBuilder
+    private func whitelistHelp(_ palette: Palette) -> some View {
+        if let help = pages.whitelist {
+            let note = Community.whitelistNote(model.strings, help)
+            let busy = pages.playerBusy != nil
+            if note != nil || !help.forms.isEmpty || !help.addresses.isEmpty {
+                section(model.t("whitelist.title"), palette)
+                if let note = note {
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(help.addon == nil ? palette.danger : palette.textSecondary)
+                }
+                ForEach(help.forms) { form in
+                    CardBox(palette: palette) {
+                        Text(model.t("whitelist.asks", ["member": form.discordName, "name": form.name, "why": form.why]))
+                            .foregroundStyle(palette.textPrimary)
+                        FlowLayout(spacing: 8) {
+                            answerButton("discord.links.approve", busy, palette) { pages, s in await pages.answerForm(form.id, approve: true, s) }
+                            answerButton("discord.links.refuse", busy, palette) { pages, s in await pages.answerForm(form.id, approve: false, s) }
+                        }
+                    }
+                }
+                ForEach(help.addresses) { address in
+                    CardBox(palette: palette) {
+                        Text(Community.addressLine(model.strings, address)).foregroundStyle(palette.textPrimary)
+                        FlowLayout(spacing: 8) {
+                            if address.state == "new" {
+                                answerButton("whitelist.allow", busy, palette) { pages, s in await pages.answerAddress(address.id, allow: true, s) }
+                                answerButton("whitelist.ignore", busy, palette) { pages, s in await pages.answerAddress(address.id, allow: false, s) }
+                            }
+                            answerButton("whitelist.remove", busy, palette) { pages, s in await pages.removeAddress(address.id, s) }
+                        }
+                    }
+                }
+                if !help.addresses.isEmpty {
+                    hint(model.t("whitelist.addresses_hint", ["addon": help.ipAddon ?? ""]), palette)
+                }
+            }
+        }
+    }
+
+    private func answerButton(
+        _ key: String, _ busy: Bool, _ palette: Palette, _ call: @escaping (ServerPages, Strings) async -> Void
+    ) -> some View {
+        Button(model.t(key)) {
+            let pages = self.pages
+            let strings = model.strings
+            Task { await call(pages, strings) }
+        }
+        .buttonStyle(.bordered)
+        .tint(palette.accentInk)
+        .disabled(busy)
+    }
+
     // MARK: - Small parts
 
     @ViewBuilder
@@ -328,6 +428,50 @@ struct PlayersView: View {
             Task { await pages.playerAction(ask.action, name: ask.name, reason: given, model.strings) }
         }
         Button(model.t("mobile.common.cancel"), role: .cancel) {}
+    }
+}
+
+/// A Bedrock player's link request: which recent player it is (the same
+/// name picked first), then Approve or Say no.
+private struct LinkRequestCard: View {
+    let request: LinkRequest
+    let players: [RecentPlayer]
+    let busy: Bool
+    let palette: Palette
+    let answer: (Bool, String?) -> Void
+
+    @Environment(AppModel.self) private var model
+    @State private var picked: String?
+
+    var body: some View {
+        CardBox(palette: palette) {
+            Text(model.t("discord.links.asks", ["member": request.discordName, "name": request.name]))
+                .foregroundStyle(palette.textPrimary)
+            if players.isEmpty {
+                Text(model.t("discord.links.no_players"))
+                    .font(.footnote)
+                    .foregroundStyle(palette.textSecondary)
+            } else {
+                Picker(model.t("discord.links.pick"), selection: $picked) {
+                    ForEach(players, id: \.uuid) { player in
+                        Text(verbatim: player.name).tag(Optional(player.uuid))
+                    }
+                }
+            }
+            FlowLayout(spacing: 8) {
+                Button(model.t("discord.links.approve")) { answer(true, picked) }
+                    .buttonStyle(.bordered)
+                    .tint(palette.accentInk)
+                    .disabled(busy || picked == nil)
+                Button(model.t("discord.links.refuse")) { answer(false, nil) }
+                    .buttonStyle(.bordered)
+                    .tint(palette.accentInk)
+                    .disabled(busy)
+            }
+        }
+        .onAppear {
+            if picked == nil { picked = Community.likelyPlayer(request, players)?.uuid }
+        }
     }
 }
 

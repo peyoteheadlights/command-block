@@ -21,15 +21,20 @@ struct NotificationsView: View {
                         .padding(.vertical, 8)
                     }
                 } else {
-                    ForEach(model.alertState.newestFirst) { alert in
-                        Button {
-                            if let id = alert.serverId {
-                                model.openServer(id)
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        ForEach(model.alertState.newestFirst) { alert in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Button {
+                                    if let id = alert.serverId {
+                                        model.openServer(id)
+                                    }
+                                } label: {
+                                    AlertRowView(alert: alert, unread: alert.id > model.alertState.readUpTo)
+                                }
+                                .buttonStyle(.plain)
+                                StartRequestButtons(alert: alert, now: context.date.timeIntervalSince1970)
                             }
-                        } label: {
-                            AlertRowView(alert: alert, unread: alert.id > model.alertState.readUpTo)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -49,6 +54,35 @@ struct NotificationsView: View {
                 await model.syncAlerts()
             }
         }
+    }
+}
+
+/// Start / Say no under a start request from Discord, while it can still
+/// be open, for someone who may start that server; then what it did.
+private struct StartRequestButtons: View {
+    let alert: AppAlert
+    let now: Double
+
+    @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let palette = model.basePalette(colorScheme)
+        if let said = model.startAnswers[alert.id] {
+            SaidRow(said: said, palette: palette)
+        } else if model.answersStartRequest(alert, now: now) {
+            let waiting = model.answering != nil
+            Presses(presses: [
+                Press(title: model.t("desktop.start_request.start"), enabled: !waiting) { answer(true) },
+                Press(title: model.t("desktop.start_request.no"), enabled: !waiting) { answer(false) },
+            ], palette: palette)
+        }
+    }
+
+    private func answer(_ start: Bool) {
+        let model = self.model
+        let alert = self.alert
+        Task { await model.answerStartRequest(alert, start: start) }
     }
 }
 

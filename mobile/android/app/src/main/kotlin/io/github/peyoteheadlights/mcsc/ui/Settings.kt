@@ -30,7 +30,7 @@ import io.github.peyoteheadlights.mcsc.core.DeviceAlerts
 private val THEMES = listOf("system", "light", "dark", "graphite", "contrast")
 
 @Composable
-fun SettingsScreen(vm: AppViewModel, onAbout: () -> Unit, onAccount: () -> Unit, onModerators: () -> Unit, onPc: () -> Unit) {
+fun SettingsScreen(vm: AppViewModel, onAbout: () -> Unit, onAccount: () -> Unit, onModerators: () -> Unit, onPc: () -> Unit, onDiscord: () -> Unit) {
     val colors = LocalColors.current
     val context = LocalContext.current
     var asking by rememberSaveable { mutableStateOf<String?>(null) }
@@ -64,6 +64,7 @@ fun SettingsScreen(vm: AppViewModel, onAbout: () -> Unit, onAccount: () -> Unit,
                             subtitle = update?.let { t("update.available", "version" to it) } ?: t("mobile.pc.hint"),
                             onClick = onPc,
                         )
+                        Item(t("discord.title"), subtitle = t("mobile.discord.hint"), onClick = onDiscord)
                     }
                 }
             }
