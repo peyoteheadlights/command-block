@@ -19,7 +19,7 @@ POST /api/servers/{server_id}/schedules
 PUT /api/servers/{server_id}/schedules/{schedule_id}
 DELETE /api/servers/{server_id}/schedules/{schedule_id}
 POST /api/servers/{server_id}/schedules/{schedule_id}/run
-GET /api/servers/{server_id}/events
+GET /api/servers/{server_id}/quests/events
 GET /api/servers/{server_id}/crashes
 POST /api/servers/{server_id}/server/restart
 POST /api/servers/{server_id}/server/restart-now
@@ -181,3 +181,10 @@ DELETE /api/servers/{server_id}/quests/{quest_id}
 POST /api/servers/{server_id}/quests/claims/{claim_id}
 GET /api/servers/{server_id}/quests/claims/{claim_id}/screenshot
 DELETE /api/servers/{server_id}/quests/suggestions/{suggestion_id}
+GET /api/servers/{server_id}/quests/events
+POST /api/servers/{server_id}/quests/events
+DELETE /api/servers/{server_id}/quests/events/{event_id}
+POST /api/servers/{server_id}/quests/events/{event_id}/approve
+PUT /api/servers/{server_id}/quests/events/{event_id}/attendance/{discord_id}
+POST /api/servers/{server_id}/quests/polls
+DELETE /api/servers/{server_id}/quests/polls/{poll_id}

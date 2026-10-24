@@ -552,6 +552,77 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        19,
+        # Events and polls (agent/game_events.py). game_events: our own
+        # events ("events" is the Activity table), with each step's time
+        # (started, saved, counted, approved) so it happens once. posts:
+        # the bot's messages, channel id -> {"message", "words"}.
+        # event_rsvps: Going / Maybe / Can't. event_attendance: who came,
+        # how it was decided (measured, suggested, fixed). Event rewards
+        # go in quest_rewards with quest_id 0, period "event:<id>" and
+        # event_id. polls and poll_votes: one vote per member.
+        """
+        CREATE TABLE game_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            goal TEXT NOT NULL DEFAULT '',
+            starts_at REAL NOT NULL,
+            ends_at REAL NOT NULL,
+            start_server INTEGER NOT NULL DEFAULT 0,
+            rewards TEXT NOT NULL DEFAULT '[]',
+            created_at REAL NOT NULL,
+            created_by TEXT NOT NULL,
+            cancelled_at REAL,
+            reminded_at REAL,
+            started_at REAL,
+            counted_at REAL,
+            approved_at REAL,
+            posts TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE event_rsvps (
+            event_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            at REAL NOT NULL,
+            PRIMARY KEY (event_id, discord_id)
+        );
+        CREATE TABLE event_attendance (
+            event_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            minutes INTEGER NOT NULL DEFAULT 0,
+            attended INTEGER NOT NULL DEFAULT 0,
+            how TEXT NOT NULL,
+            fixed_by TEXT,
+            fixed_at REAL,
+            PRIMARY KEY (event_id, discord_id)
+        );
+        CREATE TABLE polls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            question TEXT NOT NULL,
+            answers TEXT NOT NULL,
+            closes_at REAL NOT NULL,
+            created_at REAL NOT NULL,
+            created_by TEXT NOT NULL,
+            closed_at REAL,
+            posts TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE poll_votes (
+            poll_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            answer INTEGER NOT NULL,
+            at REAL NOT NULL,
+            PRIMARY KEY (poll_id, discord_id)
+        );
+        ALTER TABLE quest_rewards ADD COLUMN event_id INTEGER;
+        """,
+    ),
 ]
 
 

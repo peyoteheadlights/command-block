@@ -1,8 +1,9 @@
 """The Quests and events page: one server's quests (made here, joined in
 Discord), "done" claims to approve with their screenshot, quest ideas from
-/quest suggest, the rewards not given yet (Technical), and the Level roles
-of each Discord server it's set up in. For the owner and people with
-Quests and events; the agent checks that too."""
+/quest suggest, the rewards not given yet (Technical), events and polls
+(desktop/events.py), and the Level roles of each Discord server it's set up
+in. For the owner and people with Quests and events; the agent checks that
+too."""
 
 from __future__ import annotations
 
@@ -62,6 +63,67 @@ def reward_words(r: dict, roles: dict[str, str]) -> str:
     )
 
 
+class RewardFields:
+    """The reward templates' fields (a Discord role, an item, Minecraft XP,
+    Level XP), shared by the quest and event forms. ``form`` tells the two
+    apart for screen readers."""
+
+    def __init__(self, form: str = "") -> None:
+        self.role = QComboBox()
+        self.item = QLineEdit()
+        self.item.setPlaceholderText("diamond")
+        self.item.setMaxLength(100)
+        self.item_count = QSpinBox()
+        self.item_count.setRange(1, 64)
+        self.xp = QSpinBox()
+        self.xp.setRange(0, 30)
+        self.level_xp = QSpinBox()
+        self.level_xp.setRange(0, 500)
+        self.level_xp.setSingleStep(10)
+        self.grid = QGridLayout()
+        for i, (key, widget) in enumerate(
+            (
+                ("quests.reward_role", self.role),
+                ("quests.reward_item", self.item),
+                ("quests.reward_item_count", self.item_count),
+                ("quests.reward_xp", self.xp),
+                ("quests.reward_level_xp", self.level_xp),
+            )
+        ):
+            widget.setAccessibleName(f"{text(key)}, {form}" if form else text(key))
+            self.grid.addWidget(label(text(key), "sub"), 0, i)
+            self.grid.addWidget(widget, 1, i)
+            self.grid.setColumnStretch(i, 1)
+
+    def fill_roles(self, roles: dict[str, str], bot: bool) -> None:
+        role = self.role.currentData()
+        self.role.clear()
+        self.role.addItem(text("quests.reward_none"), None)
+        for rid, name in sorted(roles.items(), key=lambda x: x[1].lower()):
+            self.role.addItem(name, rid)
+        self.role.setCurrentIndex(max(self.role.findData(role), 0))
+        self.role.setEnabled(bot)
+
+    def values(self) -> list[dict[str, Any]]:
+        rewards: list[dict[str, Any]] = []
+        if self.role.currentData():
+            rewards.append({"kind": "role", "role_id": self.role.currentData()})
+        if self.item.text().strip():
+            rewards.append(
+                {"kind": "item", "item": self.item.text().strip(), "count": self.item_count.value()}
+            )
+        if self.xp.value():
+            rewards.append({"kind": "xp", "levels": self.xp.value()})
+        if self.level_xp.value():
+            rewards.append({"kind": "level_xp", "amount": self.level_xp.value()})
+        return rewards
+
+    def clear(self) -> None:
+        self.item.clear()
+        for spin in (self.xp, self.level_xp):
+            spin.setValue(0)
+
+
 class QuestsPage(Page):
     def __init__(self, window: MainWindow) -> None:
         super().__init__(window)
@@ -87,12 +149,18 @@ class QuestsPage(Page):
         self.reward_rows = QVBoxLayout()
         layout.addLayout(self.reward_rows)
         self.column.addWidget(self.waiting)
+        from .events import EventsPart  # it uses this file's reward fields
+
+        self.events = EventsPart(self)
+        for part in self.events.cards:
+            self.column.addWidget(part)
         self.levels = QVBoxLayout()
         self.column.addLayout(self.levels)
         self.column.addStretch()
 
     def load(self) -> None:
         self.ask("GET", "/quests", self.show_quests)
+        self.events.load()
 
     def show_quests(self, data: dict) -> None:
         self.data = data
@@ -113,6 +181,7 @@ class QuestsPage(Page):
         self.waiting.setVisible(bool(owed) and mode["technical"])
         refill(self.reward_rows, [self.reward_row(r, roles) for r in owed])
         self.fill_form_choices(roles)
+        self.events.rewards.fill_roles(roles, bool(data.get("bot")))
         boxes: list[QWidget] = []
         for guild in data.get("guilds") or []:
             frame, layout = card(text("quests.levels", guild=guild["name"]))
@@ -274,32 +343,8 @@ class QuestsPage(Page):
 
         layout.addWidget(label(text("quests.rewards_title"), "step"))
         layout.addWidget(label(text("quests.rewards_hint"), "muted"))
-        rewards = QGridLayout()
-        self.role = QComboBox()
-        self.item = QLineEdit()
-        self.item.setPlaceholderText("diamond")
-        self.item.setMaxLength(100)
-        self.item_count = QSpinBox()
-        self.item_count.setRange(1, 64)
-        self.xp = QSpinBox()
-        self.xp.setRange(0, 30)
-        self.level_xp = QSpinBox()
-        self.level_xp.setRange(0, 500)
-        self.level_xp.setSingleStep(10)
-        for i, (key, widget) in enumerate(
-            (
-                ("quests.reward_role", self.role),
-                ("quests.reward_item", self.item),
-                ("quests.reward_item_count", self.item_count),
-                ("quests.reward_xp", self.xp),
-                ("quests.reward_level_xp", self.level_xp),
-            )
-        ):
-            widget.setAccessibleName(text(key))
-            rewards.addWidget(label(text(key), "sub"), 0, i)
-            rewards.addWidget(widget, 1, i)
-            rewards.setColumnStretch(i, 1)
-        layout.addLayout(rewards)
+        self.rewards = RewardFields()
+        layout.addLayout(self.rewards.grid)
         self.problem = label(kind="problem")
         self.problem.hide()
         layout.addWidget(self.problem)
@@ -313,19 +358,14 @@ class QuestsPage(Page):
         return frame
 
     def fill_form_choices(self, roles: dict[str, str]) -> None:
-        kind, role = self.kind.currentData(), self.role.currentData()
+        kind = self.kind.currentData()
         self.kind.blockSignals(True)
         self.kind.clear()
         for key in self.data.get("kinds") or []:
             self.kind.addItem(text(f"quests.kind.{key}"), key)
         self.kind.setCurrentIndex(max(self.kind.findData(kind), 0))
         self.kind.blockSignals(False)
-        self.role.clear()
-        self.role.addItem(text("quests.reward_none"), None)
-        for rid, name in sorted(roles.items(), key=lambda x: x[1].lower()):
-            self.role.addItem(name, rid)
-        self.role.setCurrentIndex(max(self.role.findData(role), 0))
-        self.role.setEnabled(bool(self.data.get("bot")))
+        self.rewards.fill_roles(roles, bool(self.data.get("bot")))
         self.kind_changed()
 
     def kind_changed(self, _index: int = 0) -> None:
@@ -345,17 +385,6 @@ class QuestsPage(Page):
         self.ensureWidgetVisible(self.form)
 
     def make(self) -> None:
-        rewards: list[dict[str, Any]] = []
-        if self.role.currentData():
-            rewards.append({"kind": "role", "role_id": self.role.currentData()})
-        if self.item.text().strip():
-            rewards.append(
-                {"kind": "item", "item": self.item.text().strip(), "count": self.item_count.value()}
-            )
-        if self.xp.value():
-            rewards.append({"kind": "xp", "levels": self.xp.value()})
-        if self.level_xp.value():
-            rewards.append({"kind": "level_xp", "amount": self.level_xp.value()})
         body: dict[str, Any] = {
             "title": self.title.text(),
             "details": self.details.text(),
@@ -364,17 +393,16 @@ class QuestsPage(Page):
             "count": self.count.value(),
             "repeat": self.repeat.currentData(),
             "ends": self.ends.date().toString("yyyy-MM-dd") if self.ends_on.isChecked() else None,
-            "rewards": rewards,
+            "rewards": self.rewards.values(),
             "suggestion_id": self.suggestion,
         }
 
         def done(data: dict) -> None:
             self.problem.hide()
             self.suggestion = None
-            for box in (self.title, self.details, self.goal, self.item):
+            for box in (self.title, self.details, self.goal):
                 box.clear()
-            for spin in (self.xp, self.level_xp):
-                spin.setValue(0)
+            self.rewards.clear()
             self.ends_on.setChecked(False)
             self.say(text("quests.made"))
             self.show_quests(data)

@@ -29,6 +29,7 @@ from . import (
     discord,
     discord_links,
     duplicate,
+    events,
     files,
     friends,
     gamesettings,
@@ -71,6 +72,7 @@ PER_SERVER = (
     changes,
     discord_links,
     quests,
+    events,
 )
 GLOBAL = (
     auth,

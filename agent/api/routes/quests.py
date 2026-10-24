@@ -54,6 +54,25 @@ def page_of(ctx) -> dict:
     }
 
 
+async def checked_rewards(ctx, given) -> list[dict]:
+    """Rewards as templates; a Discord role (quests and events) must be one
+    that gives no power in Discord, checked with Discord."""
+    from ...discord.bot import Refused
+
+    rewards = [r.model_dump(exclude_none=True) for r in given]
+    for reward in rewards:
+        if reward["kind"] != "role":
+            continue
+        bot = ctx.core.discord
+        if bot is None or bot.gateway.state != "connected":
+            raise HTTPException(status_code=409, detail="The bot has to be connected first.")
+        try:
+            await bot.reward_role(ctx.server_id, reward.get("role_id", ""))
+        except Refused as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+    return rewards
+
+
 async def run(work):
     try:
         return await work
@@ -75,21 +94,8 @@ async def make_quest(
     principal: Principal = Depends(require(QUESTS_MANAGE)),
     ctx=Depends(get_server),
 ):
-    """Rewards only from the templates (ADR 0004); a Discord role must be
-    one that gives no power in Discord, checked with Discord."""
-    from ...discord.bot import Refused
-
-    rewards = [r.model_dump(exclude_none=True) for r in payload.rewards]
-    for reward in rewards:
-        if reward["kind"] != "role":
-            continue
-        bot = ctx.core.discord
-        if bot is None or bot.gateway.state != "connected":
-            raise HTTPException(status_code=409, detail="The bot has to be connected first.")
-        try:
-            await bot.reward_role(ctx.server_id, reward.get("role_id", ""))
-        except Refused as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
+    """Rewards only from the templates (ADR 0004)."""
+    rewards = await checked_rewards(ctx, payload.rewards)
     made = await run(
         ctx.core.quests.make(ctx, {**payload.model_dump(), "rewards": rewards}, principal.user)
     )

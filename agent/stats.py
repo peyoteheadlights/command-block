@@ -16,6 +16,7 @@ player sessions.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import re
 import time
@@ -82,6 +83,21 @@ def raw_files(world: Path, uuid: str) -> tuple[dict, dict, float | None]:
 def advancement_done(earned: dict, name: str) -> bool:
     found = earned.get(name)
     return isinstance(found, dict) and bool(found.get("done"))
+
+
+def earned_at(earned: dict, name: str) -> float | None:
+    """When an advancement was finished: its last criterion's time, as the
+    file writes it ("2026-10-23 21:04:05 +0000"). None when it isn't done
+    or no time can be read (never a guess)."""
+    if not advancement_done(earned, name):
+        return None
+    times = []
+    for value in (earned[name].get("criteria") or {}).values():
+        try:
+            times.append(datetime.datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S %z").timestamp())
+        except ValueError:
+            continue
+    return max(times) if times else None
 
 
 def read_files(world: Path, uuid: str) -> dict[str, Any]:

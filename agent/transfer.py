@@ -71,6 +71,11 @@ DATA_TABLES = (
     "quest_progress",
     "quest_suggestions",
     "quest_rewards",
+    "game_events",
+    "event_rsvps",
+    "event_attendance",
+    "polls",
+    "poll_votes",
 )
 ACCOUNT_COLUMNS = (
     "username",
@@ -478,8 +483,10 @@ def import_all(
                     db,
                     table,
                     row,
-                    # Quests keep their ids: their progress points at them.
-                    drop=() if table in ("servers", "settings", "players", "quests") else ("id",),
+                    # Quests, events and polls keep their ids: rows point at them.
+                    drop=()
+                    if table in ("servers", "settings", "players", "quests", "game_events", "polls")
+                    else ("id",),
                 )
         backups = 0
         for entry in manifest["servers"]:
