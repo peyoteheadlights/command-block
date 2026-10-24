@@ -143,6 +143,46 @@ player from the server's recent players and press **Approve** or **Say no**.
 Linked accounts are on the Players and chat page, where they can be
 removed. They're in Export everything and never in Get help.
 
+## Stats and Levels
+
+`/stats [player]` shows a player's playtime, deaths, mobs killed, blocks
+mined and advancements on that server, with no name your own linked
+accounts. They come from the world's `stats/<uuid>.json` and
+`advancements/<uuid>.json`, which Minecraft writes every few minutes and
+when a player leaves, so the answer always says when they were last saved.
+A stat that isn't in the file is left out (never shown as 0), and a mod's
+own stats are listed under their own names. Bedrock keeps no such files
+(`ServerType.stats_files`), so there it's joins and playtime from the
+console, and it says so. The apps show the same with **Stats** on a player
+on the Players and chat page.
+
+Every Discord member with a linked account has a **Level**. XP only comes
+from what Command Block measures: 10 per hour played (our own player
+sessions, added up over all their linked accounts and servers), plus XP
+for events and quests (coming in the next parts). Nothing for Discord
+messages. Level n needs 8 × n² XP: Level 5 after 20 hours, 10 after 80,
+25 after 500. `/level` shows yours and your next Level role.
+
+Level roles: "Set up this Discord server" makes Regular (5), Veteran (10)
+and Legend (25). The owner, and anyone with **Quests and events** on one of
+that Discord server's Minecraft servers, can change them under **Levels**
+on the Discord page. A member holds only the highest Level role they've
+reached; the one before is taken away. A role that gives power in Discord
+(admin, kick, ban, timeouts, @everyone, Manage anything) can't be a Level
+role, and one that gets such a permission later isn't handed out (the
+checks say so). A role that stops being a Level role is taken back from
+members. Once changed, setup leaves the Level roles alone.
+
+Once a minute the bot works out everyone's Level and only calls Discord
+for a member whose Level changed. Level-ups are posted in the quests
+channel (no ping), and can be turned off. A member seen for the first time
+gets their role without a post.
+
+The **weekly leaderboard** is off until you pick a day. It's posted in the
+quests channel at 18:00 on the PC's clock: the top 10 by playtime in the
+last 7 days on that Discord server's Minecraft servers, and the top 10
+Levels. It's remembered, so a restart doesn't post it twice.
+
 ## The code
 
 `agent/discord/client.py` is our own small Discord client (gateway and REST,
@@ -150,8 +190,8 @@ API v10, not discord.py, to keep weak PCs light). It stops on a rejected
 token and never retries it, leaves a channel alone for 10 minutes after a
 403, waits as long as Discord asks on a 429 and resumes after a drop with
 growing waits. `bot.py` holds the commands and buttons, `live.py` what the status
-commands, status message and presence say, `bridge.py` the chat bridge's words, `layout.py` the channels, roles,
-grants and checks, `links.py` the linked accounts. Without a token none of it
+commands, status message and presence say, `bridge.py` the chat bridge's words, `progress.py` what /stats, /level and the leaderboard say, `layout.py` the channels, roles,
+Level roles, grants and checks, `links.py` the linked accounts. The stats reader is `agent/stats.py` and Levels are `agent/levels.py`, with no Discord inside. Without a token none of it
 runs and the client isn't imported.
 
 Tests use a fake Discord (`tests/fake_discord.py`). There's also an opt-in

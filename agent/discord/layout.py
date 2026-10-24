@@ -21,6 +21,8 @@ from ..security import permissions as P
 from ..security.auth import Access, Principal
 
 # Discord's permission bits (https://discord.com/developers/docs/topics/permissions).
+KICK_MEMBERS = 1 << 1
+BAN_MEMBERS = 1 << 2
 ADMINISTRATOR = 1 << 3
 MANAGE_CHANNELS = 1 << 4
 ADD_REACTIONS = 1 << 6
@@ -46,6 +48,28 @@ INVITE_PERMISSIONS = (
     | SEND_MESSAGES_IN_THREADS
 )
 POSTS = VIEW_CHANNEL | SEND_MESSAGES
+# A Level role is handed out to anyone who plays enough, so it may not be one
+# that gives power in Discord: admin, kick, ban, timeouts, @everyone pings or
+# managing anything (bits 4, 5, 13, 27 to 30, 33, 34 are the Manage ones).
+POWERS = (
+    ADMINISTRATOR
+    | KICK_MEMBERS
+    | BAN_MEMBERS
+    | MANAGE_CHANNELS
+    | 1 << 5  # Manage Server
+    | 1 << 13  # Manage Messages
+    | 1 << 17  # Mention @everyone
+    | 1 << 22  # Mute Members
+    | 1 << 23  # Deafen Members
+    | 1 << 24  # Move Members
+    | 1 << 27  # Manage Nicknames
+    | MANAGE_ROLES
+    | 1 << 29  # Manage Webhooks
+    | 1 << 30  # Manage Expressions
+    | 1 << 33  # Manage Events
+    | 1 << 34  # Manage Threads
+    | 1 << 40  # Timeout Members
+)
 # A chat channel also gets a reaction on a message the game refused.
 CHATS = POSTS | ADD_REACTIONS | READ_MESSAGE_HISTORY
 
@@ -56,14 +80,15 @@ SERVER_CHANNELS = ("chat", "status")
 KINDS = (*SHARED_CHANNELS, *SERVER_CHANNELS)
 CATEGORY = "Command Block"
 # The Discord roles setup makes: kind -> (name, colour). The mod role gets
-# the default permission level; the Level roles are handed out later (PR 5).
+# the default permission level; a "level_<n>" role goes to members at Level
+# n (agent/levels.py). The owner can change the Level roles; setup then
+# leaves them alone.
 ROLES = {
     "mod": ("Minecraft mod", 0x3BA55D),
     "level_5": ("Regular", 0x5865F2),
     "level_10": ("Veteran", 0xFAA61A),
     "level_25": ("Legend", 0xED4245),
 }
-HANDED_OUT = ("level_5", "level_10", "level_25")
 
 
 def invite_url(application_id: str) -> str:
@@ -115,6 +140,15 @@ def server_of_channel(db, guild_id: str, channel_id: str) -> str | None:
     return row["server_id"] if row else None
 
 
+def shared_channel(db, guild_id: str, kind: str) -> str | None:
+    """The channel of a kind shared by the Discord server's Minecraft servers."""
+    row = db.query_one(
+        "SELECT channel_id FROM discord_channels WHERE guild_id = ? AND kind = ? AND server_id = ''",
+        (guild_id, kind),
+    )
+    return row["channel_id"] if row else None
+
+
 def alert_channels(db, server_id: str, guild_ids) -> list[str]:
     """Where a server's alerts go: in each Discord server it's tied to, its
     own alerts channel, else the shared one."""
@@ -151,6 +185,69 @@ def set_address(db, server_id: str, address: str | None) -> None:
 def our_roles(db, guild_id: str) -> dict[str, str]:
     rows = db.query("SELECT kind, role_id FROM discord_roles WHERE guild_id = ?", (guild_id,))
     return {r["kind"]: r["role_id"] for r in rows}
+
+
+# -- Levels ------------------------------------------------------------------
+LEVELS_KEY = "discord_levels"  # guild id -> its Level settings
+
+
+def level_roles(db, guild_id: str) -> list[tuple[int, str]]:
+    """(Level, role id) for each Level role, lowest first."""
+    rows = db.query(
+        "SELECT kind, role_id FROM discord_roles WHERE guild_id = ? AND kind GLOB 'level_*'",
+        (guild_id,),
+    )
+    return sorted((int(r["kind"].split("_", 1)[1]), r["role_id"]) for r in rows)
+
+
+def role_for(level: int, roles: list[tuple[int, str]]) -> str | None:
+    """The Level role a member at this Level holds: the highest reached."""
+    return next((rid for at, rid in reversed(roles) if level >= at), None)
+
+
+def level_settings(db, guild_id: str) -> dict[str, Any]:
+    """announce: post level-ups; leaderboard_day: 0 (Monday) to 6, or None
+    for no weekly leaderboard; custom: the owner changed the Level roles."""
+    saved = (db.get_setting(LEVELS_KEY, {}) or {}).get(guild_id) or {}
+    return {"announce": True, "leaderboard_day": None, "custom": False, **saved}
+
+
+def set_level_settings(db, guild_id: str, **changes: Any) -> dict[str, Any]:
+    everything = db.get_setting(LEVELS_KEY, {}) or {}
+    everything[guild_id] = {**level_settings(db, guild_id), **changes}
+    db.set_setting(LEVELS_KEY, everything)
+    return everything[guild_id]
+
+
+def level_role_refused(guild_id: str, role: dict, ours: dict[str, str]) -> str | None:
+    """Why a Discord role can't be a Level role, or None when it can."""
+    if role["id"] == guild_id or role.get("managed") or role["id"] == ours.get("mod"):
+        return f"{role['name']} can't be a Level role."
+    if int(role.get("permissions") or 0) & POWERS:
+        return (
+            f"{role['name']} gives power in Discord (like kicking or managing), so it can't be "
+            "handed out for playing. Pick a role without those, or make a new one."
+        )
+    return None
+
+
+def set_level_roles(db, guild_id: str, roles: list[tuple[int, str]]) -> None:
+    """Replace the Level roles (already checked with level_role_refused).
+    Roles that stop being Level roles are "retired": the next time
+    everyone's roles are set, members lose them."""
+    before = {rid for _at, rid in level_roles(db, guild_id)}
+    retired = set(level_settings(db, guild_id).get("retired") or []) | before
+    db.execute(
+        "DELETE FROM discord_roles WHERE guild_id = ? AND kind GLOB 'level_*'",
+        (guild_id,),
+    )
+    for level, role_id in roles:
+        db.execute(
+            "INSERT INTO discord_roles (guild_id, kind, role_id) VALUES (?, ?, ?)",
+            (guild_id, f"level_{level}", role_id),
+        )
+    keep = {rid for _at, rid in roles}
+    set_level_settings(db, guild_id, custom=True, retired=sorted(retired - keep))
 
 
 def grants(db, guild_id: str) -> dict[str, dict[str, list[str]]]:
@@ -261,10 +358,12 @@ async def inspect(rest, db, guild_id: str, bot_id: str, names: dict[str, str]) -
         problems.append({"id": "manage_channels"})
     top = top_position(roles, mine)
     ours = our_roles(db, guild_id)
-    for kind in HANDED_OUT:
-        role = by_role.get(ours.get(kind, ""))
+    for _level, role_id in level_roles(db, guild_id):
+        role = by_role.get(role_id)
         if role and role.get("position", 0) >= top:
             problems.append({"id": "role_too_low", "role": role["name"]})
+        if role and level_role_refused(guild_id, role, ours):
+            problems.append({"id": "level_role_powers", "role": role["name"]})
     tied = channels(db, guild_id)
     for row in tied:
         channel = by_channel.get(row["channel_id"])
@@ -288,7 +387,12 @@ async def inspect(rest, db, guild_id: str, bot_id: str, names: dict[str, str]) -
     return {
         "problems": problems,
         "roles": [
-            {"id": r["id"], "name": r["name"], "position": r.get("position", 0)}
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "position": r.get("position", 0),
+                "permissions": str(r.get("permissions") or "0"),
+            }
             for r in sorted(roles, key=lambda r: -r.get("position", 0))
             # Bots' own roles can't be given to people; @everyone can.
             if not r.get("managed")
@@ -345,8 +449,9 @@ async def set_up(rest, db, guild_id: str, servers: dict[str, str]) -> dict[str, 
             await channel(kind, sid, f"{slug(name, sid)}-{kind}" if several else kind, category)
 
     ours = our_roles(db, guild_id)
+    custom = level_settings(db, guild_id)["custom"]
     for kind, (name, colour) in ROLES.items():
-        if ours.get(kind) in roles:
+        if ours.get(kind) in roles or (custom and kind.startswith("level_")):
             continue
         created = await rest.request(
             "POST",

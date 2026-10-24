@@ -52,7 +52,7 @@ This is a student project I've been working on as a hobby for my personal use, a
 
 This app is in no way done and will be supported for a good long while, with these next features already being worked on:
 
-- **Discord bot:** control servers from Discord, and friends can "Ask to start" a server, which goes to you and your moderators. Setup, Discord role permissions, status and alerts, starting, account linking and the chat bridge are in already ([docs/discord.md](docs/discord.md)).
+- **Discord bot:** control servers from Discord, and friends can "Ask to start" a server, which goes to you and your moderators. Setup, Discord role permissions, status and alerts, starting, account linking, the chat bridge, /stats, Levels with Level roles and a weekly leaderboard are in already ([docs/discord.md](docs/discord.md)).
 - Manage servers on several PCs under one owner account.
 - Support for Spigot, Leaf and custom jars, with type switching.
 - Add mods from a link or file, including CurseForge, plus recommended add-ons, performance mods and QoL mods.

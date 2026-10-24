@@ -1988,6 +1988,30 @@ class DiscordStatus(Open):
     )
 
 
+class DiscordLevels(Open):
+    announce: bool = Field(description="Level-ups are posted in the quests channel")
+    leaderboard_day: int | None = Field(
+        description="The weekly leaderboard's day, 0 (Monday) to 6, or null for none"
+    )
+    roles: list[dict[str, Any]] = Field(
+        description="Each Level role: level, role_id and name (null until the bot has read it)"
+    )
+
+
+class PlayerStats(Open):
+    player: str
+    server_id: str
+    source: str = Field(description="files (the world's stats files) or console (Bedrock)")
+    values: dict[str, int] = Field(
+        description="Only what was found: playtime (seconds), deaths, mobs, blocks, "
+        "advancements, or on Bedrock playtime and joins"
+    )
+    other: list[dict[str, Any]] = Field(description="A mod's own stats: name and value")
+    saved_at: float | None = Field(
+        description="When the stats files were last saved; null when there are none (or Bedrock)"
+    )
+
+
 class DiscordSetupDone(Open):
     made: list[str]
     status: DiscordStatus

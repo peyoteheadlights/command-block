@@ -131,6 +131,8 @@ class FakeDiscord:
             {"id": "2000000000000000010", "type": 0, "name": "general", "permission_overwrites": []}
         ]
         self.bot_roles = [BOT_ROLE]
+        # Members the bot can look up: id -> their role ids.
+        self.members: dict[str, list[str]] = {MEMBER_ID: []}
         self.messages: list[dict] = []
 
     # -- seams -----------------------------------------------------------------
@@ -293,6 +295,18 @@ class FakeDiscord:
             return httpx.Response(200, json=self.channels)
         if key == ("GET", f"/guilds/{GUILD_ID}/members/{BOT_ID}"):
             return httpx.Response(200, json={"user": {"id": BOT_ID}, "roles": self.bot_roles})
+        if path.startswith(f"/guilds/{GUILD_ID}/members/"):
+            parts = path.split("/")  # "", guilds, id, members, member[, roles, role]
+            held = self.members.get(parts[4])
+            if held is None:
+                return httpx.Response(404, json={"message": "Unknown Member", "code": 10007})
+            if request.method == "GET":
+                return httpx.Response(200, json={"user": {"id": parts[4]}, "roles": list(held)})
+            if request.method == "PUT" and parts[6] not in held:
+                held.append(parts[6])
+            if request.method == "DELETE" and parts[6] in held:
+                held.remove(parts[6])
+            return httpx.Response(204)
         if key == ("POST", f"/guilds/{GUILD_ID}/channels"):
             channel = {"id": str(next(self._ids)), "permission_overwrites": [], **body}
             channel["name"] = (

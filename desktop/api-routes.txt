@@ -13,6 +13,7 @@ GET /api/servers/{server_id}/changes
 POST /api/servers/{server_id}/changes/undo
 POST /api/servers/{server_id}/changes/redo
 GET /api/servers/{server_id}/players
+GET /api/servers/{server_id}/players/{name}/stats
 GET /api/servers/{server_id}/schedules
 POST /api/servers/{server_id}/schedules
 PUT /api/servers/{server_id}/schedules/{schedule_id}
@@ -173,3 +174,4 @@ GET /api/tailscale/share-key
 PUT /api/tailscale/share-key
 DELETE /api/tailscale/share-key
 POST /api/tailscale/share-link
+PUT /api/discord/guilds/{guild_id}/levels

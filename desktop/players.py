@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
@@ -78,6 +79,7 @@ class PlayersPage(Page):
         super().__init__(window)
         self.data: dict = {}
         self.lines: dict[str, QLabel] = {}  # action id -> its line under "Sent to the server"
+        self.stats: dict[tuple[str, str], str] = {}  # (server, player) -> their stats, while open
         self.notice = label(text("players.start_first"), "notice")
         self.notice.hide()  # until the agent says the server is off
         self.column.addWidget(self.notice)
@@ -197,6 +199,10 @@ class PlayersPage(Page):
             h = QHBoxLayout(line)
             h.setContentsMargins(0, 0, 0, 0)
             words = text("discord.links.row", name=linked["name"], member=linked["discord_name"])
+            if "level" in linked:
+                words += "  ·  " + text(
+                    "discord.links.level", level=linked["level"], xp=linked["xp"]
+                )
             if mode["technical"]:
                 words += f"  ({linked['uuid']})"
             h.addWidget(label(words), 1)
@@ -338,10 +344,30 @@ class PlayersPage(Page):
         top.addStretch()
         words.addLayout(top)
         words.addWidget(label(info, "sub"))
+        shown = self.stats.get((self.row["id"], name))
+        if shown:
+            words.addWidget(label(shown, "sub"))
         h.addLayout(words, 1)
+        stats = push(text("players.stats"), "plain")
+        stats.setAccessibleName(f"{text('players.stats')}: {name}")
+        stats.clicked.connect(lambda _=False: self.toggle_stats(name))
+        h.addWidget(stats)
         for button in self.buttons(name, online):
             h.addWidget(button)
         return row
+
+    def toggle_stats(self, name: str) -> None:
+        """Shows a player's stats under their row, or hides them again."""
+        key = (self.row["id"], name)
+        if self.stats.pop(key, None) is None:
+
+            def show(found: dict) -> None:
+                self.stats[key] = stats_words(found)
+                self.show_players(self.data)
+
+            self.ask("GET", f"/players/{quote(name)}/stats", show)
+        else:
+            self.show_players(self.data)
 
     def buttons(self, name: str, online: bool) -> list[QPushButton]:
         lower, sets = name.lower(), self.sets
@@ -559,3 +585,20 @@ class PlayersPage(Page):
             body={"message": words},
             always=self.show_chat_box,
         )
+
+
+def stats_words(found: dict) -> str:
+    """Only the numbers the agent found, then where they came from."""
+    values = found.get("values") or {}
+    parts = [
+        f"{text(f'players.stat.{key}')} "
+        + (duration(values[key]) if key == "playtime" else f"{values[key]:,}")
+        for key in ("playtime", "deaths", "mobs", "blocks", "advancements", "joins")
+        if key in values
+    ]
+    parts += [f"{x['name']} {x['value']:,}" for x in found.get("other") or []]
+    if found.get("source") == "console":
+        return "  ·  ".join([*parts, text("players.stats_console")])
+    if found.get("saved_at") is None:
+        return text("players.stats_none")
+    return "  ·  ".join([*parts, text("players.stats_saved", time=clock(found["saved_at"]))])

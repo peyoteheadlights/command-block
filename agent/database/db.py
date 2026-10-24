@@ -462,6 +462,23 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        17,
+        # Levels (agent/levels.py): the XP a Discord member got for an
+        # event attended or a quest finished, once per (source, ref).
+        # Playtime XP isn't kept here: it's worked out from players.
+        """
+        CREATE TABLE level_xp (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            ref TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            at REAL NOT NULL,
+            UNIQUE (discord_id, source, ref)
+        );
+        """,
+    ),
 ]
 
 
