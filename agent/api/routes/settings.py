@@ -19,6 +19,7 @@ SETTABLE_PREFIXES = (
     "thresholds.",
     "notifications.events.",
     "notifications.discord_enabled",
+    "notifications.webhook_with_bot",
     "notifications.email_enabled",
     "notifications.push_enabled",
     "notifications.email.",

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -23,10 +24,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..config import PROJECT_ROOT
-from ..events import Event
+from ..events import OWNER_ONLY_EVENTS, Event
+from ..jobs import JobConflict
+from ..minecraft.playeractions import DONE, SENT, PlayerActionError
+from ..minecraft.process import ServerError
 from ..security import permissions as P
 from ..security.auth import AuthError, Principal, RateLimiter
-from . import client, layout
+from ..startrequests import STOPPED, StartRequest, StartRequestError
+from . import client, layout, live
 from .links import CODE_LIFE, LinkError
 
 if TYPE_CHECKING:
@@ -43,10 +48,18 @@ EPHEMERAL = 64
 # Minecraft names as the server prints them; Floodgate's "." is kept.
 NAME_RE = re.compile(r"^\.?[A-Za-z0-9_]{1,16}$")
 PROFILE_KEY = "discord_profile"
+POSTS_KEY = "discord_status_posts"  # status channel id -> {"message", "words"}
+LIVE_FIRST = 5.0  # seconds after logging in (the Discord servers arrive first)
+LIVE_EVERY = 60.0  # seconds between status message and presence checks
+START_COOLDOWN = 300.0  # seconds between starts of one server from Discord
 
 
 class Refused(Exception):
     """A command that can't go ahead, with the words to say why."""
+
+
+# Refusals whose words are safe to show in Discord as they are.
+SAYS_WHY = (Refused, LinkError, StartRequestError, PlayerActionError, JobConflict)
 
 
 @dataclass
@@ -60,6 +73,7 @@ class Call:
     options: dict[str, Any]
     interaction: dict
     ctx: ServerContext | None = None
+    arg: str = ""  # a button's player name
 
     @property
     def member_id(self) -> str:
@@ -84,6 +98,22 @@ class Command:
     handler: Handler
     needs_server: bool = True
     options: list[dict] = field(default_factory=list)
+    # Answered "thinking..." first, for work that can take longer than the
+    # 3 seconds Discord waits for an answer.
+    slow: bool = False
+
+
+@dataclass
+class Button:
+    """A button under an alert. Its id is "action:server:player"; one with
+    ``sure`` asks "Are you sure?" (only the presser sees it) first."""
+
+    action: str
+    label: str
+    permission: str
+    handler: Handler
+    sure: str | None = None  # the question; {name} and {server} filled in
+    style: int = 2  # Discord's grey; 1 blue, 3 green, 4 red
 
 
 NAME_OPTION = {
@@ -106,8 +136,11 @@ class Bot:
         self.reports: dict[str, dict] = {}  # id -> layout.inspect's answer
         # Per member, like the sign-in limiter: a burst is fine, a flood isn't.
         self.rate = RateLimiter(8, 60.0)
+        self.started: dict[str, float] = {}  # server id -> last /start from Discord
         self._task: asyncio.Task | None = None
+        self._live: asyncio.Task | None = None
         self._jobs: set[asyncio.Task] = set()
+        core.start_requests.on_close = self.request_closed
 
     # -- running -------------------------------------------------------------
     def start(self) -> None:
@@ -125,7 +158,9 @@ class Bot:
             )
 
     async def stop(self) -> None:
-        for task in [self._task, *self._jobs]:
+        if self.core.start_requests.on_close == self.request_closed:
+            self.core.start_requests.on_close = None
+        for task in [self._task, self._live, *self._jobs]:
             if task:
                 task.cancel()
         if self._task:
@@ -154,6 +189,8 @@ class Bot:
             self.user = data.get("user") or {}
             self.app = {"id": str((data.get("application") or {}).get("id", ""))}
             self.spawn(self._after_ready())
+            if self._live is None:
+                self._live = asyncio.create_task(self._live_loop(), name="discord-live")
         elif name in ("GUILD_CREATE", "GUILD_UPDATE"):
             self.guilds[data["id"]] = {"id": data["id"], "name": data.get("name", "")}
             if name == "GUILD_CREATE":
@@ -163,6 +200,107 @@ class Bot:
             self.reports.pop(data["id"], None)
         elif name == "INTERACTION_CREATE":
             self.spawn(self.interaction(data))
+
+    # -- the status messages and the presence line ------------------------------
+    async def _live_loop(self) -> None:
+        await asyncio.sleep(LIVE_FIRST)
+        while True:
+            try:
+                await self.update_live()
+            except client.DiscordError as exc:
+                log.info("couldn't update the Discord status: %s", exc)
+            except Exception:
+                log.exception("couldn't update the Discord status")
+            await asyncio.sleep(LIVE_EVERY)
+
+    async def update_live(self) -> None:
+        """Edit what changed, and nothing else (weak mini PCs, and Discord's
+        rate limits)."""
+        tied = sorted({sid for gid in self.guilds for sid in self.server_names(gid)})
+        line = live.presence([self.core.servers[sid] for sid in tied])
+        if line and line != self.gateway.presence:
+            await self.gateway.set_presence(line)
+        shared = layout.addresses(self.core.db)
+        posts = self.core.db.get_setting(POSTS_KEY, {}) or {}
+        changed = False
+        for gid in list(self.guilds):
+            for row in layout.channels(self.core.db, gid):
+                ctx = self.core.servers.get(row["server_id"])
+                if row["kind"] != "status" or ctx is None:
+                    continue
+                words = live.status_message(ctx, shared.get(ctx.server_id))
+                post = posts.get(row["channel_id"]) or {}
+                if post.get("words") == words:
+                    continue
+                posts[row["channel_id"]] = {
+                    "message": await self._post_or_edit(
+                        row["channel_id"], post.get("message"), words
+                    ),
+                    "words": words,
+                }
+                changed = True
+        if changed:
+            self.core.db.set_setting(POSTS_KEY, posts)
+
+    async def _post_or_edit(self, channel_id: str, message_id: str | None, words: str) -> str:
+        body = {"content": words, "allowed_mentions": {"parse": []}}
+        if message_id:
+            try:
+                await self.rest.request(
+                    "PATCH", f"/channels/{channel_id}/messages/{message_id}", body
+                )
+                return message_id
+            except client.DiscordError as exc:
+                if exc.status != 404:  # deleted by someone: post a new one
+                    raise
+        made = await self.rest.request("POST", f"/channels/{channel_id}/messages", body)
+        return str(made["id"])
+
+    # -- alerts ------------------------------------------------------------------
+    def posts_alert(self, event: Event) -> bool:
+        """Whether this alert goes to an alerts channel: only a Minecraft
+        server's own alerts, never the ones about the PC (owner only)."""
+        return (
+            self.gateway.state == "connected"
+            and event.server_id in self.core.servers
+            and event.type not in OWNER_ONLY_EVENTS
+            and bool(layout.alert_channels(self.core.db, event.server_id, self.guilds))
+        )
+
+    async def post_alert(self, event: Event, embed: dict) -> int:
+        assert event.server_id is not None
+        request = (
+            self.core.start_requests.get(event.server_id) if event.type == "start_request" else None
+        )
+        body = {
+            "embeds": [embed],
+            "components": alert_buttons(event, self.core.servers[event.server_id]),
+            "allowed_mentions": {"parse": []},
+        }
+        sent = 0
+        for channel_id in layout.alert_channels(self.core.db, event.server_id, self.guilds):
+            made = await self.rest.request("POST", f"/channels/{channel_id}/messages", body)
+            sent += 1
+            if request is not None:
+                request.posts.append((channel_id, str(made["id"])))
+        return sent
+
+    async def request_closed(self, request: StartRequest, how: str) -> None:
+        """A start request ended: its alerts lose their buttons and say how."""
+        words = {
+            "started": "Answered: started.",
+            "no": "Answered: not now.",
+            "expired": "Nobody answered.",
+            "online": "Started another way.",
+        }[how]
+        for channel_id, message_id in request.posts:
+            self.spawn(
+                self.rest.request(
+                    "PATCH",
+                    f"/channels/{channel_id}/messages/{message_id}",
+                    {"content": words, "components": []},
+                )
+            )
 
     async def _after_ready(self) -> None:
         self.app = await self.rest.request("GET", "/applications/@me")
@@ -230,6 +368,8 @@ class Bot:
             "invite_url": layout.invite_url(app_id) if app_id else None,
             "switches": switches,
             "features_off": off,
+            "addresses": layout.addresses(self.core.db),
+            "webhook_with_bot": self.core.config.notifications.webhook_with_bot,
             "guilds": [
                 {
                     **guild,
@@ -278,13 +418,14 @@ class Bot:
 
     # -- commands -------------------------------------------------------------------
     async def interaction(self, data: dict) -> None:
-        if data.get("type") != 2:  # only slash commands so far
-            return
-        command = COMMANDS.get(str((data.get("data") or {}).get("name")))
+        """A slash command (type 2) or a button press (type 3): rate limit,
+        pick the server, check the permission like a route, run, answer, audit."""
+        kind = data.get("type")
+        body = data.get("data") or {}
         member = data.get("member") or {}
         user = member.get("user") or {}
         guild_id = data.get("guild_id")
-        if command is None or not guild_id or not user.get("id"):
+        if kind not in (2, 3) or not guild_id or not user.get("id"):
             return
         call = Call(
             guild_id=str(guild_id),
@@ -293,21 +434,46 @@ class Bot:
             principal=layout.member_principal(
                 self.core.db, str(guild_id), user, [str(r) for r in member.get("roles") or []]
             ),
-            options={
-                o["name"]: o.get("value")
-                for o in (data["data"].get("options") or [])
-                if "name" in o
-            },
+            options={o["name"]: o.get("value") for o in body.get("options") or [] if "name" in o},
             interaction=data,
         )
-        result = "ok"
+        asking: Button | None = None  # a button that asks "Are you sure?" first
+        on_prompt = False  # pressed on the "Are you sure?" message: edit it in place
+        if kind == 2:
+            command = COMMANDS.get(str(body.get("name")))
+            if command is None:
+                return
+            name, permission, handler = f"/{command.name}", command.permission, command.handler
+            needs_server, slow = command.needs_server, command.slow
+        else:
+            custom = str(body.get("custom_id") or "")
+            if custom == "cancel":
+                await self.respond(data, "Left as it was.", update=True)
+                return
+            on_prompt = custom.startswith("sure:")
+            action, wanted, call.arg = (custom.removeprefix("sure:").split(":", 2) + ["", ""])[:3]
+            button = BUTTONS.get(action)
+            if button is None:
+                return
+            call.options = {"server": wanted}
+            name, permission, handler = f"button {action}", button.permission, button.handler
+            needs_server, slow = True, True
+            asking = button if button.sure and not on_prompt else None
+        result, deferred = "ok", False
         try:
             self.rate.check(f"discord:{call.member_id}")
-            server_id = self.pick_server(call) if command.needs_server else None
-            P.check(call.principal, command.permission, server_id)
+            server_id = self.pick_server(call) if needs_server else None
+            P.check(call.principal, permission, server_id)
             if server_id:
                 call.ctx = self.core.servers[server_id]
-            words = await command.handler(self, call)
+            if asking and call.ctx is not None:
+                question = str(asking.sure).format(name=call.arg, server=call.ctx.name)
+                await self.respond(data, question, components=sure_buttons(asking, call))
+                return
+            if slow:
+                await self.defer(data, update=on_prompt)
+                deferred = True
+            words = await handler(self, call)
         except AuthError as exc:
             result = "refused"
             words = (
@@ -315,18 +481,23 @@ class Bot:
                 if exc.status == 429
                 else "Your Discord roles don't allow that on this server."
             )
-        except (Refused, LinkError) as exc:
+        except SAYS_WHY as exc:
             result = "refused"
             words = str(exc)
         except Exception:
-            log.exception("/%s failed", command.name)
+            log.exception("%s failed", name)
             result = "failed"
             words = "Something went wrong on the PC. The owner can find it in the agent's log."
-        await self.reply(data, words)
+        if deferred:
+            await self.rest.request(
+                "PATCH", self.original(data), {"content": words[:2000], "components": []}
+            )
+        else:
+            await self.respond(data, words, update=on_prompt)
         self.core.db.audit(
             "discord_command",
             user=call.principal.user,
-            target=f"/{command.name}",
+            target=f"{name} {call.arg}".strip(),
             result=result,
             detail=f"Discord member {call.member_id}",
             server_id=call.ctx.server_id if call.ctx else None,
@@ -357,23 +528,41 @@ class Bot:
             )
         raise Refused("Which server? Add the server option: " + ", ".join(sorted(names.values())))
 
-    async def reply(self, interaction: dict, words: str, ephemeral: bool = True) -> None:
-        await self.rest.request(
-            "POST",
-            f"/interactions/{interaction['id']}/{interaction['token']}/callback",
-            {
-                "type": 4,
-                "data": {
-                    "content": words[:2000],
-                    "flags": EPHEMERAL if ephemeral else 0,
-                    "allowed_mentions": {"parse": []},
-                },
-            },
+    async def respond(
+        self,
+        interaction: dict,
+        words: str,
+        update: bool = False,
+        components: list[dict] | None = None,
+    ) -> None:
+        """Answer only the member sees, or (``update``) change the message
+        the pressed button is on."""
+        data: dict[str, Any] = {
+            "content": words[:2000],
+            "allowed_mentions": {"parse": []},
+            "components": components or [],
+        }
+        if not update:
+            data["flags"] = EPHEMERAL
+        await self._callback(interaction, {"type": 7 if update else 4, "data": data})
+
+    async def defer(self, interaction: dict, update: bool = False) -> None:
+        """ "Thinking...", answered later through ``original``."""
+        await self._callback(
+            interaction, {"type": 6} if update else {"type": 5, "data": {"flags": EPHEMERAL}}
         )
+
+    async def _callback(self, interaction: dict, body: dict) -> None:
+        await self.rest.request(
+            "POST", f"/interactions/{interaction['id']}/{interaction['token']}/callback", body
+        )
+
+    def original(self, interaction: dict) -> str:
+        return f"/webhooks/{self.app.get('id')}/{interaction['token']}/messages/@original"
 
     def edit_reply(self, interaction: dict) -> Callable[[str], None]:
         """Changes the first reply later (within the 15 minutes Discord allows)."""
-        path = f"/webhooks/{self.app.get('id')}/{interaction['token']}/messages/@original"
+        path = self.original(interaction)
 
         def edit(words: str) -> None:
             self.spawn(self.rest.request("PATCH", path, {"content": words[:2000]}))
@@ -414,33 +603,171 @@ def command_list(names: dict[str, str]) -> list[dict]:
     return out
 
 
-# -- the commands -------------------------------------------------------------------
-def _duration(seconds: float) -> str:
-    minutes = int(seconds // 60)
-    hours, minutes = divmod(minutes, 60)
-    days, hours = divmod(hours, 24)
-    if days:
-        return f"{days} d {hours} h"
-    if hours:
-        return f"{hours} h {minutes} min"
-    return f"{minutes} min"
+def alert_buttons(event: Event, ctx: ServerContext) -> list[dict]:
+    """The buttons under an alert in the alerts channel."""
+    name = str((event.data or {}).get("username") or "")
+    wanted = {
+        "player_joined": ("kick", "ban"),
+        "player_left": ("ban",),
+        "server_crashed": ("restart",),
+        "crash_loop": ("restart",),
+        "low_tps": ("restart",),
+        "high_mspt": ("restart",),
+        "backup_failed": ("backup",),
+        "backup_copy_failed": ("backup",),
+        "start_request": ("start_yes", "start_no"),
+    }.get(event.type, ())
+    if not ctx.config.server_type.bans:
+        wanted = tuple(a for a in wanted if a != "ban")
+    if event.type.startswith("player_") and not name:
+        wanted = ()
+    row = [
+        {
+            "type": 2,
+            "style": BUTTONS[a].style,
+            "label": BUTTONS[a].label,
+            "custom_id": f"{a}:{ctx.server_id}:{name}"[:100],
+        }
+        for a in wanted
+    ]
+    return [{"type": 1, "components": row}] if row else []
 
 
-async def status(bot: Bot, call: Call) -> str:
-    """Only measured facts; anything not known says Unknown."""
+def sure_buttons(button: Button, call: Call) -> list[dict]:
     assert call.ctx is not None
-    s = call.ctx.summary()
-    name = s["name"]
-    if s["state"] != "ONLINE":
-        state = {"OFFLINE": "offline", "STARTING": "starting", "STOPPING": "stopping"}.get(
-            s["state"], s["state"].lower()
+    return [
+        {
+            "type": 1,
+            "components": [
+                {
+                    "type": 2,
+                    "style": 4,
+                    "label": f"Yes, {button.label.lower()}",
+                    "custom_id": f"sure:{button.action}:{call.ctx.server_id}:{call.arg}"[:100],
+                },
+                {"type": 2, "style": 2, "label": "Cancel", "custom_id": "cancel"},
+            ],
+        }
+    ]
+
+
+# -- the commands -------------------------------------------------------------------
+async def status(bot: Bot, call: Call) -> str:
+    assert call.ctx is not None
+    return live.status(call.ctx)
+
+
+async def players(bot: Bot, call: Call) -> str:
+    assert call.ctx is not None
+    return live.players(call.ctx)
+
+
+async def ip(bot: Bot, call: Call) -> str:
+    from ..joininfo import join_info
+
+    assert call.ctx is not None
+    shared = layout.addresses(bot.core.db).get(call.ctx.server_id)
+    info = await asyncio.to_thread(join_info, call.ctx)  # asks Tailscale
+    return live.ip(call.ctx, shared, info)
+
+
+async def start_server(ctx: ServerContext, actor: str) -> None:
+    """The apps' start path. Why a start failed stays on the PC: it can name
+    folders and programs, which a Discord server shouldn't see."""
+    try:
+        await ctx.server.start(actor=actor)
+    except ServerError as exc:
+        log.info("a start from Discord failed: %s", exc)
+        raise Refused(f"{ctx.name} didn't start. The owner can see why in Command Block.") from None
+
+
+async def start(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    state = ctx.server.state.value
+    if state not in STOPPED:
+        raise Refused(f"{ctx.name} is {live.state_words(state)} already.")
+    wait = bot.started.get(ctx.server_id, 0) + START_COOLDOWN - time.time()
+    if wait > 0:
+        raise Refused(
+            f"{ctx.name} was started from Discord a moment ago. "
+            f"Try again in {math.ceil(wait / 60)} min."
         )
-        return f"{name} is {state}."
-    players = s["players_online"]
-    playing = f"{players}/{s['max_players']} playing" if players is not None else "players: Unknown"
-    version = s["minecraft_version"] or "version Unknown"
-    uptime = f"up {_duration(s['uptime'])}" if s.get("uptime") else "uptime Unknown"
-    return f"{name} is online. {playing}, {version}, {uptime}."
+    await start_server(ctx, call.principal.user)
+    bot.started[ctx.server_id] = time.time()
+    return f"Starting {ctx.name}. It takes a minute or two; /status says when it's online."
+
+
+async def request_start(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    channel, member = call.channel_id, call.member_id
+
+    async def tell(words: str) -> None:
+        if channel:
+            await bot.tell(channel, member, words)
+
+    await bot.core.start_requests.ask(ctx, f"{call.member_name} (Discord)", tell)
+    return (
+        f"Asked. The owner and moderators of {ctx.name} have been told; "
+        "you'll hear here within 15 minutes."
+    )
+
+
+# -- the buttons ---------------------------------------------------------------------
+async def kick_or_ban(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    action = str(call.interaction["data"]["custom_id"]).removeprefix("sure:").split(":")[0]
+    pending = await ctx.player_actions.send(action, call.arg, confirm=True)
+    # "Sent" until the server's console confirms it (like the Players page).
+    for _ in range(50):
+        if pending.state != SENT:
+            break
+        await asyncio.sleep(0.1)
+    done = {"kick": "was kicked", "ban": "was banned"}[action]
+    if pending.state == DONE:
+        return f"{pending.name} {done} from {ctx.name}."
+    if pending.state == SENT:
+        return f"Sent to {ctx.name}; the server hasn't confirmed it yet."
+    return f"{ctx.name} answered: {pending.message or 'it did nothing.'}"
+
+
+async def restart(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    try:
+        result = await ctx.server.restart(actor=call.principal.user)
+    except ServerError as exc:
+        log.info("a restart from Discord failed: %s", exc)
+        raise Refused(
+            f"{ctx.name} didn't restart. The owner can see why in Command Block."
+        ) from None
+    if not result.get("restarted"):
+        return (
+            f"{ctx.name} stopped but didn't come back up. The owner can see why in Command Block."
+        )
+    return f"{ctx.name} is restarting."
+
+
+async def backup(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    ctx.require_free()
+    made = await ctx.backups.create(user=call.principal.user)
+    return f"Backup of {ctx.name} done: {made.get('name') or 'saved'}."
+
+
+async def answer_request(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    yes = str(call.interaction["data"]["custom_id"]).startswith("start_yes")
+    try:
+        await bot.core.start_requests.answer(ctx, yes, call.principal.user)
+    except ServerError as exc:
+        log.info("a start from a start request failed: %s", exc)
+        raise Refused(f"{ctx.name} didn't start. The owner can see why in Command Block.") from None
+    return f"Starting {ctx.name}." if yes else "Told them no."
 
 
 async def link(bot: Bot, call: Call) -> str:
@@ -502,6 +829,21 @@ COMMANDS: dict[str, Command] = {
             P.SERVER_VIEW,
             status,
         ),
+        Command("players", "Who's playing right now", P.SERVER_VIEW, players),
+        Command("ip", "How to join the Minecraft server", P.SERVER_VIEW, ip, slow=True),
+        Command(
+            "start",
+            "Start the Minecraft server (if your Discord role may)",
+            P.SERVER_CONTROL,
+            start,
+            slow=True,
+        ),
+        Command(
+            "request-start",
+            "Ask the owner and moderators to start the Minecraft server",
+            P.SERVER_VIEW,
+            request_start,
+        ),
         Command(
             "link",
             "Link your Minecraft account to your Discord account",
@@ -520,5 +862,17 @@ COMMANDS: dict[str, Command] = {
             needs_server=False,
             options=[{**NAME_OPTION, "description": "The Minecraft name to unlink"}],
         ),
+    )
+}
+
+BUTTONS: dict[str, Button] = {
+    b.action: b
+    for b in (
+        Button("kick", "Kick", P.PLAYERS_MANAGE, kick_or_ban, "Kick {name} from {server}?"),
+        Button("ban", "Ban", P.PLAYERS_MANAGE, kick_or_ban, "Ban {name} from {server}?", 4),
+        Button("restart", "Restart", P.SERVER_CONTROL, restart, "Restart {server} now?"),
+        Button("backup", "Back up", P.BACKUPS_CREATE, backup, "Back up {server} now?"),
+        Button("start_yes", "Start", P.SERVER_CONTROL, answer_request, style=3),
+        Button("start_no", "Say no", P.SERVER_CONTROL, answer_request),
     )
 }

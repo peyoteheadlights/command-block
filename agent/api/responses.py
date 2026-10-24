@@ -1973,6 +1973,10 @@ class DiscordStatus(Open):
         description="message_content and members: on, off, or null until read from Discord",
     )
     features_off: list[str] = Field(default_factory=list)
+    addresses: dict[str, str] = Field(
+        default_factory=dict, description="The address to share in Discord, per server id"
+    )
+    webhook_with_bot: bool = Field(False, description="The webhook too while the bot posts alerts")
     guilds: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Each Discord server: id, name, servers it's for, grants, and report "
@@ -1983,6 +1987,16 @@ class DiscordStatus(Open):
 class DiscordSetupDone(Open):
     made: list[str]
     status: DiscordStatus
+
+
+class StartRequestOpen(Open):
+    request: dict[str, Any] | None = Field(
+        description="The open start request (server_id, who, asked_at, expires_at), or null"
+    )
+
+
+class StartRequestAnswered(Open):
+    answer: str = Field(description="started or no")
 
 
 class DiscordLinks(Open):

@@ -16,7 +16,14 @@ from ...security.auth import Principal
 from ...security.permissions import DISCORD_MANAGE, SERVER_PERMISSIONS, require
 from ..deps import audit, get_core
 from ..responses import DiscordSetupDone, DiscordStatus
-from .models import DiscordProfile, DiscordRoleGrants, DiscordSetup, DiscordTie, DiscordToken
+from .models import (
+    DiscordAddress,
+    DiscordProfile,
+    DiscordRoleGrants,
+    DiscordSetup,
+    DiscordTie,
+    DiscordToken,
+)
 
 router = APIRouter(prefix="/discord")
 
@@ -176,4 +183,21 @@ async def grant_role(
     for sid, wanted in payload.grants.items():
         layout.set_grant(core.db, guild_id, role_id, payload.role_name, sid, wanted)
     audit(core, request, "discord_role", target=f"{payload.role_name or role_id}")
+    return status_of(core)
+
+
+@router.put("/addresses", response_model=DiscordStatus)
+async def set_address(
+    payload: DiscordAddress,
+    request: Request,
+    principal: Principal = Depends(require(DISCORD_MANAGE)),
+    core=Depends(get_core),
+):
+    """The address /ip and the status message show for a server (empty: none)."""
+    if payload.server_id not in core.servers:
+        raise HTTPException(
+            status_code=404, detail=f"There is no server with the id '{payload.server_id}'"
+        )
+    layout.set_address(core.db, payload.server_id, payload.address)
+    audit(core, request, "discord_address", target=payload.server_id)
     return status_of(core)

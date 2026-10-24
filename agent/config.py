@@ -276,6 +276,8 @@ class EmailSettings(Section):
 @dataclass(frozen=True)
 class NotificationSettings(Section):
     discord_enabled: bool = False
+    # The webhook too while the Discord bot posts alerts (each alert twice).
+    webhook_with_bot: bool = False
     email_enabled: bool = False
     # The old browser alerts switch. Nothing reads it now; older configs still have it.
     push_enabled: bool = False
@@ -316,6 +318,7 @@ class NotificationSettings(Section):
             "helper_removed": True,
             "tailscale": True,
             "discord_bot": True,
+            "start_requests": True,
         }
     )
     email: EmailSettings = field(default_factory=EmailSettings)

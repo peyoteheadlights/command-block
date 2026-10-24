@@ -514,7 +514,9 @@ def test_bedrock_players_are_approved_in_the_app(fake, tmp_path, monkeypatch):
             json={"answer": "approve", "uuid": "2533274474361790"},
         ).json()
         assert done["requests"] == [] and done["links"][0]["name"] == "Big Steve"
-        told = wait_for(lambda: fake.messages)
+        told = wait_for(
+            lambda: [m for m in fake.messages if m.get("content", "").startswith(f"<@{MEMBER_ID}>")]
+        )
         assert told[0]["content"].startswith(f"<@{MEMBER_ID}> you're linked")
         assert told[0]["allowed_mentions"] == {"users": [MEMBER_ID]}
         alerts = client.get("/api/alerts?after=0").json()["alerts"]

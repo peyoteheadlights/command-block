@@ -111,6 +111,39 @@ def server_of_channel(db, guild_id: str, channel_id: str) -> str | None:
     return row["server_id"] if row else None
 
 
+def alert_channels(db, server_id: str, guild_ids) -> list[str]:
+    """Where a server's alerts go: in each Discord server it's tied to, its
+    own alerts channel, else the shared one."""
+    rows = db.query(
+        "SELECT guild_id, server_id, channel_id FROM discord_channels WHERE kind = 'alerts' "
+        "AND server_id IN ('', ?) ORDER BY server_id DESC",
+        (server_id,),
+    )
+    out: dict[str, str] = {}
+    for row in rows:  # the server's own row comes first
+        guild = row["guild_id"]
+        if guild in guild_ids and guild not in out and server_id in servers_of(db, guild):
+            out[guild] = row["channel_id"]
+    return list(out.values())
+
+
+ADDRESSES_KEY = "discord_addresses"
+
+
+def addresses(db) -> dict[str, str]:
+    """The address the owner typed for each server, for /ip and the status message."""
+    return db.get_setting(ADDRESSES_KEY, {}) or {}
+
+
+def set_address(db, server_id: str, address: str | None) -> None:
+    saved = addresses(db)
+    if address:
+        saved[server_id] = address
+    else:
+        saved.pop(server_id, None)
+    db.set_setting(ADDRESSES_KEY, saved)
+
+
 def our_roles(db, guild_id: str) -> dict[str, str]:
     rows = db.query("SELECT kind, role_id FROM discord_roles WHERE guild_id = ?", (guild_id,))
     return {r["kind"]: r["role_id"] for r in rows}

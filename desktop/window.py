@@ -890,6 +890,11 @@ class MainWindow(QMainWindow):
             server = alert.get("server_id")
             if alert.get("event") in RESTART_FOR and server and self.may(server, "server.control"):
                 buttons.append((text("action.restart"), "restart"))
+            if self.answers_start_requests(alert):
+                buttons += [
+                    (text("desktop.start_request.start"), "start"),
+                    (text("desktop.start_request.no"), "no"),
+                ]
             self.popped = {str(alert["id"]): alert, **dict(list(self.popped.items())[:49])}
             self.pc.show_alert(alert["title"], alert["body"], str(alert["id"]), tuple(buttons))
 
@@ -906,6 +911,9 @@ class MainWindow(QMainWindow):
         restarts the server without opening the window; anything else
         opens the alert's page (several at once: the bell)."""
         alert = self.popped.get(key)
+        if action in ("start", "no") and alert:
+            self.answer_start_request(alert, action == "start")
+            return
         if action == "restart" and alert:
             server = str(alert["server_id"])
             self.run(
@@ -920,7 +928,35 @@ class MainWindow(QMainWindow):
         elif alert:
             self.open_alert(alert)
 
+    def answers_start_requests(self, alert: dict) -> bool:
+        server = alert.get("server_id")
+        return bool(
+            alert.get("event") == "start_request" and server and self.may(server, "server.control")
+        )
+
+    def answer_start_request(self, alert: dict, start: bool) -> None:
+        """Start or Say no to a start request sent from Discord."""
+        server = str(alert["server_id"])
+        self.run(
+            lambda: self.agent.call(
+                "POST", f"/servers/{server}/start-request", {"answer": "start" if start else "no"}
+            ),
+            lambda _r: self.refresh(),
+            lambda exc: self.pc.show_alert(alert["title"], str(exc)),
+        )
+
     def open_alert(self, alert: dict) -> None:
+        if self.answers_start_requests(alert):
+            box = QMessageBox(QMessageBox.Icon.Question, alert["title"], alert["body"], parent=self)
+            start = box.addButton(
+                text("desktop.start_request.start"), QMessageBox.ButtonRole.AcceptRole
+            )
+            no = box.addButton(text("desktop.start_request.no"), QMessageBox.ButtonRole.RejectRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.exec()
+            if box.clickedButton() in (start, no):
+                self.answer_start_request(alert, box.clickedButton() is start)
+                return
         page, server = str(alert.get("page")), str(alert.get("server_id"))
         if page in PC_PAGES:
             self.open_list("PC settings", PC_PAGES[page])
