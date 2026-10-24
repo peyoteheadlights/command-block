@@ -33,8 +33,10 @@ def gear(qapp, agent_http, section, pc=None, user=("admin", None)):
         sign_in(qapp, window)
         on_all_servers(qapp, window)
         wait_for(qapp, lambda: window.role == "owner")
+    # The section first, so the page loads once: a second load could swap a
+    # card out from under a click.
+    window.pc.set_setting("section:PC settings", section)
     window.tools["gear"].click()
-    window.open_list("PC settings", section)
     return window, window.gear.sections[section]
 
 
@@ -313,6 +315,30 @@ def test_about_has_the_version_licences_and_disclaimer(qapp, agent_http):
     assert "Qt for Python" in words
     button(about, "Full help online").click()
     assert pc.opened[-1].startswith("https://github.com/")
+
+
+def test_about_has_support_the_project_and_the_two_forms(qapp, agent_http):
+    import json
+
+    from desktop.theme import SHARED
+
+    links = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
+    pc = FakePC()
+    window = open_window(qapp, agent_http, pc)
+    sign_in(qapp, window)
+    on_all_servers(qapp, window)
+    window.open_list("Help", "about")
+    about = window.help.sections["about"]
+    wait_for(qapp, lambda: "Support the project" in shown_text(about))
+    assert "unlocks nothing" in shown_text(about)
+    for words, link in [
+        ("GitHub Sponsors", "sponsors"),
+        ("Ko-fi", "kofi"),
+        ("Report a problem", "report"),
+        ("Suggest a feature", "suggest"),
+    ]:
+        button(about, words).click()
+        assert pc.opened[-1] == links[link]
 
 
 # ------------------------------------------------------------ alerts per device

@@ -109,3 +109,24 @@ def test_the_phone_apps_work_with_this_agents_api():
     assert version["agent_api"]["min"] <= agent.API_VERSION <= version["agent_api"]["max"], (
         "shared/version.json: update the phone apps and their agent_api range together"
     )
+
+
+def test_every_copy_of_a_link_matches_shared_links():
+    """shared/links.json is where the support and form addresses are set.
+    The README and the phone apps can't read it, so their copies must match."""
+    links = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    for name in ("sponsors", "kofi", "report", "suggest"):
+        assert links[name] in readme, f"README.md: update the {name} link from shared/links.json"
+    kotlin = (
+        ROOT / "mobile/android/app/src/main/kotlin/io/github/peyoteheadlights/mcsc/ui/Common.kt"
+    )
+    swift = ROOT / "mobile/ios/ServerController/PairingFlowView.swift"
+    android = kotlin.read_text(encoding="utf-8")
+    repo = re.search(r'const val REPO = "([^"]+)"', android)
+    assert repo
+    android = android.replace("$REPO", repo[1])
+    iphone = swift.read_text(encoding="utf-8")
+    for name in ("report", "suggest", "sponsors", "kofi"):
+        assert f'{name.upper()} = "{links[name]}"' in android, f"{kotlin.name}: update {name}"
+        assert f'{name} = "{links[name]}"' in iphone, f"{swift.name}: update {name}"

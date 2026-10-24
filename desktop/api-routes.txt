@@ -60,6 +60,9 @@ PUT /api/servers/{server_id}/tps
 GET /api/help-bundle
 POST /api/help-bundle
 GET /api/help-bundle/{token} file
+GET /api/support-ask
+POST /api/alerts/read
+POST /api/support-ask
 GET /api/servers/{server_id}/memory
 PUT /api/servers/{server_id}/memory
 POST /api/servers/{server_id}/eula

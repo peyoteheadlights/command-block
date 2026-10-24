@@ -1,5 +1,6 @@
 """The Overview. Simple: Suggested actions, the setup checklist on a new
-server, and four cards (Server address, Last backup, Mods, Your world).
+server, the owner's one Donate / No thanks card (agent/supportask.py), and
+four cards (Server address, Last backup, Mods, Your world).
 Technical: graphs, the console's last lines, details and mods.
 
 Everything shown comes from the agent; a value it doesn't know is left out
@@ -8,6 +9,7 @@ or said to be unknown, never guessed.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -28,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from .fixes import get_help, run_fix, sure
 from .graphs import Graph
+from .theme import SHARED
 from .ui import Note, clock, content_page, label, push, refill
 from .words import text
 
@@ -92,6 +95,39 @@ def title_of(frame: QFrame) -> QLabel:
     return found
 
 
+class AskCard(QWidget):
+    """The owner's one Donate / No thanks card (agent/supportask.py), on the
+    Overview in both modes. The agent decides when it shows."""
+
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__()
+        self.window_ = window
+        frame, layout = card(text("desktop.ask.title"))
+        layout.addWidget(label(text("desktop.ask.text"), "sub"))
+        answers = QHBoxLayout()
+        for answer, words, kind in (
+            ("donate", "desktop.ask.donate", "primary"),
+            ("no_thanks", "desktop.ask.no", "plain"),
+        ):
+            choice = push(text(words), kind)
+            choice.clicked.connect(lambda _=False, a=answer: self.answer(a))
+            answers.addWidget(choice)
+        answers.addStretch()
+        layout.addLayout(answers)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(frame)
+        self.hide()
+
+    def answer(self, answer: str) -> None:
+        window = self.window_
+        window.show_ask({"show": False})
+        if answer == "donate":
+            links = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
+            window.pc.open_link(links["sponsors"])
+        window.run(lambda: window.agent.answer_support_ask(answer), window.show_ask)
+
+
 class SimpleOverview(QWidget):
     def __init__(self, window: MainWindow) -> None:
         super().__init__()
@@ -118,6 +154,9 @@ class SimpleOverview(QWidget):
         layout.addWidget(hide, 0, Qt.AlignmentFlag.AlignRight)
         self.checklist.hide()
         column.addWidget(self.checklist)
+
+        self.ask = AskCard(window)
+        column.addWidget(self.ask)
 
         self.grid = grid = QGridLayout()
         grid.setSpacing(12)
@@ -368,6 +407,8 @@ class TechnicalOverview(QWidget):
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(12)
+        self.ask = AskCard(window)
+        column.addWidget(self.ask)
         graphs, layout = card(text("page.performance", technical=True))
         row = QHBoxLayout()
         layout.addLayout(row)

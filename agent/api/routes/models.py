@@ -224,6 +224,10 @@ class WorldUndoRequest(BaseModel):
     confirm: bool = False
 
 
+class AlertsReadRequest(BaseModel):
+    up_to: int = Field(ge=0)
+
+
 class AppPhoneRequest(BaseModel):
     # The phone's address on Google's push service (FCM), or on Apple's
     # (APNs: hex, as it goes in the address the agent sends to).
@@ -340,3 +344,7 @@ class ExportRequest(BaseModel):
 
 class HelpBundleRequest(BaseModel):
     confirm: bool = False
+
+
+class SupportAskAnswer(BaseModel):
+    answer: Literal["donate", "no_thanks"]

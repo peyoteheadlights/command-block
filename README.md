@@ -66,6 +66,13 @@ This app is in no way done and will be supported for a good long while, with the
 
 Got more ideas? Make a [feature request](https://github.com/peyoteheadlights/command-block/issues/new?template=feature_request.yml).
 
+## Support the project
+
+Command Block is free and stays free. Donating unlocks nothing, everyone gets every feature either way. If it helps you and you want to support it:
+
+- [GitHub Sponsors](https://github.com/sponsors/peyoteheadlights)
+- [Ko-fi](https://ko-fi.com/peyoteheadlights)
+
 ## More
 
 - [docs/troubleshooting.md](docs/troubleshooting.md) for common problems.

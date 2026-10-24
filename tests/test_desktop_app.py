@@ -564,6 +564,67 @@ def test_a_new_server_shows_the_setup_checklist(qapp, agent_http):
     wait_for(qapp, lambda: "Take a backup" in shown_text(window))
 
 
+def test_the_owner_sees_the_ask_once_and_donate_opens_the_support_link(
+    qapp, agent_http, monkeypatch
+):
+    import json
+
+    from agent import supportask
+    from desktop.theme import SHARED
+
+    from .fake_pc import FakePC
+
+    monkeypatch.setattr(supportask, "something_wrong", lambda core: False)
+    core = agent_http.agent.app.state.core
+    core.db.set_setting(supportask.STATE_KEY, {"first_start": 1.0})
+    pc = FakePC()
+    window = signed_in_on(qapp, agent_http, pc=pc)
+    wait_for(qapp, lambda: "Enjoying Command Block?" in shown_text(window))
+    button(window, "Donate").click()
+    links = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
+    assert pc.opened[-1] == links["sponsors"]
+    wait_for(qapp, lambda: core.db.get_setting(supportask.STATE_KEY).get("answer") == "donate")
+    assert "Enjoying Command Block?" not in shown_text(window)
+
+
+def test_the_ask_shows_in_technical_mode_too(qapp, agent_http, monkeypatch):
+    from agent import supportask
+
+    monkeypatch.setattr(supportask, "something_wrong", lambda core: False)
+    core = agent_http.agent.app.state.core
+    core.db.set_setting(supportask.STATE_KEY, {"first_start": 1.0})
+    window = signed_in_on(qapp, agent_http)
+    button(window, "Technical").click()
+    wait_for(qapp, lambda: window.server_screen.technical_overview.ask.isVisible())
+    button(window, "No thanks").click()
+    wait_for(qapp, lambda: core.db.get_setting(supportask.STATE_KEY).get("answer") == "no_thanks")
+    wait_for(qapp, lambda: not window.server_screen.technical_overview.ask.isVisible())
+
+
+def test_the_bell_counts_what_the_account_has_not_read(qapp, agent_http):
+    core = agent_http.agent.app.state.core
+    ids = [
+        core.db.insert(
+            "app_alerts",
+            {
+                "ts": 1.0,
+                "server_id": "survival",
+                "event": "server_crashed",
+                "title": f"Crash {n}",
+                "body": "b",
+                "page": "overview",
+                "url": "u",
+            },
+        )
+        for n in range(3)
+    ]
+    core.auth.mark_alerts_read("admin", ids[0])
+    window = signed_in_on(qapp, agent_http)
+    wait_for(qapp, lambda: window.unread == 2)
+    window.tools["bell"].click()
+    wait_for(qapp, lambda: core.auth.alerts_read("admin") == ids[-1])
+
+
 def test_a_hint_shows_on_hover_on_tab_and_space_and_to_narrator(qapp, agent_http):
     window = signed_in_on(qapp, agent_http)
     hint = next(

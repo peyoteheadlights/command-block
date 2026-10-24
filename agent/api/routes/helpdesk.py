@@ -1,6 +1,7 @@
 """Get help: the zip of logs and the system check to send to someone
 helping. Its file list is shown first (GET), then it is made (POST) and
-downloaded by token. Owner only (help.bundle)."""
+downloaded by token. Owner only (help.bundle). Also the one gentle ask
+(agent/supportask.py), owner only (support.ask)."""
 
 from __future__ import annotations
 
@@ -10,12 +11,12 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from ... import helpbundle
+from ... import helpbundle, supportask
 from ...security.auth import Principal
-from ...security.permissions import HELP_BUNDLE, require
+from ...security.permissions import HELP_BUNDLE, SUPPORT_ASK, require
 from ..deps import audit, get_core
-from ..responses import HelpBundleList, HelpBundleMade
-from .models import HelpBundleRequest
+from ..responses import HelpBundleList, HelpBundleMade, SupportAsk
+from .models import HelpBundleRequest, SupportAskAnswer
 
 router = APIRouter()
 
@@ -64,3 +65,21 @@ async def download_help_bundle(
     if not safe.endswith(".zip"):
         safe += ".zip"
     return FileResponse(path, media_type="application/zip", filename=safe)
+
+
+@router.get("/support-ask", response_model=SupportAsk)
+async def support_ask(principal: Principal = Depends(require(SUPPORT_ASK)), core=Depends(get_core)):
+    # Reads every server's backups, mods and recommendations, so off the event loop.
+    return await asyncio.to_thread(supportask.status, core)
+
+
+@router.post("/support-ask", response_model=SupportAsk)
+async def answer_support_ask(
+    payload: SupportAskAnswer,
+    request: Request,
+    principal: Principal = Depends(require(SUPPORT_ASK)),
+    core=Depends(get_core),
+):
+    result = await asyncio.to_thread(supportask.answer, core, payload.answer)
+    audit(core, request, "support_ask", target=payload.answer)
+    return result
