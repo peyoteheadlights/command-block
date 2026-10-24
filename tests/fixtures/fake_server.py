@@ -309,6 +309,10 @@ def main() -> int:
             name, said = cmd.split(" ", 2)[1:]
             out(stamp("Server thread", "INFO", f"<{name}> {said}"))
             continue
+        if cmd.startswith("fakeline "):
+            # A line of the server's own, like a death or an advancement.
+            out(stamp("Server thread", "INFO", cmd.split(" ", 1)[1]))
+            continue
         if cmd.startswith("fakeleave "):
             name = cmd.split(" ", 1)[1]
             if name in players:

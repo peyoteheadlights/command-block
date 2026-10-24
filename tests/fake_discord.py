@@ -4,7 +4,7 @@ It plugs into the Discord client's two seams: REST calls go to ``handle``
 (an httpx.MockTransport), the gateway to ``connect``. It keeps one Discord
 server's roles and channels, records every REST call, answers 401 for a
 wrong token, and lets a test push gateway events (a slash command, a button
-press) or drop the connection. No test touches the network.
+press, a message) or drop the connection. No test touches the network.
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ class FakeDiscord:
                 "id": GUILD_ID,
                 "name": "@everyone",
                 "position": 0,
-                "permissions": str(1 << 10 | 1 << 11),
+                "permissions": str(1 << 10 | 1 << 11 | 1 << 6 | 1 << 16),
             },
             {
                 "id": BOT_ROLE,
@@ -201,13 +201,44 @@ class FakeDiscord:
         )
         return token
 
+    def message(
+        self,
+        content: str,
+        channel: str,
+        member: str = MEMBER_ID,
+        username: str = "sam",
+        roles=(),
+        nick: str | None = None,
+        **extra,
+    ) -> str:
+        """Someone writes in a channel; returns the message's id."""
+        made = str(next(self._ids))
+        self.socket.dispatch(
+            "MESSAGE_CREATE",
+            {
+                "id": made,
+                "type": 0,
+                "guild_id": GUILD_ID,
+                "channel_id": channel,
+                "content": content,
+                "author": {"id": member, "username": username},
+                "member": {"roles": list(roles), "nick": nick},
+                "mentions": [],
+                **extra,
+            },
+        )
+        return made
+
+    def channel_id(self, name: str) -> str:
+        return next(c["id"] for c in self.channels if c["name"] == name)
+
     def answers(self, token: str) -> list[dict]:
         """Everything the bot sent for one interaction: callbacks, then edits."""
         return [body for _m, path, body in self.calls if token in path and isinstance(body, dict)]
 
     def in_channel(self, name: str) -> list[dict]:
         """The messages the bot posted in a channel, as they are now."""
-        found = next(c["id"] for c in self.channels if c["name"] == name)
+        found = self.channel_id(name)
         return [m for m in self.messages if m["channel_id"] == found]
 
     def replies(self, token: str) -> list[str]:
@@ -283,6 +314,8 @@ class FakeDiscord:
             message = {"id": str(next(self._ids)), "channel_id": path.split("/")[2], **body}
             self.messages.append(message)
             return httpx.Response(200, json=message)
+        if request.method == "PUT" and "/reactions/" in path:
+            return httpx.Response(204)
         if request.method == "PATCH" and path.startswith("/channels/") and "/messages/" in path:
             message = next((m for m in self.messages if m["id"] == path.split("/")[-1]), None)
             if message is None:

@@ -99,6 +99,20 @@ JOIN_RE = re.compile(
     rf"^(?P<name>{PLAYER})(?:\[[^\]]*\])?(?: \(formerly known as {PLAYER}\))? joined the game$"
 )
 LEAVE_RE = re.compile(rf"^(?P<name>{PLAYER}) left the game$")
+# Deaths and advancements, in vanilla's own words. Like joins, they count
+# only when the whole line is that message (chat lines start with "<Name>"),
+# and the player tracker also wants the name to be someone who's online.
+DEATH_RE = re.compile(
+    rf"^(?P<name>{PLAYER}) (?:was |walked into |fell |went (?:up in flames|off with a bang)"
+    r"|drowned|died|blew up|burned to death|froze to death|starved to death|withered away"
+    r"|hit the ground too hard|experienced kinetic energy|tried to swim in lava"
+    r"|discovered the floor was lava|suffocated in a wall|left the confines of this world"
+    r"|didn't want to live in the same world as ).*$"
+)
+ADVANCEMENT_RE = re.compile(
+    rf"^(?P<name>{PLAYER}) has (?:made the advancement|completed the challenge|reached the goal)"
+    r" \[[^\]]+\]$"
+)
 UUID_RE = re.compile(rf"^UUID of player (?P<name>{PLAYER}) is (?P<uuid>[0-9a-fA-F-]{{32,36}})")
 STOPPING_RE = re.compile(r"(Stopping the server|Stopping server|Saving worlds|Server closed)")
 PORT_RE = re.compile(r"Starting Minecraft server on (?P<host>[^:\s]*):(?P<port>\d+)")
@@ -260,6 +274,9 @@ class ParsedSignals:
     player_left: str | None = None
     player_uuid: tuple[str, str] | None = None
     player_list: tuple[int, int, list[str]] | None = None
+    # (name, the whole line) for a death or an advancement.
+    player_died: tuple[str, str] | None = None
+    advancement: tuple[str, str] | None = None
     stopping: bool = False
     tps: float | None = None
     mspt: float | None = None
@@ -330,6 +347,10 @@ def extract_signals(line: ConsoleLine, dialect: str = "java") -> ParsedSignals:
         sig.player_joined = m.group("name")
     elif m := LEAVE_RE.match(said):
         sig.player_left = m.group("name")
+    elif line.source == "stdout" and (m := ADVANCEMENT_RE.match(said)):
+        sig.advancement = (m.group("name"), said)
+    elif line.source == "stdout" and (m := DEATH_RE.match(said)):
+        sig.player_died = (m.group("name"), said)
     if STOPPING_RE.search(text):
         sig.stopping = True
     if m := MODS_LOADED_RE.search(text):

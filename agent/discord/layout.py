@@ -23,6 +23,7 @@ from ..security.auth import Access, Principal
 # Discord's permission bits (https://discord.com/developers/docs/topics/permissions).
 ADMINISTRATOR = 1 << 3
 MANAGE_CHANNELS = 1 << 4
+ADD_REACTIONS = 1 << 6
 VIEW_CHANNEL = 1 << 10
 SEND_MESSAGES = 1 << 11
 EMBED_LINKS = 1 << 14
@@ -38,12 +39,15 @@ INVITE_PERMISSIONS = (
     | SEND_MESSAGES
     | EMBED_LINKS
     | READ_MESSAGE_HISTORY
+    | ADD_REACTIONS
     | MANAGE_ROLES
     | MANAGE_CHANNELS
     | CREATE_PRIVATE_THREADS
     | SEND_MESSAGES_IN_THREADS
 )
 POSTS = VIEW_CHANNEL | SEND_MESSAGES
+# A chat channel also gets a reaction on a message the game refused.
+CHATS = POSTS | ADD_REACTIONS | READ_MESSAGE_HISTORY
 
 # Channels shared by every Minecraft server the Discord server is for, and
 # the ones each of them gets. A shared kind can also be tied per server.
@@ -271,7 +275,8 @@ async def inspect(rest, db, guild_id: str, bot_id: str, names: dict[str, str]) -
             continue
         if row["kind"] == "category":
             continue
-        if not has(channel_permissions(guild_id, roles, bot_id, mine, channel), POSTS):
+        needs = CHATS if row["kind"] == "chat" else POSTS
+        if not has(channel_permissions(guild_id, roles, bot_id, mine, channel), needs):
             problems.append(
                 {
                     "id": "channel_blocked",
