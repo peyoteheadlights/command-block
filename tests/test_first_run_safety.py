@@ -406,6 +406,10 @@ def test_secrets_are_only_in_the_encrypted_part(secret_client):
 def test_import_on_a_new_pc_relocates_the_servers(secret_client, tmp_path):
     from installer.setup_tool import read_env, write_env_value
 
+    core = secret_client.app.state.core
+    core.links.link(
+        "069a79f4-44e9-4726-a5be-fca90e38aaf5", "Alex", "java", "test", "42", "sam", "t"
+    )
     path = export_file(secret_client, worlds=True, secrets=True, passphrase="a long passphrase")
     new_pc = tmp_path / "new-pc"
     new_pc.mkdir()
@@ -427,6 +431,11 @@ def test_import_on_a_new_pc_relocates_the_servers(secret_client, tmp_path):
     assert saved["servers"][0]["directory"] == str(target)
     assert read_env(env)["MCSC_API_TOKEN"] == SECRET_VALUES["MCSC_API_TOKEN"]
     assert result["helpers"] == 1
+    from agent.config import Config
+    from agent.database.db import Database
+
+    moved = Database(Config.load(new_pc / "config" / "config.yaml", env).database_path)
+    assert [r["name"] for r in moved.query("SELECT name FROM discord_links")] == ["Alex"]
     # a second import into the same folder is refused rather than written over
     with pytest.raises(transfer.TransferError, match="already has files"):
         transfer.plan_import(transfer.read_manifest(path), new_pc / "Servers")

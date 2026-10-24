@@ -84,7 +84,16 @@ a world.
 | `test_duplicate.py` | A copy has the same jar, mods, config and game settings, its own free port and color; a fresh world leaves the world folders behind and clears the seed; links are never followed out of the source; nothing is written outside the new folder; unsafe folders are refused; a starting server is refused; a copy that fails its check is removed again; a running source is saved and paused for the copy |
 | `test_modpack.py` | A pack is described before anything happens; a missing or bad SHA-512, a host other than Modrinth's CDN, plain HTTP and unsafe paths are refused and block the import; zip-slip paths and links in the overrides block it; client-only files are never downloaded; a new server gets the pack's mods and files; a SHA-512 mismatch leaves no server or folder behind; importing into a server moves its mods aside, and a mismatch puts everything back |
 | `test_quality_of_life.py` | Auto-sleep is off until a server turns it on and **never** stops one while the player count is Unknown or above zero; it waits out the set time, warns in the game first, and the stop is a planned stop, not a crash; a change that holds the server postpones it; world undo always takes a fresh backup before restoring, refuses while the server runs, refuses a backup that did not check out, and leaves the world untouched when the archive is damaged; "play lost" is unknown when no session was recorded; chat is parsed from what the console printed and a player cannot fake the server's own line; a chat send becomes a `say` command and passes console validation, and newlines and backticks are refused; the checklist ticks only from measured state, is finished for good once done, and is dismissed per server |
+| `test_discord.py` | Against a fake Discord: the bot connects, names itself and registers its commands; the token is never in the API, the logs or `config.yaml`; a rejected token stops the bot, alerts and is never retried; a drop resumes the session; a silent connection is noticed by the heartbeat; 429 waits and a 403 channel is left alone; setup makes only what's missing and never renames or deletes; each check names what's wrong; a Discord role never gets more than a moderator could; commands pick the right server, are rate-limited and audited; a link code works once, only for its player, and never reaches the chat log; 3 accounts per member, one member per account; Bedrock links are approved in the app |
 | `test_join_info.py` | Only private addresses of adapters that are up are listed; no adapter means no address; Tailscale's own report is passed through; internet reachability is always "not known" |
+
+## Live Discord checks
+
+`tests/test_discord_live.py` runs only when `CB_TEST_DISCORD_TOKEN` and
+`CB_TEST_DISCORD_SERVER` are set, against a bot and a Discord server made
+just for testing. It logs in, registers the commands, runs "Set up this
+Discord server" twice and the checks, then deletes what setup made.
+Everything else uses the fake Discord and never touches the network.
 
 ## Running a subset
 

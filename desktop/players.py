@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -157,6 +158,13 @@ class PlayersPage(Page):
         self.column.addLayout(lists)
         self.lists_note = label(kind="sub")
         self.column.addWidget(self.lists_note)
+
+        # Linked accounts (agent/discord/links.py): shown once there's one.
+        self.links_card, layout = card(text("discord.links.title"))
+        self.link_rows = QVBoxLayout()
+        layout.addLayout(self.link_rows)
+        self.links_card.hide()
+        self.column.addWidget(self.links_card)
         self.column.addWidget(label(text("players.no_ip"), "sub"))
         self.column.addStretch()
 
@@ -175,6 +183,73 @@ class PlayersPage(Page):
         if self.may("console.read"):
             self.ask("GET", "/chat?lines=200", self.show_chat, lambda _e: None)
         self.chat_card.setVisible(self.may("console.read"))
+        if self.may("players.manage"):
+            self.ask("GET", "/discord-links", self.show_links, lambda _e: None)
+        else:
+            self.links_card.hide()
+
+    def show_links(self, data: dict) -> None:
+        rows: list[QWidget] = []
+        for asked in data.get("requests") or []:
+            rows.append(self.link_request(asked, data.get("players") or []))
+        for linked in data.get("links") or []:
+            line = QWidget()
+            h = QHBoxLayout(line)
+            h.setContentsMargins(0, 0, 0, 0)
+            words = text("discord.links.row", name=linked["name"], member=linked["discord_name"])
+            if mode["technical"]:
+                words += f"  ({linked['uuid']})"
+            h.addWidget(label(words), 1)
+            remove = push(text("discord.links.remove"), "plain")
+            remove.clicked.connect(
+                lambda _=False, u=linked["uuid"]: self.ask(
+                    "DELETE", f"/discord-links/{u}", self.show_links
+                )
+            )
+            h.addWidget(remove)
+            rows.append(line)
+        refill(self.link_rows, rows)
+        self.links_card.setVisible(bool(rows))
+
+    def link_request(self, asked: dict, players: list[dict]) -> QWidget:
+        """A Bedrock player's link request: pick who they are, then approve."""
+        line = QWidget()
+        column = QVBoxLayout(line)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.addWidget(
+            label(
+                text("discord.links.asks", member=asked["discord_name"], name=asked["name"]), "step"
+            )
+        )
+        h = QHBoxLayout()
+        who = QComboBox()
+        who.setAccessibleName(text("discord.links.pick"))
+        for p in players:
+            who.addItem(p["name"], p["uuid"])
+        if players:
+            match = who.findText(asked["name"])
+            who.setCurrentIndex(max(match, 0))
+        h.addWidget(who, 1)
+        approve = push(text("discord.links.approve"), "primary")
+        approve.setEnabled(bool(players))
+
+        def answer(verdict: str) -> None:
+            self.ask(
+                "POST",
+                f"/discord-links/requests/{asked['id']}",
+                self.show_links,
+                body={"answer": verdict, "uuid": who.currentData()},
+            )
+
+        approve.clicked.connect(lambda: answer("approve"))
+        refuse = push(text("discord.links.refuse"), "plain")
+        refuse.clicked.connect(lambda: answer("refuse"))
+        h.addWidget(approve)
+        h.addWidget(refuse)
+        column.addLayout(h)
+        if not players:
+            column.addWidget(label(text("discord.links.no_players"), "sub"))
+        return line
 
     def show_players(self, data: dict) -> None:
         self.data = data

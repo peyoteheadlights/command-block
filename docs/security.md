@@ -61,7 +61,13 @@
 
 Secrets are read from environment variables via `.env`:
 `MCSC_ADMIN_PASSWORD_HASH`, `MCSC_API_TOKEN`, `MCSC_DISCORD_WEBHOOK`,
-`MCSC_SMTP_USERNAME`, `MCSC_SMTP_PASSWORD`.
+`MCSC_DISCORD_BOT_TOKEN`, `MCSC_SMTP_USERNAME`, `MCSC_SMTP_PASSWORD`.
+
+The Discord bot's token is pasted in the desktop app and written straight to
+`.env`; no route sends it back. A Discord member using the bot gets a sign-in
+of kind `discord` built from their Discord roles' grants, checked by the same
+`permissions.check` as every route. It never holds a moderator's account
+extras or anything owner-only (see [discord.md](discord.md)).
 
 Two files leave the PC on purpose, and both are built to hold no secrets
 unless asked:

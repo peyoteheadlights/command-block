@@ -71,13 +71,14 @@ def add_moderator(agent_http, name="sam", password="moderator password", **more)
 
 
 # ------------------------------------------------------------ the list
-def test_the_gear_lists_five_sections_for_the_owner_and_two_for_a_moderator(qapp, agent_http):
+def test_the_gear_lists_six_sections_for_the_owner_and_two_for_a_moderator(qapp, agent_http):
     window, _pc = gear(qapp, agent_http, "pc")
     assert window.screen_name == "PC settings"
     assert listed(window) == [
         "PC settings",
         "Updates",
         "Moderators",
+        "Discord",
         "Signed-in devices",
         "Your account",
     ]

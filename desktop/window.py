@@ -46,6 +46,7 @@ from . import icons, self_update, theme
 from .agent import AgentClient, AgentError, SignedOut, Unreachable
 from .alerts import KEPT, PAGES, PC_PAGES, RESTART_FOR, NotificationsScreen
 from .backups import is_world
+from .discord import Discord
 from .feed import Feed
 from .gear import Account, Devices, ListScreen, PCSettings, Updates
 from .help import About, Guide
@@ -393,6 +394,7 @@ class MainWindow(QMainWindow):
                 "pc": PCSettings(self),
                 "updates": Updates(self),
                 "moderators": Moderators(self),
+                "discord": Discord(self),
                 "devices": Devices(self),
                 "account": Account(self),
             },
