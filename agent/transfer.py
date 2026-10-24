@@ -66,6 +66,7 @@ DATA_TABLES = (
     "discord_roles",
     "discord_role_grants",
     "discord_links",
+    "level_xp",
 )
 ACCOUNT_COLUMNS = (
     "username",

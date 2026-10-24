@@ -581,3 +581,20 @@ def test_cpu_cores_of_a_stopped_server_are_unknown(parts):
     cores = server.status()["cpu_cores"]
     assert cores["applied"] is None
     assert cores["applied_reason"]
+
+
+def test_stats_nobody_saved_are_never_numbers(tmp_path):
+    """/stats: no file means "not saved yet", a missing stat is left out
+    (never 0), and file stats always say when they were saved."""
+    from agent.discord.progress import stats
+    from agent.stats import read_files
+
+    uuid = "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+    empty = {"player": "Alex", "source": "files", **read_files(tmp_path, uuid)}
+    words = stats(empty, "Survival")
+    assert "no stats saved" in words and not any(c.isdigit() for c in words)
+    (tmp_path / "stats").mkdir()
+    (tmp_path / "stats" / f"{uuid}.json").write_text('{"stats": {}}', encoding="utf-8")
+    found = {"player": "Alex", "source": "files", **read_files(tmp_path, uuid)}
+    assert found["values"] == {}
+    assert "last saved <t:" in stats(found, "Survival")

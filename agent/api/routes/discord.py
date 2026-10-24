@@ -12,12 +12,14 @@ import binascii
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...discord import layout
-from ...security.auth import Principal
+from ...security import permissions as P
+from ...security.auth import AuthError, Principal
 from ...security.permissions import DISCORD_MANAGE, SERVER_PERMISSIONS, require
 from ..deps import audit, get_core
-from ..responses import DiscordSetupDone, DiscordStatus
+from ..responses import DiscordLevels, DiscordSetupDone, DiscordStatus
 from .models import (
     DiscordAddress,
+    DiscordLevelSettings,
     DiscordProfile,
     DiscordRoleGrants,
     DiscordSetup,
@@ -184,6 +186,68 @@ async def grant_role(
         layout.set_grant(core.db, guild_id, role_id, payload.role_name, sid, wanted)
     audit(core, request, "discord_role", target=f"{payload.role_name or role_id}")
     return status_of(core)
+
+
+def may_change_levels(core, principal: Principal, guild_id: str) -> None:
+    """The owner, or someone with "Quests and events" on one of the
+    Minecraft servers this Discord server is for."""
+    for sid in layout.servers_of(core.db, guild_id):
+        try:
+            P.check(principal, P.QUESTS_MANAGE, sid)
+            return
+        except AuthError:
+            continue
+    raise HTTPException(status_code=403, detail="Your account isn't allowed to do that.")
+
+
+@router.get("/guilds/{guild_id}/levels", response_model=DiscordLevels)
+async def get_levels(
+    guild_id: str,
+    principal: Principal = Depends(require(P.QUESTS_MANAGE)),
+    core=Depends(get_core),
+):
+    bot = bot_of(core)
+    may_change_levels(core, principal, guild_of(bot, guild_id))
+    return bot.levels_of(guild_id)
+
+
+@router.put("/guilds/{guild_id}/levels", response_model=DiscordLevels)
+async def set_levels(
+    guild_id: str,
+    payload: DiscordLevelSettings,
+    request: Request,
+    principal: Principal = Depends(require(P.QUESTS_MANAGE)),
+    core=Depends(get_core),
+):
+    """Level-up messages on or off, the weekly leaderboard's day, and (when
+    given) which Discord role goes with which Level."""
+    bot = bot_of(core)
+    may_change_levels(core, principal, guild_of(bot, guild_id))
+    if payload.roles is not None:
+        wanted = sorted((r.level, r.role_id) for r in payload.roles)
+        if len({at for at, _ in wanted}) != len(wanted) or len({r for _, r in wanted}) != len(
+            wanted
+        ):
+            raise HTTPException(status_code=400, detail="Each Level and each role only once.")
+        found = {
+            r["id"]: r
+            for r in await discord_call(bot.rest.request("GET", f"/guilds/{guild_id}/roles"))
+        }
+        ours = layout.our_roles(core.db, guild_id)
+        for _at, role_id in wanted:
+            if role_id not in found:
+                raise HTTPException(status_code=404, detail="There's no such Discord role.")
+            refused = layout.level_role_refused(guild_id, found[role_id], ours)
+            if refused:
+                raise HTTPException(status_code=400, detail=refused)
+        layout.set_level_roles(core.db, guild_id, wanted)
+        await discord_call(bot.check(guild_id))
+        bot.resync_levels()
+    layout.set_level_settings(
+        core.db, guild_id, announce=payload.announce, leaderboard_day=payload.leaderboard_day
+    )
+    audit(core, request, "discord_levels", target=guild_id)
+    return bot.levels_of(guild_id)
 
 
 @router.put("/addresses", response_model=DiscordStatus)

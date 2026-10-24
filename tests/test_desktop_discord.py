@@ -113,3 +113,82 @@ def test_a_start_request_alert_has_start_and_say_no(qapp, fake, discord_http):  
     told = wait_for(lambda: [m for m in fake.messages if "is starting" in m.get("content", "")])
     assert told[0]["content"].startswith(f"<@{MEMBER_ID}>")
     discord_http.post("/api/servers/survival/server/stop", json={}, headers=headers)
+
+
+def test_level_settings_are_changed_and_saved_on_the_discord_page(qapp, fake, discord_http):  # noqa: F811
+    from agent.discord import layout
+
+    from .fake_discord import GUILD_ID
+    from .test_desktop_app import owner
+
+    made = discord_http.post(
+        f"/api/discord/guilds/{GUILD_ID}/setup",
+        json={"servers": ["survival"]},
+        headers=owner(discord_http),
+    )
+    assert made.status_code == 200, made.text
+    core = discord_http.agent.app.state.core
+    window, page = gear(qapp, discord_http, "discord")
+    wait_for_window(qapp, lambda: "Members get XP for playing" in shown_text(page))
+    for technical, size in ((False, (760, 520)), (True, (1600, 1000))):
+        window.set_mode(technical)
+        window.resize(*size)
+        qapp.processEvents()
+        page.grab()  # paints, small and large, in both modes
+    window.set_mode(False)
+    wait_for_window(qapp, lambda: "Members get XP for playing" in shown_text(page))
+    tick = next(
+        b for b in page.findChildren(QtWidgets.QCheckBox) if b.text().startswith("Post level-ups")
+    )
+    tick.setChecked(False)
+    day = next(
+        b
+        for b in page.findChildren(QtWidgets.QComboBox)
+        if b.accessibleName() == "Weekly leaderboard"
+    )
+    day.setCurrentIndex(day.findData(4))
+    legend = next(b for b in page.findChildren(QtWidgets.QSpinBox) if b.value() == 25)
+    legend.setValue(20)
+    next(
+        b
+        for b in page.findChildren(QtWidgets.QPushButton)
+        if b.accessibleName() == "Remove: Level 10"
+    ).click()
+    button(page, "Save Levels").click()
+    wait_for_window(qapp, lambda: layout.level_settings(core.db, GUILD_ID)["custom"])
+    settings = layout.level_settings(core.db, GUILD_ID)
+    assert settings["announce"] is False and settings["leaderboard_day"] == 4
+    assert [at for at, _r in layout.level_roles(core.db, GUILD_ID)] == [5, 20]
+    wait_for_window(qapp, lambda: "Saved." in shown_text(page))
+
+
+def test_a_players_stats_and_level_show_on_the_players_page(qapp, fake, discord_http):  # noqa: F811
+    import json
+
+    from agent.addons import world_path
+
+    from .test_desktop_app import signed_in_on
+
+    core = discord_http.agent.app.state.core
+    uuid = "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+    core.db.execute(
+        "INSERT INTO players (server_id, username, uuid, first_seen, last_seen, total_seconds, "
+        "sessions) VALUES ('survival', 'Alex', ?, 1, 1, ?, 2)",
+        (uuid, 20 * 3600),
+    )
+    core.links.link(uuid, "Alex", "java", "survival", MEMBER_ID, "sam", "t")
+    stats = world_path(core.servers["survival"]) / "stats" / f"{uuid}.json"
+    stats.parent.mkdir(parents=True, exist_ok=True)
+    stats.write_text(
+        json.dumps({"stats": {"minecraft:custom": {"minecraft:deaths": 2}}}), encoding="utf-8"
+    )
+    window = signed_in_on(qapp, discord_http)
+    page = open_page(qapp, window, "Players and chat")
+    wait_for_window(qapp, lambda: "Alex: sam on Discord  ·  Level 5 (200 XP)" in shown_text(page))
+    stats_button = lambda: next(  # noqa: E731
+        b for b in page.findChildren(QtWidgets.QPushButton) if b.accessibleName() == "Stats: Alex"
+    )
+    stats_button().click()
+    wait_for_window(qapp, lambda: "Deaths 2  ·  Last saved" in shown_text(page))
+    stats_button().click()
+    wait_for_window(qapp, lambda: "Deaths 2" not in shown_text(page))

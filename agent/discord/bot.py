@@ -15,15 +15,17 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import datetime
 import logging
 import math
 import re
 import time
 import urllib.parse
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .. import levels
 from ..config import PROJECT_ROOT
 from ..events import OWNER_ONLY_EVENTS, Event
 from ..jobs import JobConflict
@@ -34,7 +36,8 @@ from ..minecraft.process import ServerError
 from ..security import permissions as P
 from ..security.auth import AuthError, Principal, RateLimiter
 from ..startrequests import STOPPED, StartRequest, StartRequestError
-from . import bridge, client, layout, live
+from ..stats import player_stats
+from . import bridge, client, layout, live, progress
 from .links import CODE_LIFE, LinkError
 
 if TYPE_CHECKING:
@@ -59,6 +62,9 @@ LIVE_EVERY = 60.0  # seconds between status message and presence checks
 START_COOLDOWN = 300.0  # seconds between starts of one server from Discord
 BATCH = 1.0  # seconds game lines are gathered before they're posted
 REFUSED = "\N{NO ENTRY SIGN}"  # the reaction on a message that didn't go into the game
+SEEN_KEY = "discord_levels_seen"  # member id -> the Level their roles were last set for
+BOARDS_KEY = "discord_leaderboards"  # guild id -> the day its leaderboard was last posted
+BOARD_HOUR = 18  # on the PC's clock
 
 
 class Refused(Exception):
@@ -149,6 +155,8 @@ class Bot:
         self._task: asyncio.Task | None = None
         self._live: asyncio.Task | None = None
         self._jobs: set[asyncio.Task] = set()
+        self._levels_lock = asyncio.Lock()
+        self._resync = False  # set when the Level roles changed: everyone's are set again
         core.start_requests.on_close = self.request_closed
         core.bus.subscribe(self.from_game)
 
@@ -221,14 +229,17 @@ class Bot:
 
     # -- the status messages and the presence line ------------------------------
     async def _live_loop(self) -> None:
+        """Once a minute: the status messages, Level roles and level-ups,
+        and the weekly leaderboards. One failing doesn't stop the others."""
         await asyncio.sleep(LIVE_FIRST)
         while True:
-            try:
-                await self.update_live()
-            except client.DiscordError as exc:
-                log.info("couldn't update the Discord status: %s", exc)
-            except Exception:
-                log.exception("couldn't update the Discord status")
+            for work in (self.update_live, self.update_levels, self.post_leaderboards):
+                try:
+                    await work()
+                except client.DiscordError as exc:
+                    log.info("Discord %s didn't work: %s", work.__name__, exc)
+                except Exception:
+                    log.exception("Discord %s didn't work", work.__name__)
             await asyncio.sleep(LIVE_EVERY)
 
     async def update_live(self) -> None:
@@ -273,6 +284,138 @@ class Bot:
                     raise
         made = await self.rest.request("POST", f"/channels/{channel_id}/messages", body)
         return str(made["id"])
+
+    # -- Levels ------------------------------------------------------------------
+    def resync_levels(self) -> None:
+        """The Level roles changed: set everyone's roles again, quietly."""
+        self._resync = True
+        self.spawn(self.update_levels())
+
+    async def update_levels(self) -> None:
+        """Give each member whose Level changed the Level role that goes
+        with it (and take the one before), and post their level-up. Discord
+        is only called for a change, and a member seen for the first time
+        gets their role without a message."""
+        async with self._levels_lock:
+            db = self.core.db
+            resync, self._resync = self._resync, False
+            if resync:
+                db.set_setting(SEEN_KEY, {})
+            seen: dict[str, int] = db.get_setting(SEEN_KEY, {}) or {}
+            now = {m: levels.level_of(xp) for m, xp in levels.all_xp(db).items()}
+            # Every account unlinked: back to no Level role, once.
+            gone = {m for m in seen if m not in now}
+            now.update({m: 0 for m in gone})
+            changed = {m: lv for m, lv in now.items() if seen.get(m) != lv}
+            if not changed:
+                return
+            for gid in list(self.guilds):
+                roles = layout.level_roles(db, gid)
+                retired = layout.level_settings(db, gid).get("retired") or []
+                if not roles and not retired and not self._announces(gid):
+                    continue
+                found = {r["id"]: r for r in await self.rest.request("GET", f"/guilds/{gid}/roles")}
+                for member, level in changed.items():
+                    try:
+                        role = await self._set_level_role(gid, member, level, roles, found, retired)
+                    except client.DiscordError as exc:
+                        if exc.status not in (403, 404):
+                            # Discord or the network: try again next minute.
+                            now[member] = seen.get(member, -1)
+                        log.info("couldn't set a Level role: %s", exc)
+                        continue
+                    if role is False:
+                        continue  # not in this Discord server
+                    old = seen.get(member)
+                    if old is not None and level > old and self._announces(gid):
+                        name = found.get(role or "", {}).get("name") if role else None
+                        channel = layout.shared_channel(db, gid, "quests")
+                        await self.rest.request(
+                            "POST",
+                            f"/channels/{channel}/messages",
+                            {
+                                "content": progress.level_up(member, level, name),
+                                "allowed_mentions": {"parse": []},
+                            },
+                        )
+                if resync and retired:
+                    layout.set_level_settings(db, gid, retired=[])
+            # Kept: who's still linked, and (to try again) anyone Discord failed for.
+            db.set_setting(
+                SEEN_KEY,
+                {m: lv for m, lv in now.items() if lv >= 0 and not (m in gone and lv == 0)},
+            )
+
+    def _announces(self, guild_id: str) -> bool:
+        return bool(
+            layout.level_settings(self.core.db, guild_id)["announce"]
+            and layout.shared_channel(self.core.db, guild_id, "quests")
+        )
+
+    async def _set_level_role(
+        self,
+        guild_id: str,
+        member_id: str,
+        level: int,
+        roles: list[tuple[int, str]],
+        found: dict[str, dict],
+        retired: Sequence[str] = (),
+    ) -> str | None | bool:
+        """The member gets the Level role for their Level and loses the other
+        Level roles (and retired ones). Returns the role given (None for
+        none), or False when they aren't in this Discord server."""
+        try:
+            member = await self.rest.request("GET", f"/guilds/{guild_id}/members/{member_id}")
+        except client.DiscordError as exc:
+            if exc.status == 404:
+                return False
+            raise
+        held = set(member.get("roles") or [])
+        ours = layout.our_roles(self.core.db, guild_id)
+        wanted = layout.role_for(level, roles)
+        # A role given powers in Discord since it was picked isn't handed out.
+        if wanted and (
+            wanted not in found or layout.level_role_refused(guild_id, found[wanted], ours)
+        ):
+            wanted = None
+        path = f"/guilds/{guild_id}/members/{member_id}/roles"
+        for role_id in [rid for _at, rid in roles] + list(retired):
+            if role_id in held and role_id != wanted:
+                await self.rest.request("DELETE", f"{path}/{role_id}")
+        if wanted and wanted not in held:
+            await self.rest.request("PUT", f"{path}/{wanted}")
+        return wanted
+
+    async def post_leaderboards(self, now: datetime.datetime | None = None) -> None:
+        """Each Discord server's weekly leaderboard, on its day from 18:00,
+        once (remembered, so a restart doesn't post it twice)."""
+        now = now or datetime.datetime.now()
+        if now.hour < BOARD_HOUR:
+            return
+        db = self.core.db
+        posted = db.get_setting(BOARDS_KEY, {}) or {}
+        today = now.date().isoformat()
+        for gid in list(self.guilds):
+            channel = layout.shared_channel(db, gid, "quests")
+            day = layout.level_settings(db, gid)["leaderboard_day"]
+            if day != now.weekday() or not channel or posted.get(gid) == today:
+                continue
+            names = self.server_names(gid)
+            if not names:
+                continue
+            ids = sorted(names)
+            words = progress.leaderboard(
+                " and ".join(sorted(names.values())),
+                levels.weekly_playtime(db, ids, now.timestamp()),
+                levels.top_levels(db, ids),
+            )
+            await self.rest.request(
+                "POST",
+                f"/channels/{channel}/messages",
+                {"content": words[:2000], "allowed_mentions": {"parse": []}},
+            )
+            posted[gid] = today
+            db.set_setting(BOARDS_KEY, posted)
 
     # -- alerts ------------------------------------------------------------------
     def posts_alert(self, event: Event) -> bool:
@@ -479,9 +622,23 @@ class Bot:
                     **guild,
                     "servers": layout.servers_of(self.core.db, guild["id"]),
                     "grants": layout.grants(self.core.db, guild["id"]),
+                    "levels": self.levels_of(guild["id"]),
                     "report": self.reports.get(guild["id"]),
                 }
                 for guild in sorted(self.guilds.values(), key=lambda g: g["name"].lower())
+            ],
+        }
+
+    def levels_of(self, guild_id: str) -> dict[str, Any]:
+        """A Discord server's Level settings and Level roles, with names."""
+        names = {r["id"]: r["name"] for r in (self.reports.get(guild_id) or {}).get("roles") or []}
+        settings = layout.level_settings(self.core.db, guild_id)
+        return {
+            "announce": settings["announce"],
+            "leaderboard_day": settings["leaderboard_day"],
+            "roles": [
+                {"level": at, "role_id": rid, "name": names.get(rid)}
+                for at, rid in layout.level_roles(self.core.db, guild_id)
             ],
         }
 
@@ -906,6 +1063,50 @@ async def link(bot: Bot, call: Call) -> str:
     )
 
 
+async def show_stats(bot: Bot, call: Call) -> str:
+    """/stats [player]: that player, or your own linked accounts here."""
+    ctx = call.ctx
+    assert ctx is not None
+    name = str(call.options.get("player") or "").strip()
+    if name:
+        if not NAME_RE.match(name):
+            raise Refused("That isn't a Minecraft name: letters, numbers and _ only, up to 16.")
+        names = [name]
+    else:
+        names = [r["name"] for r in bot.core.links.of_member(call.member_id)]
+        if not names:
+            raise Refused("Add a player name, or link your account with /link first.")
+    answers = []
+    for wanted in names:
+        found = await player_stats(ctx, wanted)
+        if found is not None:
+            answers.append(progress.stats(found, ctx.name))
+    if not answers:
+        who = names[0] if len(names) == 1 else "your linked accounts"
+        raise Refused(f"Nobody called {who} has played on {ctx.name}.")
+    return "\n\n".join(answers)
+
+
+async def show_level(bot: Bot, call: Call) -> str:
+    """/level: across every linked account, so no server is picked."""
+    if not bot.core.links.of_member(call.member_id):
+        raise Refused("Link your Minecraft account with /link first; Levels come from playing.")
+    xp = levels.all_xp(bot.core.db).get(call.member_id, 0)
+    roles = layout.level_roles(bot.core.db, call.guild_id)
+    try:
+        # Also sets their Level role here, for someone who joined this
+        # Discord server after their Level last changed.
+        found = {
+            r["id"]: r for r in await bot.rest.request("GET", f"/guilds/{call.guild_id}/roles")
+        }
+        await bot._set_level_role(call.guild_id, call.member_id, levels.level_of(xp), roles, found)
+    except client.DiscordError as exc:
+        log.info("couldn't set a Level role: %s", exc)
+        found = {}
+    names = {rid: r["name"] for rid, r in found.items()}
+    return progress.level(xp, roles, names)
+
+
 async def my_links(bot: Bot, call: Call) -> str:
     rows = bot.core.links.of_member(call.member_id)
     if not rows:
@@ -957,6 +1158,28 @@ COMMANDS: dict[str, Command] = {
         ),
         Command(
             "links", "Your linked Minecraft accounts", P.SERVER_VIEW, my_links, needs_server=False
+        ),
+        Command(
+            "stats",
+            "A player's stats: playtime, deaths, mobs, blocks, advancements",
+            P.SERVER_VIEW,
+            show_stats,
+            options=[
+                {
+                    **NAME_OPTION,
+                    "name": "player",
+                    "description": "The Minecraft name (leave out for your own)",
+                    "required": False,
+                }
+            ],
+        ),
+        Command(
+            "level",
+            "Your Level, your XP and your next Level role",
+            P.SERVER_VIEW,
+            show_level,
+            needs_server=False,
+            slow=True,
         ),
         Command(
             "unlink",

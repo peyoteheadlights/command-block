@@ -380,6 +380,19 @@ class DiscordRoleGrants(BaseModel):
     grants: dict[str, list[str]] = Field(max_length=50)
 
 
+class DiscordLevelRole(BaseModel):
+    level: int = Field(ge=1, le=1000)
+    role_id: str = Field(pattern=r"^\d{1,25}$")
+
+
+class DiscordLevelSettings(BaseModel):
+    announce: bool = True
+    # 0 (Monday) to 6 (Sunday); null: no weekly leaderboard.
+    leaderboard_day: int | None = Field(None, ge=0, le=6)
+    # Left out: the Level roles stay as they are.
+    roles: list[DiscordLevelRole] | None = Field(None, max_length=20)
+
+
 class DiscordAddress(BaseModel):
     server_id: str = Field(max_length=64)
     # A name or address and maybe a port, as friends type it into Minecraft.

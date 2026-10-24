@@ -17,9 +17,16 @@ router = APIRouter(prefix="/discord-links")
 
 
 def links_of(ctx) -> dict:
+    from ...levels import all_xp, standing
+
     links = ctx.core.links
+    xp = all_xp(ctx.db)
     return {
-        "links": links.of_server(ctx.server_id),
+        # Each with the member's Level (across all their linked accounts).
+        "links": [
+            {**row, **standing(xp.get(row["discord_id"], 0))}
+            for row in links.of_server(ctx.server_id)
+        ],
         "requests": links.requests(ctx.server_id),
         "players": [
             {"name": p["username"], "uuid": p["uuid"]}
