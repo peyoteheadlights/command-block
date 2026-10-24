@@ -7,7 +7,8 @@ pruned; with no start measured, the card never shows (house rule 1).
 
 It waits while anything is wrong: a server still being set up (its getting
 started card is showing), a crash or another problem in Recommendations, a
-newest backup that didn't check out, or a warning or error in the last day.
+newest backup that didn't check out, or an alert the owner hasn't read
+(the bell's read marker, AuthManager.alerts_read).
 Pressing either button hides it for good, on every device. Owner only; the
 route's permission keeps it from moderators.
 """
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
 
 STATE_KEY = "support_ask"
 WAIT_DAYS = 14
-ALERT_HOURS = 24
 # Recommendations that mean something is wrong, not just a tip.
 PROBLEMS = {
     "crash",
@@ -63,7 +63,7 @@ def handler(db: Database):
     return handle
 
 
-def something_wrong(core: AgentCore, now: float) -> bool:
+def something_wrong(core: AgentCore) -> bool:
     for ctx in core.servers.values():
         if checklist.status(ctx)["show"]:
             return True
@@ -74,11 +74,9 @@ def something_wrong(core: AgentCore, now: float) -> bool:
         shown = recommendations.visible(ctx.db, found)["recommendations"]
         if any(r["id"] in PROBLEMS for r in shown):
             return True
-    alert = core.db.query_one(
-        "SELECT 1 FROM events WHERE ts > ? AND level IN ('warn', 'warning', 'error') LIMIT 1",
-        (now - ALERT_HOURS * 3600,),
-    )
-    return alert is not None
+    read = core.auth.alerts_read(core.config.admin_username)
+    unread = core.db.query_one("SELECT 1 FROM app_alerts WHERE id > ? LIMIT 1", (read,))
+    return unread is not None
 
 
 def status(core: AgentCore) -> dict[str, Any]:
@@ -92,7 +90,7 @@ def status(core: AgentCore) -> dict[str, Any]:
         return {"show": False, "reason": "never_started"}
     if now - first < WAIT_DAYS * 86400:
         return {"show": False, "reason": "too_soon"}
-    if something_wrong(core, now):
+    if something_wrong(core):
         return {"show": False, "reason": "something_wrong"}
     return {"show": True, "reason": "ready"}
 

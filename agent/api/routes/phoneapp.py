@@ -20,8 +20,8 @@ from ...notifications import apns, fcm
 from ...security.auth import Principal
 from ...security.permissions import ACCOUNT, SERVER_VIEW, can_see_server, require
 from ..deps import audit, get_core
-from ..responses import AppAlerts, AppPhone, DeviceAlerts
-from .models import AppPhoneRequest, DeviceAlertsRequest
+from ..responses import AlertsRead, AppAlerts, AppPhone, DeviceAlerts
+from .models import AlertsReadRequest, AppPhoneRequest, DeviceAlertsRequest
 
 router = APIRouter()
 
@@ -68,7 +68,20 @@ async def alerts(
         "latest": latest,
         "more": more,
         "enabled": False,
+        "read_up_to": core.auth.alerts_read(principal.user),
     }
+
+
+@router.post("/alerts/read", response_model=AlertsRead)
+async def mark_alerts_read(
+    payload: AlertsReadRequest,
+    principal: Principal = Depends(require(ACCOUNT)),
+    core=Depends(get_core),
+):
+    """This account has read every alert up to ``up_to`` (never past the newest)."""
+    latest_row = core.db.query_one("SELECT MAX(id) AS id FROM app_alerts")
+    newest = int((latest_row or {}).get("id") or 0)
+    return {"read_up_to": core.auth.mark_alerts_read(principal.user, min(payload.up_to, newest))}
 
 
 async def _phone_state(core, principal: Principal, platform: str = "android") -> dict:

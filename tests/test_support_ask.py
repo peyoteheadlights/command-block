@@ -49,7 +49,7 @@ def ready(client, monkeypatch):
     for ctx in core.servers.values():
         checklist.dismiss(ctx)
     monkeypatch.setattr(recommendations, "evaluate", lambda facts: [])
-    core.db.execute("DELETE FROM events WHERE level IN ('warn', 'warning', 'error')")
+    core.db.execute("DELETE FROM app_alerts")
     started_days_ago(client, 15)
     assert ask(client) == {"show": True, "reason": "ready"}
     return core
@@ -96,8 +96,37 @@ def test_not_after_a_failed_backup(ready, client, monkeypatch):
     assert ask(client)["reason"] == "something_wrong"
 
 
-def test_not_after_a_recent_alert(ready, client):
-    ready.db.add_event("survival", "crash", "The server crashed", level="error")
+def an_alert(core) -> int:
+    return core.db.insert(
+        "app_alerts",
+        {
+            "ts": time.time(),
+            "server_id": "survival",
+            "event": "server_crashed",
+            "title": "Survival crashed",
+            "body": "b",
+            "page": "overview",
+            "url": "u",
+        },
+    )
+
+
+def test_not_while_an_alert_is_unread(ready, client):
+    alert = an_alert(ready)
+    assert ask(client)["reason"] == "something_wrong"
+    assert client.get("/api/alerts?after=0").json()["read_up_to"] == 0
+    # Read on any device: the marker is the account's, and only moves forward.
+    response = client.post("/api/alerts/read", json={"up_to": alert + 50})
+    assert response.json() == {"read_up_to": alert}  # never past the newest
+    client.post("/api/alerts/read", json={"up_to": 0})
+    assert client.get("/api/alerts?after=0").json()["read_up_to"] == alert
+    assert ask(client)["show"] is True
+
+
+def test_a_moderators_read_marker_is_their_own(ready, client):
+    alert = an_alert(ready)
+    sam = add_helper(client, dict(client.headers))
+    assert client.post("/api/alerts/read", json={"up_to": alert}, headers=sam).status_code == 200
     assert ask(client)["reason"] == "something_wrong"
 
 
@@ -114,6 +143,7 @@ def test_gone_for_good_once_answered(ready, client, choice):
 def test_never_for_a_moderator(ready, client):
     owner = dict(client.headers)
     sam = add_helper(client, owner)
+    client.post("/api/alerts/read", json={"up_to": 10**9})  # the "moderator added" alert
     assert client.get("/api/support-ask", headers=sam).status_code == 403
     assert (
         client.post("/api/support-ask", json={"answer": "no_thanks"}, headers=sam).status_code

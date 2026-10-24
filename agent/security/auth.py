@@ -1032,6 +1032,18 @@ class AuthManager:
         self.db.set_setting(f"user:{user}:preferences", prefs)
         return prefs
 
+    # -- alerts read -----------------------------------------------------
+    # The newest alert each account has read, like a chat app's read marker:
+    # every alert after it is unread, on every device the account uses.
+    def alerts_read(self, user: str) -> int:
+        return int(self.db.get_setting(f"user:{user}:alerts_read", 0) or 0)
+
+    def mark_alerts_read(self, user: str, up_to: int) -> int:
+        # Only moves forward, so a device that's behind can't unread anything.
+        read = max(self.alerts_read(user), up_to)
+        self.db.set_setting(f"user:{user}:alerts_read", read)
+        return read
+
     def purge_expired(self) -> int:
         cur = self.db.execute(
             "DELETE FROM sessions WHERE expires_at < ? AND until_signed_out = 0", (time.time(),)

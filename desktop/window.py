@@ -564,6 +564,7 @@ class MainWindow(QMainWindow):
         if name == "Notifications":
             self.unread = 0
             self.show_unread()
+            self.mark_alerts_read()
         self.topbar.setVisible(
             name not in ("Sign-in", "Agent not running", "Update needed", "Tailscale")
         )
@@ -717,6 +718,8 @@ class MainWindow(QMainWindow):
         )
         self.run(lambda: self.agent.events(sid), here(screen.panel.show_events), lambda _e: None)
         self.run(lambda: self.agent.status(sid), here(screen.header.show_status), lambda _e: None)
+        if self.role in (None, "owner"):  # the agent refuses moderators too
+            self.run(self.agent.support_ask, here(self.show_ask), lambda _e: None)
         if mode["technical"]:
             self.load_technical()
             return
@@ -731,8 +734,12 @@ class MainWindow(QMainWindow):
             parts.append((self.content_of(row), simple.show_mods))
         for work, done in parts:
             self.run(partial(work, sid), here(done), lambda _e: None)
-        if self.role in (None, "owner"):  # the agent refuses moderators too
-            self.run(self.agent.support_ask, here(simple.show_ask), lambda _e: None)
+
+    def show_ask(self, data: dict) -> None:
+        """The donation card, the same in Simple and Technical."""
+        screen = self.server_screen
+        for overview in (screen.simple_overview, screen.technical_overview):
+            overview.ask.setVisible(bool(data.get("show")))
 
     def still_on(self, sid: str) -> Callable[[Callable[[Any], None]], Callable[[Any], None]]:
         """Wraps a callback so an answer about a server that is no longer
@@ -815,7 +822,17 @@ class MainWindow(QMainWindow):
 
     def caught_up_with(self, found: dict) -> None:
         self.alerts_loaded(found["alerts"], pop=self.caught_up)
+        if not self.caught_up:
+            # Unread is what this account hasn't read on any device.
+            read = int(found.get("read_up_to") or 0)
+            self.unread = sum(1 for a in self.alerts if a["id"] > read)
+            self.show_unread()
         self.caught_up = True
+
+    def mark_alerts_read(self) -> None:
+        if self.last_alert:
+            up_to = self.last_alert
+            self.run(lambda: self.agent.mark_alerts_read(up_to), lambda _r: None, lambda _e: None)
 
     def feed_changed(self) -> None:
         self.refresh()
@@ -840,6 +857,8 @@ class MainWindow(QMainWindow):
         if self.screen_name != "Notifications":
             self.unread += len(new)
             self.show_unread()
+        else:
+            self.mark_alerts_read()  # seen as they arrive
         shown = self.pc.setting("show_alerts") not in (False, "false")
         showing = [
             alert

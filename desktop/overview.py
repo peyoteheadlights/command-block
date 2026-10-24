@@ -95,6 +95,39 @@ def title_of(frame: QFrame) -> QLabel:
     return found
 
 
+class AskCard(QWidget):
+    """The owner's one Donate / No thanks card (agent/supportask.py), on the
+    Overview in both modes. The agent decides when it shows."""
+
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__()
+        self.window_ = window
+        frame, layout = card(text("desktop.ask.title"))
+        layout.addWidget(label(text("desktop.ask.text"), "sub"))
+        answers = QHBoxLayout()
+        for answer, words, kind in (
+            ("donate", "desktop.ask.donate", "primary"),
+            ("no_thanks", "desktop.ask.no", "plain"),
+        ):
+            choice = push(text(words), kind)
+            choice.clicked.connect(lambda _=False, a=answer: self.answer(a))
+            answers.addWidget(choice)
+        answers.addStretch()
+        layout.addLayout(answers)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(frame)
+        self.hide()
+
+    def answer(self, answer: str) -> None:
+        window = self.window_
+        window.show_ask({"show": False})
+        if answer == "donate":
+            links = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
+            window.pc.open_link(links["sponsors"])
+        window.run(lambda: window.agent.answer_support_ask(answer), window.show_ask)
+
+
 class SimpleOverview(QWidget):
     def __init__(self, window: MainWindow) -> None:
         super().__init__()
@@ -122,19 +155,7 @@ class SimpleOverview(QWidget):
         self.checklist.hide()
         column.addWidget(self.checklist)
 
-        self.ask, layout = card(text("desktop.ask.title"))
-        layout.addWidget(label(text("desktop.ask.text"), "sub"))
-        answers = QHBoxLayout()
-        for answer, words, kind in (
-            ("donate", "desktop.ask.donate", "primary"),
-            ("no_thanks", "desktop.ask.no", "plain"),
-        ):
-            choice = push(text(words), kind)
-            choice.clicked.connect(lambda _=False, a=answer: self.answer_ask(a))
-            answers.addWidget(choice)
-        answers.addStretch()
-        layout.addLayout(answers)
-        self.ask.hide()
+        self.ask = AskCard(window)
         column.addWidget(self.ask)
 
         self.grid = grid = QGridLayout()
@@ -316,16 +337,6 @@ class SimpleOverview(QWidget):
         sid = self.row["id"]
         self.window_.run(lambda: self.window_.agent.dismiss_checklist(sid), self.show_checklist)
 
-    def show_ask(self, data: dict) -> None:
-        self.ask.setVisible(bool(data.get("show")))
-
-    def answer_ask(self, answer: str) -> None:
-        self.ask.hide()
-        if answer == "donate":
-            links = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
-            self.window_.pc.open_link(links["sponsors"])
-        self.window_.run(lambda: self.window_.agent.answer_support_ask(answer), self.show_ask)
-
     def show_address(self, join: dict) -> None:
         java = join.get("java") or {}
         tailscale = java.get("tailscale") or {}
@@ -396,6 +407,8 @@ class TechnicalOverview(QWidget):
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(12)
+        self.ask = AskCard(window)
+        column.addWidget(self.ask)
         graphs, layout = card(text("page.performance", technical=True))
         row = QHBoxLayout()
         layout.addLayout(row)

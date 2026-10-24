@@ -724,6 +724,11 @@ class AppAlerts(Open):
     latest: int = Field(description="Ask with after=latest next time")
     more: bool = Field(False, description="More alerts are waiting after latest")
     enabled: bool = Field(description="Always false: browser alerts were removed")
+    read_up_to: int = Field(0, description="This account has read every alert up to this id")
+
+
+class AlertsRead(Open):
+    read_up_to: int
 
 
 class AppPhone(Open):
