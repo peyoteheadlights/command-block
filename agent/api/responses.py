@@ -1909,6 +1909,11 @@ class HelpBundleMade(Open):
     files: list[dict[str, Any]]
 
 
+class SupportAsk(Open):
+    show: bool
+    reason: str = Field(description="answered, never_started, too_soon, something_wrong or ready")
+
+
 class SecurityOverview(Open):
     agent_connected: bool
     tls: dict[str, Any] = Field(description="The certificate as read from disk")

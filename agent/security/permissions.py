@@ -60,6 +60,7 @@ FILES_BROWSE = "files.browse"  # list folders on the PC, for the folder picker
 WORLD_REPLACE = "world.replace"  # import a world over a server's own
 DATA_EXPORT = "data.export"  # "Export everything" for moving to a new PC
 HELP_BUNDLE = "help.bundle"  # the "Get help" file of logs and checks
+SUPPORT_ASK = "support.ask"  # the one Donate / No thanks card
 APP_UPDATE = "app.update"  # check for, and install, a new version; remove the old copy
 # "Start the agent": wake the PC (Wake-on-LAN) so the agent runs again. The
 # owner can give it to a moderator for the whole PC (PC_PERMISSIONS).
@@ -98,6 +99,7 @@ ALL = frozenset(
         WORLD_REPLACE,
         DATA_EXPORT,
         HELP_BUNDLE,
+        SUPPORT_ASK,
         APP_UPDATE,
         AGENT_START,
     }

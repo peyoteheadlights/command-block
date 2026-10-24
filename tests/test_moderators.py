@@ -58,6 +58,7 @@ def test_the_switches_cover_every_server_permission():
         P.FILES_BROWSE,
         P.DATA_EXPORT,
         P.HELP_BUNDLE,
+        P.SUPPORT_ASK,
         P.APP_UPDATE,
         P.PC_SETTINGS,
         P.SECURITY_MANAGE,
