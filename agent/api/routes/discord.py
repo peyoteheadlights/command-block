@@ -241,11 +241,13 @@ async def set_levels(
             if refused:
                 raise HTTPException(status_code=400, detail=refused)
         layout.set_level_roles(core.db, guild_id, wanted)
-        await discord_call(bot.check(guild_id))
-        bot.resync_levels()
+    # Saved before waiting on Discord, so all of it is saved at once.
     layout.set_level_settings(
         core.db, guild_id, announce=payload.announce, leaderboard_day=payload.leaderboard_day
     )
+    if payload.roles is not None:
+        await discord_call(bot.check(guild_id))
+        bot.resync_levels()
     audit(core, request, "discord_levels", target=guild_id)
     return bot.levels_of(guild_id)
 
