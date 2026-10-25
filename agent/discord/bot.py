@@ -488,12 +488,7 @@ class Bot:
             log.exception("%s failed", name)
             result = "failed"
             words = "Something went wrong on the PC. The owner can find it in the agent's log."
-        if deferred:
-            await self.rest.request(
-                "PATCH", self.original(data), {"content": words[:2000], "components": []}
-            )
-        else:
-            await self.respond(data, words, update=on_prompt)
+        # Logged before answering, so it's there even if Discord can't be reached.
         self.core.db.audit(
             "discord_command",
             user=call.principal.user,
@@ -502,6 +497,12 @@ class Bot:
             detail=f"Discord member {call.member_id}",
             server_id=call.ctx.server_id if call.ctx else None,
         )
+        if deferred:
+            await self.rest.request(
+                "PATCH", self.original(data), {"content": words[:2000], "components": []}
+            )
+        else:
+            await self.respond(data, words, update=on_prompt)
 
     def pick_server(self, call: Call) -> str:
         """The option if given, else the channel's Minecraft server, else
