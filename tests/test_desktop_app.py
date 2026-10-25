@@ -927,10 +927,11 @@ def test_the_menu_lists_each_server_and_starts_it(qapp, agent_http):
     window = open_window(qapp, agent_http, pc)
     sign_in(qapp, window)
     on_all_servers(qapp, window)
-    wait_for(qapp, lambda: len(tray_items(pc)) == 3)
+    # The Start item shows once the server's state is in, a moment after the list.
+    wait_for(qapp, lambda: tray_items(pc).get("Survival: Offline") == ["Start", "Open"])
     items = tray_items(pc)
+    assert len(items) == 3
     assert items[""] == ["Open Command Block", "Quit"]
-    assert items["Survival: Offline"] == ["Start", "Open"]
     tray_action(pc, "Survival", "Start").trigger()
     headers = owner(agent_http)
     wait_for(qapp, lambda: server_state(agent_http, "survival", headers) == "ONLINE", 30, 0.2)
