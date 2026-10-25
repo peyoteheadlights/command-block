@@ -459,7 +459,10 @@ def test_ideas_are_answered_in_the_app(agent, fake):  # noqa: F811
     )
     assert [s["title"] for s in answer.json()["suggestions"]] == ["Idea 1", "Idea 2"]
     agent.delete(f"/api/servers/test/quests/suggestions/{ideas[1]['id']}")
-    told = wait_for(lambda: len([m for m in fake.messages if "idea" in m.get("content", "")]) == 2)
+    # Both answers quote the idea's title; the quests board only says "Got an idea?".
+    told = wait_for(
+        lambda: len([m for m in fake.messages if 'idea "' in m.get("content", "")]) == 2
+    )
     assert told
     assert agent.delete(f"/api/servers/test/quests/suggestions/{ideas[1]['id']}").status_code == 404
 
