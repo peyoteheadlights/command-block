@@ -268,12 +268,12 @@ def test_whitelist_requests_and_new_addresses_on_the_players_page(
 
     pressed("Say no: Bob")
     wait_for_window(qapp, lambda: "asks to join as Bob" not in shown_text(page))
-    assert core.whitelist.forms("survival") == []
+    wait_for_window(qapp, lambda: core.whitelist.forms("survival") == [])
     pressed("Ignore: Alex 203.0.x.x")
     wait_for_window(qapp, lambda: "left as it was" in shown_text(page))
     pressed("Remove: Alex 203.0.x.x")
     wait_for_window(qapp, lambda: "203.0.x.x" not in shown_text(page))
-    assert core.db.query("SELECT * FROM ip_addresses") == []
+    wait_for_window(qapp, lambda: core.db.query("SELECT * FROM ip_addresses") == [])
 
 
 def test_the_console_channel_and_leaving_are_set_on_the_discord_page(qapp, fake, discord_http):  # noqa: F811

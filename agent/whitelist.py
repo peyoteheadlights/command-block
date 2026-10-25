@@ -65,8 +65,9 @@ MAX_FORMS = 30  # open requests per server
 MAX_WHY = 300
 REMOVALS_KEY = "whitelist_removals"  # server id -> names to take off once it's online
 MAX_REMOVALS = 200
-# A colour code some consoles leave in front of a plugin's line.
-COLOUR = r"(?:§.)*"
+# A colour code some consoles leave in front of a plugin's line. On Windows a
+# Java server writes "§" in the PC's own code page, so it can reach us as "\ufffd".
+COLOUR = r"(?:[§\ufffd].)*"
 
 
 class WhitelistError(ValueError):
