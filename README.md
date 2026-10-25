@@ -50,7 +50,7 @@ This is a student project I've been working on as a hobby for my personal use, a
 
 ## Planned features
 
-This app is in no way done and will be supported for a good long while. Here's everything that's planned, roughly in order (no dates, it's a hobby project):
+This app is in no way done and will be supported for a good long while. Here's everything that's been planned so far (no dates, it's a hobby project):
 
 **Discord bot** (a lot is in already: setup, Discord role permissions, status and alerts, starting, account linking, the chat bridge, /stats, Levels with Level roles, a weekly leaderboard, quests with rewards, and events and polls, see [docs/discord.md](docs/discord.md))
 
@@ -64,7 +64,7 @@ This app is in no way done and will be supported for a good long while. Here's e
 - Safety notes and saved version lists that stay up to date without a new release.
 - Manage servers on several PCs under one owner account.
 - Help picking a server type, support for Spigot, Leaf and custom jars, and switching a server's type (for example Vanilla to Paper).
-- Add mods from a link or file, including CurseForge, plus recommended add-ons, performance and QoL suggestions, and guides for popular add-ons.
+- Add mods from a link or file, including CurseForge (if they let me have the api key), plus recommended add-ons, performance and QoL suggestions, and guides for popular add-ons.
 - Editing add-on config files inside the app.
 - Bring a server in from a folder or zip, or bring servers back from a backup folder on a new PC.
 - Test servers, and "New season" (keep the old world, start a fresh one with the same settings).
@@ -74,17 +74,11 @@ This app is in no way done and will be supported for a good long while. Here's e
 - Controlling servers on rented hosts that have an official API.
 - playit.gg support.
 
-**Getting it ready for 1.0**
-
-- Cleaner, smaller code and a simpler README.
-- Testing the whole app as a first-time player, a guided phone setup, a Tailscale share for moderators and a "First run and friends joining" guide.
-- A security check of the whole project, the phone apps in the App Store and Google Play, and a signed setup file.
-
 **After 1.0**
 
 - Your own server store run inside Command Block (no Tebex needed).
 - Server networks (a lobby plus other servers, with Velocity or BungeeCord).
-- Folia and Minecraft Education servers.
+- Folia and Minecraft Education servers (if that's even a thing).
 - Running the server side on Linux, Raspberry Pi and Mac.
 - Translations.
 - A Mac desktop app (maybe).
@@ -93,7 +87,7 @@ Got more ideas? Make a [feature request](https://github.com/peyoteheadlights/com
 
 ## Support the project
 
-Command Block is free and stays free. Donating unlocks nothing, everyone gets every feature either way. If it helps you and you want to support it:
+Command Block is free, open-source and will stay that way. If you want to support:
 
 - [GitHub Sponsors](https://github.com/sponsors/peyoteheadlights)
 - [Ko-fi](https://ko-fi.com/peyoteheadlights)
