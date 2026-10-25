@@ -218,7 +218,8 @@ def test_save_writes_the_shown_lines_with_windows_save_box(qapp, agent_http):
 def test_lines_only_reach_the_console_while_it_is_open(qapp, agent_http):
     headers = running(qapp, agent_http)
     window, page = technical_page(qapp, agent_http, "Console")
-    wait_for(qapp, lambda: page.lines)
+    # the earlier lines are asked for on their own; let that answer land first
+    wait_for(qapp, lambda: page.lines and not window._tasks)
     window.open_page("Overview")
     count = len(page.lines)
     seen = []  # the feed still brings the line; the Console just doesn't take it
