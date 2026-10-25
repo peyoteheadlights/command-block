@@ -327,6 +327,7 @@ class MainWindow(QMainWindow):
         self.quitting = False
         mode["technical"] = False
         self.mode_picked = False  # picked here since signing in
+        self.ask_answered = False  # the donation card was answered here
         self.setWindowTitle(text("app.name"))
         self.resize(1280, 800)
         desk = QWidget()
@@ -739,8 +740,10 @@ class MainWindow(QMainWindow):
     def show_ask(self, data: dict) -> None:
         """The donation card, the same in Simple and Technical."""
         screen = self.server_screen
+        # an answer to a check sent before the click mustn't bring it back
+        shown = bool(data.get("show")) and not self.ask_answered
         for overview in (screen.simple_overview, screen.technical_overview):
-            overview.ask.setVisible(bool(data.get("show")))
+            overview.ask.setVisible(shown)
 
     def still_on(self, sid: str) -> Callable[[Callable[[Any], None]], Callable[[Any], None]]:
         """Wraps a callback so an answer about a server that is no longer

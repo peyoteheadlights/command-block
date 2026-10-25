@@ -121,6 +121,7 @@ class AskCard(QWidget):
 
     def answer(self, answer: str) -> None:
         window = self.window_
+        window.ask_answered = True
         window.show_ask({"show": False})
         if answer == "donate":
             links = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
