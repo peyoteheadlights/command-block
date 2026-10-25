@@ -1043,7 +1043,8 @@ def test_a_newer_app_with_the_same_api_version_keeps_working_and_says_so(
     sign_in(qapp, window)
     on_all_servers(qapp, window)
     wait_for(qapp, lambda: "older than this app" in shown_text(window))
-    assert "Survival" in shown_text(window)
+    # the list may be mid-refresh, so this waits for it too
+    wait_for(qapp, lambda: "Survival" in shown_text(window))
 
 
 def test_a_different_api_version_stops_the_app(qapp, agent_http, monkeypatch):
