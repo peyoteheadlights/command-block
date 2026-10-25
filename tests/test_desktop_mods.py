@@ -434,6 +434,8 @@ def test_a_moderator_without_mods_rights_sees_no_change_buttons(qapp, agent_http
     wait_for(qapp, lambda: window.screen_name == "All servers" and "Survival" in shown_text(window))
     open_server(qapp, window, "Survival")
     page = open_page(qapp, window, "Mods")
+    # once /auth/me has said what sam may do and the page has loaded again
+    wait_for(qapp, lambda: window.role is not None and not window._tasks)
     wait_for(qapp, lambda: "3 mods installed" in shown_text(page))
     assert not buttons_named(page, "Turn off") and not buttons_named(page, "Update all")
     assert not page.search_card.isVisibleTo(page)

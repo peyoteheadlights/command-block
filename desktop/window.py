@@ -1217,6 +1217,9 @@ class MainWindow(QMainWindow):
             self.sync_helper()
         self.update_tray()
         self.servers_loaded(self.servers)  # hides what this account can't do
+        if self.screen_name == "Server" and self.server_screen.row:
+            # a page opened before this answered showed the owner's buttons
+            self.server_screen.show_page(self.server_screen.current_page)
         if self.role == "owner" and self.agent.place == "this PC":
             self.run(self.agent.tailscale, self.tailscale_loaded, lambda _e: None)
 
