@@ -12,9 +12,17 @@ import pytest
 from agent.events import Event
 from agent.notifications import dispatcher
 
+from .conftest import build_multi_config
 from .test_helpers import add_helper
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture
+def multi(tmp_path):
+    # No TLS: on a slow runner the certificate check 5 s after start adds a
+    # "certificate can't be read" alert to the list these tests count.
+    return build_multi_config(tmp_path, **{"tls.enabled": False})
 
 
 @pytest.fixture
