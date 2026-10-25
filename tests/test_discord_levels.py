@@ -29,6 +29,12 @@ ALT = "11111111-2222-3333-4444-555555555555"
 OTHER = "3000000000000000099"
 
 
+def bot_posts(discord) -> list[dict]:
+    """What the bot posted in #quests, leaving out the quests board it can post
+    there at any time once it's connected."""
+    return [m for m in discord.in_channel("quests") if not m["content"].startswith("**Quests**")]
+
+
 def write_stats(world, uuid=ALEX, stats=None, advancements=None, saved_at=None):
     for folder, data in (("stats", stats), ("advancements", advancements)):
         if data is None:
@@ -205,14 +211,14 @@ def test_level_roles_replace_each_other_and_level_ups_are_posted(agent, fake):  
     linked(core, "Alex", ALEX)
     call(agent, core.discord.update_levels)
     assert fake.members[MEMBER_ID] == []  # Level 1: no role yet, and no post (first seen)
-    assert fake.in_channel("quests") == []
+    assert bot_posts(fake) == []
     calls = len(fake.calls)
     call(agent, core.discord.update_levels)
     assert len(fake.calls) == calls  # nothing changed, Discord isn't asked
     core.db.execute("UPDATE players SET total_seconds = 20 * 3600 WHERE uuid = ?", (ALEX,))
     call(agent, core.discord.update_levels)
     assert fake.members[MEMBER_ID] == [level_role(core, 5)]
-    posted = fake.in_channel("quests")
+    posted = bot_posts(fake)
     assert (
         posted[-1]["content"] == f"<@{MEMBER_ID}> reached **Level 5**! They're a **Regular** now."
     )
@@ -221,10 +227,10 @@ def test_level_roles_replace_each_other_and_level_ups_are_posted(agent, fake):  
     call(agent, core.discord.update_levels)
     assert fake.members[MEMBER_ID] == [level_role(core, 10)]  # Regular taken away
     # Unlinked: back to no Level role, and nothing posted for going down.
-    posts = len(fake.in_channel("quests"))
+    posts = len(bot_posts(fake))
     core.links.unlink(ALEX)
     call(agent, core.discord.update_levels)
-    assert fake.members[MEMBER_ID] == [] and len(fake.in_channel("quests")) == posts
+    assert fake.members[MEMBER_ID] == [] and len(bot_posts(fake)) == posts
 
 
 def test_level_ups_can_be_turned_off_and_strangers_are_skipped(agent, fake):  # noqa: F811
@@ -240,7 +246,7 @@ def test_level_ups_can_be_turned_off_and_strangers_are_skipped(agent, fake):  # 
     core.db.execute("UPDATE players SET total_seconds = 30 * 3600")
     call(agent, core.discord.update_levels)
     assert fake.members[MEMBER_ID] == [level_role(core, 5)]
-    assert OTHER not in fake.members and fake.in_channel("quests") == []
+    assert OTHER not in fake.members and bot_posts(fake) == []
 
 
 def test_level_roles_can_be_changed_but_never_to_a_powerful_role(agent, fake):  # noqa: F811
@@ -333,13 +339,13 @@ def test_the_leaderboard_is_posted_once_on_its_day(agent, fake):  # noqa: F811
     played(core, "Alex", ALEX, 20)
     linked(core, "Alex", ALEX)
     call(agent, core.discord.post_leaderboards, evening)
-    assert fake.in_channel("quests") == []  # off by default
+    assert bot_posts(fake) == []  # off by default
     agent.put(f"/api/discord/guilds/{GUILD_ID}/levels", json={"leaderboard_day": today.weekday()})
     call(agent, core.discord.post_leaderboards, today.replace(hour=9))
-    assert fake.in_channel("quests") == []  # not before 18:00
+    assert bot_posts(fake) == []  # not before 18:00
     call(agent, core.discord.post_leaderboards, evening)
     call(agent, core.discord.post_leaderboards, evening.replace(hour=21))
-    posted = fake.in_channel("quests")
+    posted = bot_posts(fake)
     assert len(posted) == 1 and posted[0]["allowed_mentions"] == {"parse": []}
     lines = posted[0]["content"].splitlines()
     assert lines[0] == "**This week on Test Server**"
@@ -364,4 +370,4 @@ def test_changing_the_level_roles_sets_everyones_again_quietly(agent, fake):  # 
     assert answer.status_code == 200, answer.text
     wait_for(lambda: fake.members[MEMBER_ID] == ["2000000000000000051"])
     # no level-up posts for a resync (the quests board may be posted there too)
-    assert not any("reached **Level" in m["content"] for m in fake.in_channel("quests"))
+    assert not any("reached **Level" in m["content"] for m in bot_posts(fake))
