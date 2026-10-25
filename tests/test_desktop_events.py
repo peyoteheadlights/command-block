@@ -110,7 +110,7 @@ def test_an_approval_list_is_ticked_and_approved(qapp, quests_page):  # noqa: F8
     # Unticked after the OK: the Level XP goes back, logged.
     named(page, QtWidgets.QCheckBox, "Came: sam").setChecked(False)
     wait_for(lambda: levels.all_xp(core.db).get(MEMBER_ID, 0) == 0)
-    assert core.db.query("SELECT 1 FROM audit_log WHERE action = 'event_attendance_fix'")
+    wait_for(lambda: core.db.query("SELECT 1 FROM audit_log WHERE action = 'event_attendance_fix'"))
 
 
 def _buttons(page):
