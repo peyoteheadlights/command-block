@@ -105,6 +105,10 @@ def test_a_game_setting_is_saved_and_a_bad_one_is_marked(qapp, agent_http):
 
 def test_the_memory_slider_saves_the_limit(qapp, agent_http):
     _window, page = settings_page(qapp, agent_http)
+    # The memory card is asked for on its own, so it can come after the rest.
+    wait_for(
+        qapp, lambda: "Memory" in [h.text() for h in page.findChildren(QtWidgets.QLabel, "h2")]
+    )
     memory = card_of(page, "Memory")
     slider = memory.findChild(QtWidgets.QSlider, "memorySlider")
     slider.setValue(slider.value() - 4)  # 2 GB less, in 512 MB steps

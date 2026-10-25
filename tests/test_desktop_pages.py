@@ -171,7 +171,8 @@ def test_the_console_shows_output_live_and_sends_commands(qapp, agent_http):
     page.command.setText("hello world")
     page.send_button.click()
     wait_for(qapp, lambda: "[Console] hello world" in page.log.toPlainText())
-    assert page.command.text() == ""
+    # The box is cleared when the agent answers, which can come after the line.
+    wait_for(qapp, lambda: page.command.text() == "")
 
 
 def test_a_dangerous_command_asks_first(qapp, agent_http):
