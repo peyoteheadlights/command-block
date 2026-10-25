@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.github.peyoteheadlights.mcsc.BuildConfig
 import io.github.peyoteheadlights.mcsc.core.AgentJson
 import io.github.peyoteheadlights.mcsc.core.Diagnostics
 import io.github.peyoteheadlights.mcsc.graph
@@ -74,6 +75,16 @@ fun AboutScreen(vm: AppViewModel, onBack: () -> Unit, onHelp: () -> Unit) {
                         },
                     )
                     Item(t("mobile.about.source"), onClick = { openLink(context, Links.REPO) }, external = true)
+                }
+            }
+            if (!BuildConfig.STORE_BUILD) {
+                item { SectionTitle(t("mobile.about.support")) }
+                item {
+                    Card {
+                        Note(t("mobile.about.support_text"), modifier = Modifier.padding(top = 8.dp))
+                        Item(t("mobile.about.sponsors"), onClick = { openLink(context, Links.SPONSORS) }, external = true)
+                        Item(t("mobile.about.kofi"), onClick = { openLink(context, Links.KOFI) }, external = true)
+                    }
                 }
             }
             item {

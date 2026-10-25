@@ -208,6 +208,10 @@ class TLSServer:
         self.thread.join(timeout=20)
 
 
+# A busy CI runner can take more than httpx's 5 s to answer the first request.
+TIMEOUT = 30
+
+
 @pytest.fixture
 def live_tls(tls_config):
     with TLSServer(tls_config) as server:
@@ -217,7 +221,7 @@ def live_tls(tls_config):
 def test_https_serves_the_api_with_certificate_verification(live_tls):
     config, port = live_tls
     # verify against the CA bundle; verification is never switched off
-    with httpx.Client(verify=str(config.tls_ca_certificate)) as client:
+    with httpx.Client(verify=str(config.tls_ca_certificate), timeout=TIMEOUT) as client:
         response = client.get(f"https://localhost:{port}/api/health")
         assert response.status_code == 200
         assert response.json()["ok"] is True
@@ -230,7 +234,7 @@ def test_untrusted_client_rejects_the_private_ca(live_tls):
     """Proof the certificate is actually being checked: without the CA the
     connection must fail, not succeed."""
     config, port = live_tls
-    with httpx.Client() as client:  # system trust store only
+    with httpx.Client(timeout=TIMEOUT) as client:  # system trust store only
         with pytest.raises(httpx.ConnectError):
             client.get(f"https://localhost:{port}/api/health")
 
@@ -259,7 +263,7 @@ def test_tls_self_check_reports_a_hostname_mismatch_honestly(live_tls):
 def test_hsts_is_sent_over_https_but_not_on_loopback(live_tls):
     """HSTS on 127.0.0.1 would poison local development permanently."""
     config, port = live_tls
-    with httpx.Client(verify=str(config.tls_ca_certificate)) as client:
+    with httpx.Client(verify=str(config.tls_ca_certificate), timeout=TIMEOUT) as client:
         loopback = client.get(f"https://localhost:{port}/api/health")
         assert "Strict-Transport-Security" not in loopback.headers
         named = client.get(
@@ -271,7 +275,7 @@ def test_hsts_is_sent_over_https_but_not_on_loopback(live_tls):
 
 def test_security_headers_over_https(live_tls):
     config, port = live_tls
-    with httpx.Client(verify=str(config.tls_ca_certificate)) as client:
+    with httpx.Client(verify=str(config.tls_ca_certificate), timeout=TIMEOUT) as client:
         headers = client.get(f"https://localhost:{port}/api/health").headers
     assert headers["X-Frame-Options"] == "DENY"
     assert headers["X-Content-Type-Options"] == "nosniff"
@@ -286,7 +290,7 @@ def test_security_headers_over_https(live_tls):
 def test_authentication_still_enforced_over_https(live_tls):
     config, port = live_tls
     base = f"https://localhost:{port}"
-    with httpx.Client(verify=str(config.tls_ca_certificate)) as client:
+    with httpx.Client(verify=str(config.tls_ca_certificate), timeout=TIMEOUT) as client:
         assert client.get(f"{base}/api/status").status_code == 401
         token = client.post(
             f"{base}/api/auth/login", json={"username": "admin", "password": PASSWORD}
@@ -304,7 +308,7 @@ def test_wss_streams_events_after_authentication(live_tls):
     config, port = live_tls
     import json
 
-    with httpx.Client(verify=str(config.tls_ca_certificate)) as client:
+    with httpx.Client(verify=str(config.tls_ca_certificate), timeout=TIMEOUT) as client:
         token = client.post(
             f"https://localhost:{port}/api/auth/login",
             json={"username": "admin", "password": PASSWORD},

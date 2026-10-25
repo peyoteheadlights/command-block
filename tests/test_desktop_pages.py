@@ -117,7 +117,8 @@ def test_chat_shows_what_players_say_live_and_sends_as_server(qapp, agent_http):
     page.message.setText("welcome")
     page.send.click()
     wait_for(qapp, lambda: "Server: welcome" in page.chat.toPlainText())
-    assert page.message.text() == ""
+    # Same as the console: cleared when the agent answers, maybe after the line.
+    wait_for(qapp, lambda: page.message.text() == "")
 
 
 def test_chat_lines_from_before_the_page_opened_are_loaded(qapp, agent_http):
@@ -171,7 +172,8 @@ def test_the_console_shows_output_live_and_sends_commands(qapp, agent_http):
     page.command.setText("hello world")
     page.send_button.click()
     wait_for(qapp, lambda: "[Console] hello world" in page.log.toPlainText())
-    assert page.command.text() == ""
+    # The box is cleared when the agent answers, which can come after the line.
+    wait_for(qapp, lambda: page.command.text() == "")
 
 
 def test_a_dangerous_command_asks_first(qapp, agent_http):
@@ -216,7 +218,8 @@ def test_save_writes_the_shown_lines_with_windows_save_box(qapp, agent_http):
 def test_lines_only_reach_the_console_while_it_is_open(qapp, agent_http):
     headers = running(qapp, agent_http)
     window, page = technical_page(qapp, agent_http, "Console")
-    wait_for(qapp, lambda: page.lines)
+    # the earlier lines are asked for on their own; let that answer land first
+    wait_for(qapp, lambda: page.lines and not window._tasks)
     window.open_page("Overview")
     count = len(page.lines)
     seen = []  # the feed still brings the line; the Console just doesn't take it
@@ -231,6 +234,8 @@ def test_clear_empties_the_console(qapp, agent_http):
     window, page = technical_page(qapp, agent_http, "Console")
     command(agent_http, headers, "something to clear")
     wait_for(qapp, lambda: "[Console] something to clear" in page.log.toPlainText())
+    # The earlier lines load on their own; if they came after Clear they'd fill it again.
+    wait_for(qapp, lambda: not window._tasks)
     button(page, "Clear").click()
     wait_for(qapp, lambda: page.log.toPlainText() == "")
     logs = agent_http.get("/api/servers/survival/logs", headers=headers).json()["lines"]

@@ -96,6 +96,9 @@ class ServerType:
     # Whether the console prints players' chat (Bedrock's doesn't), so the
     # Chat page can say reading it isn't available instead of looking empty.
     reads_chat: bool = True
+    # Whether the world keeps each player's stats/<uuid>.json and
+    # advancements/<uuid>.json (Bedrock's doesn't), for /stats and Levels.
+    stats_files: bool = True
     # Whether the server has a ban list (Bedrock has none).
     bans: bool = True
     # How a running server's world is copied for a backup: "save_off"
@@ -358,6 +361,7 @@ TYPES: dict[str, ServerType] = {
             dialect="bedrock",
             addons=True,
             reads_chat=False,
+            stats_files=False,
             bans=False,
             backup_method="save_hold",
             world_root="worlds",

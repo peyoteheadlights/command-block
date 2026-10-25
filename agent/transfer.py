@@ -6,6 +6,7 @@ Export ("Export everything" in App settings) writes one ``.zip``:
   manifest.json        what is inside, and where each server's folder was
   config.yaml          the settings (no passwords or keys are kept there)
   data.json            schedules, players seen, mod sources, preferences,
+                       the Discord bot's channels, roles and Linked accounts,
                        and helper accounts by name and role only
   servers/<id>/...     each server's folder: mods, configs, server.properties
                        worlds only when ticked; logs and crash reports never
@@ -54,7 +55,30 @@ SKIP_FILES = {"session.lock"}
 # server.properties values that are passwords.
 SECRET_PROPERTIES = ("rcon.password", "management-server-secret")
 # Database tables carried over, with the columns that identify a row.
-DATA_TABLES = ("servers", "players", "schedules", "settings", "mod_versions", "mod_history")
+DATA_TABLES = (
+    "servers",
+    "players",
+    "schedules",
+    "settings",
+    "mod_versions",
+    "mod_history",
+    "discord_channels",
+    "discord_roles",
+    "discord_role_grants",
+    "discord_links",
+    "level_xp",
+    "quests",
+    "quest_progress",
+    "quest_suggestions",
+    "quest_rewards",
+    "game_events",
+    "event_rsvps",
+    "event_attendance",
+    "polls",
+    "poll_votes",
+    "whitelist_forms",
+    "ip_addresses",
+)
 ACCOUNT_COLUMNS = (
     "username",
     "role",
@@ -461,7 +485,10 @@ def import_all(
                     db,
                     table,
                     row,
-                    drop=() if table in ("servers", "settings", "players") else ("id",),
+                    # Quests, events and polls keep their ids: rows point at them.
+                    drop=()
+                    if table in ("servers", "settings", "players", "quests", "game_events", "polls")
+                    else ("id",),
                 )
         backups = 0
         for entry in manifest["servers"]:

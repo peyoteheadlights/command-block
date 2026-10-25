@@ -724,6 +724,11 @@ class AppAlerts(Open):
     latest: int = Field(description="Ask with after=latest next time")
     more: bool = Field(False, description="More alerts are waiting after latest")
     enabled: bool = Field(description="Always false: browser alerts were removed")
+    read_up_to: int = Field(0, description="This account has read every alert up to this id")
+
+
+class AlertsRead(Open):
+    read_up_to: int
 
 
 class AppPhone(Open):
@@ -1909,6 +1914,11 @@ class HelpBundleMade(Open):
     files: list[dict[str, Any]]
 
 
+class SupportAsk(Open):
+    show: bool
+    reason: str = Field(description="answered, never_started, too_soon, something_wrong or ready")
+
+
 class SecurityOverview(Open):
     agent_connected: bool
     tls: dict[str, Any] = Field(description="The certificate as read from disk")
@@ -1945,3 +1955,148 @@ class TailscaleState(Open):
     connected: bool | None = Field(None, description="what Tailscale says; null when unknown")
     account: str | None = None
     error: str | None = None
+
+
+# ------------------------------------------------------------ Discord bot
+class DiscordStatus(Open):
+    token_set: bool
+    state: str = Field(
+        description="off (no token), connecting, connected, token_rejected, intents_refused or stopped"
+    )
+    detail: str = ""
+    connected_at: float | None = None
+    name: str | None = Field(None, description="The bot's name on Discord, once connected")
+    application_id: str | None = None
+    invite_url: str | None = None
+    switches: dict[str, bool | None] = Field(
+        default_factory=dict,
+        description="message_content and members: on, off, or null until read from Discord",
+    )
+    features_off: list[str] = Field(default_factory=list)
+    no_game_chat: list[str] = Field(
+        default_factory=list,
+        description="Servers whose game chat can't reach Discord (their console prints none)",
+    )
+    addresses: dict[str, str] = Field(
+        default_factory=dict, description="The address to share in Discord, per server id"
+    )
+    webhook_with_bot: bool = Field(False, description="The webhook too while the bot posts alerts")
+    guilds: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Each Discord server: id, name, servers it's for, grants, and report "
+        "(problems, roles, channels, tied, checked_at) once checked",
+    )
+
+
+class DiscordLevels(Open):
+    announce: bool = Field(description="Level-ups are posted in the quests channel")
+    leaderboard_day: int | None = Field(
+        description="The weekly leaderboard's day, 0 (Monday) to 6, or null for none"
+    )
+    roles: list[dict[str, Any]] = Field(
+        description="Each Level role: level, role_id and name (null until the bot has read it)"
+    )
+
+
+class PlayerStats(Open):
+    player: str
+    server_id: str
+    source: str = Field(description="files (the world's stats files) or console (Bedrock)")
+    values: dict[str, int] = Field(
+        description="Only what was found: playtime (seconds), deaths, mobs, blocks, "
+        "advancements, or on Bedrock playtime and joins"
+    )
+    other: list[dict[str, Any]] = Field(description="A mod's own stats: name and value")
+    saved_at: float | None = Field(
+        description="When the stats files were last saved; null when there are none (or Bedrock)"
+    )
+
+
+class DiscordSetupDone(Open):
+    made: list[str]
+    status: DiscordStatus
+
+
+class StartRequestOpen(Open):
+    request: dict[str, Any] | None = Field(
+        description="The open start request (server_id, who, asked_at, expires_at), or null"
+    )
+
+
+class StartRequestAnswered(Open):
+    answer: str = Field(description="started or no")
+
+
+class DiscordLinks(Open):
+    links: list[dict[str, Any]]
+    requests: list[dict[str, Any]] = Field(description="Bedrock players waiting for approval")
+    players: list[dict[str, Any]] = Field(description="Recent players to pick from: name and uuid")
+    reads_chat: bool
+
+
+class WhitelistHelp(Open):
+    """The Players page's whitelist help for one server."""
+
+    online_mode: bool | None = Field(None, description="null when server.properties isn't there")
+    addon: str | None = Field(None, description="The whitelist add-on used (offline mode only)")
+    suggested: list[str] = Field(description="Whitelist add-ons for an offline-mode server")
+    ip_addon: str | None = Field(None, description="The IP whitelist add-on installed, if any")
+    forms: list[dict[str, Any]] = Field(
+        description="Requests to join: id, name, why, discord_name, created_at"
+    )
+    addresses: list[dict[str, Any]] = Field(
+        description="Addresses turned away: id, name, masked (never the whole address), why "
+        "(changed or new), state (new, allowed, ignored), seen_at, answered_by, answered_at"
+    )
+    action: PlayerAction | None = Field(None, description="The command an answer sent")
+
+
+class QuestsPage(Open):
+    """Everything the Quests and events page shows for one server."""
+
+    quests: list[dict[str, Any]] = Field(
+        description="Quests going on: id, title, details, kind, goal, count, repeat, ends_at, "
+        "rewards, period, joined, saved_at (null unless from the stats files) and members "
+        "(discord_id, name, progress, finished_at)"
+    )
+    claims: list[dict[str, Any]] = Field(
+        description="/quest done claims waiting: id, quest_id, title, discord_name, note, "
+        "screenshot (null for none), created_at"
+    )
+    suggestions: list[dict[str, Any]] = Field(
+        description="/quest suggest ideas: id, discord_name, title, details, created_at"
+    )
+    rewards: list[dict[str, Any]] = Field(
+        description="Rewards not given yet, or sent without the server confirming: id, title, "
+        "kind, value, state (waiting, sending, sent, failed), answer"
+    )
+    kinds: list[str] = Field(description="The quest kinds this server can check")
+    bot: bool = Field(description="The Discord bot is connected (needed for Discord roles)")
+    guilds: list[dict[str, Any]] = Field(
+        description="The Discord servers set up for this server: id, name, roles (id, name) "
+        "and levels (as GET /discord/guilds/{id}/levels)"
+    )
+
+
+class QuestScreenshot(Open):
+    type: str = Field(description="png or jpg")
+    image: str = Field(description="The picture, base64")
+
+
+class EventsPage(Open):
+    """The events and polls on the Quests and events page for one server."""
+
+    events: list[dict[str, Any]] = Field(
+        description="Events coming up or ended in the last 8 days: id, title, details, kind "
+        "(advancement, online, approval), goal, starts_at, ends_at, start_server, rewards, "
+        "state (coming, on, counting, approving, ended, cancelled), answers (going, maybe, no "
+        "counts), going (discord_id, discord_name, answer), attendance (discord_id, "
+        "discord_name, minutes, attended, how: measured, suggested or fixed, fixed_by) and "
+        "fixable (attendance can still be fixed)"
+    )
+    polls: list[dict[str, Any]] = Field(
+        description="Polls open or closed in the last 8 days: id, question, answers, votes "
+        "(a count per answer), total, closes_at, closed_at, open"
+    )
+    kinds: list[str] = Field(description="The event kinds this server can check")
+    bot: bool = Field(description="The Discord bot is connected (events are answered there)")

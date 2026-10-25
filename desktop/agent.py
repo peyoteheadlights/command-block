@@ -303,6 +303,12 @@ class AgentClient:
     def dismiss_checklist(self, server_id: str) -> dict:
         return self.call("POST", f"/servers/{server_id}/getting-started/dismiss", {})
 
+    def support_ask(self) -> dict:
+        return self.call("GET", "/support-ask")
+
+    def answer_support_ask(self, answer: str) -> dict:
+        return self.call("POST", "/support-ask", {"answer": answer})
+
     def join(self, server_id: str) -> dict:
         return self.call("GET", f"/servers/{server_id}/join")
 
@@ -342,6 +348,10 @@ class AgentClient:
     def alerts(self, after: int = 0) -> dict:
         """Alerts newer than the id ``after``, oldest first (0: the newest 200)."""
         return self.call("GET", f"/alerts?after={after}&limit=200")
+
+    def mark_alerts_read(self, up_to: int) -> dict:
+        """This account has read every alert up to the id ``up_to``."""
+        return self.call("POST", "/alerts/read", {"up_to": up_to})
 
     def events(self, server_id: str, limit: int = 20) -> list[dict]:
         return self.call("GET", f"/servers/{server_id}/events?limit={limit}")["events"]

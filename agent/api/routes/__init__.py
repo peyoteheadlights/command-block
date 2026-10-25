@@ -26,7 +26,10 @@ from . import (
     changes,
     chat,
     console,
+    discord,
+    discord_links,
     duplicate,
+    events,
     files,
     friends,
     gamesettings,
@@ -37,6 +40,7 @@ from . import (
     phoneapp,
     players,
     pushalerts,
+    quests,
     recommendations,
     schedules,
     security,
@@ -48,6 +52,7 @@ from . import (
     transfer,
     updates,
     wake,
+    whitelist,
     world,
 )
 from .settings import SETTABLE_PREFIXES
@@ -66,6 +71,10 @@ PER_SERVER = (
     world,
     addons,
     changes,
+    discord_links,
+    quests,
+    events,
+    whitelist,
 )
 GLOBAL = (
     auth,
@@ -81,6 +90,7 @@ GLOBAL = (
     helpdesk,
     updates,
     wake,
+    discord,
 )
 MODULES = (*GLOBAL, *PER_SERVER)
 SERVER_PREFIX = "/servers/{server_id}"

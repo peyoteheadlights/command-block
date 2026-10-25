@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -40,6 +42,8 @@ ACTION_WORDS = {
     "kick": "players.do_kick",
     "ban": "players.do_ban",
     "pardon": "players.do_pardon",
+    "address_allow": "whitelist.do_address_allow",
+    "address_remove": "whitelist.do_address_remove",
 }
 # Bedrock calls its whitelist the allowlist (the glossary's words).
 ALLOWLIST = {
@@ -48,6 +52,7 @@ ALLOWLIST = {
     "players.whitelist": "desktop.players.allowlist",
     "players.whitelist_empty": "desktop.players.allowlist_empty",
     "players.tag_whitelisted": "desktop.players.tag_allowlisted",
+    "whitelist.title": "whitelist.title_allowlist",
 }
 STATE_WORDS = {
     "sent": "players.state_sent",
@@ -77,6 +82,7 @@ class PlayersPage(Page):
         super().__init__(window)
         self.data: dict = {}
         self.lines: dict[str, QLabel] = {}  # action id -> its line under "Sent to the server"
+        self.stats: dict[tuple[str, str], str] = {}  # (server, player) -> their stats, while open
         self.notice = label(text("players.start_first"), "notice")
         self.notice.hide()  # until the agent says the server is off
         self.column.addWidget(self.notice)
@@ -157,6 +163,19 @@ class PlayersPage(Page):
         self.column.addLayout(lists)
         self.lists_note = label(kind="sub")
         self.column.addWidget(self.lists_note)
+
+        # Linked accounts (agent/discord/links.py): shown once there's one.
+        self.links_card, layout = card(text("discord.links.title"))
+        self.link_rows = QVBoxLayout()
+        layout.addLayout(self.link_rows)
+        self.links_card.hide()
+        self.column.addWidget(self.links_card)
+        # Whitelist requests, new addresses and the add-on note (agent/whitelist.py).
+        self.help_card, layout = card(text("whitelist.title"))
+        self.help_rows = QVBoxLayout()
+        layout.addLayout(self.help_rows)
+        self.help_card.hide()
+        self.column.addWidget(self.help_card)
         self.column.addWidget(label(text("players.no_ip"), "sub"))
         self.column.addStretch()
 
@@ -175,6 +194,157 @@ class PlayersPage(Page):
         if self.may("console.read"):
             self.ask("GET", "/chat?lines=200", self.show_chat, lambda _e: None)
         self.chat_card.setVisible(self.may("console.read"))
+        if self.may("players.manage"):
+            self.ask("GET", "/discord-links", self.show_links, lambda _e: None)
+            self.ask("GET", "/whitelist", self.show_help, lambda _e: None)
+        else:
+            self.links_card.hide()
+            self.help_card.hide()
+
+    def show_links(self, data: dict) -> None:
+        rows: list[QWidget] = []
+        for asked in data.get("requests") or []:
+            rows.append(self.link_request(asked, data.get("players") or []))
+        for linked in data.get("links") or []:
+            line = QWidget()
+            h = QHBoxLayout(line)
+            h.setContentsMargins(0, 0, 0, 0)
+            words = text("discord.links.row", name=linked["name"], member=linked["discord_name"])
+            if "level" in linked:
+                words += "  ·  " + text(
+                    "discord.links.level", level=linked["level"], xp=linked["xp"]
+                )
+            if mode["technical"]:
+                words += f"  ({linked['uuid']})"
+            h.addWidget(label(words), 1)
+            remove = push(text("discord.links.remove"), "plain")
+            remove.clicked.connect(
+                lambda _=False, u=linked["uuid"]: self.ask(
+                    "DELETE", f"/discord-links/{u}", self.show_links
+                )
+            )
+            h.addWidget(remove)
+            rows.append(line)
+        refill(self.link_rows, rows)
+        self.links_card.setVisible(bool(rows))
+
+    def show_help(self, data: dict) -> None:
+        """Requests to join, addresses an IP whitelist add-on turned away,
+        and what an offline-mode server uses for its whitelist."""
+        title_of(self.help_card).setText(self.words("whitelist.title"))
+        rows: list[QWidget] = []
+        if data.get("online_mode") is False and data.get("suggested"):
+            words = (
+                text("whitelist.addon_used", addon=data["addon"])
+                if data.get("addon")
+                else text("whitelist.no_addon", addons=", ".join(data["suggested"]))
+            )
+            rows.append(label(words, "notice" if not data.get("addon") else "sub"))
+        for form in data.get("forms") or []:
+            rows.append(self.form_row(form))
+        addresses = data.get("addresses") or []
+        for address in addresses:
+            rows.append(self.address_row(address))
+        if addresses:
+            rows.append(label(text("whitelist.addresses_hint", addon=data["ip_addon"]), "muted"))
+        refill(self.help_rows, rows)
+        self.help_card.setVisible(bool(rows))
+        if data.get("action"):
+            self.sent(data)
+
+    def form_row(self, form: dict) -> QWidget:
+        line = QWidget()
+        h = QHBoxLayout(line)
+        h.setContentsMargins(0, 0, 0, 0)
+        words = text(
+            "whitelist.asks", member=form["discord_name"], name=form["name"], why=form["why"]
+        )
+        h.addWidget(label(words), 1)
+        for verdict, key, style in (
+            ("approve", "discord.links.approve", "primary"),
+            ("refuse", "discord.links.refuse", "plain"),
+        ):
+            button = push(text(key), style)
+            button.setAccessibleName(f"{text(key)}: {form['name']}")
+            button.clicked.connect(
+                lambda _=False, v=verdict: self.ask(
+                    "POST", f"/whitelist/forms/{form['id']}", self.show_help, body={"answer": v}
+                )
+            )
+            h.addWidget(button)
+        return line
+
+    def address_row(self, address: dict) -> QWidget:
+        line = QWidget()
+        h = QHBoxLayout(line)
+        h.setContentsMargins(0, 0, 0, 0)
+        words = text(
+            f"whitelist.address_{address['state']}",
+            name=address["name"],
+            masked=address["masked"],
+            time=clock(address["seen_at"]),
+        )
+        h.addWidget(label(words), 1)
+        path = f"/whitelist/addresses/{address['id']}"
+        choices = [("allow", "whitelist.allow", "primary"), ("ignore", "whitelist.ignore", "plain")]
+        if address["state"] != "new":
+            choices = []
+        for verdict, key, style in choices:
+            button = push(text(key), style)
+            button.setAccessibleName(f"{text(key)}: {address['name']} {address['masked']}")
+            button.clicked.connect(
+                lambda _=False, v=verdict: self.ask(
+                    "POST", path, self.show_help, body={"answer": v}
+                )
+            )
+            h.addWidget(button)
+        remove = push(text("whitelist.remove"), "plain")
+        remove.setAccessibleName(
+            f"{text('whitelist.remove')}: {address['name']} {address['masked']}"
+        )
+        remove.clicked.connect(lambda: self.ask("DELETE", path, self.show_help))
+        h.addWidget(remove)
+        return line
+
+    def link_request(self, asked: dict, players: list[dict]) -> QWidget:
+        """A Bedrock player's link request: pick who they are, then approve."""
+        line = QWidget()
+        column = QVBoxLayout(line)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.addWidget(
+            label(
+                text("discord.links.asks", member=asked["discord_name"], name=asked["name"]), "step"
+            )
+        )
+        h = QHBoxLayout()
+        who = QComboBox()
+        who.setAccessibleName(text("discord.links.pick"))
+        for p in players:
+            who.addItem(p["name"], p["uuid"])
+        if players:
+            match = who.findText(asked["name"])
+            who.setCurrentIndex(max(match, 0))
+        h.addWidget(who, 1)
+        approve = push(text("discord.links.approve"), "primary")
+        approve.setEnabled(bool(players))
+
+        def answer(verdict: str) -> None:
+            self.ask(
+                "POST",
+                f"/discord-links/requests/{asked['id']}",
+                self.show_links,
+                body={"answer": verdict, "uuid": who.currentData()},
+            )
+
+        approve.clicked.connect(lambda: answer("approve"))
+        refuse = push(text("discord.links.refuse"), "plain")
+        refuse.clicked.connect(lambda: answer("refuse"))
+        h.addWidget(approve)
+        h.addWidget(refuse)
+        column.addLayout(h)
+        if not players:
+            column.addWidget(label(text("discord.links.no_players"), "sub"))
+        return line
 
     def show_players(self, data: dict) -> None:
         self.data = data
@@ -263,10 +433,30 @@ class PlayersPage(Page):
         top.addStretch()
         words.addLayout(top)
         words.addWidget(label(info, "sub"))
+        shown = self.stats.get((self.row["id"], name))
+        if shown:
+            words.addWidget(label(shown, "sub"))
         h.addLayout(words, 1)
+        stats = push(text("players.stats"), "plain")
+        stats.setAccessibleName(f"{text('players.stats')}: {name}")
+        stats.clicked.connect(lambda _=False: self.toggle_stats(name))
+        h.addWidget(stats)
         for button in self.buttons(name, online):
             h.addWidget(button)
         return row
+
+    def toggle_stats(self, name: str) -> None:
+        """Shows a player's stats under their row, or hides them again."""
+        key = (self.row["id"], name)
+        if self.stats.pop(key, None) is None:
+
+            def show(found: dict) -> None:
+                self.stats[key] = stats_words(found)
+                self.show_players(self.data)
+
+            self.ask("GET", f"/players/{quote(name)}/stats", show)
+        else:
+            self.show_players(self.data)
 
     def buttons(self, name: str, online: bool) -> list[QPushButton]:
         lower, sets = name.lower(), self.sets
@@ -484,3 +674,20 @@ class PlayersPage(Page):
             body={"message": words},
             always=self.show_chat_box,
         )
+
+
+def stats_words(found: dict) -> str:
+    """Only the numbers the agent found, then where they came from."""
+    values = found.get("values") or {}
+    parts = [
+        f"{text(f'players.stat.{key}')} "
+        + (duration(values[key]) if key == "playtime" else f"{values[key]:,}")
+        for key in ("playtime", "deaths", "mobs", "blocks", "advancements", "joins")
+        if key in values
+    ]
+    parts += [f"{x['name']} {x['value']:,}" for x in found.get("other") or []]
+    if found.get("source") == "console":
+        return "  ·  ".join([*parts, text("players.stats_console")])
+    if found.get("saved_at") is None:
+        return text("players.stats_none")
+    return "  ·  ".join([*parts, text("players.stats_saved", time=clock(found["saved_at"]))])

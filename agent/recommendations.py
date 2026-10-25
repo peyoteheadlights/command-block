@@ -65,6 +65,8 @@ class Facts:
     tailscale_down: bool = False
     mods: list[dict[str, Any]] = field(default_factory=list)  # installed, as list_installed
     online_at: float | None = None  # when the server last came online, None when off
+    # The Discord bot's first problem (agent/discord/bot.py), None when fine or off.
+    discord: dict[str, Any] | None = None
 
 
 @dataclass
@@ -397,8 +399,55 @@ def tailscale_stopped(f: Facts) -> Recommendation | None:
     )
 
 
+DISCORD_WORDS = {
+    "token_rejected": (
+        "Discord refused the bot's token",
+        "Paste a new token: reset it in Discord's developer portal.",
+    ),
+    "intents_refused": (
+        "The Discord bot can't log in",
+        "It asked for a switch that's off in Discord's developer portal.",
+    ),
+    "manage_roles": (
+        "The Discord bot can't give Discord roles",
+        "It needs Manage Roles in {guild}.",
+    ),
+    "role_too_low": (
+        "The Discord bot's role is too low",
+        "In {guild}, drag the bot's role above {role} in Server Settings > Roles.",
+    ),
+    "channel_blocked": (
+        "The Discord bot can't post in a channel",
+        "In {guild}, let the bot see, post and add reactions in #{channel}.",
+    ),
+    "console_public": (
+        "Everyone can see a console channel",
+        "In {guild}, make #{channel} private: it shows everything {server} prints.",
+    ),
+}
+
+
+def discord_problem(f: Facts) -> Recommendation | None:
+    if not f.discord:
+        return None
+    title, reason = DISCORD_WORDS[f.discord["id"]]
+    return Recommendation(
+        id="discord_problem",
+        title=title,
+        reason=reason.format(**{"guild": "", "role": "", "channel": "", "server": "", **f.discord}),
+        evidence="Checked against Discord when the bot connected or the Discord page was opened.",
+        action={"label": "Open the Discord page", "page": "discord"},
+        fingerprint=f"discord:{f.discord['id']}:{f.discord.get('role') or f.discord.get('channel') or ''}",
+        details={
+            **f.discord,
+            "source": "the bot's connection and Discord's role and channel lists",
+        },
+    )
+
+
 RULES: tuple[Rule, ...] = (
     tailscale_stopped,
+    discord_problem,
     java_too_old,
     no_recent_backup,
     no_backup_schedule,
@@ -475,6 +524,7 @@ def gather(ctx) -> Facts:
         tailscale_down=bool(getattr(getattr(ctx.core, "tailscale", None), "down", False)),
         mods=installed,
         online_at=status.get("online_at") if status.get("state") == "ONLINE" else None,
+        discord=ctx.core.discord.problem() if getattr(ctx.core, "discord", None) else None,
     )
 
 

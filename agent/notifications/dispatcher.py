@@ -1,4 +1,5 @@
-"""Notifications: Discord webhooks, SMTP email and phone alerts.
+"""Notifications: the Discord bot's alerts channel, Discord webhooks, SMTP
+email and phone alerts.
 
 Nothing in this module may take the agent down. Every send is wrapped, every
 failure is recorded in notifications_log and published as an event, and the
@@ -115,6 +116,22 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "phones_can_reach": ("tailscale", 0x3BA55D, "Phones can now reach this PC"),
     "tailscale_stopped": ("tailscale", 0xED4245, "Phones can't reach this PC: Tailscale stopped"),
     "tailscale_key_expiring": ("tailscale", 0xFAA61A, "The Tailscale key runs out soon"),
+    "discord_token_rejected": ("discord_bot", 0xED4245, "Discord refused the bot's token"),
+    "discord_link_request": ("discord_bot", 0x5865F2, "{server}: a Discord member asks to link"),
+    "start_request": ("start_requests", 0xFAA61A, "{server}: start request"),
+    "quest_claim": ("quests", 0x5865F2, "{server}: a quest is waiting for approval"),
+    "event_attendance": (
+        "quests",
+        0x5865F2,
+        "{server}: who came to an event? It waits for your OK",
+    ),
+    "whitelist_form": ("whitelist_requests", 0x5865F2, "{server}: someone asks to join"),
+    "new_address": (
+        "whitelist_requests",
+        0xFAA61A,
+        "{server}: a player tried to join from a new address",
+    ),
+    "player_report": ("reports", 0xED4245, "{server}: a player was reported"),
 }
 
 
@@ -162,8 +179,15 @@ ALERT_PAGES = {
     "phones_can_reach": "app-settings",
     "tailscale_stopped": "app-settings",
     "tailscale_key_expiring": "helpers",
+    "discord_token_rejected": "discord",
+    "discord_link_request": "players",
+    "quest_claim": "quests",
+    "event_attendance": "quests",
+    "whitelist_form": "players",
+    "new_address": "players",
+    "player_report": "players",
 }
-APP_PAGES = {"security", "helpers", "app-settings"}
+APP_PAGES = {"security", "helpers", "app-settings", "discord"}
 
 # How many alerts the agent keeps for the phone app to read.
 APP_ALERTS_KEPT = 200
@@ -213,6 +237,8 @@ class Notifier:
         # Whether an account may see a server's alerts (user, server id);
         # set by AgentCore from the accounts. None: everyone sees everything.
         self.can_see: Callable[[str, str | None], bool] | None = None
+        # The Discord bot, when there is one (set by AgentCore).
+        self.bot: Callable[[], Any] | None = None
 
     # ------------------------------------------------------------------
     def enabled_for(self, event_type: str) -> bool:
@@ -382,30 +408,29 @@ class Notifier:
         return fields[:8]
 
     # ------------------------------------------------------------------
-    async def send_discord(self, event: Event) -> bool:
-        webhook = self.config.discord_webhook
-        if not webhook:
-            self._log("discord", event.type, "skipped", "No webhook URL is configured")
-            return False
+    def embed(self, event: Event) -> dict[str, Any]:
+        """The alert as a Discord embed, for the webhook and the bot."""
         colour, title = self.title(event)
         footer = (
             self.server_name(event)
             if event.server_id is not None or self.servers is None
             else "Command Block"
         )
-        payload = {
-            "username": "Command Block",
-            "embeds": [
-                {
-                    "title": title,
-                    "description": event.message[:2000] or title,
-                    "color": colour,
-                    "fields": self._fields(event),
-                    "footer": {"text": f"{footer} · {time.strftime('%d %b %H:%M')}"},
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(event.ts)),
-                }
-            ],
+        return {
+            "title": title,
+            "description": event.message[:2000] or title,
+            "color": colour,
+            "fields": self._fields(event),
+            "footer": {"text": f"{footer} · {time.strftime('%d %b %H:%M')}"},
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(event.ts)),
         }
+
+    async def send_discord(self, event: Event) -> bool:
+        webhook = self.config.discord_webhook
+        if not webhook:
+            self._log("discord", event.type, "skipped", "No webhook URL is configured")
+            return False
+        payload = {"username": "Command Block", "embeds": [self.embed(event)]}
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 response = await client.post(webhook, json=payload)
@@ -419,6 +444,16 @@ class Notifier:
             self._log("discord", event.type, "failed", str(exc))
             await self._report_failure("Discord", str(exc))
             return False
+
+    async def send_bot(self, bot: Any, event: Event) -> bool:
+        try:
+            sent = await bot.post_alert(event, self.embed(event))
+        except Exception as exc:
+            self._log("discord_bot", event.type, "failed", str(exc))
+            await self._report_failure("Discord bot", str(exc))
+            return False
+        self._log("discord_bot", event.type, "sent", f"{sent} channel(s)")
+        return True
 
     # ------------------------------------------------------------------
     def _build_email(self, event: Event) -> EmailMessage:
@@ -646,7 +681,14 @@ class Notifier:
                 )
             # Queued for a device's own list alone: no shared channel gets it.
             shared = self.enabled_for(event.type)
-            if shared and self.config.notifications.discord_enabled:
+            bot = self.bot() if self.bot else None
+            by_bot = shared and bot is not None and bot.posts_alert(event)
+            if by_bot:
+                tasks.append(self.send_bot(bot, event))
+            # The bot's alerts channel takes over from the webhook, unless the
+            # owner wants both. Alerts the bot doesn't post still use it.
+            notes = self.config.notifications
+            if shared and notes.discord_enabled and (not by_bot or notes.webhook_with_bot):
                 tasks.append(self.send_discord(event))
             if shared and self.config.notifications.email_enabled:
                 tasks.append(self.send_email(event))

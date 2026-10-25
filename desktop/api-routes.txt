@@ -13,12 +13,13 @@ GET /api/servers/{server_id}/changes
 POST /api/servers/{server_id}/changes/undo
 POST /api/servers/{server_id}/changes/redo
 GET /api/servers/{server_id}/players
+GET /api/servers/{server_id}/players/{name}/stats
 GET /api/servers/{server_id}/schedules
 POST /api/servers/{server_id}/schedules
 PUT /api/servers/{server_id}/schedules/{schedule_id}
 DELETE /api/servers/{server_id}/schedules/{schedule_id}
 POST /api/servers/{server_id}/schedules/{schedule_id}/run
-GET /api/servers/{server_id}/events
+GET /api/servers/{server_id}/quests/events
 GET /api/servers/{server_id}/crashes
 POST /api/servers/{server_id}/server/restart
 POST /api/servers/{server_id}/server/restart-now
@@ -60,6 +61,9 @@ PUT /api/servers/{server_id}/tps
 GET /api/help-bundle
 POST /api/help-bundle
 GET /api/help-bundle/{token} file
+GET /api/support-ask
+POST /api/alerts/read
+POST /api/support-ask
 GET /api/servers/{server_id}/memory
 PUT /api/servers/{server_id}/memory
 POST /api/servers/{server_id}/eula
@@ -170,3 +174,22 @@ GET /api/tailscale/share-key
 PUT /api/tailscale/share-key
 DELETE /api/tailscale/share-key
 POST /api/tailscale/share-link
+PUT /api/discord/guilds/{guild_id}/levels
+GET /api/servers/{server_id}/quests
+POST /api/servers/{server_id}/quests
+DELETE /api/servers/{server_id}/quests/{quest_id}
+POST /api/servers/{server_id}/quests/claims/{claim_id}
+GET /api/servers/{server_id}/quests/claims/{claim_id}/screenshot
+DELETE /api/servers/{server_id}/quests/suggestions/{suggestion_id}
+GET /api/servers/{server_id}/quests/events
+POST /api/servers/{server_id}/quests/events
+DELETE /api/servers/{server_id}/quests/events/{event_id}
+POST /api/servers/{server_id}/quests/events/{event_id}/approve
+PUT /api/servers/{server_id}/quests/events/{event_id}/attendance/{discord_id}
+POST /api/servers/{server_id}/quests/polls
+DELETE /api/servers/{server_id}/quests/polls/{poll_id}
+GET /api/servers/{server_id}/whitelist
+POST /api/servers/{server_id}/whitelist/forms/{form_id}
+POST /api/servers/{server_id}/whitelist/addresses/{address_id}
+DELETE /api/servers/{server_id}/whitelist/addresses/{address_id}
+PUT /api/discord/guilds/{guild_id}/options

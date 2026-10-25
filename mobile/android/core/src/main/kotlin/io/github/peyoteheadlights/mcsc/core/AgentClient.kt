@@ -855,6 +855,96 @@ class AgentClient(
         ColorSaved.serializer(),
     )
 
+    // ------------------------------------------------------------ the Discord bot (Phase 11)
+    /** Every alert up to [upTo] read, on every device of this account. */
+    suspend fun markAlertsRead(upTo: Long): AlertsRead =
+        call(post("/api/alerts/read", buildJsonObject { put("up_to", upTo) }), AlertsRead.serializer())
+
+    /** Start (the Start button's own start) or Say no to the server's open start request. */
+    suspend fun answerStartRequest(serverId: String, start: Boolean): StartRequestAnswered = call(
+        post("${server(serverId)}/start-request", buildJsonObject { put("answer", if (start) "start" else "no") }),
+        StartRequestAnswered.serializer(),
+    )
+
+    /** The bot's state and each Discord server's check (owner only). */
+    suspend fun discord(): DiscordStatus = get("/api/discord", DiscordStatus.serializer())
+
+    suspend fun checkDiscord(): DiscordStatus =
+        call(post("/api/discord/check", JsonObject(emptyMap())), DiscordStatus.serializer(), slow = true)
+
+    suspend fun setRemoveOnLeave(guildId: String, on: Boolean): DiscordStatus = call(
+        request("/api/discord/guilds/${path(guildId)}/options").put(buildJsonObject { put("remove_on_leave", on) }.toBody()).build(),
+        DiscordStatus.serializer(),
+    )
+
+    suspend fun discordLinks(serverId: String): DiscordLinks = get("${server(serverId)}/discord-links", DiscordLinks.serializer())
+
+    suspend fun unlink(serverId: String, uuid: String): DiscordLinks =
+        call(request("${server(serverId)}/discord-links/${path(uuid)}").delete().build(), DiscordLinks.serializer())
+
+    /** A Bedrock player's link request: approve as [uuid] (one of the recent players), or refuse. */
+    suspend fun answerLinkRequest(serverId: String, requestId: Long, approve: Boolean, uuid: String?): DiscordLinks = call(
+        post("${server(serverId)}/discord-links/requests/$requestId", buildJsonObject {
+            put("answer", if (approve) "approve" else "refuse")
+            put("uuid", uuid)
+        }),
+        DiscordLinks.serializer(),
+    )
+
+    suspend fun whitelistHelp(serverId: String): WhitelistHelp = get("${server(serverId)}/whitelist", WhitelistHelp.serializer())
+
+    /** Approve sends the whitelist command: "Sent" until the console says so. */
+    suspend fun answerWhitelistForm(serverId: String, formId: Long, approve: Boolean): WhitelistHelp = call(
+        post("${server(serverId)}/whitelist/forms/$formId", buildJsonObject { put("answer", if (approve) "approve" else "refuse") }),
+        WhitelistHelp.serializer(),
+    )
+
+    suspend fun answerAddress(serverId: String, addressId: Long, allow: Boolean): WhitelistHelp = call(
+        post("${server(serverId)}/whitelist/addresses/$addressId", buildJsonObject { put("answer", if (allow) "allow" else "ignore") }),
+        WhitelistHelp.serializer(),
+    )
+
+    suspend fun removeAddress(serverId: String, addressId: Long): WhitelistHelp =
+        call(request("${server(serverId)}/whitelist/addresses/$addressId").delete().build(), WhitelistHelp.serializer())
+
+    suspend fun quests(serverId: String): QuestsPage = get("${server(serverId)}/quests", QuestsPage.serializer())
+
+    /** A new quest, its body from [Community.questBody]. */
+    suspend fun makeQuest(serverId: String, body: JsonObject): QuestsPage =
+        call(post("${server(serverId)}/quests", body), QuestsPage.serializer())
+
+    suspend fun endQuest(serverId: String, questId: Long): QuestsPage =
+        call(request("${server(serverId)}/quests/$questId").delete().build(), QuestsPage.serializer())
+
+    suspend fun answerClaim(serverId: String, claimId: Long, approve: Boolean): QuestsPage = call(
+        post("${server(serverId)}/quests/claims/$claimId", buildJsonObject { put("answer", if (approve) "approve" else "refuse") }),
+        QuestsPage.serializer(),
+    )
+
+    suspend fun claimScreenshot(serverId: String, claimId: Long): QuestScreenshot =
+        get("${server(serverId)}/quests/claims/$claimId/screenshot", QuestScreenshot.serializer())
+
+    suspend fun turnDownIdea(serverId: String, ideaId: Long): QuestsPage =
+        call(request("${server(serverId)}/quests/suggestions/$ideaId").delete().build(), QuestsPage.serializer())
+
+    suspend fun questEvents(serverId: String): EventsPage = get("${server(serverId)}/quests/events", EventsPage.serializer())
+
+    suspend fun callOffEvent(serverId: String, eventId: Long): EventsPage =
+        call(request("${server(serverId)}/quests/events/$eventId").delete().build(), EventsPage.serializer())
+
+    /** The suggested attendance list is right: the rewards go out. */
+    suspend fun approveAttendance(serverId: String, eventId: Long): EventsPage =
+        call(post("${server(serverId)}/quests/events/$eventId/approve", JsonObject(emptyMap())), EventsPage.serializer())
+
+    suspend fun fixAttendance(serverId: String, eventId: Long, discordId: String, attended: Boolean): EventsPage = call(
+        request("${server(serverId)}/quests/events/$eventId/attendance/${path(discordId)}")
+            .put(buildJsonObject { put("attended", attended) }.toBody()).build(),
+        EventsPage.serializer(),
+    )
+
+    suspend fun closePoll(serverId: String, pollId: Long): EventsPage =
+        call(request("${server(serverId)}/quests/polls/$pollId").delete().build(), EventsPage.serializer())
+
     // ------------------------------------------------------------------
     /** Takes a server off the list. Nothing on the PC is deleted. */
     suspend fun removeServer(serverId: String): ServerRemoved =

@@ -13,6 +13,7 @@ import io.github.peyoteheadlights.mcsc.core.ConsoleBuffer
 import io.github.peyoteheadlights.mcsc.core.ConsoleCommands
 import io.github.peyoteheadlights.mcsc.core.ConsoleLine
 import io.github.peyoteheadlights.mcsc.core.Crash
+import io.github.peyoteheadlights.mcsc.core.DiscordLinks
 import io.github.peyoteheadlights.mcsc.core.EventRow
 import io.github.peyoteheadlights.mcsc.core.JoinInfo
 import io.github.peyoteheadlights.mcsc.core.PlayerAction
@@ -20,6 +21,7 @@ import io.github.peyoteheadlights.mcsc.core.PlayerActionWatch
 import io.github.peyoteheadlights.mcsc.core.PlayerActions
 import io.github.peyoteheadlights.mcsc.core.PlayersPage
 import io.github.peyoteheadlights.mcsc.core.Recommendations
+import io.github.peyoteheadlights.mcsc.core.WhitelistHelp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -51,6 +53,9 @@ class ServerPages(
 
     /** Server settings. */
     val setup = SetupPages(serverId, scope, client, noted, onListChanged)
+
+    /** Quests and events. */
+    val quests = QuestPages(serverId, scope, client, noted)
 
     // ------------------------------------------------------------ console
     var console: Read<List<ConsoleLine>> by mutableStateOf(Read())
@@ -222,6 +227,62 @@ class ServerPages(
 
     private fun track(action: PlayerAction) {
         pressed = (listOf(action) + pressed.filter { it.id != action.id }).take(10)
+    }
+
+    // ------------------------------------------------------------ Linked accounts and whitelist help
+    /** Null until read, and while it can't be (no Players permission, an older agent). */
+    var links: DiscordLinks? by mutableStateOf(null)
+        private set
+    var whitelist: WhitelistHelp? by mutableStateOf(null)
+        private set
+
+    /** Read beside the players for someone with Players; they are personal data. */
+    fun loadCommunity() {
+        val c = client() ?: return
+        scope.launch {
+            links = try { c.discordLinks(serverId) } catch (e: AgentException) { null }
+            whitelist = try { c.whitelistHelp(serverId) } catch (e: AgentException) { null }
+        }
+    }
+
+    fun unlink(uuid: String) = answer("unlink:$uuid") { links = it.unlink(serverId, uuid) }
+
+    fun answerLink(requestId: Long, approve: Boolean, uuid: String?) =
+        answer("link:$requestId") { links = it.answerLinkRequest(serverId, requestId, approve, uuid) }
+
+    /** Approve sends the whitelist command, followed like a player button until the console says so. */
+    fun answerForm(formId: Long, approve: Boolean) = answer("form:$formId") { c ->
+        whitelist = c.answerWhitelistForm(serverId, formId, approve).also { follow(c, it) }
+    }
+
+    /** Allow sends the IP whitelist add-on's command, followed the same way. */
+    fun answerAddress(addressId: Long, allow: Boolean) = answer("address:$addressId") { c ->
+        whitelist = c.answerAddress(serverId, addressId, allow).also { follow(c, it) }
+    }
+
+    private fun follow(c: AgentClient, help: WhitelistHelp) {
+        val sent = help.action ?: return
+        track(sent)
+        scope.launch { PlayerActionWatch({ c.playerActionStatus(serverId, it).action }).follow(sent, ::track) }
+    }
+
+    fun removeAddress(addressId: Long) = answer("address:$addressId") { whitelist = it.removeAddress(serverId, addressId) }
+
+    /** One answer at a time, in [playerBusy]; what went wrong in [playerProblem]. */
+    private fun answer(busy: String, call: suspend (AgentClient) -> Unit) {
+        val c = client() ?: return
+        if (playerBusy != null) return
+        playerBusy = busy
+        playerProblem = null
+        scope.launch {
+            try {
+                call(c)
+            } catch (e: AgentException) {
+                noted(e)
+                playerProblem = Message.of(e)
+            }
+            playerBusy = null
+        }
     }
 
     // ------------------------------------------------------------ activity

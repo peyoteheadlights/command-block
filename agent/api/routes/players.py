@@ -15,7 +15,7 @@ from ...security.permissions import (
     require,
 )
 from ..deps import audit, get_server
-from ..responses import PlayerActionResult, PlayerActionStatus, Players
+from ..responses import PlayerActionResult, PlayerActionStatus, Players, PlayerStats
 from .models import PlayerActionRequest
 
 router = APIRouter()
@@ -43,8 +43,26 @@ async def players(principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depe
         "bans": ctx.config.server_type.bans,
         "edition": ctx.config.server_type.edition,
         "running": ctx.server.running and ctx.server.state.value == "ONLINE",
-        "actions": [a.to_dict() for a in ctx.player_actions.recent()[:10]],
+        # The page's own buttons only (a quest reward or an IP whitelist
+        # add-on's command goes through the same sender).
+        "actions": [
+            a.to_dict() for a in ctx.player_actions.recent() if a.kind in playeractions.ACTIONS
+        ][:10],
     }
+
+
+@router.get("/players/{name}/stats", response_model=PlayerStats)
+async def player_stats(
+    name: str, principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
+):
+    """What /stats shows: from the world's stats files with the time they
+    were saved, or (Bedrock) what the console showed."""
+    from ...stats import player_stats as read
+
+    found = await read(ctx, name[:17])
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"Nobody called {name[:17]} has played here.")
+    return found
 
 
 @router.get("/players/sessions")

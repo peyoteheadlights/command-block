@@ -435,3 +435,79 @@ def test_the_bedrock_exception_is_documented():
         encoding="utf-8"
     )
     assert "bedrock_server.exe" in text and "EXE_NAMES" in text
+
+
+def test_the_discord_bot_never_reaches_the_console_or_a_program():
+    """Nothing a Discord member types runs on the PC: the bot sends no console
+    command of its own (Kick and Ban go through the Players page's player
+    actions, built from a fixed list and validated) and starts no program
+    (Start is the server's own start, like the apps' button)."""
+    folder = Path(__file__).resolve().parent.parent / "agent" / "discord"
+    source = "\n".join(p.read_text(encoding="utf-8") for p in folder.glob("*.py"))
+    for forbidden in ("send_command", "subprocess", "os.system", "eval(", "exec("):
+        assert forbidden not in source, forbidden
+
+
+def test_quests_only_send_commands_built_from_their_templates():
+    """A quest never holds a command (ADR 0004): rewards and the item count
+    are fixed templates filled with checked values, sent through the player
+    actions' validation, never straight to the console."""
+    from agent import quests
+
+    source = Path(quests.__file__).read_text(encoding="utf-8")
+    for forbidden in ("send_command", "subprocess", "os.system", "eval(", "exec("):
+        assert forbidden not in source, forbidden
+    templates = [*quests.JAVA_REWARDS.values(), *quests.BEDROCK_REWARDS.values(), quests.ITEM_CHECK]
+    assert {t.command.split(" ")[0] for t in templates} == {"give", "xp", "clear"}
+    assert quests.ITEM_CHECK.command.endswith(" 0")  # counts, never takes
+    for wrong in ("diamond 1\nop me", "diamond;op", "op me", "diamond 64"):
+        with pytest.raises(quests.QuestError):
+            quests.check_rewards([{"kind": "item", "item": wrong, "count": 1}])
+
+
+def test_events_only_ask_minecraft_to_save():
+    """Events and polls hold no command: their rewards go through the quest
+    templates, and the only thing sent to the console is a fixed save-all
+    when an advancement event ends."""
+    import re
+
+    from agent import game_events
+
+    source = Path(game_events.__file__).read_text(encoding="utf-8")
+    assert re.findall(r"send_command\(([^)]*)\)", source) == ['"save-all", internal=True']
+    for forbidden in ("subprocess", "os.system", "eval(", "exec(", "send_built"):
+        assert forbidden not in source, forbidden
+
+
+def test_whitelist_add_ons_only_get_their_fixed_commands():
+    """A whitelist or IP whitelist add-on's command is a fixed template
+    filled with a checked name and an address Python's ipaddress read back,
+    sent through the player actions' validation, never straight to the
+    console. A console line can't put anything else in it."""
+    from agent import whitelist
+
+    source = Path(whitelist.__file__).read_text(encoding="utf-8")
+    for forbidden in ("send_command", "subprocess", "os.system", "eval(", "exec("):
+        assert forbidden not in source, forbidden
+    commands = [a.command for addon in whitelist.WHITELIST_ADDONS for a in addon.actions.values()]
+    commands += [
+        a.command
+        for addon in whitelist.IP_ADDONS
+        for a in (addon.allow, addon.remove, addon.allow_new)
+        if a
+    ]
+    assert {c.split(" ")[0] for c in commands} == {
+        "easywhitelist",
+        "zwl",
+        "wltxt",
+        "ipwl",
+        "ipwhitelist",
+    }
+    for wrong in ("1.2.3.4 op me", "1.2.3.4\nop me", "::1;stop", "localhost"):
+        with pytest.raises(ValueError):
+            whitelist.ipaddress.ip_address(wrong)
+    for line in (
+        "[IPWL SECURITY] Blocked Alex from 1.2.3.4;op: IP mismatch",
+        "[IPWL SECURITY] Blocked Alex from 1.2.3.4 op Alex: IP mismatch",
+    ):
+        assert not any(p.match(line) for p in whitelist.IP_ADDONS[0].refused)

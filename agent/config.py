@@ -276,6 +276,8 @@ class EmailSettings(Section):
 @dataclass(frozen=True)
 class NotificationSettings(Section):
     discord_enabled: bool = False
+    # The webhook too while the Discord bot posts alerts (each alert twice).
+    webhook_with_bot: bool = False
     email_enabled: bool = False
     # The old browser alerts switch. Nothing reads it now; older configs still have it.
     push_enabled: bool = False
@@ -315,6 +317,11 @@ class NotificationSettings(Section):
             "helper_added": True,
             "helper_removed": True,
             "tailscale": True,
+            "discord_bot": True,
+            "start_requests": True,
+            "quests": True,
+            "whitelist_requests": True,
+            "reports": True,
         }
     )
     email: EmailSettings = field(default_factory=EmailSettings)
@@ -400,6 +407,9 @@ SECRET_ENV_KEYS = (
     "MCSC_API_TOKEN",
     "MCSC_SECRET_KEY",
     "MCSC_DISCORD_WEBHOOK",
+    "MCSC_DISCORD_BOT_TOKEN",
+    # The key the stored IP addresses are encrypted with (agent/whitelist.py).
+    "MCSC_ADDRESS_KEY",
     "MCSC_SMTP_USERNAME",
     "MCSC_SMTP_PASSWORD",
     # The browser alerts' keys: gone with the web pages, but older installs
@@ -1001,6 +1011,10 @@ class Config:
     @property
     def discord_webhook(self) -> str:
         return os.environ.get("MCSC_DISCORD_WEBHOOK", "")
+
+    @property
+    def discord_bot_token(self) -> str:
+        return os.environ.get("MCSC_DISCORD_BOT_TOKEN", "")
 
     @property
     def smtp_username(self) -> str:

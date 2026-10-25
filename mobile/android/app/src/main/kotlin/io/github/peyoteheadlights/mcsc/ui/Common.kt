@@ -76,6 +76,10 @@ object Links {
     const val PRIVACY = "$REPO/blob/main/PRIVACY.md"
     const val REPORT = "$REPO/issues/new?template=bug_report.yml"
     const val SUGGEST = "$REPO/issues/new?template=feature_request.yml"
+
+    // Placeholders until the accounts exist; shared/links.json has the same.
+    const val SPONSORS = "https://github.com/sponsors/peyoteheadlights"
+    const val KOFI = "https://ko-fi.com/peyoteheadlights"
     const val TAILSCALE_ANDROID = "https://play.google.com/store/apps/details?id=com.tailscale.ipn"
     const val TAILSCALE_SHARE = "https://tailscale.com/kb/1084/sharing"
 

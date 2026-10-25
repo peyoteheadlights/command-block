@@ -12,6 +12,10 @@ two kinds of account:
     picking a level (LEVELS). A server with nothing ticked is hidden from
     them. On top of that every moderator holds MODERATOR_ACCOUNT: their own
     account and reading the agent's non-secret facts.
+  * **Discord member** (kind "discord"): someone using the bot. What they
+    may do on each server comes from their Discord roles' grants, made
+    whole the same way, so never more than a moderator could. They never
+    hold MODERATOR_ACCOUNT (agent/discord/members.py).
 
 A permission in neither set is the owner's alone, so a new permission is
 owner-only until someone adds it to SERVER_PERMISSIONS on purpose. Every
@@ -60,6 +64,9 @@ FILES_BROWSE = "files.browse"  # list folders on the PC, for the folder picker
 WORLD_REPLACE = "world.replace"  # import a world over a server's own
 DATA_EXPORT = "data.export"  # "Export everything" for moving to a new PC
 HELP_BUNDLE = "help.bundle"  # the "Get help" file of logs and checks
+SUPPORT_ASK = "support.ask"  # the one Donate / No thanks card
+QUESTS_MANAGE = "quests.manage"  # "Quests and events": quests, events, Level roles
+DISCORD_MANAGE = "discord.manage"  # the bot: token, setup, channels, Discord role grants
 APP_UPDATE = "app.update"  # check for, and install, a new version; remove the old copy
 # "Start the agent": wake the PC (Wake-on-LAN) so the agent runs again. The
 # owner can give it to a moderator for the whole PC (PC_PERMISSIONS).
@@ -98,6 +105,9 @@ ALL = frozenset(
         WORLD_REPLACE,
         DATA_EXPORT,
         HELP_BUNDLE,
+        SUPPORT_ASK,
+        QUESTS_MANAGE,
+        DISCORD_MANAGE,
         APP_UPDATE,
         AGENT_START,
     }
@@ -125,6 +135,7 @@ SERVER_PERMISSIONS = frozenset(
         SETTINGS_GAME,
         SETTINGS_SERVER,
         WORLD_REPLACE,
+        QUESTS_MANAGE,
     }
 )
 
@@ -143,6 +154,8 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("addons", (MODS_MANAGE,)),
     ("backups", (BACKUPS_CREATE, BACKUPS_RESTORE, BACKUPS_DOWNLOAD, BACKUPS_DELETE, WORLD_REPLACE)),
     ("settings", (SETTINGS_GAME, SETTINGS_SERVER, SCHEDULES_MANAGE)),
+    # In no level: the owner ticks it on purpose (Phase 11).
+    ("community", (QUESTS_MANAGE,)),
 )
 
 # Shown only in Technical mode: rarer, and riskier.
@@ -220,6 +233,15 @@ def catalogue() -> dict:
     }
 
 
+def account_extras(principal: Principal) -> frozenset[str]:
+    """What a non-owner holds whatever their servers. A Discord member has
+    no account here and reads nothing agent-wide."""
+    assert principal.access is not None
+    if principal.kind == "discord":
+        return principal.access.pc
+    return MODERATOR_ACCOUNT | principal.access.pc
+
+
 def on_server(principal: Principal, server_id: str | None) -> frozenset[str]:
     """What this account may do on that server. The owner: everything."""
     if principal.access is None:
@@ -234,7 +256,7 @@ def held_anywhere(principal: Principal) -> frozenset[str]:
     account-wide ones: the flat list the sign-in answer has always given."""
     if principal.access is None:
         return ALL
-    return principal.access.anywhere() | MODERATOR_ACCOUNT | principal.access.pc
+    return principal.access.anywhere() | account_extras(principal)
 
 
 def legacy_names(held: frozenset[str]) -> list[str]:
@@ -265,7 +287,7 @@ def check(principal: Principal, permission: str, server_id: str | None = None) -
     then show only that account's servers)."""
     if permission not in ALL:  # a typo in a route would otherwise lock everyone out
         raise ValueError(f"{permission!r} isn't a permission this app has.")
-    if principal.access is None or permission in MODERATOR_ACCOUNT | principal.access.pc:
+    if principal.access is None or permission in account_extras(principal):
         return
     if permission in SERVER_PERMISSIONS:
         held = principal.access.on(server_id) if server_id else principal.access.anywhere()

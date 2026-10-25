@@ -67,6 +67,16 @@ class PlayerTracker:
         if sig.player_list:
             online, _max, names = sig.player_list
             await self.reconcile(names)
+        if sig.player_died or sig.advancement:
+            await self.game_line(sig)
+
+    async def game_line(self, sig) -> None:
+        """A death or an advancement, for the chat bridge. Only for someone
+        who's online: a line that just looks like one counts for nobody."""
+        kind = "player_died" if sig.player_died else "player_advancement"
+        name, said = sig.player_died or sig.advancement
+        if any(p["username"] == name for p in self.online()):
+            await self.bus.publish(Event(type=kind, message=said, data={"username": name}))
 
     # ------------------------------------------------------------------
     def mark_verified(self, source: str) -> None:

@@ -224,6 +224,10 @@ class WorldUndoRequest(BaseModel):
     confirm: bool = False
 
 
+class AlertsReadRequest(BaseModel):
+    up_to: int = Field(ge=0)
+
+
 class AppPhoneRequest(BaseModel):
     # The phone's address on Google's push service (FCM), or on Apple's
     # (APNs: hex, as it goes in the address the agent sends to).
@@ -340,3 +344,124 @@ class ExportRequest(BaseModel):
 
 class HelpBundleRequest(BaseModel):
     confirm: bool = False
+
+
+class SupportAskAnswer(BaseModel):
+    answer: Literal["donate", "no_thanks"]
+
+
+class DiscordToken(BaseModel):
+    # A bot token is three dot-separated parts of base64; never logged.
+    token: str = Field(
+        min_length=50,
+        max_length=120,
+        pattern=r"^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$",
+    )
+
+
+class DiscordProfile(BaseModel):
+    name: str | None = Field(None, min_length=2, max_length=32)
+    # A PNG or JPEG as base64, or "logo" for the Command Block logo.
+    avatar: str | None = Field(None, max_length=11_000_000)
+
+
+class DiscordSetup(BaseModel):
+    servers: list[str] = Field(min_length=1, max_length=50)
+
+
+class DiscordTie(BaseModel):
+    kind: Literal["alerts", "quests", "events", "chat", "status", "console"]
+    server_id: str = Field(default="", max_length=64)
+    channel_id: str | None = Field(None, pattern=r"^\d{1,25}$")
+
+
+class DiscordRoleGrants(BaseModel):
+    role_name: str = Field(default="", max_length=100)
+    grants: dict[str, list[str]] = Field(max_length=50)
+
+
+class DiscordLevelRole(BaseModel):
+    level: int = Field(ge=1, le=1000)
+    role_id: str = Field(pattern=r"^\d{1,25}$")
+
+
+class DiscordLevelSettings(BaseModel):
+    announce: bool = True
+    # 0 (Monday) to 6 (Sunday); null: no weekly leaderboard.
+    leaderboard_day: int | None = Field(None, ge=0, le=6)
+    # Left out: the Level roles stay as they are.
+    roles: list[DiscordLevelRole] | None = Field(None, max_length=20)
+
+
+class DiscordAddress(BaseModel):
+    server_id: str = Field(max_length=64)
+    # A name or address and maybe a port, as friends type it into Minecraft.
+    address: str | None = Field(None, max_length=253, pattern=r"^[A-Za-z0-9.\-]+(:\d{1,5})?$")
+
+
+class StartRequestAnswer(BaseModel):
+    answer: Literal["start", "no"]
+
+
+class WhitelistAnswer(BaseModel):
+    answer: Literal["approve", "refuse"]
+
+
+class AddressAnswer(BaseModel):
+    answer: Literal["allow", "ignore"]
+
+
+class DiscordGuildOptions(BaseModel):
+    remove_on_leave: bool
+
+
+class DiscordLinkAnswer(BaseModel):
+    answer: Literal["approve", "refuse"]
+    uuid: str | None = Field(None, max_length=64)
+
+
+class QuestReward(BaseModel):
+    kind: Literal["role", "item", "xp", "level_xp"]
+    role_id: str | None = Field(None, pattern=r"^\d{5,25}$")
+    item: str | None = Field(None, max_length=100)
+    count: int | None = Field(None, ge=1, le=64)
+    levels: int | None = Field(None, ge=1, le=30)
+    amount: int | None = Field(None, ge=1, le=500)
+
+
+class NewQuest(BaseModel):
+    title: str = Field(max_length=200)
+    details: str = Field("", max_length=600)
+    kind: Literal["stat", "advancement", "playtime", "joins", "items", "approval"]
+    goal: str = Field("", max_length=100)
+    count: int = Field(1, ge=1, le=100_000)
+    repeat: Literal["once", "daily", "weekly", "monthly", "yearly"] = "once"
+    ends: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    rewards: list[QuestReward] = Field(default_factory=list, max_length=4)
+    # Made from a member's /quest suggest: that idea is answered and removed.
+    suggestion_id: int | None = None
+
+
+class QuestAnswer(BaseModel):
+    answer: Literal["approve", "refuse"]
+
+
+class NewEvent(BaseModel):
+    title: str = Field(max_length=200)
+    details: str = Field("", max_length=600)
+    kind: Literal["advancement", "online", "approval"] = "online"
+    goal: str = Field("", max_length=100)
+    starts_at: float
+    ends_at: float
+    start_server: bool = False
+    rewards: list[QuestReward] = Field(default_factory=list, max_length=4)
+
+
+class EventFix(BaseModel):
+    attended: bool
+
+
+class NewPoll(BaseModel):
+    question: str = Field(max_length=300)
+    answers: list[str] = Field(max_length=5)
+    closes_at: float

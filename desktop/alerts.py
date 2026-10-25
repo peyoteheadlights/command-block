@@ -24,11 +24,17 @@ PAGES = {
     "players": "Players and chat",
     "performance": "Performance",
     "game-settings": "Settings",
+    "quests": "Quests and events",
 }
 # Alerts whose Windows alert has a Restart button (for someone who may).
 RESTART_FOR = {"server_crashed", "crash_loop", "low_tps", "high_mspt"}
 # About the PC, not one server: the gear's section for each.
-PC_PAGES = {"security": "devices", "helpers": "moderators", "app-settings": "pc"}
+PC_PAGES = {
+    "security": "devices",
+    "helpers": "moderators",
+    "app-settings": "pc",
+    "discord": "discord",
+}
 
 
 class NotificationsScreen(QWidget):

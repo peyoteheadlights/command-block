@@ -46,6 +46,7 @@ from . import icons, self_update, theme
 from .agent import AgentClient, AgentError, SignedOut, Unreachable
 from .alerts import KEPT, PAGES, PC_PAGES, RESTART_FOR, NotificationsScreen
 from .backups import is_world
+from .discord import Discord
 from .feed import Feed
 from .gear import Account, Devices, ListScreen, PCSettings, Updates
 from .help import About, Guide
@@ -326,6 +327,8 @@ class MainWindow(QMainWindow):
         self.setup_unfinished = False  # the Tailscale step was skipped (yellow dot)
         self.quitting = False
         mode["technical"] = False
+        self.mode_picked = False  # picked here since signing in
+        self.ask_answered = False  # the donation card was answered here
         self.setWindowTitle(text("app.name"))
         self.resize(1280, 800)
         desk = QWidget()
@@ -393,6 +396,7 @@ class MainWindow(QMainWindow):
                 "pc": PCSettings(self),
                 "updates": Updates(self),
                 "moderators": Moderators(self),
+                "discord": Discord(self),
                 "devices": Devices(self),
                 "account": Account(self),
             },
@@ -564,6 +568,7 @@ class MainWindow(QMainWindow):
         if name == "Notifications":
             self.unread = 0
             self.show_unread()
+            self.mark_alerts_read()
         self.topbar.setVisible(
             name not in ("Sign-in", "Agent not running", "Update needed", "Tailscale")
         )
@@ -717,6 +722,8 @@ class MainWindow(QMainWindow):
         )
         self.run(lambda: self.agent.events(sid), here(screen.panel.show_events), lambda _e: None)
         self.run(lambda: self.agent.status(sid), here(screen.header.show_status), lambda _e: None)
+        if self.role in (None, "owner"):  # the agent refuses moderators too
+            self.run(self.agent.support_ask, here(self.show_ask), lambda _e: None)
         if mode["technical"]:
             self.load_technical()
             return
@@ -731,6 +738,14 @@ class MainWindow(QMainWindow):
             parts.append((self.content_of(row), simple.show_mods))
         for work, done in parts:
             self.run(partial(work, sid), here(done), lambda _e: None)
+
+    def show_ask(self, data: dict) -> None:
+        """The donation card, the same in Simple and Technical."""
+        screen = self.server_screen
+        # an answer to a check sent before the click mustn't bring it back
+        shown = bool(data.get("show")) and not self.ask_answered
+        for overview in (screen.simple_overview, screen.technical_overview):
+            overview.ask.setVisible(shown)
 
     def still_on(self, sid: str) -> Callable[[Callable[[Any], None]], Callable[[Any], None]]:
         """Wraps a callback so an answer about a server that is no longer
@@ -813,7 +828,17 @@ class MainWindow(QMainWindow):
 
     def caught_up_with(self, found: dict) -> None:
         self.alerts_loaded(found["alerts"], pop=self.caught_up)
+        if not self.caught_up:
+            # Unread is what this account hasn't read on any device.
+            read = int(found.get("read_up_to") or 0)
+            self.unread = sum(1 for a in self.alerts if a["id"] > read)
+            self.show_unread()
         self.caught_up = True
+
+    def mark_alerts_read(self) -> None:
+        if self.last_alert:
+            up_to = self.last_alert
+            self.run(lambda: self.agent.mark_alerts_read(up_to), lambda _r: None, lambda _e: None)
 
     def feed_changed(self) -> None:
         self.refresh()
@@ -838,6 +863,8 @@ class MainWindow(QMainWindow):
         if self.screen_name != "Notifications":
             self.unread += len(new)
             self.show_unread()
+        else:
+            self.mark_alerts_read()  # seen as they arrive
         shown = self.pc.setting("show_alerts") not in (False, "false")
         showing = [
             alert
@@ -863,6 +890,11 @@ class MainWindow(QMainWindow):
             server = alert.get("server_id")
             if alert.get("event") in RESTART_FOR and server and self.may(server, "server.control"):
                 buttons.append((text("action.restart"), "restart"))
+            if self.answers_start_requests(alert):
+                buttons += [
+                    (text("desktop.start_request.start"), "start"),
+                    (text("desktop.start_request.no"), "no"),
+                ]
             self.popped = {str(alert["id"]): alert, **dict(list(self.popped.items())[:49])}
             self.pc.show_alert(alert["title"], alert["body"], str(alert["id"]), tuple(buttons))
 
@@ -879,6 +911,9 @@ class MainWindow(QMainWindow):
         restarts the server without opening the window; anything else
         opens the alert's page (several at once: the bell)."""
         alert = self.popped.get(key)
+        if action in ("start", "no") and alert:
+            self.answer_start_request(alert, action == "start")
+            return
         if action == "restart" and alert:
             server = str(alert["server_id"])
             self.run(
@@ -893,7 +928,35 @@ class MainWindow(QMainWindow):
         elif alert:
             self.open_alert(alert)
 
+    def answers_start_requests(self, alert: dict) -> bool:
+        server = alert.get("server_id")
+        return bool(
+            alert.get("event") == "start_request" and server and self.may(server, "server.control")
+        )
+
+    def answer_start_request(self, alert: dict, start: bool) -> None:
+        """Start or Say no to a start request sent from Discord."""
+        server = str(alert["server_id"])
+        self.run(
+            lambda: self.agent.call(
+                "POST", f"/servers/{server}/start-request", {"answer": "start" if start else "no"}
+            ),
+            lambda _r: self.refresh(),
+            lambda exc: self.pc.show_alert(alert["title"], str(exc)),
+        )
+
     def open_alert(self, alert: dict) -> None:
+        if self.answers_start_requests(alert):
+            box = QMessageBox(QMessageBox.Icon.Question, alert["title"], alert["body"], parent=self)
+            start = box.addButton(
+                text("desktop.start_request.start"), QMessageBox.ButtonRole.AcceptRole
+            )
+            no = box.addButton(text("desktop.start_request.no"), QMessageBox.ButtonRole.RejectRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.exec()
+            if box.clickedButton() in (start, no):
+                self.answer_start_request(alert, box.clickedButton() is start)
+                return
         page, server = str(alert.get("page")), str(alert.get("server_id"))
         if page in PC_PAGES:
             self.open_list("PC settings", PC_PAGES[page])
@@ -1196,6 +1259,9 @@ class MainWindow(QMainWindow):
             self.sync_helper()
         self.update_tray()
         self.servers_loaded(self.servers)  # hides what this account can't do
+        if self.screen_name == "Server" and self.server_screen.row:
+            # a page opened before this answered showed the owner's buttons
+            self.server_screen.show_page(self.server_screen.current_page)
         if self.role == "owner" and self.agent.place == "this PC":
             self.run(self.agent.tailscale, self.tailscale_loaded, lambda _e: None)
 
@@ -1218,6 +1284,7 @@ class MainWindow(QMainWindow):
         self.show_screen("All servers")
         self.feed.start()
         self.refresh()
+        self.mode_picked = False
         self.run(self.agent.preferences, self.mode_loaded, lambda _e: None)
         self.run(self.agent.me, self.me_loaded, lambda _e: None)
         self.run(self.agent.version, self.version_loaded, lambda _e: None)
@@ -1255,11 +1322,14 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ Simple and Technical
     def mode_loaded(self, prefs: dict) -> None:
+        if self.mode_picked:  # a slow answer mustn't undo the person's own pick
+            return
         mode["technical"] = prefs.get("mode") == "technical"
         self.show_mode()
 
     def set_mode(self, technical: bool) -> None:
         mode["technical"] = technical
+        self.mode_picked = True
         self.show_mode()
         self.run(
             lambda: self.agent.set_mode("technical" if technical else "simple"), lambda _r: None

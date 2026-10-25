@@ -113,6 +113,8 @@ moderator gets 403 from each of these. See [security.md](security.md#permissions
 | GET | `/api/help-bundle` | The Get help file's list of files, before it is made |
 | POST | `/api/help-bundle` | `{confirm: true}` makes it; returns a token |
 | GET | `/api/help-bundle/{token}` | The Get help file |
+| GET | `/api/support-ask` | `{show, reason}`: whether to show the one Donate / No thanks card now. Shown after 14 days from the first real server start, never while something is wrong (including an alert the owner hasn't read) |
+| POST | `/api/support-ask` | `{answer: "donate" \| "no_thanks"}` hides it for good |
 
 Per server, under `/api/servers/{id}/`:
 
@@ -176,6 +178,8 @@ chatty as the console itself. Live messages arrive on the WebSocket as
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| GET | `/api/alerts?after=` | Alerts newer than `after`, plus `read_up_to`: this account has read every alert up to that id. Everything after it is unread, on every device |
+| POST | `/api/alerts/read` | `{up_to}` moves this account's read marker forward (never back, never past the newest alert) |
 | GET | `/api/push` | Answers 410. Browser alerts were removed |
 | POST | `/api/push/subscribe` | Answers 410 |
 | POST | `/api/push/unsubscribe` | Answers 410 |
@@ -298,6 +302,20 @@ for a Bedrock server, and their answers add `edition_matches` and
 A version change does **not** set the version. The chosen one is kept as
 `pending_version` and becomes `minecraft_version` only when that server's own
 console reports it (see `docs/honesty.md`).
+
+## Discord bot
+
+Owner only (`discord.manage`): `GET /api/discord` (connection, switches,
+invite link, each Discord server's checks, channels, roles and grants),
+`PUT|DELETE /api/discord/token`, `POST /api/discord/check`,
+`PUT /api/discord/profile` (`name`, `avatar` as base64 or `"logo"`),
+`POST /api/discord/guilds/{id}/setup` (`servers`),
+`PUT /api/discord/guilds/{id}/channels` (`kind`, `server_id`, `channel_id`),
+`PUT /api/discord/guilds/{id}/roles/{role}` (`grants`: server id to
+permissions). Per server, with Players (`players.manage`):
+`GET /api/servers/{id}/discord-links`, `DELETE .../discord-links/{uuid}`,
+`POST .../discord-links/requests/{id}` (`answer`, `uuid`). See
+[discord.md](discord.md).
 
 ## TPS monitoring
 

@@ -53,6 +53,19 @@ struct HelpAboutView: View {
                 Text(model.t("mobile.about.forms_hint"))
                     .textCase(nil)
             }
+            // App Store builds (Release) leave out outside donation links, which
+            // Apple doesn't allow; project.yml sets STORE_BUILD for them.
+            #if !STORE_BUILD
+            Section {
+                webButton(model.t("mobile.about.sponsors"), Links.sponsors)
+                webButton(model.t("mobile.about.kofi"), Links.kofi)
+            } header: {
+                Text(model.t("mobile.about.support"))
+                    .textCase(nil)
+            } footer: {
+                Text(model.t("mobile.about.support_text"))
+            }
+            #endif
             Section {
                 Button(model.t("mobile.about.copy_diagnostics")) {
                     UIPasteboard.general.string = model.diagnosticsText()

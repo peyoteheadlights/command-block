@@ -406,6 +406,268 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE accounts ADD COLUMN pc_grants TEXT;
         """,
     ),
+    (
+        16,
+        # The Discord bot (agent/discord). discord_channels: the channels
+        # it uses in each Discord server, server_id '' for one shared by
+        # every Minecraft server (alerts) and for the category.
+        # discord_roles: the Discord roles it made and hands out.
+        # discord_role_grants: what a Discord role may do on a server (a
+        # JSON list, like a moderator's grants). discord_links: Linked
+        # accounts, one Discord member per Minecraft account (its uuid, or
+        # a Bedrock player's xuid). discord_link_requests: Bedrock players
+        # waiting for the owner or a moderator to approve their link.
+        """
+        CREATE TABLE discord_channels (
+            guild_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            server_id TEXT NOT NULL DEFAULT '',
+            channel_id TEXT NOT NULL,
+            PRIMARY KEY (guild_id, kind, server_id)
+        );
+        CREATE TABLE discord_roles (
+            guild_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            PRIMARY KEY (guild_id, kind)
+        );
+        CREATE TABLE discord_role_grants (
+            guild_id TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            role_name TEXT NOT NULL DEFAULT '',
+            permissions TEXT NOT NULL,
+            PRIMARY KEY (guild_id, role_id, server_id)
+        );
+        CREATE TABLE discord_links (
+            uuid TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            edition TEXT,
+            server_id TEXT NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            linked_at REAL NOT NULL,
+            linked_by TEXT
+        );
+        CREATE INDEX discord_links_member ON discord_links(discord_id);
+        CREATE TABLE discord_link_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            channel_id TEXT,
+            created_at REAL NOT NULL,
+            UNIQUE (server_id, discord_id)
+        );
+        """,
+    ),
+    (
+        17,
+        # Levels (agent/levels.py): the XP a Discord member got for an
+        # event attended or a quest finished, once per (source, ref).
+        # Playtime XP isn't kept here: it's worked out from players.
+        """
+        CREATE TABLE level_xp (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            ref TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            at REAL NOT NULL,
+            UNIQUE (discord_id, source, ref)
+        );
+        """,
+    ),
+    (
+        18,
+        # Quests (agent/quests.py). quests: what to do and the rewards (a
+        # JSON list of reward templates, never a command). quest_progress:
+        # a member's progress in one period ('once', a day, a Monday, a
+        # month or a year), counted from the numbers when it began
+        # (baseline, account id -> number). quest_claims: "done" claims
+        # waiting for approval. quest_suggestions: /quest suggest.
+        # quest_rewards: each reward owed, until it's given.
+        """
+        CREATE TABLE quests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            goal TEXT NOT NULL DEFAULT '',
+            count INTEGER NOT NULL DEFAULT 1,
+            repeat TEXT NOT NULL DEFAULT 'once',
+            ends_at REAL,
+            rewards TEXT NOT NULL DEFAULT '[]',
+            created_at REAL NOT NULL,
+            created_by TEXT NOT NULL,
+            ended_at REAL
+        );
+        CREATE TABLE quest_progress (
+            quest_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            period TEXT NOT NULL,
+            baseline TEXT NOT NULL DEFAULT '{}',
+            progress INTEGER NOT NULL DEFAULT 0,
+            saved_at REAL,
+            finished_at REAL,
+            PRIMARY KEY (quest_id, discord_id, period)
+        );
+        CREATE TABLE quest_claims (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quest_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            period TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            screenshot TEXT,
+            channel_id TEXT,
+            created_at REAL NOT NULL,
+            UNIQUE (quest_id, discord_id)
+        );
+        CREATE TABLE quest_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            title TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '',
+            channel_id TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE TABLE quest_rewards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quest_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            period TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            value TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'waiting',
+            answer TEXT,
+            created_at REAL NOT NULL,
+            given_at REAL,
+            UNIQUE (quest_id, discord_id, period, kind)
+        );
+        """,
+    ),
+    (
+        19,
+        # Events and polls (agent/game_events.py). game_events: our own
+        # events ("events" is the Activity table), with each step's time
+        # (started, saved, counted, approved) so it happens once. posts:
+        # the bot's messages, channel id -> {"message", "words"}.
+        # event_rsvps: Going / Maybe / Can't. event_attendance: who came,
+        # how it was decided (measured, suggested, fixed). Event rewards
+        # go in quest_rewards with quest_id 0, period "event:<id>" and
+        # event_id. polls and poll_votes: one vote per member.
+        """
+        CREATE TABLE game_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            goal TEXT NOT NULL DEFAULT '',
+            starts_at REAL NOT NULL,
+            ends_at REAL NOT NULL,
+            start_server INTEGER NOT NULL DEFAULT 0,
+            rewards TEXT NOT NULL DEFAULT '[]',
+            created_at REAL NOT NULL,
+            created_by TEXT NOT NULL,
+            cancelled_at REAL,
+            reminded_at REAL,
+            started_at REAL,
+            counted_at REAL,
+            approved_at REAL,
+            posts TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE event_rsvps (
+            event_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            at REAL NOT NULL,
+            PRIMARY KEY (event_id, discord_id)
+        );
+        CREATE TABLE event_attendance (
+            event_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            minutes INTEGER NOT NULL DEFAULT 0,
+            attended INTEGER NOT NULL DEFAULT 0,
+            how TEXT NOT NULL,
+            fixed_by TEXT,
+            fixed_at REAL,
+            PRIMARY KEY (event_id, discord_id)
+        );
+        CREATE TABLE polls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            question TEXT NOT NULL,
+            answers TEXT NOT NULL,
+            closes_at REAL NOT NULL,
+            created_at REAL NOT NULL,
+            created_by TEXT NOT NULL,
+            closed_at REAL,
+            posts TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE poll_votes (
+            poll_id INTEGER NOT NULL,
+            discord_id TEXT NOT NULL,
+            answer INTEGER NOT NULL,
+            at REAL NOT NULL,
+            PRIMARY KEY (poll_id, discord_id)
+        );
+        ALTER TABLE quest_rewards ADD COLUMN event_id INTEGER;
+        """,
+    ),
+    (
+        20,
+        # agent/whitelist.py and /report. whitelist_forms: requests to join
+        # (/whitelist ask), one open per member per server. ip_addresses:
+        # an address an IP whitelist add-on turned a player away from,
+        # encrypted (address), masked for showing, digest (a keyed hash) to
+        # find it again; state new, allowed or ignored. discord_reports:
+        # /report's private threads, for the "See the report" button.
+        """
+        CREATE TABLE whitelist_forms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            why TEXT NOT NULL,
+            discord_id TEXT NOT NULL,
+            discord_name TEXT NOT NULL,
+            channel_id TEXT,
+            created_at REAL NOT NULL,
+            UNIQUE (server_id, discord_id)
+        );
+        CREATE TABLE ip_addresses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            address TEXT NOT NULL,
+            masked TEXT NOT NULL,
+            digest TEXT NOT NULL,
+            why TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'new',
+            seen_at REAL NOT NULL,
+            answered_by TEXT,
+            answered_at REAL,
+            UNIQUE (server_id, digest)
+        );
+        CREATE TABLE discord_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            guild_id TEXT NOT NULL,
+            thread_id TEXT NOT NULL,
+            reporter_id TEXT NOT NULL,
+            player TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        """,
+    ),
 ]
 
 

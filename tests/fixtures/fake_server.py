@@ -67,6 +67,8 @@ def eula_accepted() -> bool:
 # Players page's buttons are answered the way a real server answers them.
 LISTS = {"whitelist": "whitelist.json", "ops": "ops.json", "banned": "banned-players.json"}
 FAKE_UUID = "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+INVENTORY: dict[tuple[str, str], int] = {}  # (player, item id) -> count, from "fakeitem"
+IPS: set[tuple[str, str]] = set()  # (player or "", address): an IP whitelist add-on's list
 
 
 def read_list(which: str) -> list[dict]:
@@ -87,6 +89,43 @@ def player_command(cmd: str, players: list[str]) -> str | None:
     changing its list file the way Minecraft does. None: not one of them."""
     parts = cmd.split(" ")
     word = parts[0]
+    # Whitelist add-ons, answering the way their jars do. EasyWhitelist and
+    # Zero Whitelist call Minecraft's own whitelist code.
+    if word in ("easywhitelist", "zwl"):
+        return player_command(" ".join(["whitelist", *parts[1:]]), players)
+    if word == "wltxt" and len(parts) == 4 and parts[2] == "player":
+        said = player_command(f"whitelist {parts[1]} {parts[3]}", players) or ""
+        name = parts[3]
+        if parts[1] == "add":
+            return (
+                f"{name} is already on the player list."
+                if "already" in said
+                else (f"{name} has been added to the player list.")
+            )
+        return (
+            f"{name} was not found on the player list."
+            if "not" in said
+            else (f"{name} has been removed from the player list.")
+        )
+    if word == "ipwl" and len(parts) == 4:
+        name, ip = parts[2], parts[3]
+        if parts[1] in ("add", "addip"):
+            IPS.add((name.lower(), ip))
+            return (
+                f"Added {name} with IP {ip}." if parts[1] == "add" else f"Added IP {ip} to {name}."
+            )
+        if parts[1] == "removeip":
+            if (name.lower(), ip) not in IPS:
+                return f"IP not found for {name}: {ip}"
+            IPS.discard((name.lower(), ip))
+            return f"Removed IP {ip} from {name}."
+    if word == "ipwhitelist" and len(parts) == 3:
+        if parts[1] == "addip":
+            IPS.add(("", parts[2]))
+            return f"\u00a7aWhitelisted IP (Manual): {parts[2]}"
+        if parts[1] == "removeip":
+            IPS.discard(("", parts[2]))
+            return f"\u00a7eRemoved IP: {parts[2]}"
     if word == "whitelist" and len(parts) >= 3 and parts[1] in ("add", "remove"):
         name = parts[2]
         entries = read_list("whitelist")
@@ -139,6 +178,25 @@ def player_command(cmd: str, players: list[str]) -> str | None:
         if name in players:
             players.remove(name)
         return f"Banned {name}: {reason}"
+    # Quest rewards and the "bring items" count (clear with 0 takes nothing).
+    if word == "give" and len(parts) == 4:
+        if parts[1] not in players:
+            return "No player was found"
+        if parts[2] == "minecraft:nothing":
+            return f"Unknown item '{parts[2]}'"
+        name = parts[2].split(":")[-1].replace("_", " ").title()
+        return f"Gave {parts[3]} [{name}] to {parts[1]}"
+    if word == "xp" and len(parts) == 5 and parts[1] == "add":
+        if parts[2] not in players:
+            return "No player was found"
+        return f"Gave {parts[3]} experience levels to {parts[2]}"
+    if word == "clear" and len(parts) == 4 and parts[3] == "0":
+        if parts[1] not in players:
+            return "No player was found"
+        held = INVENTORY.get((parts[1], parts[2]), 0)
+        if not held:
+            return f"No items were found on player {parts[1]}"
+        return f"Found {held} matching item(s) on player {parts[1]}"
     if word == "pardon" and len(parts) == 2:
         name = parts[1]
         entries = read_list("banned")
@@ -290,13 +348,14 @@ def main() -> int:
             )
             continue
         if cmd.startswith("fakejoin "):
-            name = cmd.split(" ", 1)[1]
+            # "fakejoin Name", or "fakejoin Name <uuid>" for a second account.
+            name, _, uuid = cmd.split(" ", 1)[1].partition(" ")
             players.append(name)
             out(
                 stamp(
                     "User Authenticator #1",
                     "INFO",
-                    f"UUID of player {name} is 069a79f4-44e9-4726-a5be-fca90e38aaf5",
+                    f"UUID of player {name} is {uuid or FAKE_UUID}",
                 )
             )
             out(stamp("Server thread", "INFO", f"{name} joined the game"))
@@ -307,6 +366,15 @@ def main() -> int:
         if cmd.startswith("fakechat "):
             name, said = cmd.split(" ", 2)[1:]
             out(stamp("Server thread", "INFO", f"<{name}> {said}"))
+            continue
+        if cmd.startswith("fakeline "):
+            # A line of the server's own, like a death or an advancement.
+            out(stamp("Server thread", "INFO", cmd.split(" ", 1)[1]))
+            continue
+        if cmd.startswith("fakeitem "):
+            # "fakeitem Name minecraft:diamond 5": what the player carries.
+            name, item, count = cmd.split(" ")[1:]
+            INVENTORY[(name, item)] = int(count)
             continue
         if cmd.startswith("fakeleave "):
             name = cmd.split(" ", 1)[1]

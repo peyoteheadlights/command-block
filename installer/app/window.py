@@ -9,6 +9,7 @@ on a thread of its own) and shows the engine's real progress.
 from __future__ import annotations
 
 import functools
+import json
 import os
 import sys
 from collections.abc import Callable
@@ -1114,7 +1115,7 @@ class SetupWindow(QWidget):
                 "done",
                 t("done_title"),
                 t("done_connect_sub"),
-                [],
+                [self.support()],
                 [button(t("close"), self.close), button(t("open_app"), open_app, "primary")],
             )
             return
@@ -1136,8 +1137,23 @@ class SetupWindow(QWidget):
             "done",
             t("done_title"),
             t("done_sub"),
-            [grid],
+            [grid, self.support()],
             [button(t("close"), self.close), button(t("open_app"), open_app, "primary")],
+        )
+
+    def support(self) -> QWidget:
+        """The last screen's Support the project links and Mojang disclaimer."""
+        links = json.loads((theme.SHARED / "links.json").read_text(encoding="utf-8"))
+        return column(
+            left(
+                row(
+                    label(t("support"), "muted", wrap=False),
+                    button(t("sponsors"), lambda: self.open_target(links["sponsors"])),
+                    button(t("kofi"), lambda: self.open_target(links["kofi"])),
+                    stretch_first=False,
+                )
+            ),
+            label(t("disclaimer"), "muted"),
         )
 
     # ------------------------------------------------------------ remove

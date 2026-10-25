@@ -142,6 +142,15 @@ struct SettingsView: View {
                     }
                 }
                 .frame(minHeight: 44)
+                NavigationLink {
+                    DiscordView()
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.t("discord.title"))
+                        Text(model.t("mobile.discord.hint")).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(minHeight: 44)
             }
         }
         .task(id: model.me?.isOwner == true) {

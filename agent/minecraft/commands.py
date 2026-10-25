@@ -79,15 +79,15 @@ class ValidatedCommand:
         }
 
 
-def validate(command: str, confirm: bool = False) -> ValidatedCommand:
+def validate(command: str, confirm: bool = False, max_length: int = MAX_LENGTH) -> ValidatedCommand:
     if command is None:
         raise CommandError("Type a command first.")
     text = command.strip()
     if not text:
         raise CommandError("Type a command first.")
-    if len(text) > MAX_LENGTH:
+    if len(text) > max_length:
         raise CommandError(
-            f"That command is longer than {MAX_LENGTH} characters, so it wasn't sent."
+            f"That command is longer than {max_length} characters, so it wasn't sent."
         )
     if "\n" in command or "\r" in command or "\0" in command:
         raise CommandError("A command has to be one line.")

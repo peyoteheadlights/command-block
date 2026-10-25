@@ -14,20 +14,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from . import __version__, colors, memory
+from . import __version__, colors, memory, supportask
 from .autosleep import AutoSleep
 from .backups.manager import BackupManager
 from .config import ConfigError
 from .database.db import Database, ServerDb
 from .database.event_writer import EventWriter
+from .discord.links import Links
 from .events import AGENT_SCOPE, Event, EventBus, ServerBus
+from .game_events import GameEvents
 from .jobs import JobConflict, JobHandle, JobTracker
 from .keepawake import KeepAwake
-from .minecraft.chat import ChatLog
+from .minecraft.chat import ChatLog, parse_chat
 from .minecraft.crash import CrashReporter
 from .minecraft.playeractions import PlayerActions
 from .minecraft.process import MinecraftServer, ServerError
@@ -37,11 +40,14 @@ from .monitoring.players import PlayerTracker
 from .monitoring.tps import TpsMonitor
 from .notifications.dispatcher import Notifier
 from .ports import PortManager
+from .quests import Quests
 from .scheduler.scheduler import Scheduler
 from .security.auth import AuthManager
+from .startrequests import StartRequests
 from .tailscale_watch import TailscaleWatch
 from .updates import Updater
 from .wake import Wake
+from .whitelist import Whitelist, whitelist_addon
 
 log = logging.getLogger("msc.core")
 
@@ -84,6 +90,7 @@ class ServerContext:
         )
 
         self.player_actions = PlayerActions(self.server, self.bus)
+        self.player_actions.addon = self._whitelist_addon
         # In-game chat as the console printed it, and the watcher that stops
         # a server nobody is playing on (off unless this server turns it on).
         self.chat = ChatLog()
@@ -99,9 +106,17 @@ class ServerContext:
         ]
         self._update_task: asyncio.Task | None = None
 
+    def _whitelist_addon(self, kind: str):
+        addon = whitelist_addon(self)
+        return addon.actions.get(kind) if addon else None
+
     async def _console_signals(self, sig, line) -> None:
         await self.players.handle_signals(sig, line)
         await self.player_actions.handle(sig, line)
+        await self.core.whitelist.heard(self, line)
+        said = parse_chat(line)
+        if said and said[0] == "player" and self.core.links.hear(self, said[1] or "", said[2]):
+            return  # a link code: kept out of the chat log, so never bridged to Discord
         message = self.chat.add(line)
         if message is not None:
             # Not stored in the database: chat is as chatty as the console
@@ -303,11 +318,23 @@ class AgentCore:
         # Moves the agent onto Tailscale and checks it every minute after.
         self.tailscale = TailscaleWatch(self)
         self.wake = Wake(self)
+        # Linked accounts work without the bot (the apps list and remove
+        # them); the bot itself only exists while a token is set.
+        self.links = Links(self.db)
+        self.start_requests = StartRequests(self)
+        self.quests = Quests(self)
+        self.game_events = GameEvents(self)
+        self.whitelist = Whitelist(self)
+        self.discord: Any = None
+        # The bot posts alerts in its alerts channel (and the webhook steps aside).
+        self.notifier.bot = lambda: self.discord
 
         self.bus.subscribe(self._persist_event)
         self.bus.subscribe(self.notifier.handle)
         self.bus.subscribe(self._dispatch)
         self.bus.subscribe(self.keepawake.handle)
+        self.bus.subscribe(supportask.handler(self.db))
+        self.bus.subscribe(self.start_requests.handle)
         self._cert_task: asyncio.Task | None = None
         self._cert_alerted: str | None = None
         self._servers_lock = asyncio.Lock()
@@ -368,7 +395,15 @@ class AgentCore:
 
     # ------------------------------------------------------------------
     async def _persist_event(self, event: Event) -> None:
-        if event.type in ("console", "metrics", "job", "chat", "alert"):
+        if event.type in (
+            "console",
+            "metrics",
+            "job",
+            "chat",
+            "alert",
+            "player_died",
+            "player_advancement",
+        ):
             return  # far too chatty for the database, or kept elsewhere (alerts)
         self.events.add(
             event.server_id or AGENT_SCOPE,
@@ -394,8 +429,34 @@ class AgentCore:
         await self.updates.start()
         self.tailscale.start()
         self.wake.start()
+        self.game_events.start()
+        self.start_discord()
         for ctx in list(self.servers.values()):
             await ctx.autostart()
+
+    def start_discord(self) -> None:
+        """Start the bot when a token is set. Without one the Discord client
+        isn't even imported (weak mini PCs come first)."""
+        token = self.config.discord_bot_token
+        if token and self.discord is None:
+            from .discord.bot import Bot
+
+            self.discord = Bot(self, token)
+            self.discord.start()
+
+    async def set_discord_token(self, token: str | None) -> None:
+        """Save a new bot token in .env (or remove it), then reconnect."""
+        from installer.setup_tool import write_env_value
+
+        from .appinfo import default_env_path
+
+        path = self.config.env_path or default_env_path()
+        await asyncio.to_thread(write_env_value, path, "MCSC_DISCORD_BOT_TOKEN", token or "")
+        os.environ["MCSC_DISCORD_BOT_TOKEN"] = token or ""
+        if self.discord is not None:
+            await self.discord.stop()
+            self.discord = None
+        self.start_discord()
 
     async def check_certificate(self) -> dict:
         """Read the certificate and alert on approaching expiry.
@@ -462,6 +523,12 @@ class AgentCore:
         await self.updates.stop()
         self.tailscale.stop()
         self.wake.stop()
+        if self.discord is not None:
+            await self.discord.stop()
+        self.start_requests.stop()
+        self.quests.stop()
+        self.whitelist.stop()
+        await self.game_events.stop()
         await self.jobs.stop()
         for ctx in list(self.servers.values()):
             await ctx.stop()

@@ -162,6 +162,24 @@ def test_none_yet_ends_on_open_command_block(qapp, monkeypatch):
     assert window.wizard.apps_opened == 1 and window.opened == []  # the desktop app, not a web page
 
 
+def test_the_last_screen_has_support_links_and_the_disclaimer(qapp, monkeypatch):
+    import json
+
+    from desktop.theme import SHARED
+
+    links = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
+    window = make(qapp, monkeypatch)
+    window.path = "none"
+    window.answers["servers"] = []
+    window.run()
+    window.wizard.advance(20)
+    window.poll()
+    assert "NOT AN OFFICIAL MINECRAFT PRODUCT" in shown_text(window)
+    press(window, TEXT["sponsors"])
+    press(window, TEXT["kofi"])
+    assert window.opened == [links["sponsors"], links["kofi"]]
+
+
 def test_the_first_screen_asks_run_servers_here_or_connect(qapp, monkeypatch):
     window = make(qapp, monkeypatch)
     assert window.screen_name == "start"
@@ -188,6 +206,7 @@ def test_the_first_screen_asks_run_servers_here_or_connect(qapp, monkeypatch):
     window.poll()
     assert window.screen_name == "done"
     assert TEXT["done_connect_sub"] in shown_text(window)
+    assert TEXT["disclaimer"] in shown_text(window)
     press(window, TEXT["open_app"])
     assert window.wizard.apps_opened == 1
 

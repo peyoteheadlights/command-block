@@ -30,6 +30,12 @@ Your worlds, backups, settings, passwords (stored only as salted hashes),
 logs and players' names stay on your PC. The agent is reached through
 your own Tailscale network; this app never sends it anywhere else.
 
+Players' internet addresses aren't saved, with one exception: on a server
+with an IP whitelist add-on, the address it turned away a known player
+from is kept encrypted, shown only in part (`203.0.x.x`), and deleted when
+the player is taken off the whitelist. If you pick a Discord channel for a
+server's console, its lines are posted there with addresses hidden.
+
 **Get help** saves a file of logs and checks on your PC. It is never sent
 by itself: you choose who to give it to. It never contains passwords, keys
 or worlds.

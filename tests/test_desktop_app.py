@@ -25,7 +25,9 @@ from desktop.window import MainWindow  # noqa: E402
 def wait_for(qapp, condition, timeout=15.0, pause=0.02):
     """pause: asking the agent itself needs a longer one, or it says "too
     many tries at once"."""
-    deadline = time.monotonic() + timeout
+    # GitHub's Windows runners can be several times slower than a real PC,
+    # and waiting longer only costs time when a test is failing anyway.
+    deadline = time.monotonic() + max(timeout, 45.0)
     while time.monotonic() < deadline:
         qapp.processEvents()
         if condition():
@@ -308,7 +310,7 @@ def signed_in_on(qapp, agent_http, name="Survival", pc=None):
     return window
 
 
-def test_simple_shows_six_page_tabs_and_technical_eight(qapp, agent_http):
+def test_simple_shows_seven_page_tabs_and_technical_nine(qapp, agent_http):
     window = signed_in_on(qapp, agent_http)
     assert page_tabs(window) == [
         "Overview",
@@ -316,10 +318,11 @@ def test_simple_shows_six_page_tabs_and_technical_eight(qapp, agent_http):
         "Backups",
         "Mods",
         "Schedules",
+        "Quests and events",
         "Settings",
     ]
     button(window, "Technical").click()
-    wait_for(qapp, lambda: len(page_tabs(window)) == 8)
+    wait_for(qapp, lambda: len(page_tabs(window)) == 9)
     assert page_tabs(window) == [
         "Overview",
         "Players and chat",
@@ -327,6 +330,7 @@ def test_simple_shows_six_page_tabs_and_technical_eight(qapp, agent_http):
         "Backups",
         "Mods",
         "Schedules",
+        "Quests and events",
         "Performance",
         "Settings",
     ]
@@ -562,6 +566,67 @@ def test_a_new_server_shows_the_setup_checklist(qapp, agent_http):
     window = signed_in_on(qapp, agent_http)
     wait_for(qapp, lambda: "Getting started" in shown_text(window))
     wait_for(qapp, lambda: "Take a backup" in shown_text(window))
+
+
+def test_the_owner_sees_the_ask_once_and_donate_opens_the_support_link(
+    qapp, agent_http, monkeypatch
+):
+    import json
+
+    from agent import supportask
+    from desktop.theme import SHARED
+
+    from .fake_pc import FakePC
+
+    monkeypatch.setattr(supportask, "something_wrong", lambda core: False)
+    core = agent_http.agent.app.state.core
+    core.db.set_setting(supportask.STATE_KEY, {"first_start": 1.0})
+    pc = FakePC()
+    window = signed_in_on(qapp, agent_http, pc=pc)
+    wait_for(qapp, lambda: "Enjoying Command Block?" in shown_text(window))
+    button(window, "Donate").click()
+    links = json.loads((SHARED / "links.json").read_text(encoding="utf-8"))
+    assert pc.opened[-1] == links["sponsors"]
+    wait_for(qapp, lambda: core.db.get_setting(supportask.STATE_KEY).get("answer") == "donate")
+    assert "Enjoying Command Block?" not in shown_text(window)
+
+
+def test_the_ask_shows_in_technical_mode_too(qapp, agent_http, monkeypatch):
+    from agent import supportask
+
+    monkeypatch.setattr(supportask, "something_wrong", lambda core: False)
+    core = agent_http.agent.app.state.core
+    core.db.set_setting(supportask.STATE_KEY, {"first_start": 1.0})
+    window = signed_in_on(qapp, agent_http)
+    button(window, "Technical").click()
+    wait_for(qapp, lambda: window.server_screen.technical_overview.ask.isVisible())
+    button(window, "No thanks").click()
+    wait_for(qapp, lambda: core.db.get_setting(supportask.STATE_KEY).get("answer") == "no_thanks")
+    wait_for(qapp, lambda: not window.server_screen.technical_overview.ask.isVisible())
+
+
+def test_the_bell_counts_what_the_account_has_not_read(qapp, agent_http):
+    core = agent_http.agent.app.state.core
+    ids = [
+        core.db.insert(
+            "app_alerts",
+            {
+                "ts": 1.0,
+                "server_id": "survival",
+                "event": "server_crashed",
+                "title": f"Crash {n}",
+                "body": "b",
+                "page": "overview",
+                "url": "u",
+            },
+        )
+        for n in range(3)
+    ]
+    core.auth.mark_alerts_read("admin", ids[0])
+    window = signed_in_on(qapp, agent_http)
+    wait_for(qapp, lambda: window.unread == 2)
+    window.tools["bell"].click()
+    wait_for(qapp, lambda: core.auth.alerts_read("admin") == ids[-1])
 
 
 def test_a_hint_shows_on_hover_on_tab_and_space_and_to_narrator(qapp, agent_http):
@@ -864,10 +929,11 @@ def test_the_menu_lists_each_server_and_starts_it(qapp, agent_http):
     window = open_window(qapp, agent_http, pc)
     sign_in(qapp, window)
     on_all_servers(qapp, window)
-    wait_for(qapp, lambda: len(tray_items(pc)) == 3)
+    # The Start item shows once the server's state is in, a moment after the list.
+    wait_for(qapp, lambda: tray_items(pc).get("Survival: Offline") == ["Start", "Open"])
     items = tray_items(pc)
+    assert len(items) == 3
     assert items[""] == ["Open Command Block", "Quit"]
-    assert items["Survival: Offline"] == ["Start", "Open"]
     tray_action(pc, "Survival", "Start").trigger()
     headers = owner(agent_http)
     wait_for(qapp, lambda: server_state(agent_http, "survival", headers) == "ONLINE", 30, 0.2)
@@ -982,7 +1048,8 @@ def test_a_newer_app_with_the_same_api_version_keeps_working_and_says_so(
     sign_in(qapp, window)
     on_all_servers(qapp, window)
     wait_for(qapp, lambda: "older than this app" in shown_text(window))
-    assert "Survival" in shown_text(window)
+    # the list may be mid-refresh, so this waits for it too
+    wait_for(qapp, lambda: "Survival" in shown_text(window))
 
 
 def test_a_different_api_version_stops_the_app(qapp, agent_http, monkeypatch):
