@@ -234,6 +234,8 @@ def test_clear_empties_the_console(qapp, agent_http):
     window, page = technical_page(qapp, agent_http, "Console")
     command(agent_http, headers, "something to clear")
     wait_for(qapp, lambda: "[Console] something to clear" in page.log.toPlainText())
+    # The earlier lines load on their own; if they came after Clear they'd fill it again.
+    wait_for(qapp, lambda: not window._tasks)
     button(page, "Clear").click()
     wait_for(qapp, lambda: page.log.toPlainText() == "")
     logs = agent_http.get("/api/servers/survival/logs", headers=headers).json()["lines"]
