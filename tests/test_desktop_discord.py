@@ -186,9 +186,17 @@ def test_a_players_stats_and_level_show_on_the_players_page(qapp, fake, discord_
     window = signed_in_on(qapp, discord_http)
     page = open_page(qapp, window, "Players and chat")
     wait_for_window(qapp, lambda: "Alex: sam on Discord  ·  Level 5 (200 XP)" in shown_text(page))
-    stats_button = lambda: next(  # noqa: E731
-        b for b in page.findChildren(QtWidgets.QPushButton) if b.accessibleName() == "Stats: Alex"
-    )
+
+    def stats_button():
+        # The list redraws when the agent answers, so wait for the button and find it fresh.
+        found = lambda: [  # noqa: E731
+            b
+            for b in page.findChildren(QtWidgets.QPushButton)
+            if b.accessibleName() == "Stats: Alex"
+        ]
+        wait_for_window(qapp, lambda: found() and not window._tasks)
+        return found()[0]
+
     stats_button().click()
     wait_for_window(qapp, lambda: "Deaths 2  ·  Last saved" in shown_text(page))
     stats_button().click()
