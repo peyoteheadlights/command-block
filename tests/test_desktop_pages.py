@@ -117,7 +117,8 @@ def test_chat_shows_what_players_say_live_and_sends_as_server(qapp, agent_http):
     page.message.setText("welcome")
     page.send.click()
     wait_for(qapp, lambda: "Server: welcome" in page.chat.toPlainText())
-    assert page.message.text() == ""
+    # Same as the console: cleared when the agent answers, maybe after the line.
+    wait_for(qapp, lambda: page.message.text() == "")
 
 
 def test_chat_lines_from_before_the_page_opened_are_loaded(qapp, agent_http):
