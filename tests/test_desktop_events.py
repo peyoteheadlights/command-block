@@ -141,7 +141,9 @@ def test_events_paint_small_and_large_in_both_modes(qapp, quests_page):  # noqa:
         window.set_mode(technical)
         window.resize(*size)
         page.load()
-        wait_for_window(qapp, lambda: "Ended" in shown_text(page))
+        # Each mode's own word, so this waits for the reload in that mode.
+        ended = "ended" if technical else "Ended"
+        wait_for_window(qapp, lambda ended=ended: ended in shown_text(page))
         qapp.processEvents()
         page.grab()
     assert "measured" in shown_text(page) or any(
