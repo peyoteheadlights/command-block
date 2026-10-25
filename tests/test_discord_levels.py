@@ -363,4 +363,5 @@ def test_changing_the_level_roles_sets_everyones_again_quietly(agent, fake):  # 
     )
     assert answer.status_code == 200, answer.text
     wait_for(lambda: fake.members[MEMBER_ID] == ["2000000000000000051"])
-    assert fake.in_channel("quests") == []  # no level-up posts for a resync
+    # no level-up posts for a resync (the quests board may be posted there too)
+    assert not any("reached **Level" in m["content"] for m in fake.in_channel("quests"))
