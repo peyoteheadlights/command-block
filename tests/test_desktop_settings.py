@@ -93,7 +93,14 @@ def test_a_game_setting_is_saved_and_a_bad_one_is_marked(qapp, agent_http):
     difficulty.setCurrentIndex(difficulty.findData("hard"))
     button(game, "Save").click()
     folder = core_of(agent_http).servers["survival"].config.server_dir
-    wait_for(qapp, lambda: "difficulty=hard" in (folder / "server.properties").read_text(), 20)
+
+    def saved() -> bool:
+        try:
+            return "difficulty=hard" in (folder / "server.properties").read_text()
+        except PermissionError:  # Windows: the agent is swapping the new file in
+            return False
+
+    wait_for(qapp, saved, 20)
     wait_for(qapp, lambda: "Saved." in shown_text(page))
     game = card_of(page, "Game settings")
     port = next(s for s in game.findChildren(QtWidgets.QSpinBox) if s.value() == 25565)
