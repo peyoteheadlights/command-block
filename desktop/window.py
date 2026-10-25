@@ -326,6 +326,7 @@ class MainWindow(QMainWindow):
         self.setup_unfinished = False  # the Tailscale step was skipped (yellow dot)
         self.quitting = False
         mode["technical"] = False
+        self.mode_picked = False  # picked here since signing in
         self.setWindowTitle(text("app.name"))
         self.resize(1280, 800)
         desk = QWidget()
@@ -1242,6 +1243,7 @@ class MainWindow(QMainWindow):
         self.show_screen("All servers")
         self.feed.start()
         self.refresh()
+        self.mode_picked = False
         self.run(self.agent.preferences, self.mode_loaded, lambda _e: None)
         self.run(self.agent.me, self.me_loaded, lambda _e: None)
         self.run(self.agent.version, self.version_loaded, lambda _e: None)
@@ -1279,11 +1281,14 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ Simple and Technical
     def mode_loaded(self, prefs: dict) -> None:
+        if self.mode_picked:  # a slow answer mustn't undo the person's own pick
+            return
         mode["technical"] = prefs.get("mode") == "technical"
         self.show_mode()
 
     def set_mode(self, technical: bool) -> None:
         mode["technical"] = technical
+        self.mode_picked = True
         self.show_mode()
         self.run(
             lambda: self.agent.set_mode("technical" if technical else "simple"), lambda _r: None
