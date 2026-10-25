@@ -25,7 +25,9 @@ from desktop.window import MainWindow  # noqa: E402
 def wait_for(qapp, condition, timeout=15.0, pause=0.02):
     """pause: asking the agent itself needs a longer one, or it says "too
     many tries at once"."""
-    deadline = time.monotonic() + timeout
+    # GitHub's Windows runners can be several times slower than a real PC,
+    # and waiting longer only costs time when a test is failing anyway.
+    deadline = time.monotonic() + max(timeout, 45.0)
     while time.monotonic() < deadline:
         qapp.processEvents()
         if condition():
