@@ -155,7 +155,8 @@ def test_level_settings_are_changed_and_saved_on_the_discord_page(qapp, fake, di
         if b.accessibleName() == "Remove: Level 10"
     ).click()
     button(page, "Save Levels").click()
-    wait_for_window(qapp, lambda: layout.level_settings(core.db, GUILD_ID)["custom"])
+    # once the agent has answered: reading while it writes can see half of it
+    wait_for_window(qapp, lambda: "Saved." in shown_text(page))
     settings = layout.level_settings(core.db, GUILD_ID)
     assert settings["announce"] is False and settings["leaderboard_day"] == 4
     assert [at for at, _r in layout.level_roles(core.db, GUILD_ID)] == [5, 20]
