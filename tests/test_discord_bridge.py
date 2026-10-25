@@ -158,8 +158,9 @@ def test_chat_joins_deaths_and_advancements_reach_the_chat_channel(agent, fake):
     ]
     assert code not in posted() and "Herobrine" not in posted()
     assert all(m["allowed_mentions"] == {"parse": []} for m in fake.in_channel("chat"))
-    # Nothing in the status channel but the status message.
-    assert all("Alex" not in m["content"] for m in fake.in_channel("status"))
+    # Nothing in the status channel but the status message (its player list
+    # may name Alex, if it was edited while he was on).
+    assert all(m["content"].startswith("**Test Server** is ") for m in fake.in_channel("status"))
     agent.post("/api/servers/test/server/stop")
 
 
