@@ -113,6 +113,86 @@ final class CommunityTests: XCTestCase {
         XCTAssertEqual(dig["rewards"], .array([]))
     }
 
+    func testAQuestCanHaveALastDayTypedLikeTheDesktops() {
+        var form = QuestForm()
+        form.title = "x"
+        XCTAssertEqual(Community.questBody(form)["ends"], .null)
+        form.lastDay = " 2026-12-31 "
+        XCTAssertEqual(Community.questBody(form)["ends"], .string("2026-12-31"))
+        XCTAssertTrue(Community.lastDayOk("") && Community.lastDayOk("2026-01-05"))
+        XCTAssertFalse(Community.lastDayOk("31/12/2026") || Community.lastDayOk("2026-1-5"))
+    }
+
+    func testACommunityEventAndAPollAreSentWithTheirTimesOnThePhonesClock() throws {
+        let cairo = try XCTUnwrap(TimeZone(identifier: "Africa/Cairo"))
+        let now = 1_761_840_000.0
+        var form = Community.eventForm(now: now, zone: cairo)
+        XCTAssertEqual(form.starts, Community.showWhen(now + 86_400, zone: cairo))
+        form.title = " Dragon night "
+        form.goal = "ignored"
+        form.startServer = true
+        form.xpLevels = 5
+        let body = try XCTUnwrap(Community.eventBody(form, zone: cairo))
+        XCTAssertEqual(body["title"], .string("Dragon night"))
+        XCTAssertEqual(body["goal"], .string(""))
+        XCTAssertEqual(body["starts_at"], .number(now + 86_400))
+        XCTAssertEqual(body["ends_at"], .number(now + 93_600))
+        XCTAssertEqual(body["start_server"], .bool(true))
+        XCTAssertEqual(body["rewards"], .array([.object(["kind": .string("xp"), "levels": .number(5)])]))
+        var dragon = form
+        dragon.kind = "advancement"
+        dragon.goal = "end/kill_dragon"
+        XCTAssertEqual(Community.eventBody(dragon, zone: cairo)?["goal"], .string("end/kill_dragon"))
+        // A time that can't be read sends nothing.
+        form.starts = "tomorrow"
+        XCTAssertNil(Community.eventBody(form, zone: cairo))
+
+        var poll = Community.pollForm(now: now, zone: cairo)
+        poll.question = "Map?"
+        poll.answers = [" Desert ", "", "Ocean", "", ""]
+        let sent = try XCTUnwrap(Community.pollBody(poll, zone: cairo))
+        XCTAssertEqual(sent["answers"], .array([.string("Desert"), .string("Ocean")]))
+        XCTAssertEqual(sent["closes_at"], .number(now + 86_400))
+        poll.closes = "soon"
+        XCTAssertNil(Community.pollBody(poll, zone: cairo))
+    }
+
+    // A Discord server as GET /discord sends it (agent/discord/bot.py status).
+    private func guild(servers: String = "[\"survival\"]") throws -> DiscordGuild {
+        try decode(DiscordGuild.self, """
+        {"id": "999", "name": "Friends", "servers": \(servers), "options": {"remove_on_leave": false, "reminders": "private"},
+         "levels": {"announce": true, "leaderboard_day": null, "roles": [{"level": 5, "role_id": "50", "name": "Regular"}]},
+         "report": {"problems": [], "roles": [{"id": "50", "name": "Regular"}, {"id": "999", "name": "@everyone"}],
+                    "channels": [{"id": "70", "name": "general"}],
+                    "tied": [{"kind": "levels", "server_id": "", "channel_id": "70", "name": "general"}]}}
+        """)
+    }
+
+    func testTheChannelPickersListTheSharedChannelsThenEachServersOwn() throws {
+        let guild = try self.guild()
+        let rows = Community.channelRows(s, guild, servers: [("survival", "Survival"), ("creative", "Creative")])
+        XCTAssertEqual(rows.map(\.kind), ["alerts", "quests", "levels", "events", "status", "chat", "alerts", "console"])
+        XCTAssertEqual(rows.first { $0.kind == "levels" }?.channelId, "70")
+        XCTAssertEqual(rows.first { $0.kind == "chat" }?.label, s.t("discord.kind.chat") + ": Survival")
+        XCTAssertFalse(rows.contains { $0.serverId == "creative" }) // not set up for this Discord server
+        XCTAssertEqual(Community.noChannel(try XCTUnwrap(rows.last { $0.kind == "alerts" })), "discord.same_alerts")
+        let chat = try XCTUnwrap(rows.first { $0.kind == "chat" })
+        XCTAssertEqual(Community.channelBody(chat, channelId: nil),
+                       ["kind": .string("chat"), "server_id": .string("survival"), "channel_id": .null])
+        XCTAssertEqual(guild.reminders, "private")
+    }
+
+    func testLevelSettingsSendTheLevelRolesOnlyWhenTheyChanged() throws {
+        let guild = try self.guild()
+        let same = Community.levelsBody(guild, announce: false, day: 4, rows: [LevelRow(level: 5, roleId: "50")])
+        XCTAssertEqual(same, ["announce": .bool(false), "leaderboard_day": .number(4)])
+        let changed = Community.levelsBody(guild, announce: true, day: nil, rows: [LevelRow(level: 20, roleId: "50"), LevelRow(level: 30, roleId: nil)])
+        XCTAssertEqual(changed["roles"], .array([.object(["level": .number(20), "role_id": .string("50")])]))
+        XCTAssertEqual(Community.levelRoleChoices(guild).map(\.id), ["50"]) // never @everyone
+        XCTAssertEqual(Community.setupServers(guild, servers: ["survival", "creative"]), ["survival"])
+        XCTAssertEqual(Community.setupServers(try self.guild(servers: "[]"), servers: ["solo"]), ["solo"])
+    }
+
     func testAServerThatCantCheckEveryKindSaysSo() throws {
         let hint = Community.goalHint(s, kind: "playtime", kinds: try quests().kinds)
         XCTAssertTrue(hint.hasSuffix(s.t("quests.limited_kinds")))
@@ -202,6 +282,30 @@ final class CommunityTests: XCTestCase {
         XCTAssertEqual(StubAgent.requests[3].request.httpMethod, "PUT")
         XCTAssertEqual(StubAgent.requests[3].request.url?.path, "/api/servers/survival/quests/events/1/attendance/11")
 
+        StubAgent.json("{\"made\": [\"levels\"], \"status\": {\"token_set\": true, \"state\": \"connected\"}}")
+        let setup = try await c.setUpDiscord(guildId: "999", servers: ["survival"])
+        XCTAssertEqual(setup.made, ["levels"])
+        XCTAssertEqual(StubAgent.requests[4].request.url?.path, "/api/discord/guilds/999/setup")
+        XCTAssertEqual(body(4), "{\"servers\":[\"survival\"]}")
+
+        StubAgent.json("{\"token_set\": true, \"state\": \"connected\"}")
+        _ = try await c.setReminders(guildId: "999", how: "private")
+        XCTAssertEqual(StubAgent.requests[5].request.httpMethod, "PUT")
+        XCTAssertEqual(body(5), "{\"reminders\":\"private\"}")
+
+        StubAgent.json("{\"token_set\": true, \"state\": \"connecting\"}")
+        _ = try await c.setDiscordToken(" a.b.c ")
+        XCTAssertEqual(StubAgent.requests[6].request.url?.path, "/api/discord/token")
+        XCTAssertEqual(body(6), "{\"token\":\"a.b.c\"}")
+
+        var poll = PollForm()
+        poll.question = "Map?"
+        poll.answers = ["A", "B"]
+        poll.closes = "2026-10-31 20:00"
+        StubAgent.json("{\"events\": [], \"polls\": [], \"kinds\": [], \"bot\": true}")
+        _ = try await c.makePoll(serverId: "survival", body: try XCTUnwrap(Community.pollBody(poll, zone: try XCTUnwrap(TimeZone(identifier: "UTC")))))
+        XCTAssertEqual(StubAgent.requests[7].request.url?.path, "/api/servers/survival/quests/polls")
+
         // A request that ended (answered elsewhere, or expired) comes back as the agent's words.
         StubAgent.json("{\"detail\": \"There's no start request open for Survival.\"}", status: 404)
         do {
@@ -214,9 +318,11 @@ final class CommunityTests: XCTestCase {
     }
 
     func testEveryWordTheCommunityScreensUseIsInTheTable() {
-        let keys = ["mobile.start_request.started", "mobile.start_request.said_no", "page.quests", "mobile.quests.last_day",
-                    "mobile.quests.make_events", "mobile.discord.hint", "mobile.discord.on_pc"]
+        let keys = ["mobile.start_request.started", "mobile.start_request.said_no", "page.quests", "mobile.quests.last_day_hint",
+                    "mobile.quests.when_hint", "mobile.discord.hint", "mobile.discord.token_hint"]
             + Community.KINDS.map { "quests.kind.\($0)" } + Community.REPEATS.map { "quests.repeat_pick.\($0)" }
+            + Community.EVENT_KINDS.map { "game_events.kind.\($0)" } + Community.REMINDERS.map { "discord.reminders.\($0)" }
+            + (Community.SHARED_CHANNELS + Community.SERVER_CHANNELS).map { "discord.kind.\($0)" }
         for key in keys { XCTAssertTrue(s.has(key), key) }
     }
 }

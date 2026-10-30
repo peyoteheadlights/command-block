@@ -877,6 +877,43 @@ class AgentClient(
         DiscordStatus.serializer(),
     )
 
+    /** The bot's token, from Discord's developer portal (owner only; never sent back). */
+    suspend fun setDiscordToken(token: String): DiscordStatus = call(
+        request("/api/discord/token").put(buildJsonObject { put("token", token.trim()) }.toBody()).build(),
+        DiscordStatus.serializer(),
+        slow = true,
+    )
+
+    suspend fun removeDiscordToken(): DiscordStatus =
+        call(request("/api/discord/token").delete().build(), DiscordStatus.serializer(), slow = true)
+
+    /** "Set up this Discord server" for these Minecraft servers: only what's missing is made. */
+    suspend fun setUpDiscord(guildId: String, servers: List<String>): DiscordSetupDone = call(
+        post("/api/discord/guilds/${path(guildId)}/setup", buildJsonObject { put("servers", JsonArray(servers.map(::JsonPrimitive))) }),
+        DiscordSetupDone.serializer(),
+        slow = true,
+    )
+
+    /** Which channel does what; [body] from [Community.channelBody]. */
+    suspend fun tieChannel(guildId: String, body: JsonObject): DiscordStatus = call(
+        request("/api/discord/guilds/${path(guildId)}/channels").put(body.toBody()).build(),
+        DiscordStatus.serializer(),
+        slow = true,
+    )
+
+    /** "ping" or "private". */
+    suspend fun setReminders(guildId: String, how: String): DiscordStatus = call(
+        request("/api/discord/guilds/${path(guildId)}/options").put(buildJsonObject { put("reminders", how) }.toBody()).build(),
+        DiscordStatus.serializer(),
+    )
+
+    /** Level settings; [body] from [Community.levelsBody]. */
+    suspend fun setLevels(guildId: String, body: JsonObject): DiscordLevels = call(
+        request("/api/discord/guilds/${path(guildId)}/levels").put(body.toBody()).build(),
+        DiscordLevels.serializer(),
+        slow = true,
+    )
+
     suspend fun discordLinks(serverId: String): DiscordLinks = get("${server(serverId)}/discord-links", DiscordLinks.serializer())
 
     suspend fun unlink(serverId: String, uuid: String): DiscordLinks =
@@ -928,6 +965,13 @@ class AgentClient(
         call(request("${server(serverId)}/quests/suggestions/$ideaId").delete().build(), QuestsPage.serializer())
 
     suspend fun questEvents(serverId: String): EventsPage = get("${server(serverId)}/quests/events", EventsPage.serializer())
+
+    /** A new Community event or poll; the body from [Community.eventBody] or [Community.pollBody]. */
+    suspend fun makeEvent(serverId: String, body: JsonObject): EventsPage =
+        call(post("${server(serverId)}/quests/events", body), EventsPage.serializer())
+
+    suspend fun makePoll(serverId: String, body: JsonObject): EventsPage =
+        call(post("${server(serverId)}/quests/polls", body), EventsPage.serializer())
 
     suspend fun callOffEvent(serverId: String, eventId: Long): EventsPage =
         call(request("${server(serverId)}/quests/events/$eventId").delete().build(), EventsPage.serializer())

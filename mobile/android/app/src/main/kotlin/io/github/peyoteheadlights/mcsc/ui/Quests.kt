@@ -28,6 +28,7 @@ import io.github.peyoteheadlights.mcsc.core.EventsPage
 import io.github.peyoteheadlights.mcsc.core.GameEvent
 import io.github.peyoteheadlights.mcsc.core.QuestForm
 import io.github.peyoteheadlights.mcsc.core.QuestsPage
+import java.time.ZoneId
 
 /** A button waiting for "yes": end a quest or call off an event. */
 private data class Ending(val kind: String, val id: Long, val title: String)
@@ -35,9 +36,8 @@ private data class Ending(val kind: String, val id: Long, val title: String)
 /**
  * Quests and events for the owner and people with "Quests and events": the
  * quests going on (joined in Discord), claims to approve with their
- * screenshot, ideas from /quest suggest, a new quest, then the events with
- * who came, and the polls. Events and polls are made in the desktop app or
- * in Discord (/event, /poll); here they're looked after.
+ * screenshot, ideas from /quest suggest, a new quest, then the Community
+ * events with who came, the polls, and a new Community event and poll.
  */
 @Composable
 fun QuestsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
@@ -190,12 +190,13 @@ private fun NewQuest(quests: QuestPages, page: QuestsPage, form: QuestForm, onCh
                 if (form.item.isNotBlank()) Count(t("quests.reward_item_count"), form.itemCount, 1..64) { onChange(form.copy(itemCount = it)) }
                 Count(t("quests.reward_xp"), form.xpLevels, 0..30) { onChange(form.copy(xpLevels = it)) }
                 Count(t("quests.reward_level_xp"), form.levelXp, 0..500) { onChange(form.copy(levelXp = it)) }
+                Field(t("quests.last_day"), form.lastDay, 10) { onChange(form.copy(lastDay = it)) }
+                Text(t("mobile.quests.last_day_hint"), color = if (Community.lastDayOk(form.lastDay)) colors.text3 else colors.danger)
                 quests.formProblem?.let { Text(it.text(), color = colors.danger) }
                 Button(
                     onClick = { quests.make(form.copy(kind = kind)) { onChange(QuestForm()) } },
-                    enabled = quests.busy == null && form.title.isNotBlank(),
+                    enabled = quests.busy == null && form.title.isNotBlank() && Community.lastDayOk(form.lastDay),
                 ) { Text(t("quests.create")) }
-                Text(t("mobile.quests.last_day"), color = colors.text3)
             }
         }
     }
@@ -260,7 +261,76 @@ private fun LazyListScope.eventsPart(
             if (poll.open) Buttons(listOf(Press(t("game_events.close_poll"), { quests.closePoll(poll.id) })), quests.busy != null)
         }
     }
-    item { Note(t("mobile.quests.make_events"), color = LocalColors.current.text3) }
+    item { NewEvent(quests, events, page) }
+    item { NewPoll(quests) }
+}
+
+@Composable
+private fun NewEvent(quests: QuestPages, events: EventsPage, page: QuestsPage?) {
+    val colors = LocalColors.current
+    var form by remember { mutableStateOf(Community.eventForm(System.currentTimeMillis() / 1000.0, ZoneId.systemDefault())) }
+    val kinds = Community.EVENT_KINDS.filter { it in events.kinds.ifEmpty { Community.EVENT_KINDS } }
+    val roles = page?.roleNames.orEmpty().entries.sortedBy { it.value.lowercase() }
+    Column {
+        SectionTitle(t("game_events.new"))
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Field(t("quests.title"), form.title, 80) { form = form.copy(title = it) }
+                Field(t("quests.details"), form.details, 300) { form = form.copy(details = it) }
+                Picker(t("game_events.kind"), t("game_events.kind.${form.kind}"), kinds.map { it to t("game_events.kind.$it") }) { form = form.copy(kind = it) }
+                Text(Community.eventGoalHint(LocalStrings.current, form.kind, events.kinds), color = colors.text3)
+                if (form.kind == "advancement") Field(t("game_events.goal"), form.goal, 100) { form = form.copy(goal = it) }
+                Field(t("game_events.starts"), form.starts, 16) { form = form.copy(starts = it) }
+                Field(t("game_events.ends"), form.ends, 16) { form = form.copy(ends = it) }
+                Text(t("mobile.quests.when_hint"), color = colors.text3)
+                Tick(t("game_events.start_server"), checked = form.startServer) { form = form.copy(startServer = it) }
+                Text(t("quests.rewards_title"), color = colors.text)
+                Text(t("game_events.rewards_hint"), color = colors.text3)
+                if (page?.bot == true && roles.isNotEmpty()) {
+                    val none = "" to t("quests.reward_none")
+                    Picker(t("quests.reward_role"), form.roleId?.let { page.roleNames[it] } ?: none.second, listOf(none) + roles.map { it.key to it.value }) {
+                        form = form.copy(roleId = it.ifEmpty { null })
+                    }
+                }
+                Field(t("quests.reward_item"), form.item, 100) { form = form.copy(item = it) }
+                if (form.item.isNotBlank()) Count(t("quests.reward_item_count"), form.itemCount, 1..64) { form = form.copy(itemCount = it) }
+                Count(t("quests.reward_xp"), form.xpLevels, 0..30) { form = form.copy(xpLevels = it) }
+                Count(t("quests.reward_level_xp"), form.levelXp, 0..500) { form = form.copy(levelXp = it) }
+                quests.eventProblem?.takeIf { it.first == "event" }?.let { Text(it.second.text(), color = colors.danger) }
+                Button(
+                    onClick = { quests.makeEvent(form) { form = Community.eventForm(System.currentTimeMillis() / 1000.0, ZoneId.systemDefault()) } },
+                    enabled = quests.busy == null && form.title.isNotBlank(),
+                ) { Text(t("game_events.create")) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NewPoll(quests: QuestPages) {
+    val colors = LocalColors.current
+    var form by remember { mutableStateOf(Community.pollForm(System.currentTimeMillis() / 1000.0, ZoneId.systemDefault())) }
+    Column {
+        SectionTitle(t("game_events.new_poll"))
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Field(t("game_events.question"), form.question, 150) { form = form.copy(question = it) }
+                form.answers.forEachIndexed { i, answer ->
+                    Field(t("game_events.answer", "n" to i + 1), answer, 55) { typed ->
+                        form = form.copy(answers = form.answers.toMutableList().also { it[i] = typed })
+                    }
+                }
+                Text(t("game_events.answers_hint"), color = colors.text3)
+                Field(t("game_events.closes"), form.closes, 16) { form = form.copy(closes = it) }
+                Text(t("mobile.quests.when_hint"), color = colors.text3)
+                quests.eventProblem?.takeIf { it.first == "poll" }?.let { Text(it.second.text(), color = colors.danger) }
+                Button(
+                    onClick = { quests.makePoll(form) { form = Community.pollForm(System.currentTimeMillis() / 1000.0, ZoneId.systemDefault()) } },
+                    enabled = quests.busy == null && form.question.isNotBlank() && form.answers.count { it.isNotBlank() } >= 2,
+                ) { Text(t("game_events.create_poll")) }
+            }
+        }
+    }
 }
 
 /** Who came: ticks, changeable for 7 days after the end; Approve for a list to OK. */

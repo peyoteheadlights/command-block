@@ -6,11 +6,15 @@ import androidx.compose.runtime.setValue
 import io.github.peyoteheadlights.mcsc.core.AgentClient
 import io.github.peyoteheadlights.mcsc.core.AgentException
 import io.github.peyoteheadlights.mcsc.core.Community
+import io.github.peyoteheadlights.mcsc.core.EventForm
 import io.github.peyoteheadlights.mcsc.core.EventsPage
+import io.github.peyoteheadlights.mcsc.core.PollForm
 import io.github.peyoteheadlights.mcsc.core.QuestForm
 import io.github.peyoteheadlights.mcsc.core.QuestsPage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import java.time.ZoneId
 
 /**
  * One server's Quests and events: the quests and their board, "done"
@@ -81,6 +85,35 @@ class QuestPages(
         val shot = c.claimScreenshot(serverId, claimId)
         val bytes = runCatching { java.util.Base64.getDecoder().decode(shot.image) }.getOrNull()
         if (bytes == null) problem = Message("quests.screenshot_unreadable") else screenshot = claimId to bytes
+    }
+
+    /** A new Community event or poll; [done] empties its form. A time that can't be read says so here. */
+    fun makeEvent(form: EventForm, done: () -> Unit) = made("event", Community.eventBody(form, ZoneId.systemDefault()), done) { c, body ->
+        c.makeEvent(serverId, body)
+    }
+
+    fun makePoll(form: PollForm, done: () -> Unit) = made("poll", Community.pollBody(form, ZoneId.systemDefault()), done) { c, body ->
+        c.makePoll(serverId, body)
+    }
+
+    /** What the agent said was wrong with the new Community event or poll ("event" or "poll"). */
+    var eventProblem: Pair<String, Message>? by mutableStateOf(null)
+        private set
+
+    private fun made(which: String, body: JsonObject?, done: () -> Unit, call: suspend (AgentClient, JsonObject) -> EventsPage) {
+        if (body == null) {
+            eventProblem = which to Message("mobile.quests.when_hint")
+            return
+        }
+        work("make:$which") { c ->
+            eventProblem = null
+            try {
+                events = Read(call(c, body))
+                done()
+            } catch (e: AgentException.Failed) {
+                eventProblem = which to Message.of(e)
+            }
+        }
     }
 
     fun callOff(eventId: Long) = events("event:$eventId") { it.callOffEvent(serverId, eventId) }

@@ -2,6 +2,7 @@ package io.github.peyoteheadlights.mcsc.core
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -11,6 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.ZoneId
 
 /** The Discord bot's screens: start requests, the bot, Linked accounts,
  * whitelist requests, quests, events and polls (agent/api/routes/). */
@@ -90,6 +92,76 @@ class CommunityTest {
         assertEquals("500", stat["count"]!!.jsonPrimitive.content)
         assertEquals("7", stat["suggestion_id"]!!.jsonPrimitive.content)
         assertTrue(stat["rewards"]!!.jsonArray.isEmpty())
+    }
+
+    @Test
+    fun `a quest can have a last day, typed like the desktop's`() {
+        assertEquals("2026-12-31", Community.questBody(QuestForm(title = "x", lastDay = " 2026-12-31 "))["ends"]!!.jsonPrimitive.content)
+        assertEquals(JsonNull, Community.questBody(QuestForm(title = "x"))["ends"])
+        assertTrue(Community.lastDayOk("") && Community.lastDayOk("2026-01-05"))
+        assertFalse(Community.lastDayOk("31/12/2026") || Community.lastDayOk("2026-1-5"))
+    }
+
+    @Test
+    fun `a Community event and a poll are sent with their times on the phone's clock`() {
+        val cairo = ZoneId.of("Africa/Cairo")
+        val now = 1_761_840_000.0
+        val form = Community.eventForm(now, cairo)
+        assertEquals(Community.showWhen(now + 86_400, cairo), form.starts)
+        val body = Community.eventBody(
+            form.copy(title = " Dragon night ", kind = "online", goal = "ignored", startServer = true, xpLevels = 5),
+            cairo,
+        )!!
+        assertEquals("Dragon night", body["title"]!!.jsonPrimitive.content)
+        assertEquals("", body["goal"]!!.jsonPrimitive.content)
+        assertEquals(now + 86_400, body["starts_at"]!!.jsonPrimitive.content.toDouble(), 0.0)
+        assertEquals(now + 93_600, body["ends_at"]!!.jsonPrimitive.content.toDouble(), 0.0)
+        assertEquals("true", body["start_server"]!!.jsonPrimitive.content)
+        assertEquals("xp", body["rewards"]!!.jsonArray[0].jsonObject["kind"]!!.jsonPrimitive.content)
+        assertEquals("end/kill_dragon", Community.eventBody(form.copy(kind = "advancement", goal = "end/kill_dragon"), cairo)!!["goal"]!!.jsonPrimitive.content)
+        // A time that can't be read sends nothing.
+        assertNull(Community.eventBody(form.copy(starts = "tomorrow"), cairo))
+        val poll = Community.pollBody(
+            Community.pollForm(now, cairo).copy(question = "Map?", answers = listOf(" Desert ", "", "Ocean", "", "")),
+            cairo,
+        )!!
+        assertEquals(listOf("Desert", "Ocean"), poll["answers"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(now + 86_400, poll["closes_at"]!!.jsonPrimitive.content.toDouble(), 0.0)
+        assertNull(Community.pollBody(PollForm(question = "Map?", closes = "soon"), cairo))
+    }
+
+    // A Discord server as GET /discord sends it (agent/discord/bot.py status).
+    private val guild = json.decodeFromString(
+        DiscordGuild.serializer(),
+        """{"id": "999", "name": "Friends", "servers": ["survival"], "options": {"remove_on_leave": false, "reminders": "private"},
+            "levels": {"announce": true, "leaderboard_day": null, "roles": [{"level": 5, "role_id": "50", "name": "Regular"}]},
+            "report": {"problems": [], "roles": [{"id": "50", "name": "Regular"}, {"id": "999", "name": "@everyone"}],
+                       "channels": [{"id": "70", "name": "general"}],
+                       "tied": [{"kind": "levels", "server_id": "", "channel_id": "70", "name": "general"}]}}""",
+    )
+
+    @Test
+    fun `the channel pickers list the shared channels, then each server's own`() {
+        val rows = Community.channelRows(strings, guild, listOf("survival" to "Survival", "creative" to "Creative"))
+        assertEquals(listOf("alerts", "quests", "levels", "events", "status", "chat", "alerts", "console"), rows.map { it.kind })
+        assertEquals("70", rows.first { it.kind == "levels" }.channelId)
+        assertEquals("${strings.t("discord.kind.chat")}: Survival", rows.first { it.kind == "chat" }.label)
+        assertTrue(rows.none { it.serverId == "creative" }) // not set up for this Discord server
+        assertEquals("discord.same_alerts", Community.noChannel(rows.last { it.kind == "alerts" }))
+        val body = Community.channelBody(rows.first { it.kind == "chat" }, null)
+        assertEquals("""{"kind":"chat","server_id":"survival","channel_id":null}""", body.toString())
+        assertEquals("private", guild.reminders)
+    }
+
+    @Test
+    fun `Level settings send the Level roles only when they changed`() {
+        val same = Community.levelsBody(guild, announce = false, day = 4, rows = listOf(LevelRow(5, "50")))
+        assertEquals("""{"announce":false,"leaderboard_day":4}""", same.toString())
+        val changed = Community.levelsBody(guild, announce = true, day = null, rows = listOf(LevelRow(20, "50"), LevelRow(30, null)))
+        assertEquals("""[{"level":20,"role_id":"50"}]""", changed["roles"].toString())
+        assertEquals(listOf("50"), Community.levelRoleChoices(guild).map { it.id }) // never @everyone
+        assertEquals(listOf("survival"), Community.setupServers(guild, listOf("survival", "creative")))
+        assertEquals(listOf("solo"), Community.setupServers(guild.copy(servers = emptyList()), listOf("solo")))
     }
 
     @Test
@@ -185,6 +257,28 @@ class CommunityTest {
             assertEquals("PUT", fix.method)
             assertEquals("/api/servers/survival/quests/events/1/attendance/11", fix.path)
 
+            agent.server.enqueue(agent.json("""{"made": ["levels"], "status": {"token_set": true, "state": "connected"}}"""))
+            assertEquals(listOf("levels"), c.setUpDiscord("999", listOf("survival")).made)
+            val setup = agent.server.takeRequest()
+            assertEquals("/api/discord/guilds/999/setup", setup.path)
+            assertEquals("""{"servers":["survival"]}""", setup.body.readUtf8())
+
+            agent.server.enqueue(agent.json("""{"token_set": true, "state": "connected"}"""))
+            c.setReminders("999", "private")
+            val reminders = agent.server.takeRequest()
+            assertEquals("PUT", reminders.method)
+            assertEquals("""{"reminders":"private"}""", reminders.body.readUtf8())
+
+            agent.server.enqueue(agent.json("""{"token_set": true, "state": "connecting"}"""))
+            c.setDiscordToken(" a.b.c ")
+            val token = agent.server.takeRequest()
+            assertEquals("/api/discord/token", token.path)
+            assertEquals("""{"token":"a.b.c"}""", token.body.readUtf8())
+
+            agent.server.enqueue(agent.json("""{"events": [], "polls": [], "kinds": [], "bot": true}"""))
+            c.makePoll("survival", Community.pollBody(PollForm(question = "Map?", answers = listOf("A", "B"), closes = "2026-10-31 20:00"), ZoneId.of("UTC"))!!)
+            assertEquals("/api/servers/survival/quests/polls", agent.server.takeRequest().path)
+
             // A request that ended (answered elsewhere, or expired) comes back as the agent's words.
             agent.server.enqueue(agent.json("""{"detail": "There's no start request open for Survival."}""", 404))
             val gone = assertThrows(AgentException.Failed::class.java) { runBlocking { c.answerStartRequest("survival", start = false) } }
@@ -194,8 +288,10 @@ class CommunityTest {
 
     @Test
     fun `every word the community screens use is in the table`() {
-        val keys = listOf("mobile.start_request.started", "mobile.start_request.said_no", "page.quests", "mobile.quests.last_day", "mobile.quests.make_events", "mobile.discord.hint", "mobile.discord.on_pc") +
-            Community.KINDS.map { "quests.kind.$it" } + Community.REPEATS.map { "quests.repeat_pick.$it" }
+        val keys = listOf("mobile.start_request.started", "mobile.start_request.said_no", "page.quests", "mobile.quests.last_day_hint", "mobile.quests.when_hint", "mobile.discord.hint", "mobile.discord.token_hint") +
+            Community.KINDS.map { "quests.kind.$it" } + Community.REPEATS.map { "quests.repeat_pick.$it" } +
+            Community.EVENT_KINDS.map { "game_events.kind.$it" } + Community.REMINDERS.map { "discord.reminders.$it" } +
+            (Community.SHARED_CHANNELS + Community.SERVER_CHANNELS).map { "discord.kind.$it" }
         for (key in keys) assertTrue(key, strings.has(key))
     }
 }

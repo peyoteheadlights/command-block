@@ -19,16 +19,73 @@ public struct AlertsRead: Decodable, Equatable, Sendable {
 
 // MARK: - The bot (owner)
 
+/// A channel the bot uses: its kind, the Minecraft server ("" when shared) and the channel.
+public struct TiedChannel: Decodable, Equatable, Sendable {
+    public var kind: String
+    public var serverId: String
+    public var channelId: String
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case serverId = "server_id"
+        case channelId = "channel_id"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(String.self, forKey: .kind)
+        serverId = c.value(.serverId, "")
+        channelId = try c.decode(String.self, forKey: .channelId)
+    }
+}
+
+public struct LevelRole: Decodable, Equatable, Sendable {
+    public var level: Int
+    public var roleId: String
+    public var name: String?
+
+    enum CodingKeys: String, CodingKey {
+        case level, name
+        case roleId = "role_id"
+    }
+}
+
+public struct DiscordLevels: Decodable, Equatable, Sendable {
+    public var announce = true
+    /// 0 (Monday) to 6, or nil for no weekly leaderboard.
+    public var leaderboardDay: Int? = nil
+    public var roles: [LevelRole] = []
+
+    enum CodingKeys: String, CodingKey {
+        case announce, roles
+        case leaderboardDay = "leaderboard_day"
+    }
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        announce = c.value(.announce, true)
+        leaderboardDay = c.maybe(.leaderboardDay)
+        roles = c.each(.roles)
+    }
+}
+
 public struct DiscordGuild: Decodable, Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
     public var servers: [String]
     public var options: [String: JSONValue]
+    public var levels: DiscordLevels
     /// What the check found, one entry per problem; nil until checked.
     public var problems: [[String: JSONValue]]?
+    /// Its Discord roles (highest first) and text channels, as read by the check.
+    public var roles: [RoleName]
+    public var channels: [RoleName]
+    public var tied: [TiedChannel]
 
-    enum CodingKeys: String, CodingKey { case id, name, servers, options, report }
-    enum ReportKeys: String, CodingKey { case problems }
+    enum CodingKeys: String, CodingKey { case id, name, servers, options, levels, report }
+    enum ReportKeys: String, CodingKey { case problems, roles, channels, tied }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -36,11 +93,31 @@ public struct DiscordGuild: Decodable, Equatable, Sendable, Identifiable {
         name = c.value(.name, id)
         servers = c.value(.servers, [])
         options = c.value(.options, [:])
+        levels = c.value(.levels, DiscordLevels())
         let report = try? c.nestedContainer(keyedBy: ReportKeys.self, forKey: .report)
         problems = report?.maybe(.problems)
+        roles = report?.each(.roles) ?? []
+        channels = report?.each(.channels) ?? []
+        tied = report?.each(.tied) ?? []
     }
 
     public var removeOnLeave: Bool { options["remove_on_leave"] == .bool(true) }
+
+    /// How Community event reminders are sent: "ping" in #events or "private" messages.
+    public var reminders: String { options["reminders"]?.text ?? "ping" }
+}
+
+public struct DiscordSetupDone: Decodable, Equatable, Sendable {
+    public var made: [String]
+    public var status: DiscordStatus
+
+    enum CodingKeys: String, CodingKey { case made, status }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        made = c.value(.made, [])
+        status = try c.decode(DiscordStatus.self, forKey: .status)
+    }
 }
 
 public struct DiscordStatus: Decodable, Equatable, Sendable {
@@ -50,6 +127,7 @@ public struct DiscordStatus: Decodable, Equatable, Sendable {
     public var detail: String
     public var connectedAt: Double?
     public var name: String?
+    public var inviteUrl: String?
     /// message_content and members: on, off, or nil until read from Discord.
     public var switches: [String: Bool?]
     public var featuresOff: [String]
@@ -60,6 +138,7 @@ public struct DiscordStatus: Decodable, Equatable, Sendable {
         case state, detail, name, switches, guilds
         case tokenSet = "token_set"
         case connectedAt = "connected_at"
+        case inviteUrl = "invite_url"
         case featuresOff = "features_off"
         case webhookWithBot = "webhook_with_bot"
     }
@@ -71,6 +150,7 @@ public struct DiscordStatus: Decodable, Equatable, Sendable {
         detail = c.value(.detail, "")
         connectedAt = c.maybe(.connectedAt)
         name = c.maybe(.name)
+        inviteUrl = c.maybe(.inviteUrl)
         switches = c.value(.switches, [:])
         featuresOff = c.value(.featuresOff, [])
         webhookWithBot = c.value(.webhookWithBot, false)
@@ -498,10 +578,60 @@ public struct QuestForm: Equatable, Sendable {
     public var itemCount = 1
     public var xpLevels = 0
     public var levelXp = 0
+    /// The last day, like 2026-12-31 (on the PC's clock); empty for none.
+    public var lastDay = ""
     /// The /quest suggest idea it was made from, answered once made.
     public var suggestionId: Int64? = nil
 
     public init() {}
+}
+
+/// The new Community event form, as typed: times like "2026-10-30 20:00".
+public struct EventForm: Equatable, Sendable {
+    public var title = ""
+    public var details = ""
+    public var kind = "online"
+    public var goal = ""
+    public var starts = ""
+    public var ends = ""
+    public var startServer = false
+    public var roleId: String? = nil
+    public var item = ""
+    public var itemCount = 1
+    public var xpLevels = 0
+    public var levelXp = 0
+
+    public init() {}
+}
+
+/// The new poll form: 2 to 5 answers, closing at a time like "2026-10-31 20:00".
+public struct PollForm: Equatable, Sendable {
+    public var question = ""
+    public var answers = Array(repeating: "", count: Community.POLL_ANSWERS)
+    public var closes = ""
+
+    public init() {}
+}
+
+/// One line of the Level roles: the Level and the Discord role it gives (nil: none picked yet).
+public struct LevelRow: Equatable, Sendable {
+    public var level: Int
+    public var roleId: String?
+
+    public init(level: Int, roleId: String?) {
+        self.level = level
+        self.roleId = roleId
+    }
+}
+
+/// A channel picker: which kind, for which server ("" shared), and the words beside it.
+public struct ChannelRow: Equatable, Sendable, Identifiable {
+    public var kind: String
+    public var serverId: String
+    public var label: String
+    public var channelId: String?
+
+    public var id: String { kind + "/" + serverId }
 }
 
 /// What the community screens say and send, the same as the desktop app.
@@ -511,6 +641,15 @@ public enum Community {
     public static let START_REQUEST = "start_request"
     /// The category of a start request's lock-screen alert, with Start and Say no.
     public static let START_REQUEST_CATEGORY = "start-request"
+    /// Discord's own page for making a bot: the only web page the Discord screens open.
+    public static let DEVELOPER_PORTAL = "https://discord.com/developers/applications"
+    public static let EVENT_KINDS = ["online", "advancement", "approval"]
+    public static let POLL_ANSWERS = 5
+    // The channels, as the desktop app lists them (desktop/discord.py).
+    public static let SHARED_CHANNELS = ["alerts", "quests", "levels", "events"]
+    /// Each server's own; alerts may be its own too, console only when picked.
+    public static let SERVER_CHANNELS = ["status", "chat", "alerts", "console"]
+    public static let REMINDERS = ["ping", "private"]
 
     public static let KINDS = ["stat", "advancement", "playtime", "joins", "items", "approval"]
     public static let REPEATS = ["once", "daily", "weekly", "monthly", "yearly"]
@@ -588,22 +727,34 @@ public enum Community {
         return hint
     }
 
-    /// POST /quests: only the fields the kind uses, and only the rewards picked.
-    public static func questBody(_ form: QuestForm) -> [String: JSONValue] {
+    /// The rewards picked, each in its template's limits (the agent checks again).
+    static func rewards(roleId: String?, item: String, itemCount: Int, xpLevels: Int, levelXp: Int) -> JSONValue {
         var rewards: [JSONValue] = []
-        if let role = form.roleId {
+        if let role = roleId {
             rewards.append(.object(["kind": .string("role"), "role_id": .string(role)]))
         }
-        let item = form.item.trimmingCharacters(in: .whitespaces)
+        let item = item.trimmingCharacters(in: .whitespaces)
         if !item.isEmpty {
-            rewards.append(.object(["kind": .string("item"), "item": .string(item), "count": .number(Double(clamp(form.itemCount, 1, 64)))]))
+            rewards.append(.object(["kind": .string("item"), "item": .string(item), "count": .number(Double(clamp(itemCount, 1, 64)))]))
         }
-        if form.xpLevels > 0 {
-            rewards.append(.object(["kind": .string("xp"), "levels": .number(Double(clamp(form.xpLevels, 1, 30)))]))
+        if xpLevels > 0 {
+            rewards.append(.object(["kind": .string("xp"), "levels": .number(Double(clamp(xpLevels, 1, 30)))]))
         }
-        if form.levelXp > 0 {
-            rewards.append(.object(["kind": .string("level_xp"), "amount": .number(Double(clamp(form.levelXp, 1, 500)))]))
+        if levelXp > 0 {
+            rewards.append(.object(["kind": .string("level_xp"), "amount": .number(Double(clamp(levelXp, 1, 500)))]))
         }
+        return .array(rewards)
+    }
+
+    /// A last day as typed: empty (none) or like 2026-12-31.
+    public static func lastDayOk(_ text: String) -> Bool {
+        let day = text.trimmingCharacters(in: .whitespaces)
+        return day.isEmpty || day.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil
+    }
+
+    /// POST /quests: only the fields the kind uses, and only the rewards picked.
+    public static func questBody(_ form: QuestForm) -> [String: JSONValue] {
+        let lastDay = form.lastDay.trimmingCharacters(in: .whitespaces)
         return [
             "title": .string(form.title.trimmingCharacters(in: .whitespaces)),
             "details": .string(form.details.trimmingCharacters(in: .whitespaces)),
@@ -611,10 +762,122 @@ public enum Community {
             "goal": .string(needsGoal(form.kind) ? form.goal.trimmingCharacters(in: .whitespaces) : ""),
             "count": .number(Double(needsCount(form.kind) ? clamp(form.count, 1, 100_000) : 1)),
             "repeat": .string(form.repeatEvery),
-            "ends": .null,
-            "rewards": .array(rewards),
+            "ends": lastDay.isEmpty ? .null : .string(lastDay),
+            "rewards": rewards(roleId: form.roleId, item: form.item, itemCount: form.itemCount, xpLevels: form.xpLevels, levelXp: form.levelXp),
             "suggestion_id": form.suggestionId.map { .number(Double($0)) } ?? .null,
         ]
+    }
+
+    static func whenFormatter(_ zone: TimeZone) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = zone
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        formatter.isLenient = false
+        return formatter
+    }
+
+    /// "2026-10-30 20:00" on this phone's clock as seconds, or nil when it can't be read.
+    public static func parseWhen(_ text: String, zone: TimeZone = .current) -> Double? {
+        whenFormatter(zone).date(from: text.trimmingCharacters(in: .whitespaces))?.timeIntervalSince1970
+    }
+
+    /// A time as the forms show it.
+    public static func showWhen(_ seconds: Double, zone: TimeZone = .current) -> String {
+        whenFormatter(zone).string(from: Date(timeIntervalSince1970: seconds))
+    }
+
+    /// A new event form: tomorrow at this hour for 2 hours.
+    public static func eventForm(now: Double, zone: TimeZone = .current) -> EventForm {
+        var form = EventForm()
+        form.starts = showWhen(now + 86_400, zone: zone)
+        form.ends = showWhen(now + 93_600, zone: zone)
+        return form
+    }
+
+    /// A new poll form: open for a day.
+    public static func pollForm(now: Double, zone: TimeZone = .current) -> PollForm {
+        var form = PollForm()
+        form.closes = showWhen(now + 86_400, zone: zone)
+        return form
+    }
+
+    /// POST /quests/events, or nil while a time can't be read.
+    public static func eventBody(_ form: EventForm, zone: TimeZone = .current) -> [String: JSONValue]? {
+        guard let starts = parseWhen(form.starts, zone: zone), let ends = parseWhen(form.ends, zone: zone) else { return nil }
+        return [
+            "title": .string(form.title.trimmingCharacters(in: .whitespaces)),
+            "details": .string(form.details.trimmingCharacters(in: .whitespaces)),
+            "kind": .string(form.kind),
+            "goal": .string(form.kind == "advancement" ? form.goal.trimmingCharacters(in: .whitespaces) : ""),
+            "starts_at": .number(starts),
+            "ends_at": .number(ends),
+            "start_server": .bool(form.startServer),
+            "rewards": rewards(roleId: form.roleId, item: form.item, itemCount: form.itemCount, xpLevels: form.xpLevels, levelXp: form.levelXp),
+        ]
+    }
+
+    /// POST /quests/polls, or nil while the closing time can't be read. Empty answers are left out.
+    public static func pollBody(_ form: PollForm, zone: TimeZone = .current) -> [String: JSONValue]? {
+        guard let closes = parseWhen(form.closes, zone: zone) else { return nil }
+        let answers = form.answers.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return [
+            "question": .string(form.question.trimmingCharacters(in: .whitespaces)),
+            "answers": .array(answers.map(JSONValue.string)),
+            "closes_at": .number(closes),
+        ]
+    }
+
+    public static func eventGoalHint(_ strings: Strings, kind: String, kinds: [String]) -> String {
+        var hint = strings.t("game_events.kind_hint.\(kind)")
+        if !(kinds.isEmpty ? ["advancement"] : kinds).contains("advancement") { hint += " " + strings.t("game_events.limited_kinds") }
+        return hint
+    }
+
+    /// Which channel does what: the shared ones, then each of its servers' own.
+    /// `servers` is (id, name) for every Minecraft server.
+    public static func channelRows(_ strings: Strings, _ guild: DiscordGuild, servers: [(String, String)]) -> [ChannelRow] {
+        var current: [String: String] = [:]
+        for tie in guild.tied { current[tie.kind + "/" + tie.serverId] = tie.channelId }
+        let shared = SHARED_CHANNELS.map { ChannelRow(kind: $0, serverId: "", label: strings.t("discord.kind.\($0)"), channelId: current[$0 + "/"]) }
+        let own = servers.filter { guild.servers.contains($0.0) }.flatMap { server in
+            SERVER_CHANNELS.map { ChannelRow(kind: $0, serverId: server.0, label: "\(strings.t("discord.kind.\($0)")): \(server.1)", channelId: current[$0 + "/" + server.0]) }
+        }
+        return shared + own
+    }
+
+    /// What "no channel" says for a row: a server's own alerts fall back to the shared ones.
+    public static func noChannel(_ row: ChannelRow) -> String {
+        !row.serverId.isEmpty && row.kind == "alerts" ? "discord.same_alerts" : "discord.no_channel"
+    }
+
+    /// PUT /discord/guilds/{id}/channels.
+    public static func channelBody(_ row: ChannelRow, channelId: String?) -> [String: JSONValue] {
+        ["kind": .string(row.kind), "server_id": .string(row.serverId), "channel_id": channelId.map(JSONValue.string) ?? .null]
+    }
+
+    /// The roles a Level may give: not @everyone (its id is the Discord server's).
+    public static func levelRoleChoices(_ guild: DiscordGuild) -> [RoleName] { guild.roles.filter { $0.id != guild.id } }
+
+    /// PUT /discord/guilds/{id}/levels. The Level roles go only when changed:
+    /// once changed, setup leaves them alone (like the desktop app).
+    public static func levelsBody(_ guild: DiscordGuild, announce: Bool, day: Int?, rows: [LevelRow]) -> [String: JSONValue] {
+        func sorted(_ pairs: [(Int, String)]) -> [(Int, String)] { pairs.sorted { $0.0 != $1.0 ? $0.0 < $1.0 : $0.1 < $1.1 } }
+        let wanted = sorted(rows.compactMap { row in row.roleId.map { (clamp(row.level, 1, 1000), $0) } })
+        let saved = sorted(guild.levels.roles.map { ($0.level, $0.roleId) })
+        var body: [String: JSONValue] = ["announce": .bool(announce), "leaderboard_day": day.map { .number(Double($0)) } ?? .null]
+        if !wanted.elementsEqual(saved, by: { $0.0 == $1.0 && $0.1 == $1.1 }) {
+            body["roles"] = .array(wanted.map { .object(["level": .number(Double($0.0)), "role_id": .string($0.1)]) })
+        }
+        return body
+    }
+
+    /// Set up this Discord server for these Minecraft servers: the ticked ones, or with
+    /// none yet the one there is when there's only one (the desktop app's default).
+    public static func setupServers(_ guild: DiscordGuild, servers: [String]) -> [String] {
+        let ticked = guild.servers.filter { servers.contains($0) }
+        return !ticked.isEmpty ? ticked : servers.count == 1 ? servers : []
     }
 
     static func clamp(_ value: Int, _ low: Int, _ high: Int) -> Int { Swift.min(Swift.max(value, low), high) }

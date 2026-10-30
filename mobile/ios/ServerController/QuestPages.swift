@@ -2,9 +2,9 @@ import Core
 import Foundation
 import Observation
 
-/// One server's Quests and events (mirrors QuestPages.kt): the quests and
+/// One server's Quests and Community events (mirrors QuestPages.kt): the quests and
 /// their board, "done" claims to approve, ideas from /quest suggest, a new
-/// quest, the events with their attendance, and the polls. The agent
+/// quest, the Community events with their attendance, new ones, and the polls. The agent
 /// checks every value and the "Quests and events" permission again.
 @MainActor
 @Observable
@@ -97,6 +97,42 @@ final class QuestPages {
                 self?.problem = strings.t("quests.screenshot_unreadable")
             }
         }
+    }
+
+    /// What the agent said was wrong with the new Community event or poll ("event" or "poll").
+    var eventProblem: (which: String, text: String)? = nil
+
+    /// True once the agent made it, to empty the form. A time that can't be read says so here.
+    func makeEvent(_ form: EventForm, _ strings: Strings) async -> Bool {
+        await made("event", Community.eventBody(form), strings) { client, id, body in
+            try await client.makeEvent(serverId: id, body: body)
+        }
+    }
+
+    func makePoll(_ form: PollForm, _ strings: Strings) async -> Bool {
+        await made("poll", Community.pollBody(form), strings) { client, id, body in
+            try await client.makePoll(serverId: id, body: body)
+        }
+    }
+
+    private func made(_ which: String, _ body: [String: JSONValue]?, _ strings: Strings,
+                      _ call: @escaping (AgentClient, String, [String: JSONValue]) async throws -> EventsPage) async -> Bool {
+        guard let body else {
+            eventProblem = (which, strings.t("mobile.quests.when_hint"))
+            return false
+        }
+        var made = false
+        eventProblem = nil
+        await work("make:\(which)", strings) { [weak self] client, id in
+            do {
+                self?.events = PageRead(value: try await call(client, id, body))
+                made = true
+            } catch let refused as AgentError {
+                guard case .failed = refused else { throw refused }
+                self?.eventProblem = (which, refused.message(strings))
+            }
+        }
+        return made
     }
 
     func callOff(_ eventId: Int64, _ strings: Strings) async {

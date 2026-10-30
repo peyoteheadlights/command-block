@@ -23,8 +23,37 @@ extension AgentClient {
     }
 
     public func setRemoveOnLeave(guildId: String, on: Bool) async throws -> DiscordStatus {
-        try await call("PUT", "/api/discord/guilds/\(AgentClient.pathSegment(guildId))/options",
-                       body: try AgentClient.encode(["remove_on_leave": on]), as: DiscordStatus.self)
+        try await call("PUT", guild(guildId) + "/options", body: try AgentClient.encode(["remove_on_leave": on]), as: DiscordStatus.self)
+    }
+
+    /// The bot's token, from Discord's developer portal (owner only; never sent back).
+    public func setDiscordToken(_ token: String) async throws -> DiscordStatus {
+        try await call("PUT", "/api/discord/token", body: try AgentClient.encode(["token": token.trimmingCharacters(in: .whitespacesAndNewlines)]),
+                       slow: true, as: DiscordStatus.self)
+    }
+
+    public func removeDiscordToken() async throws -> DiscordStatus {
+        try await call("DELETE", "/api/discord/token", slow: true, as: DiscordStatus.self)
+    }
+
+    /// "Set up this Discord server" for these Minecraft servers: only what's missing is made.
+    public func setUpDiscord(guildId: String, servers: [String]) async throws -> DiscordSetupDone {
+        try await call("POST", guild(guildId) + "/setup", body: try AgentClient.encode(["servers": servers]), slow: true, as: DiscordSetupDone.self)
+    }
+
+    /// Which channel does what; the body from `Community.channelBody`.
+    public func tieChannel(guildId: String, body: [String: JSONValue]) async throws -> DiscordStatus {
+        try await call("PUT", guild(guildId) + "/channels", body: try AgentClient.encode(body), slow: true, as: DiscordStatus.self)
+    }
+
+    /// "ping" or "private".
+    public func setReminders(guildId: String, how: String) async throws -> DiscordStatus {
+        try await call("PUT", guild(guildId) + "/options", body: try AgentClient.encode(["reminders": how]), as: DiscordStatus.self)
+    }
+
+    /// Level settings; the body from `Community.levelsBody`.
+    public func setLevels(guildId: String, body: [String: JSONValue]) async throws -> DiscordLevels {
+        try await call("PUT", guild(guildId) + "/levels", body: try AgentClient.encode(body), slow: true, as: DiscordLevels.self)
     }
 
     public func discordLinks(serverId: String) async throws -> DiscordLinks {
@@ -90,6 +119,15 @@ extension AgentClient {
         try await call("GET", room(serverId) + "/quests/events", as: EventsPage.self)
     }
 
+    /// A new Community event or poll; the body from `Community.eventBody` or `Community.pollBody`.
+    public func makeEvent(serverId: String, body: [String: JSONValue]) async throws -> EventsPage {
+        try await call("POST", room(serverId) + "/quests/events", body: try AgentClient.encode(body), as: EventsPage.self)
+    }
+
+    public func makePoll(serverId: String, body: [String: JSONValue]) async throws -> EventsPage {
+        try await call("POST", room(serverId) + "/quests/polls", body: try AgentClient.encode(body), as: EventsPage.self)
+    }
+
     public func callOffEvent(serverId: String, eventId: Int64) async throws -> EventsPage {
         try await call("DELETE", room(serverId) + "/quests/events/\(eventId)", as: EventsPage.self)
     }
@@ -110,4 +148,6 @@ extension AgentClient {
 
     /// PageAPI.swift's `server(_:)` is private to that file.
     private func room(_ id: String) -> String { "/api/servers/" + AgentClient.pathSegment(id) }
+
+    private func guild(_ id: String) -> String { "/api/discord/guilds/" + AgentClient.pathSegment(id) }
 }

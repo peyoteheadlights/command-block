@@ -13,8 +13,8 @@ private struct Ending: Identifiable {
 /// Quests and events for the owner and people with "Quests and events"
 /// (mirrors Quests.kt): the quests going on (joined in Discord), claims to
 /// approve with their screenshot, ideas from /quest suggest, a new quest,
-/// then the events with who came, and the polls. Events and polls are made
-/// in the desktop app or in Discord (/event, /poll); here they're looked after.
+/// then the Community events with who came, the polls, and a new Community
+/// event and poll.
 struct QuestsView: View {
     let serverId: String
 
@@ -195,7 +195,8 @@ struct QuestsView: View {
                 }
             }
         }
-        Hint(text: model.t("mobile.quests.make_events"), palette: palette)
+        NewEventCard(quests: quests, events: events, page: quests.page.value, palette: palette)
+        NewPollCard(quests: quests, palette: palette)
     }
 
     /// Who came: ticks, changeable for 7 days after the end; Approve for a list to OK.
@@ -309,6 +310,10 @@ private struct NewQuestCard: View {
                 }
                 count("quests.reward_xp", $form.xpLevels, 0...30)
                 count("quests.reward_level_xp", $form.levelXp, 0...500)
+                field("quests.last_day", $form.lastDay, 10)
+                Text(model.t("mobile.quests.last_day_hint"))
+                    .font(.footnote)
+                    .foregroundStyle(Community.lastDayOk(form.lastDay) ? palette.textSecondary : palette.danger)
                 if let problem = quests.formProblem {
                     Text(problem).foregroundStyle(palette.danger)
                 }
@@ -322,26 +327,150 @@ private struct NewQuestCard: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(palette.accentInk)
-                .disabled(quests.busy != nil || form.title.trimmingCharacters(in: .whitespaces).isEmpty)
-                Hint(text: model.t("mobile.quests.last_day"), palette: palette)
+                .disabled(quests.busy != nil || form.title.trimmingCharacters(in: .whitespaces).isEmpty || !Community.lastDayOk(form.lastDay))
             }
         }
     }
 
-    private func field(_ key: String, _ text: Binding<String>, _ max: Int) -> some View {
-        TextField(model.t(key), text: Binding(get: { text.wrappedValue }, set: { text.wrappedValue = String($0.prefix(max)) }))
-            .textFieldStyle(.roundedBorder)
+    private func field(_ key: String, _ text: Binding<String>, _ max: Int) -> some View { FormField(label: model.t(key), text: text, max: max) }
+
+    private func count(_ key: String, _ value: Binding<Int>, _ range: ClosedRange<Int>) -> some View {
+        FormCount(label: model.t(key), value: value, range: range, palette: palette)
+    }
+}
+
+/// A new Community event, its times typed like "2026-10-30 20:00" on this phone's clock.
+private struct NewEventCard: View {
+    let quests: QuestPages
+    let events: EventsPage
+    let page: QuestsPage?
+    let palette: Palette
+
+    @Environment(AppModel.self) private var model
+    @State private var form = Community.eventForm(now: Date().timeIntervalSince1970)
+
+    var body: some View {
+        let kinds = Community.EVENT_KINDS.filter { (events.kinds.isEmpty ? Community.EVENT_KINDS : events.kinds).contains($0) }
+        let roles = (page?.roleNames ?? [:]).sorted { $0.value.lowercased() < $1.value.lowercased() }
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle(text: model.t("game_events.new"), palette: palette)
+            CardBox(palette: palette) {
+                field("quests.title", $form.title, 80)
+                field("quests.details", $form.details, 300)
+                Picker(model.t("game_events.kind"), selection: $form.kind) {
+                    ForEach(kinds, id: \.self) { Text(model.t("game_events.kind.\($0)")).tag($0) }
+                }
+                Hint(text: Community.eventGoalHint(model.strings, kind: form.kind, kinds: events.kinds), palette: palette)
+                if form.kind == "advancement" {
+                    field("game_events.goal", $form.goal, 100)
+                }
+                field("game_events.starts", $form.starts, 16)
+                field("game_events.ends", $form.ends, 16)
+                Hint(text: model.t("mobile.quests.when_hint"), palette: palette)
+                Toggle(model.t("game_events.start_server"), isOn: $form.startServer)
+                Text(model.t("quests.rewards_title")).foregroundStyle(palette.textPrimary)
+                Hint(text: model.t("game_events.rewards_hint"), palette: palette)
+                if page?.bot == true && !roles.isEmpty {
+                    Picker(model.t("quests.reward_role"), selection: $form.roleId) {
+                        Text(model.t("quests.reward_none")).tag(String?.none)
+                        ForEach(roles, id: \.key) { role in Text(verbatim: role.value).tag(Optional(role.key)) }
+                    }
+                }
+                field("quests.reward_item", $form.item, 100)
+                if !form.item.trimmingCharacters(in: .whitespaces).isEmpty {
+                    count("quests.reward_item_count", $form.itemCount, 1...64)
+                }
+                count("quests.reward_xp", $form.xpLevels, 0...30)
+                count("quests.reward_level_xp", $form.levelXp, 0...500)
+                if let problem = quests.eventProblem, problem.which == "event" {
+                    Text(problem.text).foregroundStyle(palette.danger)
+                }
+                Button(model.t("game_events.create")) {
+                    let sent = form
+                    let strings = model.strings
+                    Task {
+                        if await quests.makeEvent(sent, strings) { form = Community.eventForm(now: Date().timeIntervalSince1970) }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(palette.accentInk)
+                .disabled(quests.busy != nil || form.title.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
     }
 
-    /// A whole number kept inside `range`.
+    private func field(_ key: String, _ text: Binding<String>, _ max: Int) -> some View { FormField(label: model.t(key), text: text, max: max) }
+
     private func count(_ key: String, _ value: Binding<Int>, _ range: ClosedRange<Int>) -> some View {
-        Stepper(value: value, in: range) {
+        FormCount(label: model.t(key), value: value, range: range, palette: palette)
+    }
+}
+
+/// A new poll: a question and 2 to 5 answers.
+private struct NewPollCard: View {
+    let quests: QuestPages
+    let palette: Palette
+
+    @Environment(AppModel.self) private var model
+    @State private var form = Community.pollForm(now: Date().timeIntervalSince1970)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle(text: model.t("game_events.new_poll"), palette: palette)
+            CardBox(palette: palette) {
+                FormField(label: model.t("game_events.question"), text: $form.question, max: 150)
+                ForEach(form.answers.indices, id: \.self) { i in
+                    FormField(label: model.t("game_events.answer", ["n": i + 1]), text: $form.answers[i], max: 55)
+                }
+                Hint(text: model.t("game_events.answers_hint"), palette: palette)
+                FormField(label: model.t("game_events.closes"), text: $form.closes, max: 16)
+                Hint(text: model.t("mobile.quests.when_hint"), palette: palette)
+                if let problem = quests.eventProblem, problem.which == "poll" {
+                    Text(problem.text).foregroundStyle(palette.danger)
+                }
+                Button(model.t("game_events.create_poll")) {
+                    let sent = form
+                    let strings = model.strings
+                    Task {
+                        if await quests.makePoll(sent, strings) { form = Community.pollForm(now: Date().timeIntervalSince1970) }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(palette.accentInk)
+                .disabled(quests.busy != nil || form.question.trimmingCharacters(in: .whitespaces).isEmpty
+                    || form.answers.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count < 2)
+            }
+        }
+    }
+}
+
+/// A text box that keeps at most `max` characters.
+private struct FormField: View {
+    let label: String
+    @Binding var text: String
+    let max: Int
+
+    var body: some View {
+        TextField(label, text: Binding(get: { text }, set: { text = String($0.prefix(max)) }))
+            .textFieldStyle(.roundedBorder)
+    }
+}
+
+/// A whole number kept inside `range`.
+private struct FormCount: View {
+    let label: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let palette: Palette
+
+    var body: some View {
+        Stepper(value: $value, in: range) {
             HStack {
-                Text(model.t(key)).foregroundStyle(palette.textPrimary)
+                Text(label).foregroundStyle(palette.textPrimary)
                 Spacer()
                 TextField(
-                    model.t(key),
-                    value: Binding(get: { value.wrappedValue }, set: { value.wrappedValue = Swift.min(Swift.max($0, range.lowerBound), range.upperBound) }),
+                    label,
+                    value: Binding(get: { value }, set: { value = Swift.min(Swift.max($0, range.lowerBound), range.upperBound) }),
                     format: .number
                 )
                 .keyboardType(.numberPad)
