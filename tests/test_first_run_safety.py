@@ -3,6 +3,8 @@ limit, keeping the PC awake, Move to a new PC, and Get help."""
 
 import io
 import json
+import os
+import time
 import zipfile
 from pathlib import Path
 
@@ -568,6 +570,62 @@ def test_a_finished_export_never_replaces_a_file_that_appears_meanwhile(tmp_path
     assert saved.name == "export (2).zip" and saved.read_bytes() == b"new"
     assert (tmp_path / "export.zip").read_bytes() == b"first"
     assert not part.exists()
+
+
+def test_a_folder_with_the_exports_name_is_stepped_over(tmp_path, monkeypatch):
+    """Windows says PermissionError, not FileExistsError, for a folder."""
+    part = tmp_path / "export.zip.abc.part"
+    part.write_bytes(b"new")
+    (tmp_path / "export.zip").mkdir()
+    real_open = os.open
+
+    def like_windows(path, flags, *args):
+        if Path(path).is_dir():
+            raise PermissionError(13, "Access is denied")
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr(transfer.os, "open", like_windows)
+    assert transfer.place(part, tmp_path, "export.zip").name == "export (2).zip"
+
+
+def test_a_name_held_for_a_moment_doesnt_throw_the_export_away(tmp_path, monkeypatch):
+    """Windows Defender can hold the new empty file while it looks at it."""
+    part = tmp_path / "export.zip.abc.part"
+    part.write_bytes(b"new")
+    real_replace = os.replace
+    tries = []
+
+    def held_once(*args):
+        tries.append(args)
+        if len(tries) == 1:
+            raise PermissionError(13, "The file is in use")
+        return real_replace(*args)
+
+    monkeypatch.setattr(transfer.os, "replace", held_once)
+    monkeypatch.setattr(transfer.time, "sleep", lambda s: None)
+    saved = transfer.place(part, tmp_path, "export.zip")
+    assert saved.read_bytes() == b"new" and len(tries) == 2
+
+
+def test_an_old_part_file_in_the_export_folder_is_cleared(secret_client, tmp_path):
+    """Left when the agent stopped in the middle of an export."""
+    folder = tmp_path / "Exports"
+    folder.mkdir()
+    old = folder / "command-block-export-20261001.zip.ab12cd34.part"
+    new = folder / "command-block-export-20261030.zip.ef56ab78.part"
+    mine = folder / "notes.part"
+    for path in (old, new, mine):
+        path.write_bytes(b"half")
+    day_ago = time.time() - transfer.KEEP_SECONDS - 60
+    for path in (old, mine):
+        os.utime(path, (day_ago, day_ago))
+    job = wait_for_job(
+        secret_client,
+        secret_client.post("/api/export", json={"folder": str(folder)}).json()["job_id"],
+    )
+    assert job["state"] == "succeeded", job
+    # Only this app's own old ".part" goes: one may still be being written.
+    assert not old.exists() and new.exists() and mine.exists()
 
 
 # ------------------------------------------------------------------ database

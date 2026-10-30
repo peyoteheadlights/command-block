@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..security.paths import PathSafetyError, _system_folders, assert_not_symlink, is_inside
+from ..security.paths import PathSafetyError, assert_not_symlink, is_inside, system_folders
 
 if TYPE_CHECKING:
     from ..jobs import JobHandle
@@ -63,7 +63,7 @@ def check_folder(value: str, protected: list[Path]) -> Path:
     if not path.is_dir():
         raise PathSafetyError(f"{path} is a file, not a folder.")
     resolved = path.resolve()
-    for system in _system_folders():
+    for system in system_folders():
         if is_inside(system, resolved):
             raise PathSafetyError(f"{path} is inside a system folder ({system}).")
     for folder in protected:
