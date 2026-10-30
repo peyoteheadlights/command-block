@@ -835,8 +835,9 @@ class Bot:
         data = event.data or {}
         echoes = self._echoes.get(event.server_id or "")
         if event.type == "chat" and data.get("kind") == "server" and echoes:
-            if data.get("text") in echoes:
-                echoes.remove(data.get("text"))
+            said = str(data.get("text") or "")
+            if said in echoes:
+                echoes.remove(said)
                 return  # came from Discord
         line = bridge.game_line(event)
         if line is None:

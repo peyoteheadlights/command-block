@@ -318,11 +318,13 @@ final class CommunityTests: XCTestCase {
     }
 
     func testEveryWordTheCommunityScreensUseIsInTheTable() {
-        let keys = ["mobile.start_request.started", "mobile.start_request.said_no", "page.quests", "mobile.quests.last_day_hint",
-                    "mobile.quests.when_hint", "mobile.discord.hint", "mobile.discord.token_hint"]
-            + Community.KINDS.map { "quests.kind.\($0)" } + Community.REPEATS.map { "quests.repeat_pick.\($0)" }
-            + Community.EVENT_KINDS.map { "game_events.kind.\($0)" } + Community.REMINDERS.map { "discord.reminders.\($0)" }
-            + (Community.SHARED_CHANNELS + Community.SERVER_CHANNELS).map { "discord.kind.\($0)" }
+        var keys: [String] = ["mobile.start_request.started", "mobile.start_request.said_no", "page.quests", "mobile.quests.last_day_hint",
+                              "mobile.quests.when_hint", "mobile.discord.hint", "mobile.discord.token_hint"]
+        keys += Community.KINDS.map { "quests.kind.\($0)" }
+        keys += Community.REPEATS.map { "quests.repeat_pick.\($0)" }
+        keys += Community.EVENT_KINDS.map { "game_events.kind.\($0)" }
+        keys += Community.REMINDERS.map { "discord.reminders.\($0)" }
+        keys += (Community.SHARED_CHANNELS + Community.SERVER_CHANNELS).map { "discord.kind.\($0)" }
         for key in keys { XCTAssertTrue(s.has(key), key) }
     }
 }
