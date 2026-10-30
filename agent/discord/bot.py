@@ -407,7 +407,7 @@ class Bot:
                     old = seen.get(member)
                     if old is not None and level > old and self._announces(gid):
                         name = found.get(role or "", {}).get("name") if role else None
-                        channel = layout.shared_channel(db, gid, "levels")
+                        channel = layout.levels_channel(db, gid)
                         await self.rest.request(
                             "POST",
                             f"/channels/{channel}/messages",
@@ -427,7 +427,7 @@ class Bot:
     def _announces(self, guild_id: str) -> bool:
         return bool(
             layout.level_settings(self.core.db, guild_id)["announce"]
-            and layout.shared_channel(self.core.db, guild_id, "levels")
+            and layout.levels_channel(self.core.db, guild_id)
         )
 
     async def _set_level_role(
@@ -474,7 +474,7 @@ class Bot:
         posted = db.get_setting(BOARDS_KEY, {}) or {}
         today = now.date().isoformat()
         for gid in list(self.guilds):
-            channel = layout.shared_channel(db, gid, "levels")
+            channel = layout.levels_channel(db, gid)
             day = layout.level_settings(db, gid)["leaderboard_day"]
             if day != now.weekday() or not channel or posted.get(gid) == today:
                 continue
@@ -701,6 +701,7 @@ class Bot:
         going = [r["discord_id"] for r in view["going"]]
         if not going or event["created_at"] > event["starts_at"] - REMIND_BEFORE:
             return
+        messaged: set[str] = set()  # once, even when two Discord servers want it private
         for gid in list(self.guilds):
             channel = layout.shared_channel(db, gid, "events")
             if not channel or event["server_id"] not in layout.servers_of(db, gid):
@@ -709,7 +710,14 @@ class Bot:
             if layout.guild_options(db, gid)["reminders"] == "private":
                 server = self.core.servers[event["server_id"]].name
                 words = progress.private_reminder(event, server, self.guilds[gid]["name"])
-                pinged = [m for m in going if not await self._private(m, words)]
+                pinged = []
+                for member in going:
+                    if member in messaged:
+                        continue
+                    if await self._private(member, words):
+                        messaged.add(member)
+                    else:
+                        pinged.append(member)
             for i in range(0, len(pinged), 50):  # Discord pings at most 100 a message
                 some = pinged[i : i + 50]
                 await self.rest.request(
@@ -835,7 +843,7 @@ class Bot:
         data = event.data or {}
         echoes = self._echoes.get(event.server_id or "")
         if event.type == "chat" and data.get("kind") == "server" and echoes:
-            said = str(data.get("text") or "")
+            said = bridge.echo_key(str(data.get("text") or ""))
             if said in echoes:
                 echoes.remove(said)
                 return  # came from Discord
@@ -981,11 +989,13 @@ class Bot:
         # The console prints it back as "[Server] Sam: hi": that line isn't
         # posted in Discord again.
         echoes = self._echoes.setdefault(ctx.server_id, deque(maxlen=ECHOES))
-        echoes.append(line)
+        key = bridge.echo_key(line)
+        echoes.append(key)
         try:
             await say(ctx.server, line)
         except (ChatError, CommandError, ServerError) as exc:
-            echoes.remove(line)
+            if key in echoes:  # a busy channel may have pushed it out already
+                echoes.remove(key)
             log.info("a Discord message didn't reach %s: %s", ctx.name, exc)
 
     async def _after_ready(self) -> None:

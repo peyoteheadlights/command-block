@@ -35,13 +35,21 @@ ALLOWED_CHARS_RE = re.compile(r"^[A-Za-z0-9 _:,.\-=+*/@~^\[\]{}()'\"!?#%\\]*$")
 SHELL_META_RE = re.compile(r"[`;&|<>$\r\n\0]")
 # Unicode categories: letters, marks (accents) and digits.
 WORD_CATEGORIES = ("L", "M", "N")
+# Letters and marks that show nothing: fillers and variation selectors (the
+# ones Unicode lists as "default ignorable"). A line of them looks blank.
+INVISIBLE_RE = re.compile(
+    "[\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\ufe00-\ufe0f\uffa0\U000e0100-\U000e01ef]"
+)
 
 
 def any_language(text: str, ascii_re: re.Pattern = ALLOWED_CHARS_RE) -> bool:
     """Every character is in the ASCII set, or a letter, mark or digit of
-    any language (beyond ASCII: plain ASCII is checked by the set alone)."""
+    any language that shows (beyond ASCII: plain ASCII is checked by the
+    set alone)."""
     return all(
-        ascii_re.match(ch) if ch.isascii() else unicodedata.category(ch).startswith(WORD_CATEGORIES)
+        ascii_re.match(ch)
+        if ch.isascii()
+        else unicodedata.category(ch).startswith(WORD_CATEGORIES) and not INVISIBLE_RE.match(ch)
         for ch in text
     )
 

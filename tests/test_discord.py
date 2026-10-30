@@ -252,6 +252,11 @@ def test_chat_channels_keep_discords_slowmode_on(agent, fake):
     chat["rate_limit_per_user"] = 2
     set_up(agent)
     assert chat["rate_limit_per_user"] == 5
+    # Discord refuses it on this channel: the rest of the setup still runs.
+    chat["rate_limit_per_user"] = 0
+    fake.forbidden_channels.add(chat["id"])
+    fake.roles = [r for r in fake.roles if r["name"] != "Legend"]
+    assert "Legend" in set_up(agent)["made"]
 
 
 def test_several_servers_get_a_chat_and_status_channel_each(multi_agent, fake):

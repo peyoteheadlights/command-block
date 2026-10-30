@@ -165,6 +165,13 @@ def test_colour_codes_and_invisible_characters_go():
 def test_letters_of_any_language_reach_say():
     assert line("مرحبا يا أصدقاء", "سامي") == "say سامي: مرحبا يا أصدقاء"
     assert line("héllo 你好 Привет") == "say Sam: héllo 你好 Привет"
+    assert line("❤️ hi") == "say Sam: hi"  # the heart's variation selector goes too
+
+
+def test_the_echo_matches_when_the_console_cant_print_the_language():
+    sent = bridge.echo_key("Sam: مرحبا")
+    assert bridge.echo_key("Sam: ?????") == sent == bridge.echo_key("Sam: \ufffd\ufffd")
+    assert bridge.echo_key("Bob: hi") != bridge.echo_key("Sam: hi")
 
 
 def test_a_very_long_line_is_cut_to_one_line_of_220():
@@ -180,7 +187,15 @@ def test_fake_chat_and_console_lines_are_refused(text):
 
 def test_the_console_check_lets_say_carry_letters_and_nothing_more():
     assert validate("say مرحبا", confirm=True).raw == "say مرحبا"
-    for bad in ("say hi §4", "say hi \u202e", "say hi ✨", "say hi\u2028stop", "say a;b"):
+    for bad in (
+        "say hi §4",
+        "say hi \u202e",
+        "say hi ✨",
+        "say hi\u2028stop",
+        "say a;b",
+        "say \u3164",  # a Hangul filler: a letter that shows nothing
+        "say hi \ufe0f",  # the variation selector left after an emoji
+    ):
         with pytest.raises(CommandError):
             validate(bad, confirm=True)
     # Only say: every other command keeps the ASCII set.

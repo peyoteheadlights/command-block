@@ -198,3 +198,10 @@ def say_line(name: str, text: str) -> str:
     if len(line) > LIMIT:
         line = line[: LIMIT - 3].rstrip() + "..."
     return line
+
+
+def echo_key(line: str) -> str:
+    """A said line as it's matched against what the console prints back:
+    its ASCII characters without "?". A console that can't print a language
+    turns its letters into "?" or "\ufffd", and the line still matches."""
+    return "".join(ch for ch in line if ch.isascii() and ch != "?")

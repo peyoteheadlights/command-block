@@ -234,6 +234,20 @@ def test_level_roles_replace_each_other_and_level_ups_are_posted(agent, fake):  
     assert fake.members[MEMBER_ID] == [] and len(bot_posts(fake)) == posts
 
 
+def test_without_a_levels_channel_level_ups_go_to_quests(agent, fake):  # noqa: F811
+    """A Discord server set up before #levels was made."""
+    set_up(agent)
+    core = core_of(agent)
+    core.db.execute("DELETE FROM discord_channels WHERE kind = 'levels'")
+    played(core, "Alex", ALEX, 1)
+    linked(core, "Alex", ALEX)
+    call(agent, core.discord.update_levels)
+    core.db.execute("UPDATE players SET total_seconds = 20 * 3600 WHERE uuid = ?", (ALEX,))
+    call(agent, core.discord.update_levels)
+    assert any("reached **Level 5**" in m["content"] for m in fake.in_channel("quests"))
+    assert bot_posts(fake) == []
+
+
 def test_level_ups_can_be_turned_off_and_strangers_are_skipped(agent, fake):  # noqa: F811
     set_up(agent)
     core = core_of(agent)

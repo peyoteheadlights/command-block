@@ -14,11 +14,15 @@ both (see agent/security/permissions.py).
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from ..security import permissions as P
 from ..security.auth import Access, Principal
+from .client import DiscordError
+
+log = logging.getLogger(__name__)
 
 # Discord's permission bits (https://discord.com/developers/docs/topics/permissions).
 KICK_MEMBERS = 1 << 1
@@ -153,6 +157,12 @@ def shared_channel(db, guild_id: str, kind: str) -> str | None:
         (guild_id, kind),
     )
     return row["channel_id"] if row else None
+
+
+def levels_channel(db, guild_id: str) -> str | None:
+    """Where level-ups and the leaderboard go: #levels, or #quests on a
+    Discord server set up before #levels was made."""
+    return shared_channel(db, guild_id, "levels") or shared_channel(db, guild_id, "quests")
 
 
 def alert_channels(db, server_id: str, guild_ids) -> list[str]:
@@ -504,7 +514,11 @@ async def set_up(rest, db, guild_id: str, servers: dict[str, str]) -> dict[str, 
                 kind, sid, f"{slug(name, sid)}-{kind}" if several else kind, category
             )
             if kind == "chat" and made_id in found:
-                await keep_slowmode(rest, found[made_id])
+                try:
+                    await keep_slowmode(rest, found[made_id])
+                except DiscordError as exc:
+                    # Not allowed on this channel: the rest of the setup still runs.
+                    log.info("couldn't set slowmode on a chat channel: %s", exc)
 
     ours = our_roles(db, guild_id)
     custom = level_settings(db, guild_id)["custom"]
