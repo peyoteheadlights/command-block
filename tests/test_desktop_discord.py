@@ -305,7 +305,7 @@ def test_the_console_channel_and_leaving_are_set_on_the_discord_page(qapp, fake,
     reminders = next(
         b
         for b in page.findChildren(QtWidgets.QComboBox)
-        if b.accessibleName() == "Event reminders" and b.isVisibleTo(page)
+        if b.accessibleName() == "Community event reminders" and b.isVisibleTo(page)
     )
     assert reminders.currentData() == "ping"  # the default
     reminders.setCurrentIndex(reminders.findData("private"))
