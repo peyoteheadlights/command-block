@@ -1,15 +1,18 @@
-"""Installed mods, Modrinth search and install, updates, rollback and
-dependencies."""
+"""Installed mods, search and install from Modrinth and Hangar, add from a
+file or link, updates, rollback and dependencies."""
 
 from __future__ import annotations
 
+import asyncio
 import time
+from itertools import zip_longest
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
 from ...jobs import JobConflict
+from ...mods.addfrom import add_file, add_from_link, read_link
 from ...mods.dependencies import DependencyError
-from ...mods.modrinth import ModrinthError
+from ...mods.sources import SourceError, split
 from ...mods.updateall import update_all
 from ...security.auth import Principal
 from ...security.permissions import MODS_MANAGE, SERVER_VIEW, require
@@ -23,6 +26,7 @@ from ..responses import (
     ModHistory,
     ModImpact,
     ModInstalled,
+    ModLink,
     ModList,
     ModProject,
     ModRemoved,
@@ -39,6 +43,8 @@ from .models import (
     DependencyInstallRequest,
     ModFileRequest,
     ModInstallRequest,
+    ModLinkAddRequest,
+    ModLinkRequest,
     ModRollbackRequest,
     ModUpdateRequest,
     UpdateAllRequest,
@@ -74,18 +80,50 @@ async def search_mods(
     principal: Principal = Depends(require(SERVER_VIEW)),
     ctx=Depends(get_server),
 ):
-    version = minecraft_version or ctx.server.mc_version
-    return await ctx.mods.modrinth.search(
-        q, minecraft_version=version or None, limit=limit, offset=offset
+    version = minecraft_version or ctx.server.mc_version or None
+    if not ctx.config.server_type.hangar_platform:
+        return await ctx.mods.modrinth.search(
+            q, minecraft_version=version, limit=limit, offset=offset
+        )
+    # Plugin servers: Modrinth and Hangar side by side, each named. Their
+    # files share no checksum (SHA-512 and SHA-256), so the same plugin can
+    # show twice; installing it twice is refused by its hash.
+    # shortcut: each site fills half the page, so once one runs out the
+    # pages get shorter and the other's offset can repeat a few results.
+    half, start = max(1, limit // 2), max(0, offset) // 2
+    sites = (ctx.mods.modrinth, ctx.mods.hangar)
+    answers = await asyncio.gather(
+        *(site.search(q, minecraft_version=version, limit=half, offset=start) for site in sites),
+        return_exceptions=True,
     )
+    for answer in answers:
+        if isinstance(answer, BaseException) and not isinstance(answer, SourceError):
+            raise answer
+    found = [a for a in answers if isinstance(a, dict)]
+    if not found:
+        raise answers[0]
+    problems = [
+        f"{name} isn't available right now."
+        for name, a in zip(("Modrinth", "Hangar"), answers, strict=True)
+        if not isinstance(a, dict)
+    ]
+    for name, answer in zip(("Modrinth", "Hangar"), answers, strict=True):
+        for hit in answer["hits"] if isinstance(answer, dict) else []:
+            hit.setdefault("source_name", name)
+    hits = [hit for pair in zip_longest(*(a["hits"] for a in found)) for hit in pair if hit]
+    return {"hits": hits, "total": sum(a.get("total") or 0 for a in found), "problems": problems}
 
 
 @router.get("/mods/project/{project}", response_model=ModProject)
 async def mod_project(
     project: str, principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
 ):
-    info = await ctx.mods.modrinth.project(project)
-    versions = await ctx.mods.modrinth.versions(project, ctx.server.mc_version)
+    source, plain = split(project)
+    site = ctx.mods.hangar if source == "hangar" else ctx.mods.modrinth
+    if source == "hangar":
+        ctx.mods.site("hangar")  # refused on a server Hangar has nothing for
+    info = await site.project(plain)
+    versions = await site.versions(plain, ctx.server.mc_version)
     return {
         "project": info,
         "versions": versions[:25],
@@ -103,7 +141,7 @@ async def install_mod(
     try:
         result = await ctx.mod_change(
             f"Installing {payload.project}",
-            lambda: ctx.mods.install_from_modrinth(
+            lambda: ctx.mods.install_from_site(
                 payload.project,
                 user=principal.user,
                 version_id=payload.version_id,
@@ -135,12 +173,33 @@ async def upload_mod(
 ):
     data = await file.read(320 * 1024 * 1024)
     with audit_failure(ctx, request, "mod_upload", target=file.filename):
-        result = await ctx.mod_change(
-            f"Adding {file.filename}",
-            lambda: ctx.mods.install_local_file(file.filename or "", data, user=principal.user),
-            principal.user,
-        )
+        result = await add_file(ctx, file.filename or "", data, user=principal.user)
     audit(ctx, request, "mod_upload", target=file.filename)
+    return {"ok": True, **result}
+
+
+@router.post("/mods/link", response_model=ModLink)
+async def mod_link(
+    payload: ModLinkRequest,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """What a pasted link offers: a GitHub release's files to pick from, or
+    "download it in your browser". Nothing is downloaded."""
+    with respond_as(400):
+        return await read_link(ctx.mods, payload.url)
+
+
+@router.post("/mods/link/add", response_model=ModUploaded)
+async def mod_link_add(
+    payload: ModLinkAddRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    with audit_failure(ctx, request, "mod_link_add", target=payload.version_id):
+        result = await add_from_link(ctx, payload.version_id, user=principal.user)
+    audit(ctx, request, "mod_link_add", target=result["installed"]["filename"])
     return {"ok": True, **result}
 
 
@@ -303,7 +362,7 @@ async def mod_dependencies(
     report = ctx.mods.deps.analyse()
     try:
         await ctx.mods.deps.describe(report)
-    except (ModrinthError, DependencyError) as exc:
+    except (SourceError, DependencyError) as exc:
         report["lookup_error"] = f"Mod names could not be looked up on Modrinth: {exc}"
     return report
 

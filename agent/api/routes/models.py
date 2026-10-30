@@ -57,7 +57,7 @@ class UndoRequest(BaseModel):
 
 class ModInstallRequest(BaseModel):
     project: str = Field(max_length=100)
-    version_id: str | None = Field(default=None, max_length=64)
+    version_id: str | None = Field(default=None, max_length=200)
     allow_replace: bool = False
     install_dependencies: bool = False
 
@@ -67,7 +67,16 @@ class ModFileRequest(BaseModel):
 
 
 class ModUpdateRequest(ModFileRequest):
-    version_id: str | None = Field(default=None, max_length=64)
+    # Modrinth's, "hangar:<id>" or a GitHub file's "owner/repo/<id>".
+    version_id: str | None = Field(default=None, max_length=200)
+
+
+class ModLinkRequest(BaseModel):
+    url: str = Field(max_length=500)
+
+
+class ModLinkAddRequest(BaseModel):
+    version_id: str = Field(max_length=200)
 
 
 class UpdateAllRequest(BaseModel):

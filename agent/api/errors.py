@@ -36,7 +36,7 @@ from ..minecraft.properties import FormError, PropertiesError
 from ..modpack import ModpackError
 from ..mods.dependencies import DependencyError
 from ..mods.manager import ModError
-from ..mods.modrinth import ModrinthError
+from ..mods.sources import SourceError
 from ..safechange import SafeChangeError
 from ..scheduler.scheduler import ScheduleError
 from ..security.auth import AuthError
@@ -60,7 +60,7 @@ ERROR_STATUS: dict[type[Exception], int] = {
     DependencyError: 400,
     ScheduleError: 400,
     PathSafetyError: 400,
-    ModrinthError: 502,  # Modrinth failed, not the request
+    SourceError: 502,  # the add-on site failed, not the request
     UnknownServer: 404,
     JobNotFound: 404,
     JobConflict: 409,  # another change is already running on that server

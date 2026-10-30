@@ -439,3 +439,69 @@ def test_a_moderator_without_mods_rights_sees_no_change_buttons(qapp, agent_http
     wait_for(qapp, lambda: "3 mods installed" in shown_text(page))
     assert not buttons_named(page, "Turn off") and not buttons_named(page, "Update all")
     assert not page.search_card.isVisibleTo(page)
+
+
+def test_a_datapack_drop_and_a_github_link_are_marked_not_checked(
+    qapp, agent_http, tmp_path, monkeypatch
+):
+    from agent import downloads
+
+    from .test_hangar_and_links import DATAPACK, FakeSites
+
+    class FabricRelease(FakeSites):
+        def asset_bytes(self, name):
+            return (tmp_path / "tree.jar").read_bytes()
+
+    make_jar(tmp_path / "tree.jar", "treeplugin", "1.2", name="Trees")
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(FabricRelease()))
+    folder = with_mods(agent_http)
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.read.isEnabled())
+    pack = tmp_path / "trees.zip"
+    pack.write_bytes(DATAPACK)
+    window.open_page("Overview")
+    assert drop(qapp, window, [pack])
+    wait_for(qapp, lambda: "Added the datapack trees" in page.note.text(), 20)
+    assert "Not checked by Modrinth" in page.note.text()
+    world = core_of(agent_http).servers["survival"].config.server_dir / "world"
+    assert (world / "datapacks" / "trees.zip").is_file()
+
+    page.link_box.setText("https://www.planetminecraft.com/data-pack/trees/")
+    page.read.click()
+    wait_for(qapp, lambda: "Download it in your browser" in page.note.text(), 20)
+
+    picks = []
+    window.pick = lambda title, body, choices: picks.append((title, choices)) or 0
+    page.link_box.setText("https://github.com/tree-maker/trees/releases/tag/v1.2")
+    page.read.click()
+    wait_for(qapp, lambda: "Added Trees" in page.note.text(), 20)
+    assert picks[0][0] == "Which file from Trees v1.2?"
+    assert picks[0][1][0].startswith("TreePlugin-1.2.jar")
+    assert (folder / "TreePlugin-1.2.jar").is_file()
+    wait_for(qapp, lambda: "Not checked by Modrinth" in shown_text(page))
+
+
+def test_a_paper_server_searches_hangar_too_and_names_each_site(qapp, agent_http, monkeypatch):
+    from agent import downloads
+
+    from .test_hangar_and_links import FakeSites, PluginModrinth
+
+    sites = FakeSites()
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(sites))
+    ctx = core_of(agent_http).servers["survival"]
+    ctx.config.set("server.type", "paper")
+    use(agent_http, PluginModrinth())
+    window = signed_in_on(qapp, agent_http)
+    window.refresh()
+    wait_for(qapp, lambda: "Plugins" in page_tabs(window))
+    page = open_page(qapp, window, "Mods")
+    wait_for(qapp, lambda: page.data)
+    assert "Add from Modrinth or Hangar" in shown_text(page)
+    page.search_box.setText("via")
+    page.search()
+    wait_for(qapp, lambda: "1,031 downloads on Hangar" in shown_text(page), 20)
+    sites.down.add("hangar.papermc.io")
+    page.search_box.setText("essentials")
+    page.search()
+    wait_for(qapp, lambda: "Hangar isn't available right now." in shown_text(page), 20)
+    assert "EssentialsX" in shown_text(page)

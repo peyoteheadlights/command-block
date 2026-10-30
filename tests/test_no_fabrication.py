@@ -643,3 +643,20 @@ async def test_newer_software_never_counts_as_installed(config):
     finally:
         await core.jobs.stop()
         core.db.close()
+
+
+async def test_an_added_file_is_never_shown_as_checked_by_a_site(mods, config, tmp_path):
+    """Only a site that lists the very file has looked at it. A jar dropped
+    in or added from a GitHub release says nobody checked it, and a jar
+    copied into the folder by hand has no source at all, never a guess."""
+    source = make_jar(tmp_path / "build.jar", "cooltech", "2.1.0")
+    result = await mods.install_local_file("cooltech.jar", source.read_bytes(), user="tester")
+    assert result["source"] == "file" and result["checked_by"] is None
+    make_jar(config.mods_dir / "byhand.jar", "byhand")
+    rows = {row["mod_id"]: row for row in mods.list_installed()}
+    assert (rows["cooltech"]["source"], rows["cooltech"]["checked_by"]) == ("file", None)
+    assert (rows["byhand"]["source"], rows["byhand"]["checked_by"]) == (None, None)
+    plan = await mods.update_plan()
+    assert "cooltech" in {row["mod_id"] for row in plan["unchecked"]}, (
+        "a file's add-on is never counted as up to date"
+    )

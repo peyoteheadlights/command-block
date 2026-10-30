@@ -525,3 +525,24 @@ def test_nothing_from_the_notes_file_is_run_or_downloaded():
     # The only addresses it reads are its own two fixed files.
     assert source.count("downloads.fetch") == 2
     assert "NOTES_URL" in source and "SIGNATURE_URL" in source
+
+
+def test_nothing_added_from_another_site_a_file_or_a_link_is_run():
+    """Hangar, GitHub links and dropped files only write files the server
+    reads; a link Hangar gives for a plugin hosted elsewhere is shown,
+    never fetched."""
+    from agent.mods import addfrom, github, hangar
+
+    for module in (addfrom, github, hangar):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        for forbidden in (
+            "send_command",
+            "subprocess",
+            "os.system",
+            "eval(",
+            "exec(",
+            "os.startfile",
+        ):
+            assert forbidden not in source, (module.__name__, forbidden)
+    source = Path(hangar.__file__).read_text(encoding="utf-8")
+    assert "externalUrl" in source and "FileSpec(\n            url=str(url)" in source

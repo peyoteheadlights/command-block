@@ -516,9 +516,12 @@ Everything the agent downloads (server software, loader installers, mods
 and plugins, Geyser and Floodgate) goes through `agent/downloads.py`, which:
 
 - allows HTTPS only, to an allow-list of hosts (Mojang, FabricMC, QuiltMC,
-  Forge, NeoForged, PaperMC, PurpurMC, Modrinth, GeyserMC). On hosts that
-  serve other people's files or other pages (GitHub; Mojang's Bedrock
-  hosts), only the listed paths are allowed (`GITHUB_PATHS`, `BEDROCK_PATHS`). The host is
+  Forge, NeoForged, PaperMC, PurpurMC, Modrinth, Hangar, GeyserMC). On hosts
+  that serve other people's files or other pages (GitHub; Mojang's Bedrock
+  hosts; Hangar), only the listed paths are allowed (`GITHUB_PATHS`,
+  `BEDROCK_PATHS`). One more GitHub repo's release list and files are allowed
+  only while an add-on from a pasted link to it is read, added or updated
+  (`downloads.allow_releases`); any other pasted link is never fetched. The host is
   re-checked on every redirect hop, and redirects are followed by hand
   rather than by the HTTP client, so a redirect can't leave the list;
 - caps the size of a list (20 MB) and of a file (300 MB), and stops reading
@@ -531,7 +534,11 @@ and plugins, Geyser and Floodgate) goes through `agent/downloads.py`, which:
 Where a source publishes no checksum (the Fabric launcher jar is one), the
 file is recorded as **unverified** and the apps say so, rather than
 the result being presented as checked (see `docs/honesty.md`). Mod downloads
-additionally refuse anything Modrinth hasn't published a checksum for.
+additionally refuse anything Modrinth or Hangar hasn't published a checksum
+for. A plugin Hangar only links to on another site is shown as a link, never
+downloaded. A file from a GitHub release is checked against the SHA-256
+GitHub lists when there is one, and like a dropped file it is shown as "Not
+checked by Modrinth".
 
 Modpack mods are stricter still: each one must be on `cdn.modrinth.com`
 and must come with a SHA-512 in the pack; anything else blocks the import

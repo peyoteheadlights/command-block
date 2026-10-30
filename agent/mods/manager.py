@@ -1,13 +1,15 @@
 """The mod and plugin manager.
 
 Mods (Fabric, Quilt, Forge, NeoForge) live in mods/; plugins (Paper,
-Purpur) live in plugins/. Which one, which loaders are accepted and which
-Modrinth listings fit come from the server type's capabilities
-(agent/servertypes). Everything that touches that folder goes through this
+Purpur) live in plugins/; datapacks in the world's datapacks/. Which one,
+which loaders are accepted and which sites' listings fit come from the
+server type's capabilities (agent/servertypes). Add-ons come from Modrinth,
+Hangar or a GitHub release, all through the same calls (agent/mods/sources.py),
+or from a file. Everything that touches those folders goes through this
 class, and every write is:
 
   * confined to the mods folder by agent.security.paths
-  * limited to .jar (and .jar.disabled) files
+  * limited to .jar (and .jar.disabled) files, and .zip datapacks
   * recorded in mod_history with actor, source URL and SHA-256
   * reversible - removals go to a trash folder, updates keep the old jar
 
@@ -19,14 +21,18 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
+import json
 import logging
 import shutil
 import time
+import zipfile
 from pathlib import Path
 from typing import Any
 
 from .. import savedlists
 from ..events import Event, EventBus
+from ..minecraft.properties import FILENAME, PropertiesFile, world_folder
 from ..security.paths import (
     PathSafetyError,
     assert_not_symlink,
@@ -36,6 +42,8 @@ from ..security.paths import (
 )
 from . import checks
 from .dependencies import PLATFORM_IDS, DependencyResolver
+from .github import GitHubReleases
+from .hangar import HangarClient
 from .jarinfo import (
     DISABLED_SUFFIX,
     ModInfo,
@@ -45,11 +53,28 @@ from .jarinfo import (
     sha256_file,
     wrong_loader_reason,
 )
-from .modrinth import ModrinthClient, ModrinthError
+from .modrinth import ModrinthClient
+from .sources import LABELS, AddonSource, SourceError, split
 
 log = logging.getLogger("msc.mods")
 
 JAR_EXT = {".jar"}
+# What can be added from a file or a link: mods and plugins, and datapacks.
+FILE_EXT = {".jar", ".zip"}
+MAX_FILE_BYTES = 300 * 1024 * 1024
+# A jar with one of these is a mod or plugin (agent/mods/jarinfo.py reads them).
+MOD_FILES = (
+    "fabric.mod.json",
+    "quilt.mod.json",
+    "META-INF/mods.toml",
+    "META-INF/neoforge.mods.toml",
+    "mcmod.info",
+    "plugin.yml",
+    "paper-plugin.yml",
+)
+# How deep required plugins of required plugins are added.
+MAX_NEEDS_DEPTH = 6
+NO_UPDATES = "Added from a file, so there's no list to check it against for updates."
 # How many mods Update all asks Modrinth about at the same time.
 PLAN_CHECKS_AT_ONCE = 6
 
@@ -70,6 +95,44 @@ def refuse_known_bad(data: bytes, filename: str) -> None:
         )
 
 
+def is_datapack(data: bytes) -> bool:
+    """A datapack, not a mod or plugin that happens to carry pack.mcmeta."""
+    if datapack_problem(data):
+        return False
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        names = set(zf.namelist())
+    return not any(name in names for name in MOD_FILES)
+
+
+def datapack_problem(data: bytes) -> str | None:
+    """None when ``data`` is a datapack Minecraft can load (a zip with
+    pack.mcmeta and data/ at its top), else why not, in plain words. Only
+    read, never unpacked: the zip goes into the world as it is."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = set(zf.namelist())
+            if "pack.mcmeta" not in names:
+                inside = any(n.endswith("/pack.mcmeta") for n in names)
+                return (
+                    "Its pack.mcmeta is in a folder inside the zip, so Minecraft won't load it. "
+                    "Zip the files inside that folder instead."
+                    if inside
+                    else "It has no mod, plugin or datapack information inside."
+                )
+            if not any(n.startswith("data/") for n in names):
+                return (
+                    "It's a resource pack. Players add those in their own game, not on the server."
+                )
+            if zf.getinfo("pack.mcmeta").file_size > 64 * 1024:
+                return "Its pack.mcmeta is too big to be real."
+            meta = json.loads(zf.read("pack.mcmeta").decode("utf-8-sig"))
+    except (zipfile.BadZipFile, ValueError, UnicodeDecodeError):
+        return "Its pack.mcmeta can't be read."
+    if not isinstance(meta, dict) or not isinstance(meta.get("pack"), dict):
+        return "Its pack.mcmeta can't be read."
+    return None
+
+
 class ModManager:
     def __init__(self, config, bus: EventBus, db, server, backups=None):
         self.config = config
@@ -78,6 +141,8 @@ class ModManager:
         self.server = server
         self.backups = backups
         self.modrinth = ModrinthClient(config)
+        self.hangar = HangarClient(config)
+        self.github = GitHubReleases(config)
         self.deps = DependencyResolver(self)
         self._cache: tuple[float, list[ModInfo]] | None = None
 
@@ -105,6 +170,65 @@ class ModManager:
         reason = wrong_loader_reason(info, self.server_type.accepts, self.server_type.name)
         if reason:
             raise ModError(reason + (" It wasn't installed." if discarded else ""))
+
+    # ------------------------------------------------------------------
+    # where add-ons come from
+    # ------------------------------------------------------------------
+    def site(self, name: str) -> AddonSource:
+        """The add-on source called ``name``, when this server can use it."""
+        if name == "hangar" and not self.server_type.hangar_platform:
+            raise ModError(f"Hangar has plugins for Paper servers, not {self.server_type.name}.")
+        sites: dict[str, AddonSource] = {
+            "modrinth": self.modrinth,
+            "hangar": self.hangar,
+            "github": self.github,
+        }
+        if name not in sites:
+            raise ModError("That add-on source isn't known.")
+        return sites[name]
+
+    def record_of(self, mod: ModInfo) -> dict[str, Any]:
+        return self.db.get_setting(f"mod_source:{mod.mod_id}") or {}
+
+    def origin(self, mod: ModInfo) -> tuple[str, str | None]:
+        """Where ``mod`` came from and its project there. Add-ons noted
+        before Hangar was added have no "source": they are Modrinth's."""
+        record = self.record_of(mod)
+        source = record.get("source") or "modrinth"
+        if source == "modrinth":
+            return source, record.get("modrinth_project") or mod.modrinth_project or mod.mod_id
+        return source, record.get("project")
+
+    def remember(self, mod_id: str, source: str, version: dict[str, Any] | None = None) -> None:
+        """Note where an add-on came from, for its updates."""
+        record: dict[str, Any] = {"source": source}
+        if version:
+            record.update(
+                project=version.get("project_id"),
+                version_id=version.get("version_id"),
+                version=version.get("version_number"),
+            )
+            if source == "modrinth":
+                record["modrinth_project"] = version.get("project_id")
+        self.db.set_setting(f"mod_source:{mod_id}", record)
+
+    async def match_on_hangar(self, mod: ModInfo) -> None:
+        """A jar that came from nowhere the app knows, looked up on Hangar
+        by its SHA-256 once, so a plugin found there gets its updates."""
+        try:
+            project = await self.hangar.by_hash(mod.sha256)
+        except SourceError:
+            return  # asked again next time
+        if project:
+            self.remember(mod.mod_id, "hangar", {"project_id": f"hangar:{project}"})
+        else:  # still asked on Modrinth by its id, as before
+            self.db.set_setting(f"mod_source:{mod.mod_id}", {"hangar_checked": True})
+
+    def source_of(self, mod: ModInfo) -> str | None:
+        """The source the app installed ``mod`` from, None for a jar it
+        didn't add (copied into the folder by hand). Never a guess."""
+        record = self.record_of(mod)
+        return record.get("source") or ("modrinth" if record.get("modrinth_project") else None)
 
     # ------------------------------------------------------------------
     # directories
@@ -196,6 +320,12 @@ class ModManager:
                 (self.server.server_id, mod.mod_id),
             )
             row["has_history"] = bool(latest)
+            source = self.source_of(mod)
+            row["source"] = source
+            row["source_name"] = LABELS.get(source or "")
+            # Only a site that lists the file has looked at it; a file or a
+            # GitHub release was checked by nobody.
+            row["checked_by"] = LABELS[source] if source in ("modrinth", "hangar") else None
             update = self.db.get_setting(f"mod_update:{mod.mod_id}")
             if update and update.get("installed_version") == mod.version:
                 row["update_available"] = update
@@ -470,7 +600,7 @@ class ModManager:
         existing = self.find_by_id(mod_id_or_slug)
         return {"already_installed": existing.to_dict() if existing else None}
 
-    async def install_from_modrinth(
+    async def install_from_site(
         self,
         project: str,
         user: str,
@@ -478,18 +608,24 @@ class ModManager:
         minecraft_version: str | None = None,
         allow_replace: bool = False,
         install_dependencies: bool = False,
+        depth: int = 0,
     ) -> dict[str, Any]:
-        """Download and install a mod or plugin. Returns what changed."""
+        """Download and install a mod or plugin from Modrinth, or from
+        Hangar when ``project`` is "hangar:<id>". Returns what changed."""
         self._require_content()
         self.require_server_offline(f"install a {self.word}")
         mc_version = minecraft_version or self.server.mc_version
         kind = self.server_type.name
+        source, plain = split(project)
+        if source == "github":
+            raise ModError("Add a file from GitHub with Add from a link.")
+        site = self.site(source)
 
         version: dict[str, Any] | None
         if version_id:
-            version = await self.modrinth.version(version_id)
+            version = await site.version(version_id)
         else:
-            version = await self.modrinth.latest_for(project, mc_version)
+            version = await site.latest_for(plain, mc_version)
         if not version:
             raise ModError(
                 f"There's no {kind} version of '{project}'"
@@ -515,8 +651,14 @@ class ModManager:
                 "was changed. Use Update, or confirm that you want to replace it."
             )
 
-        data, filename, sha256 = await self.modrinth.download(version)
+        data, filename, sha256 = await site.download(version)
         refuse_known_bad(data, filename)
+        twin = next((m for m in self.scan() if m.sha256 == sha256 and m.path != str(target)), None)
+        if twin:
+            # The same file from the other site, or under another name.
+            raise ModError(
+                f"That file is already installed as {twin.filename}, so nothing was changed."
+            )
         temp = self.mods_dir / f".{filename}.part"
         temp.write_bytes(data)
         try:
@@ -544,14 +686,10 @@ class ModManager:
             new_version=installed.version,
             source=version["file"]["url"],
             sha256=sha256,
-            detail=f"Modrinth {version['version_number']} ({version['release_type']})",
+            detail=f"{LABELS[source]} {version['version_number']} ({version['release_type']})",
         )
-        self.db.set_setting(
-            f"mod_source:{installed.mod_id}",
-            {
-                "modrinth_project": version.get("project_id") or project,
-                "version_id": version["version_id"],
-            },
+        self.remember(
+            installed.mod_id, source, {**version, "project_id": version.get("project_id") or plain}
         )
         self._cache = None
         await self._emit(
@@ -559,7 +697,7 @@ class ModManager:
             f"Installed {installed.name} {installed.version}",
             level="success",
             mod=installed.to_dict(),
-            source="modrinth",
+            source=source,
         )
 
         report: dict[str, Any] = {
@@ -579,11 +717,38 @@ class ModManager:
             "release_type": version["release_type"],
             "dependencies_required": [],
             "dependencies_installed": [],
+            # Hangar's: the ones not on Hangar (a link the owner clicks; never
+            # downloaded) and the optional ones (listed, not added).
+            "dependencies_links": [
+                {"name": d.get("name"), "url": d["url"], "required": d["type"] == "required"}
+                for d in version.get("dependencies") or []
+                if d.get("url") and not d.get("project_id")
+            ],
+            "dependencies_optional": [
+                {"name": d.get("name"), "project": d["project_id"]}
+                for d in version.get("dependencies") or []
+                if d["type"] == "optional" and d.get("project_id")
+            ],
         }
 
-        # Dependencies are planned from this version's Modrinth metadata and
-        # installed through the same verified path; see dependencies.py.
-        if install_dependencies:
+        if source == "hangar":
+            needs = [
+                d
+                for d in version.get("dependencies") or []
+                if d["type"] == "required" and d.get("project_id") and not self._has(d)
+            ]
+            if install_dependencies:
+                done = await self._add_needs(needs, user, depth)
+                report["dependencies_installed"] = [r for r in done if r["result"] == "installed"]
+                report["dependencies_failed"] = [r for r in done if r["result"] == "failed"]
+                needs = [d for d in needs if not self._has(d)]
+            report["dependencies_required"] = [
+                {"mod_id": d["project_id"], "title": d.get("name"), "installed": False}
+                for d in needs
+            ]
+        # Modrinth's are planned from this version's metadata and installed
+        # through the same verified path; see dependencies.py.
+        elif install_dependencies:
             outcome = await self.deps.install(None, user)
             report["dependencies_installed"] = [
                 r for r in outcome["results"] if r["result"] == "installed"
@@ -608,21 +773,77 @@ class ModManager:
             ]
         return report
 
+    def _has(self, need: dict[str, Any]) -> bool:
+        """Whether a required plugin is here already: added from that
+        project, or a jar of that name."""
+        name = str(need.get("name") or "").lower()
+        return any(
+            mod.mod_id.lower() == name or self.origin(mod) == ("hangar", need["project_id"])
+            for mod in self.scan()
+        )
+
+    async def _add_needs(
+        self, needs: list[dict[str, Any]], user: str, depth: int
+    ) -> list[dict[str, Any]]:
+        """Add each required Hangar plugin, with a version that fits this
+        server, and theirs in turn. One that fails is reported, not hidden."""
+        results: list[dict[str, Any]] = []
+        for need in needs:
+            title = need.get("name") or need["project_id"]
+            if self._has(need):  # added for another one just now
+                continue
+            if depth >= MAX_NEEDS_DEPTH:
+                results.append(
+                    {
+                        "title": title,
+                        "result": "failed",
+                        "detail": "The chain of needs is too long.",
+                    }
+                )
+                continue
+            try:
+                got = await self.install_from_site(
+                    need["project_id"], user, install_dependencies=True, depth=depth + 1
+                )
+            except (ModError, SourceError, PathSafetyError) as exc:
+                results.append({"title": title, "result": "failed", "detail": str(exc)})
+                continue
+            results.append(
+                {"title": title, "result": "installed", "version": got["installed"]["version"]}
+            )
+            results += got["dependencies_installed"] + got.get("dependencies_failed", [])
+        return results
+
     async def install_local_file(
-        self, filename: str, data: bytes, user: str, allow_replace: bool = False
+        self,
+        filename: str,
+        data: bytes,
+        user: str,
+        allow_replace: bool = False,
+        source: str = "file",
+        version: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Install an uploaded jar. Same rules as a Modrinth install."""
-        self._require_content()
+        """Install a jar or datapack from the PC, or from a GitHub link
+        (``source`` and ``version`` say where it came from). Same rules as
+        a Modrinth install; it is read to check it fits this server first."""
         self.require_server_offline(f"install a {self.word}")
-        safe_filename(filename, JAR_EXT)
+        safe_filename(filename, FILE_EXT)
         if not data.startswith(b"PK"):
-            raise ModError("That file isn't a .jar file.")
-        if len(data) > 300 * 1024 * 1024:
+            raise ModError("That file isn't a .jar or .zip file.")
+        if len(data) > MAX_FILE_BYTES:
             raise ModError("That file is bigger than the 300 MB limit.")
+        refuse_known_bad(data, filename)
+        if is_datapack(data):
+            return await self._install_datapack(filename, data, user, allow_replace, source)
+        self._require_content()
+        if filename.lower().endswith(".zip"):
+            raise ModError(
+                f"{filename} can't be added. "
+                + (datapack_problem(data) or f"It's a {self.word}, so its name has to end in .jar.")
+            )
         target = safe_join(self.mods_dir, filename, allowed_extensions=JAR_EXT)
         if target.exists() and not allow_replace:
             raise ModError(f"{filename} is already there, so nothing was changed.")
-        refuse_known_bad(data, filename)
         temp = self.mods_dir / f".{filename}.part"
         temp.write_bytes(data)
         try:
@@ -636,22 +857,73 @@ class ModManager:
         finally:
             temp.unlink(missing_ok=True)
         installed = read_mod_jar(target)
-        self.archive(target, installed, source="uploaded")
-        self.record("install", user, installed, source="upload", detail=f"Uploaded {filename}")
+        where = (version or {}).get("file", {}).get("url") or "upload"
+        self.archive(target, installed, source="uploaded" if source == "file" else where)
+        self.record("install", user, installed, source=where, detail=f"Added {filename}")
+        self.remember(installed.mod_id, source, version)
         self._cache = None
         await self._emit(
             "mod_installed",
-            f"Installed {installed.name} {installed.version} from a file",
+            f"Installed {installed.name} {installed.version} from {LABELS[source]}",
             level="success",
             mod=installed.to_dict(),
-            source="upload",
+            source=source,
         )
         return {
-            "installed": installed.to_dict(),
+            "installed": {**installed.to_dict(), "kind": self.word},
+            "source": source,
+            "checked_by": LABELS[source] if source in ("modrinth", "hangar") else None,
             "loaded_by_minecraft": "not verified",
             "loaded_detail": (
                 f"The file is in the {self.server_type.content} folder. Start the server "
                 "to find out whether it loads."
+            ),
+        }
+
+    @property
+    def datapacks_dir(self) -> Path:
+        """The main world's datapacks folder (Paper's split layout keeps
+        its datapacks there too)."""
+        props = self.config.server_dir / FILENAME
+        values = PropertiesFile.read(props).values() if props.is_file() else {}
+        return world_folder(self.config.server_dir, values, self.server_type) / "datapacks"
+
+    async def _install_datapack(
+        self, filename: str, data: bytes, user: str, allow_replace: bool, source: str
+    ) -> dict[str, Any]:
+        if self.server_type.edition != "java":
+            raise ModError(f"{self.server_type.name} servers don't use Java datapacks.")
+        folder = self.datapacks_dir
+        if not filename.lower().endswith(".zip"):
+            raise ModError(f"{filename} is a datapack, so its name has to end in .zip.")
+        folder.mkdir(parents=True, exist_ok=True)
+        target = safe_join(folder, filename, allowed_extensions={".zip"})
+        if target.exists() and not allow_replace:
+            raise ModError(f"{filename} is already in the world's datapacks folder.")
+        temp = folder / f".{filename}.part"
+        temp.write_bytes(data)
+        temp.replace(target)
+        name = Path(filename).stem
+        self.record(
+            "install",
+            user,
+            mod_id=name.lower(),
+            mod_name=name,
+            source="upload" if source == "file" else source,
+            sha256=hashlib.sha256(data).hexdigest(),
+            detail=f"Datapack {filename} into {folder.parent.name}/datapacks",
+        )
+        await self._emit(
+            "mod_installed", f"Added the datapack {name}", level="success", source=source
+        )
+        return {
+            "installed": {"filename": filename, "name": name, "kind": "datapack"},
+            "source": source,
+            "checked_by": None,
+            "loaded_by_minecraft": "not verified",
+            "loaded_detail": (
+                f"The datapack is in {folder.parent.name}/datapacks. Minecraft turns it on "
+                "when the server starts; /datapack list shows whether it did."
             ),
         }
 
@@ -753,9 +1025,9 @@ class ModManager:
         return pending.get("minecraft_version") or self.server.mc_version
 
     async def check_updates(self, minecraft_version: str | None = None) -> list[dict[str, Any]]:
-        """Ask Modrinth about every mod or plugin (turned-off ones too, so
-        their updates are offered; they stay off) and save what it says for
-        the Mods list. Returns the updates found."""
+        """Ask the site each mod or plugin came from (turned-off ones too,
+        so their updates are offered; they stay off) and save what it says
+        for the Mods list. Returns the updates found."""
         found, _ = await self._check(minecraft_version or self._target_version())
         return [entry for _, entry in found]
 
@@ -763,23 +1035,28 @@ class ModManager:
         self, mc_version: str | None
     ) -> tuple[list[tuple[ModInfo, dict[str, Any]]], list[tuple[ModInfo, str]]]:
         """Each mod with a newer version and its saved update, and each mod
-        Modrinth couldn't be asked about with the reason. Several are asked
+        its site couldn't be asked about with the reason. Several are asked
         at once."""
         mods = self.scan()
         asking = asyncio.Semaphore(PLAN_CHECKS_AT_ONCE)
 
         async def ask(
             mod: ModInfo,
-        ) -> tuple[str, dict[str, Any] | None | ModrinthError, str | None]:
-            project = self._project(mod)
+        ) -> tuple[str, dict[str, Any] | None | Exception, str | None]:
             async with asking:
+                if not self.record_of(mod) and self.server_type.hangar_platform:
+                    await self.match_on_hangar(mod)
+                source, project = self.origin(mod)
+                if source == "file" or not project:
+                    return "", SourceError(NO_UPDATES), None
                 with savedlists.watch() as used:
                     try:
-                        latest = await self.modrinth.latest_for(project, mc_version)
-                    except ModrinthError as exc:
+                        site = self.site(source)
+                        latest = await site.latest_for(project, mc_version, like=mod.filename)
+                    except (SourceError, ModError) as exc:
                         return project, exc, None
                 # "From 3 days ago, couldn't reach Modrinth." when the
-                # answer is Modrinth's saved list.
+                # answer is the site's saved list.
                 return project, latest, savedlists.problem(used)[1]
 
         answers = await asyncio.gather(*(ask(mod) for mod in mods))
@@ -787,7 +1064,7 @@ class ModManager:
         unchecked: list[tuple[ModInfo, str]] = []
         for mod, (project, latest, saved) in zip(mods, answers, strict=True):
             entry = None
-            if isinstance(latest, ModrinthError):
+            if isinstance(latest, Exception):
                 unchecked.append((mod, str(latest)))
                 continue
             if latest:
@@ -797,26 +1074,26 @@ class ModManager:
             elif saved:
                 # A saved list is never "up to date": nobody checked just now.
                 unchecked.append((mod, f"{saved} The saved list shows nothing newer."))
-        if any(
-            saved is None and not isinstance(latest, ModrinthError) for _, latest, saved in answers
-        ):
+        if any(saved is None and not isinstance(latest, Exception) for _, latest, saved in answers):
             self.db.set_setting("mod_updates_checked_at", time.time())
         return found, unchecked
-
-    def _project(self, mod: ModInfo) -> str:
-        source = self.db.get_setting(f"mod_source:{mod.mod_id}") or {}
-        return source.get("modrinth_project") or mod.modrinth_project or mod.mod_id
 
     def _note_update(
         self, mod: ModInfo, project: str, latest: dict[str, Any], saved: str | None = None
     ) -> dict[str, Any] | None:
-        """Save what Modrinth said about ``mod`` for the Mods list; returns
+        """Save what the site said about ``mod`` for the Mods list; returns
         the update, or None when it is up to date. ``saved`` says how old
         the list was when it came from a saved copy."""
+        record = self.record_of(mod)
         if (
             not latest["version_number"]
             or latest["version_number"] == mod.version
             or self._is_installed_file(mod, latest)
+            # A release tag ("v1.3") rarely matches the jar's own version.
+            or (
+                record.get("source") == "github"
+                and latest["version_id"] == record.get("version_id")
+            )
         ):
             if not saved:
                 self.db.set_setting(f"mod_update:{mod.mod_id}", None)
@@ -831,6 +1108,7 @@ class ModManager:
             "release_type": latest.get("release_type"),
             "game_versions": latest.get("game_versions", []),
             "project": project,
+            "source": self.origin(mod)[0],
             "changelog": (latest.get("changelog") or "")[:400],
             "saved": saved,
         }
@@ -844,7 +1122,7 @@ class ModManager:
         "mc1.21.1-0.6.0-fabric" is "0.6.0+mc1.21.1" in the jar), so the
         names alone would offer the same file again and again."""
         file = version.get("file") or {}
-        for algorithm in ("sha512", "sha1"):
+        for algorithm in ("sha512", "sha256", "sha1"):
             if file.get(algorithm):
                 with open(mod.path, "rb") as jar:
                     digest = hashlib.file_digest(jar, algorithm).hexdigest()
@@ -853,16 +1131,16 @@ class ModManager:
 
     async def update_plan(self) -> dict[str, Any]:
         """What "Update all" would change: every mod or plugin, turned off
-        ones too, that Modrinth has a newer version of. One Modrinth can't
-        be asked about is listed in ``unchecked`` with the reason, never
-        left out as if it were up to date. What it finds is saved for the
+        ones too, that its site has a newer version of. One that can't be
+        checked (its site is down, or it came from a file) is listed in
+        ``unchecked`` with the reason, never left out as if it were up to date. What it finds is saved for the
         Mods list too, as a check for updates would."""
         found, unchecked = await self._check(self._target_version())
 
         def row(mod: ModInfo) -> dict[str, Any]:
             return {"mod_id": mod.mod_id, "name": mod.name or mod.mod_id, "filename": mod.filename}
 
-        keys = ("installed_version", "latest_version", "version_id", "project", "saved")
+        keys = ("installed_version", "latest_version", "version_id", "project", "source", "saved")
         return {
             "updates": [
                 {**row(mod), "enabled": mod.enabled, **{key: entry[key] for key in keys}}
@@ -878,21 +1156,28 @@ class ModManager:
         self.require_server_offline(f"update a {self.word}")
         mod = self.find(filename)
         old_path = Path(mod.path)
-        project = self._project(mod)
+        source, project = self.origin(mod)
+        if source == "file" or not project:
+            raise ModError(
+                f"{mod.name} was added from a file, so there's nothing to update it from."
+            )
+        site = self.site(source)
         version: dict[str, Any] | None
         if version_id:
-            version = await self.modrinth.version(version_id)
+            version = await site.version(version_id)
         else:
-            version = await self.modrinth.latest_for(project, self._target_version())
+            version = await site.latest_for(project, self._target_version(), like=mod.filename)
         if not version:
-            raise ModError(f"Modrinth has no newer {self.server_type.name} version of {mod.name}.")
+            raise ModError(
+                f"{LABELS[source]} has no newer {self.server_type.name} version of {mod.name}."
+            )
         if self._is_installed_file(mod, version):
             self.db.set_setting(f"mod_update:{mod.mod_id}", None)
             raise ModError(
                 f"{mod.name} is already this version ({version['version_number']}), "
                 "so nothing was changed."
             )
-        data, new_filename, sha256 = await self.modrinth.download(version)
+        data, new_filename, sha256 = await site.download(version)
         refuse_known_bad(data, new_filename)
         archived = self.archive(old_path, mod, source="pre-update")
         target = safe_join(self.mods_dir, new_filename, allowed_extensions=JAR_EXT)
@@ -923,12 +1208,10 @@ class ModManager:
             source=version["file"]["url"],
             sha256=sha256,
         )
-        self.db.set_setting(
-            f"mod_source:{installed.mod_id}",
-            {
-                "modrinth_project": version.get("project_id") or project,
-                "version_id": version["version_id"],
-            },
+        self.remember(
+            installed.mod_id,
+            source,
+            {**version, "project_id": version.get("project_id") or project},
         )
         self.db.set_setting(f"mod_update:{installed.mod_id}", None)
         self._cache = None

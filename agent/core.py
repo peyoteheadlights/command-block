@@ -282,6 +282,7 @@ class ServerContext:
                 "bans": self.config.server_type.bans,
                 "addons": self.config.server_type.addons,
                 "mods": bool(self.config.server_type.content_folder),
+                "hangar": bool(self.config.server_type.hangar_platform),
             },
             "crossplay": bool(self.config.server.crossplay),
             "game_port": self.core.ports.port_of(self).to_dict(),

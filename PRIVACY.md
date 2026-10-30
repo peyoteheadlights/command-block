@@ -15,6 +15,8 @@ here.
 | **GitHub** (`api.github.com`, this repository's releases) | Once a day to see if a new version is out (on by default; `updates.check: false` in `config.yaml` turns it off), when you select **Check now**, and when you install an update | An ordinary web request. Nothing about you or your servers |
 | **Mojang / Microsoft**, **Fabric**, **Quilt**, **Forge**, **NeoForge**, **PaperMC**, **Purpur**, **GeyserMC** | When you make a server, change its version or add crossplay | Which version to download |
 | **Modrinth** | When you search for, add or update mods, and every 12 hours to see if your mods have updates (on by default; `mods.update_check_hours: 0` in `config.yaml` turns it off) | Your search words, or which mods you have, and the Minecraft version |
+| **Hangar** (`hangar.papermc.io`, PaperMC's plugin site) | On Paper and Purpur servers: when you search for, add or update plugins, with the same update check as Modrinth, and once for each plugin jar the app didn't add, to look it up by its checksum | Your search words, which plugins you have (as checksums or project numbers), and the Minecraft version |
+| **GitHub** (one add-on's repository) | When you paste a GitHub release link to add a mod or plugin, and with the update check for an add-on added that way | Which repository and release |
 | **Adoptium** (Java) | When you ask the setup or the apps to get Java | Which Java version to download |
 | **Discord** | Only if you set up Discord alerts | The alert text (for example "Server crashed") to the webhook you entered |
 | **Your email server** | Only if you set up email alerts | The alert text to the addresses you entered |

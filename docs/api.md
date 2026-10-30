@@ -221,7 +221,10 @@ summaries use this).
 
 `GET /api/mods`, `GET /api/mods/search?q=&minecraft_version=`,
 `GET /api/mods/project/{slug}`, `POST /api/mods/install`,
-`POST /api/mods/upload` (multipart), `GET /api/mods/impact?filename=`,
+`POST /api/mods/upload` (multipart: a jar or a datapack .zip; one backup and
+one Undo), `POST /api/mods/link` (`{"url"}`: a GitHub release's files, or
+`"kind": "browser"`), `POST /api/mods/link/add` (`{"version_id"}` from it),
+`GET /api/mods/impact?filename=`,
 `POST /api/mods/remove`, `POST /api/mods/enable`, `POST /api/mods/disable`,
 `GET /api/mods/updates?refresh=`, `POST /api/mods/update`,
 `GET /api/mods/versions/{mod_id}`, `POST /api/mods/rollback`,
@@ -235,6 +238,11 @@ couldn't be asked about; needs `server.view`),
 `POST /api/mods/update-all` (`{"mods": [{"filename", "version_id"}]}`: the
 ticked ones as one change, with the server stopped: one backup first, all
 put back if any update fails, one Undo; needs `mods.manage`).
+
+On Paper and Purpur servers search answers come from Modrinth and Hangar,
+each hit with `source_name`, plus `problems` when one of them is down. Hangar
+ids look like `hangar:31` and go back unchanged to `project`, `install` and
+`version_id`.
 
 ## Game settings
 

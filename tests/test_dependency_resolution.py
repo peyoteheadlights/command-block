@@ -96,7 +96,7 @@ class FakeModrinth:
                     return v
         raise ModrinthNotFound("Modrinth doesn't have that.")
 
-    async def latest_for(self, id_or_slug, minecraft_version, loaders=None):
+    async def latest_for(self, id_or_slug, minecraft_version, loaders=None, like=None):
         return (await self.versions(id_or_slug))[0]
 
     async def download(self, version):
@@ -104,6 +104,9 @@ class FakeModrinth:
         self.downloads.append(slug)
         data = jar_bytes(self.projects[slug].get("mod_id", slug), version["version_number"])
         return data, version["file"]["filename"], hashlib.sha256(data).hexdigest()
+
+    async def by_hash(self, sha512):
+        return None  # no file added from the PC is one of these
 
     async def close(self):
         pass

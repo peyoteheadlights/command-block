@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -54,6 +55,13 @@ def is_world(path: Path) -> bool:
     """What can be dropped on the window to bring a world in."""
     if path.is_dir():
         return (path / "level.dat").is_file()  # Java and Bedrock worlds both have one
+    if path.suffix.lower() == ".zip":
+        try:
+            with zipfile.ZipFile(path) as zf:
+                if "pack.mcmeta" in zf.namelist():
+                    return False  # a datapack, which the Mods page adds
+        except (OSError, zipfile.BadZipFile):
+            pass  # the world import says what's wrong with it
     return path.suffix.lower() in WORLD_FILES
 
 

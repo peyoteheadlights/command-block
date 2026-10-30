@@ -1,7 +1,7 @@
 """The Mods page, called Plugins or Add-ons by the server's type: the
 installed list with Turn off, Update, Versions and Remove, the mods other
-mods need, Update all, Modrinth search, a modpack import and .jar files from
-this PC. A Bedrock server's add-ons (behavior and resource packs) are on
+mods need, Update all, Modrinth search (and Hangar's on plugin servers), a
+modpack import, .jar and datapack files from this PC and GitHub release links. A Bedrock server's add-ons (behavior and resource packs) are on
 their own page, AddonsPage. Changes wait until the server is stopped, as on
 the agent; nothing here stops it without a click."""
 
@@ -46,13 +46,13 @@ ACTIONS = ("install", "upload", "remove", "update", "rollback", "enable", "disab
 
 def takes(row: dict, paths: list[str]) -> bool:
     """Whether these files, dropped on the window, are the server's add-ons:
-    .jar mods or plugins, one .mrpack, or Bedrock packs."""
+    .jar mods or plugins and .zip datapacks, one .mrpack, or Bedrock packs."""
     kinds = {Path(p).suffix.lower() for p in paths}
     caps = row.get("capabilities") or {}
     if caps.get("addons"):
         return kinds <= set(PACK_FILES)
     if caps.get("mods"):
-        return kinds == {".jar"} or (len(paths) == 1 and kinds == {".mrpack"})
+        return kinds <= {".jar", ".zip"} or (len(paths) == 1 and kinds == {".mrpack"})
     return False
 
 
@@ -135,9 +135,20 @@ class ModsPage(Page):
         buttons.addWidget(self.update_all)
         buttons.addWidget(self.add_file)
         buttons.addStretch()
+        self.link_row = QWidget()
+        line = QHBoxLayout(self.link_row)
+        line.setContentsMargins(0, 0, 0, 0)
+        self.link_box = QLineEdit()
+        self.link_box.setMaxLength(500)
+        self.link_box.returnPressed.connect(self.read_link)
+        self.read = push("")
+        self.read.clicked.connect(self.read_link)
+        line.addWidget(self.link_box, 1)
+        line.addWidget(self.read)
         self.rows = QVBoxLayout()
         layout.addWidget(self.needs)
         layout.addLayout(buttons)
+        layout.addWidget(self.link_row)
         layout.addLayout(self.rows)
         drop_hint = label(kind="sub")
         layout.addWidget(drop_hint)
@@ -189,6 +200,9 @@ class ModsPage(Page):
             (title_of(self.missing_card).setText, "deps.title"),
             (self.update_all.setText, "mobile.content.update_all"),
             (self.add_file.setText, "mobile.content.add_file"),
+            (self.link_box.setPlaceholderText, "desktop.mods.link_placeholder"),
+            (self.link_box.setAccessibleName, "desktop.mods.link_placeholder"),
+            (self.read.setText, "desktop.mods.link_read"),
             (drop_hint.setText, "desktop.mods.drop"),
             (title_of(self.search_card).setText, "mobile.content.search_title"),
             (self.search_box.setPlaceholderText, "mods.search_placeholder"),
@@ -220,8 +234,11 @@ class ModsPage(Page):
         refill(self.hits, [])
         self.more.hide()
         manage = self.may("mods.manage")
-        for widget in (self.search_card, self.add_file, self.update_all):
+        for widget in (self.search_card, self.add_file, self.update_all, self.link_row):
             widget.setVisible(manage)
+        if (self.row.get("capabilities") or {}).get("hangar"):
+            title_of(self.search_card).setText(text("desktop.mods.search_both"))
+        self.link_box.clear()
         self.pack_card.setVisible(manage and self.may("settings.server"))
         self.checks_card.setVisible(mode["technical"])
         self.missing_card.hide()
@@ -274,6 +291,7 @@ class ModsPage(Page):
         # The search results' Install buttons too: the server may have stopped since.
         for button in [
             self.add_file,
+            self.read,
             self.install_missing,
             *self.hits_widget.findChildren(QPushButton),
         ]:
@@ -308,8 +326,10 @@ class ModsPage(Page):
         parts = [mod.get("version") or text("state.unknown")]
         parts.append(text(status if mod.get("enabled") else "mods.status_off"))
         if mode["technical"]:
-            parts += [mod.get("mod_id"), mod.get("minecraft_range")]
+            parts += [mod.get("mod_id"), mod.get("minecraft_range"), mod.get("source_name")]
         words.addWidget(label("  ·  ".join(p for p in parts if p), "sub"))
+        if mod.get("source") in ("file", "github"):
+            words.addWidget(label(text("desktop.mods.not_checked"), "muted"))
         for issue in (mod.get("issues") or [])[:2]:
             words.addWidget(
                 label(issue["detail"], "problem" if issue.get("severity") == "error" else "sub")
@@ -623,7 +643,7 @@ class ModsPage(Page):
                 return  # another search (or another server) since
             hits = data.get("hits") or []
             if not more:
-                refill(self.hits, [])
+                refill(self.hits, [label(p, "problem") for p in data.get("problems") or []])
             for hit in hits:
                 self.hits.addWidget(self.hit_row(hit))
             if not more and not hits:
@@ -648,8 +668,14 @@ class ModsPage(Page):
         words.addWidget(label(title, "step"))
         words.addWidget(label((hit.get("description") or "")[:140], "sub"))
         if hit.get("downloads") is not None:
+            count = f"{hit['downloads']:,}"
             words.addWidget(
-                label(text("mobile.content.downloads", count=f"{hit['downloads']:,}"), "muted")
+                label(
+                    text("desktop.mods.downloads_on", count=count, site=hit["source_name"])
+                    if hit.get("source_name")
+                    else text("mobile.content.downloads", count=count),
+                    "muted",
+                )
             )
         h.addLayout(words, 1)
         get = push(text("mods.install"))
@@ -689,8 +715,19 @@ class ModsPage(Page):
                         licence=project.get("license") or text("state.unknown"),
                     ),
                 ]
-            lines.append(text("mods.install_checked"))
-            needed = [d for d in latest.get("dependencies") or [] if d.get("type") == "required"]
+            hangar = slug.startswith("hangar:")
+            lines.append(text("desktop.mods.checked_hangar" if hangar else "mods.install_checked"))
+            deps = latest.get("dependencies") or []
+            # Hangar's needs that live elsewhere are only ever a link to click.
+            lines += [
+                text("desktop.mods.needs_link", name=d.get("name"), url=d["url"])
+                for d in deps
+                if d.get("type") == "required" and d.get("url") and not d.get("project_id")
+            ]
+            optional = [d.get("name") for d in deps if hangar and d.get("type") == "optional"]
+            if optional:
+                lines.append(text("desktop.mods.works_with", names=", ".join(map(str, optional))))
+            needed = [d for d in deps if d.get("type") == "required" and d.get("project_id")]
             body = "\n".join(lines)
             if needed:
                 count = len(needed)
@@ -760,7 +797,7 @@ class ModsPage(Page):
 
     def pick_jar(self) -> None:
         path = self.window_.pc.pick_file(
-            text("mobile.content.add_file"), f"{text('page.mods')} (*.jar)"
+            text("mobile.content.add_file"), f"{text('page.mods')} (*.jar *.zip)"
         )
         if path:
             self.add_files([path])
@@ -774,19 +811,64 @@ class ModsPage(Page):
             added: list[dict] = []
             for path in paths:
                 try:
-                    added.append(agent.upload(f"/servers/{sid}/mods/upload", path)["installed"])
+                    added.append(agent.upload(f"/servers/{sid}/mods/upload", path))
                 except AgentError as exc:  # the ones before it stay added
                     return added, f"{Path(path).name}: {exc}"
             return added, ""
 
         def done(result: tuple[list[dict], str]) -> None:
             added, problem = result
-            words = [text("mobile.content.added", name=names(added, "name"))] if added else []
-            self.say(" ".join([*words, problem]))
-            self.after_change()
+            self.added(added, problem)
 
         self.say(text("mobile.content.reading"))
         self.run_here(send, done)
+
+    def added(self, results: list[dict], problem: str = "") -> None:
+        """What was added from files or a link, and Undo for the last one."""
+        packs = [r["installed"] for r in results if r["installed"].get("kind") == "datapack"]
+        jars = [r["installed"] for r in results if r["installed"].get("kind") != "datapack"]
+        words = [text("mobile.content.added", name=names(jars, "name"))] if jars else []
+        words += [text("desktop.mods.datapack_added", name=p["name"]) for p in packs]
+        if any(not r.get("checked_by") for r in results):
+            words.append(f"{text('desktop.mods.not_checked')}.")
+        undo = results[-1].get("undo") if results else None
+        self.say(
+            " ".join([*words, problem]),
+            (lambda: self.window_.move_change("undo")) if undo and not problem else None,
+        )
+        self.after_change()
+
+    def read_link(self) -> None:
+        url = self.link_box.text().strip()
+        if not url:
+            return
+
+        def offer(read: dict) -> None:
+            if read["kind"] != "github":
+                self.say(read.get("message") or "")
+                return
+            files = read.get("files") or []
+            if not files:
+                self.say(text("desktop.mods.link_none"))
+                return
+            picked = self.window_.pick(
+                text("desktop.mods.link_pick", name=read.get("name") or read.get("repo")),
+                text("desktop.mods.link_pick_body"),
+                [f"{f['filename']}  ·  {size(f.get('size'))}" for f in files],
+            )
+            if picked is None:
+                return
+            self.say(text("mobile.content.working"))
+            self.ask(
+                "POST",
+                "/mods/link/add",
+                lambda result: self.added([result]),
+                self.said,
+                body={"version_id": files[picked]["version_id"]},
+                slow=True,
+            )
+
+        self.ask("POST", "/mods/link", offer, self.said, body={"url": url}, slow=True)
 
     def pick_pack(self) -> None:
         path = self.window_.pc.pick_file(

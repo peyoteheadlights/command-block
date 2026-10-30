@@ -783,6 +783,7 @@ def test_the_server_list_says_what_bedrock_cant_do(bedrock_client):
         "bans": False,
         "addons": True,
         "mods": False,
+        "hangar": False,
     }
     assert rows["java"]["capabilities"]["memory_limit"] is True
     assert rows["bedrock"]["game_port"]["protocol"] == "udp"

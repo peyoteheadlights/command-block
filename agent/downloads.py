@@ -1,8 +1,8 @@
 """The safe downloader: one module for every file and list the app fetches.
 
 Rules, the same for every source (Mojang, Fabric, Quilt, Forge, NeoForge,
-Paper, Purpur, Modrinth, GeyserMC, Adoptium's Java, and this app's own
-GitHub releases):
+Paper, Purpur, Modrinth, Hangar, GeyserMC, Adoptium's Java, this app's own
+GitHub releases and the one release an owner added an add-on from):
 
   * HTTPS only, and only from the official hosts in ALLOWED_HOSTS. A
     redirect is followed only to another allowed host.
@@ -25,7 +25,9 @@ import asyncio
 import hashlib
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -68,6 +70,9 @@ ALLOWED_HOSTS = frozenset(
         "api.modrinth.com",
         "cdn.modrinth.com",
         "cdn-raw.modrinth.com",
+        # Hangar (PaperMC's plugin site): its API and the files it points to.
+        "hangar.papermc.io",
+        "hangarcdn.papermc.io",
         # GeyserMC
         "download.geysermc.org",
         # Eclipse Temurin (Adoptium's Java), for the installer only
@@ -97,15 +102,21 @@ GITHUB_PATHS = {
     "api.github.com": (f"/repos/{REPO}/releases",),
     "github.com": (f"/{REPO}/releases/download/", "/adoptium/"),
 }
-# The same for Mojang's Bedrock hosts and Tailscale's package site, which
-# also serve web pages and other files: only the links list, the Bedrock
-# server zips and Tailscale's Windows setup.
+# The same for Mojang's Bedrock hosts, Tailscale's package site and Hangar,
+# which also serve web pages and other files: only the links list, the
+# Bedrock server zips, Tailscale's Windows setup, Hangar's API and its
+# plugin files.
 BEDROCK_PATHS = {
     "net-secondary.web.minecraft-services.net": ("/api/v1.0/download/links",),
     "www.minecraft.net": ("/bedrockdedicatedserver/",),
     "minecraft.azureedge.net": ("/bin-win/", "/bin-linux/"),
     "pkgs.tailscale.com": ("/stable/tailscale-setup-",),
+    "hangar.papermc.io": ("/api/v1/",),
+    "hangarcdn.papermc.io": ("/plugins/",),
 }
+# One more repo whose release list and release files may be read, while an
+# add-on from a GitHub link is read or updated (see allow_releases).
+_link_repo: ContextVar[str | None] = ContextVar("link_repo", default=None)
 
 MAX_LIST_BYTES = 20 * 1024 * 1024  # a version list or API answer
 MAX_FILE_BYTES = 300 * 1024 * 1024  # one server jar, installer or mod
@@ -121,6 +132,20 @@ TRANSPORT: httpx.AsyncBaseTransport | None = None
 class DownloadError(RuntimeError):
     """A download or list could not be fetched or did not check out. The
     message is written for the person reading it."""
+
+
+class DownloadNotFound(DownloadError):
+    """The site answered 404: it doesn't have that (an answer, not an outage)."""
+
+
+@contextmanager
+def allow_releases(repo: str) -> Iterator[None]:
+    """Inside the block, ``owner/repo``'s releases may be read from GitHub too."""
+    token = _link_repo.set(repo)
+    try:
+        yield
+    finally:
+        _link_repo.reset(token)
 
 
 @dataclass(frozen=True)
@@ -177,11 +202,15 @@ def check_url(url: str) -> str:
     if host not in ALLOWED_HOSTS:
         raise DownloadError(
             f"Downloads from {host or 'that address'} aren't allowed. "
-            "Only official Minecraft, mod loader, Modrinth, Java, Tailscale and this app's own sites are."
+            "Only official Minecraft, mod loader, Modrinth, Hangar, Java, Tailscale and this "
+            "app's own sites are."
         )
     if parsed.username or parsed.password or parsed.port not in (None, 443):
         raise DownloadError("That download address isn't allowed.")
     prefixes = GITHUB_PATHS.get(host)
+    repo = _link_repo.get()
+    if prefixes is not None and repo:
+        prefixes = (*prefixes, f"/repos/{repo}/releases", f"/{repo}/releases/download/")
     if prefixes is not None and not any(parsed.path.startswith(p) for p in prefixes):
         raise DownloadError(
             "Only this app's own releases and Temurin's files can be downloaded from GitHub."
@@ -240,7 +269,8 @@ async def _send(
         # 304: unchanged since the ETag asked with (fetch_if_changed).
         if response.status_code >= 300 and response.status_code != 304:
             await response.aclose()
-            raise DownloadError(_plain_status(response.status_code, source_name(url)))
+            error = DownloadNotFound if response.status_code == 404 else DownloadError
+            raise error(_plain_status(response.status_code, source_name(url)))
         return response, url
     raise DownloadError(
         f"{source_name(url)} kept sending the download somewhere else, so it was stopped."

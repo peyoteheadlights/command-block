@@ -1059,6 +1059,13 @@ class Mod(Open):
     issues: list[ModIssue] = []
     has_history: bool | None = None
     update_available: ModUpdate | None = None
+    source: str | None = Field(
+        None, description="modrinth, hangar, github or file; null for a jar the app didn't add"
+    )
+    source_name: str | None = None
+    checked_by: str | None = Field(
+        None, description="The site that lists this file (Modrinth or Hangar); null: nobody"
+    )
 
 
 class ModProblem(ModIssue):
@@ -1157,11 +1164,14 @@ class ModrinthHit(Open):
     page: str | None = None
     server_side: str | None = None
     client_side: str | None = None
+    source: str | None = Field(None, description="modrinth or hangar")
+    source_name: str | None = None
 
 
 class ModSearch(Open):
     hits: list[ModrinthHit]
     total: int | None = None
+    problems: list[str] = Field([], description='"Hangar isn\'t available right now."')
 
 
 class ModrinthFile(Open):
@@ -1209,11 +1219,28 @@ class DependencyNeeded(Open):
     installed: bool = False
 
 
+class DependencyLink(Open):
+    name: str | None = None
+    url: str
+    required: bool
+
+
+class DependencyOptional(Open):
+    name: str | None = None
+    project: str
+
+
 class ModInstalled(Open):
     ok: bool
     installed: dict[str, Any]
     dependencies_required: list[DependencyNeeded] = []
     dependencies_installed: list[dict[str, Any]] = []
+    dependencies_links: list[DependencyLink] = Field(
+        [], description="Needed plugins that aren't on Hangar: a link only, never downloaded"
+    )
+    dependencies_optional: list[DependencyOptional] = Field(
+        [], description="Plugins it works with, listed but not added"
+    )
 
 
 class DependencyItem(Open):
@@ -1270,6 +1297,31 @@ class DependencyInstall(Open):
 class ModUploaded(Open):
     ok: bool
     installed: dict[str, Any]
+    source: str | None = Field(
+        None, description="modrinth or hangar when a site lists it, else file or github"
+    )
+    checked_by: str | None = Field(None, description="null: nobody checked it")
+    undo: Undo | None = None
+
+
+class ModLinkFile(Open):
+    version_id: str
+    filename: str
+    size: int | None = None
+    checksum: bool = Field(description="GitHub lists its SHA-256, so the download is checked")
+
+
+class ModLink(Open):
+    """A pasted link: a GitHub release's files, or the browser-and-drop answer."""
+
+    kind: str = Field(description="github or browser")
+    message: str | None = None
+    repo: str | None = None
+    tag: str | None = None
+    name: str | None = None
+    prerelease: bool | None = None
+    page: str | None = None
+    files: list[ModLinkFile] = []
 
 
 class UpdateAllRow(Open):
@@ -1280,8 +1332,9 @@ class UpdateAllRow(Open):
     installed_version: str
     latest_version: str
     version_id: str
+    source: str | None = Field(None, description="The site the update comes from")
     saved: str | None = Field(
-        None, description="How old Modrinth's list was, when only its saved copy could be read"
+        None, description="How old the site's list was, when only its saved copy could be read"
     )
 
 

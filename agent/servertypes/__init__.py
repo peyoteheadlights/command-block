@@ -41,6 +41,8 @@ class ServerType:
     metadata_files: tuple[str, ...] = ()
     # Modrinth loader names to search and filter by. Empty: no Modrinth.
     modrinth_loaders: tuple[str, ...] = ()
+    # Hangar's platform for this type's plugins ("PAPER"). None: no Hangar.
+    hangar_platform: str | None = None
     # The name of the loader or build the console reports, if any.
     loader_name: str | None = None
     # The id mods use to depend on that loader ("fabricloader"). A
@@ -310,6 +312,7 @@ TYPES: dict[str, ServerType] = {
             accepts=("paper", "bukkit"),
             metadata_files=("paper-plugin.yml", "plugin.yml"),
             modrinth_loaders=("paper", "spigot", "bukkit"),
+            hangar_platform="PAPER",
             loader_name="Paper",
             jar="paper.jar",
             version_source="PaperMC downloads API",
@@ -330,6 +333,7 @@ TYPES: dict[str, ServerType] = {
             accepts=("paper", "bukkit"),
             metadata_files=("paper-plugin.yml", "plugin.yml"),
             modrinth_loaders=("purpur", "paper", "spigot", "bukkit"),
+            hangar_platform="PAPER",
             loader_name="Purpur",
             jar="purpur.jar",
             version_source="Purpur downloads API",

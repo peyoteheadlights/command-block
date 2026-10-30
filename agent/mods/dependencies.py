@@ -21,7 +21,7 @@ Safety rules for installing:
     that would create a duplicate; a present-but-wrong version is reported
     for the user to decide, never silently replaced or downgraded
   * identifiers are validated before they are used in any request
-  * every download goes through ModManager.install_from_modrinth, which keeps
+  * every download goes through ModManager.install_from_site, which keeps
     its checksum verification, path safety, archiving and no-overwrite rules
 """
 
@@ -581,7 +581,7 @@ class DependencyResolver:
                 continue
             log.info("dependency_detected mod=%s version=%s", item["slug"], item["version_number"])
             try:
-                installed = await self.manager.install_from_modrinth(
+                installed = await self.manager.install_from_site(
                     item["slug"], user, version_id=item["version_id"], install_dependencies=False
                 )
                 results.append(

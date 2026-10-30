@@ -84,6 +84,41 @@ rules are in `docs/security.md`. On top of them, for mods:
 - A file with no published checksum is refused rather than trusted
 - 300 MB ceiling per file
 
+## Hangar, files and links
+
+On Paper and Purpur servers the search also asks **Hangar**, PaperMC's own
+plugin site, and each result says which site it's from. Hangar plugins
+install, update and join Update all like Modrinth ones, with these rules
+(`agent/mods/hangar.py`):
+
+- only public projects, for the PAPER platform and this Minecraft version
+- the SHA-256 Hangar published is checked, and files come only from
+  `hangarcdn.papermc.io`
+- required plugins on Hangar are added with a version that fits; one Hangar
+  only links to on another site is shown as a link; optional ones are listed
+- only the Release channel is installed by default and offered as an update
+- at most 20 requests every 5 seconds, as Hangar asks
+- Modrinth publishes SHA-512 and SHA-1, Hangar SHA-256, so a plugin on both
+  can show twice in a search. Installing the same file twice is refused by its
+  hash.
+
+**Add a file** (or drop one on the window) takes a mod or plugin `.jar` or a
+datapack `.zip`. The file is read first: a mod for another loader, a resource
+pack or a zip with its `pack.mcmeta` in a folder is refused with the reason.
+Datapacks go into the world's `datapacks` folder. A jar Modrinth or Hangar
+lists (looked up by its hash) is treated as theirs; anything else shows
+"Not checked by Modrinth" and is never updated by Update all.
+
+**Add from a link** reads GitHub release links only (`agent/mods/github.py`):
+you pick one of the release's `.jar` or `.zip` files, and updates come from
+the repo's newest full release when it has one file named like yours. Any
+other link (Planet Minecraft, SpigotMC, a creator's site) says "Download it
+in your browser and drop the file here".
+
+Each add is one change with a backup of the folder it writes to and one
+Undo, except into an empty folder, which has nothing to put back (Remove
+takes it out).
+
 ## Why the server must be stopped
 
 Installing, removing, enabling, disabling and updating all require the server

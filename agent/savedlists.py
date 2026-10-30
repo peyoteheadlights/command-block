@@ -41,6 +41,8 @@ SITE_NAMES = {
     "fill.papermc.io": "PaperMC",
     "api.purpurmc.org": "Purpur",
     "api.modrinth.com": "Modrinth",
+    "hangar.papermc.io": "Hangar",
+    "api.github.com": "GitHub",
 }
 
 _root: Path | None = None

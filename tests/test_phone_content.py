@@ -85,7 +85,7 @@ def test_the_plan_lists_only_mods_with_a_newer_version_and_marks_turned_off_ones
 
 def test_a_mod_modrinth_could_not_check_is_named_not_left_out(client, mods_dir):
     class Unreachable(FakeModrinth):
-        async def latest_for(self, id_or_slug, minecraft_version, loaders=None):
+        async def latest_for(self, id_or_slug, minecraft_version, loaders=None, like=None):
             if id_or_slug == "gamma":
                 raise ModrinthError("Modrinth didn't answer.")
             return await super().latest_for(id_or_slug, minecraft_version, loaders)

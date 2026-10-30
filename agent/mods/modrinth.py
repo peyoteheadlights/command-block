@@ -26,6 +26,7 @@ import httpx
 
 from .. import downloads, savedlists
 from ..security.paths import PathSafetyError, safe_filename
+from .sources import NotFound, SourceError
 
 log = logging.getLogger("msc.modrinth")
 
@@ -33,15 +34,18 @@ ALLOWED_HOSTS = {"cdn.modrinth.com", "cdn-raw.modrinth.com", "api.modrinth.com"}
 MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024  # 300 MB ceiling for a single mod file
 
 
-class ModrinthError(RuntimeError):
+class ModrinthError(SourceError):
     pass
 
 
-class ModrinthNotFound(ModrinthError):
+class ModrinthNotFound(ModrinthError, NotFound):
     """Modrinth answered that the project or version does not exist."""
 
 
 class ModrinthClient:
+    name = "modrinth"
+    label = "Modrinth"
+
     def __init__(self, config):
         self.config = config
         self.base = config.mods.modrinth_api.rstrip("/")
@@ -146,6 +150,8 @@ class ModrinthClient:
                     "icon_url": hit.get("icon_url"),
                     "license": hit.get("license"),
                     "page": f"https://modrinth.com/{self.page_kind(hit)}/{hit.get('slug')}",
+                    "source": self.name,
+                    "source_name": self.label,
                 }
             )
         return {
@@ -252,6 +258,7 @@ class ModrinthClient:
         minecraft_version: str | None,
         loaders: tuple[str, ...] | None = None,
         allow_types: tuple[str, ...] = ("release", "beta", "alpha"),
+        like: str | None = None,
     ) -> dict | None:
         versions = await self.versions(id_or_slug, minecraft_version, loaders)
         for release_type in allow_types:
@@ -259,6 +266,14 @@ class ModrinthClient:
                 if version["release_type"] == release_type:
                     return version
         return versions[0] if versions else None
+
+    async def by_hash(self, sha512: str) -> str | None:
+        """The project a file belongs to, found by its SHA-512, or None."""
+        try:
+            found = await self._get(f"/version_file/{sha512}", {"algorithm": "sha512"})
+        except ModrinthNotFound:
+            return None
+        return str(found.get("project_id") or "") or None
 
     # ------------------------------------------------------------------
     async def download(self, version: dict[str, Any]) -> tuple[bytes, str, str]:
