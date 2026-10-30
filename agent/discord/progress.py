@@ -242,6 +242,13 @@ def reminder(event: dict[str, Any], members: list[str]) -> str:
     return f"**{escape(event['title'])}** starts <t:{int(event['starts_at'])}:R>. {pings}"
 
 
+def private_reminder(event: dict[str, Any], server: str, guild: str) -> str:
+    return (
+        f"**{escape(event['title'])}** on {escape(server)} starts "
+        f"<t:{int(event['starts_at'])}:R>. You said you're going (in {escape(guild)})."
+    )
+
+
 def poll_post(poll: dict[str, Any], server: str) -> str:
     """A poll's message: how many voted while it's open (so early votes
     don't sway later ones), every answer's count once it's closed."""

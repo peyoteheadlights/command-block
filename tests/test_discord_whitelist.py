@@ -16,6 +16,7 @@ from agent import config as agent_config
 from agent import transfer
 from agent import whitelist as wl
 from agent.discord import bridge, layout
+from agent.discord.bot import command_list
 from agent.events import Event
 from agent.minecraft.console import ConsoleLine
 from agent.security import permissions as P
@@ -138,18 +139,52 @@ def test_each_whitelist_add_on_is_confirmed_by_its_own_line(
 
 
 # ------------------------------------------------------------ whitelist requests
+def ask(fake, name: str, why: str, **who) -> list[str]:  # noqa: F811
+    """/whitelist ask opens a pop-up form; the member fills it in and sends it."""
+    token = fake.command("whitelist ask", **who)
+    form = wait_for(lambda: fake.form(token))
+    sent = fake.submit(form["custom_id"], {"name": name, "why": why}, **who)
+    return wait_for(lambda: fake.replies(sent))
+
+
+def test_whitelist_ask_opens_a_form_and_checks_what_is_typed(agent, fake):  # noqa: F811
+    set_up(agent)
+    token = fake.command("whitelist ask")
+    form = wait_for(lambda: fake.form(token))
+    assert form["custom_id"] == "form:whitelist ask:test"
+    assert form["title"] == "Ask to join Test Server"
+    fields = [row["components"][0] for row in form["components"]]
+    assert [(f["custom_id"], f["max_length"], f["required"]) for f in fields] == [
+        ("name", 20, True),
+        ("why", 300, True),
+    ]
+    # Typed into the form or not, every field gets the same checks.
+    assert "name" in ask(fake, "../Bob", "hi")[0].lower()
+    assert "why you'd like to join" in ask(fake, "Bob", "   ")[0]
+    # A form for a server this Discord server isn't for, or one that's gone.
+    sent = fake.submit("form:whitelist ask:nowhere", {"name": "Bob", "why": "hi"})
+    assert "isn't there any more" in wait_for(lambda: fake.replies(sent))[0]
+    sent = fake.submit("form:report:test", {"player": "Bob", "reason": "x"})  # not a form
+    sent_too = fake.submit("form:whitelist ask:test", {"name": "Bob", "why": "hi"})
+    assert wait_for(lambda: fake.replies(sent_too))[0].startswith("Sent.")
+    assert fake.replies(sent) == []
+    assert agent.get("/api/servers/test/whitelist").json()["forms"][0]["name"] == "Bob"
+    # Registered with no options: the form asks.
+    entry = next(c for c in command_list({"test": "Test Server"}) if c["name"] == "whitelist")
+    ask_entry = next(o for o in entry["options"] if o["name"] == "ask")
+    assert [o["name"] for o in ask_entry["options"]] == ["server"]
+
+
 def test_a_request_is_approved_once_and_the_asker_hears(agent, fake):  # noqa: F811
     set_up(agent)
-    assert run(fake, "whitelist ask", {"name": "Bob", "why": "  Sam's\nfriend  "})[0].startswith(
-        "Sent."
-    )
+    assert ask(fake, "Bob", "  Sam's\nfriend  ")[0].startswith("Sent.")
     form = agent.get("/api/servers/test/whitelist").json()["forms"][0]
     assert (form["name"], form["why"], form["discord_name"]) == ("Bob", "Sam's friend", "sam")
     alert = wait_for(lambda: alerts_of(fake, "form_yes"))[0]
     assert alert["embeds"][0]["title"] == "Test Server: someone asks to join"
     assert buttons_of(alert) == [f"form_yes:test:{form['id']}", f"form_no:test:{form['id']}"]
     # Asking again replaces the request: one per member.
-    run(fake, "whitelist ask", {"name": "Bobby", "why": "typo"})
+    ask(fake, "Bobby", "typo")
     forms = agent.get("/api/servers/test/whitelist").json()["forms"]
     assert [f["name"] for f in forms] == ["Bobby"]
     form_id = forms[0]["id"]
@@ -196,7 +231,7 @@ def test_turning_down_a_request_and_what_a_request_may_hold(agent, fake):  # noq
     set_up(agent)
     core = core_of(agent)
     ctx = core.servers["test"]
-    run(fake, "whitelist ask", {"name": "Bob", "why": "hi"})
+    ask(fake, "Bob", "hi")
     form_id = agent.get("/api/servers/test/whitelist").json()["forms"][0]["id"]
     refused = agent.post(f"/api/servers/test/whitelist/forms/{form_id}", json={"answer": "refuse"})
     assert refused.status_code == 200, refused.text
@@ -235,7 +270,7 @@ def test_leaving_the_discord_server_takes_them_off_only_when_asked(agent, fake):
     identifies = fake.identifies
     turned_on = agent.put(f"/api/discord/guilds/{GUILD_ID}/options", json={"remove_on_leave": True})
     assert turned_on.status_code == 200, turned_on.text
-    assert turned_on.json()["guilds"][0]["options"] == {"remove_on_leave": True}
+    assert turned_on.json()["guilds"][0]["options"]["remove_on_leave"] is True
     # The bot logs in again to ask Discord who leaves.
     wait_for(lambda: fake.identifies > identifies)
     wait_for(lambda: agent.get("/api/discord").json()["state"] == "connected")

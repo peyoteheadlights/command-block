@@ -31,7 +31,7 @@ Everything is on the desktop app's gear → **Discord**.
    private threads.
 6. Tick which Minecraft servers that Discord server is for and press **Set
    up this Discord server**. It adds a "Command Block" category with
-   alerts, quests and events channels, a chat and status channel for each
+   alerts, quests, levels and events channels, a chat and status channel for each
    Minecraft server, and the Discord roles "Minecraft mod", "Regular",
    "Veteran" and "Legend". It only adds what's missing and finds its own
    channels and roles by id, so it never deletes or renames anything.
@@ -109,12 +109,17 @@ Each Minecraft server's chat channel and its game chat are joined.
   who's online. Lines are gathered for a second and posted together. The
   bot never pings anyone and Discord formatting in game chat shows as
   typed. Link codes never reach Discord.
-- **Discord to game:** `[Discord] Sam: hi`, sent with `tellraw`. Letters of
-  any language stay, emoji go, mentions become plain names, formatting
-  marks go, and it's one line of at most 220 characters. A message that
+- **Discord to game:** `[Server] Sam: hi`, sent with `say`, so the console
+  prints it and it shows in the apps' chat views too (it isn't posted back
+  in Discord). Letters of any language stay, emoji and symbols go, mentions
+  become plain names, formatting marks go, `@` becomes "at" so `@a` and the
+  other target selectors can never pick players, and it's one line of at
+  most 220 characters. Only a server's own chat channel goes in. A message that
   starts like a command (`/`) or a console line (`[12:00:00`, `[Server]`,
   `<Name>`) gets a 🚫 reaction and stays out of the game. Each member can
-  send 5 messages in 10 seconds; the rest are dropped. Bots and webhooks
+  send 5 messages in 10 seconds; the rest are dropped. Discord's own
+  slowmode is on in each chat channel (5 seconds), and the bot turns it
+  back on if someone turns it off or lower. Bots and webhooks
   are left out, and nothing goes in while the server isn't online.
 
 Discord to game needs the **Message Content** switch; without it the bridge
@@ -122,10 +127,11 @@ is game to Discord only and the Discord page says so. A Bedrock server
 doesn't print chat to its console, so there only joins and leaves reach
 Discord (the page says that too); Discord messages still reach the game.
 
-The `tellraw` text is JSON our code writes, with every character outside a
-small safe set written as a `\u` escape, so the command still passes the
-console check's character set (house rule 2). It's built and sent in
-`agent/minecraft/chat.py`; nothing in `agent/discord/` reaches the console.
+The `say` line goes through the same console check as every command (house
+rule 2): one line, no control or invisible characters, no shell characters,
+no `§` colour codes. `say` is the one command that may also carry letters
+and digits of any language. It's sent by `agent/minecraft/chat.py`; nothing
+in `agent/discord/` reaches the console.
 
 ## Linking accounts
 
@@ -176,12 +182,12 @@ checks say so). A role that stops being a Level role is taken back from
 members. Once changed, setup leaves the Level roles alone.
 
 Once a minute the bot works out everyone's Level and only calls Discord
-for a member whose Level changed. Level-ups are posted in the quests
+for a member whose Level changed. Level-ups are posted in the levels
 channel (no ping), and can be turned off. A member seen for the first time
 gets their role without a post.
 
 The **weekly leaderboard** is off until you pick a day. It's posted in the
-quests channel at 18:00 on the PC's clock: the top 10 by playtime in the
+levels channel at 18:00 on the PC's clock: the top 10 by playtime in the
 last 7 days on that Discord server's Minecraft servers, and the top 10
 Levels. It's remembered, so a restart doesn't post it twice.
 
@@ -238,7 +244,9 @@ with `/event create` (the start typed on the PC's clock, like
 `2026-10-30 20:00`; Discord shows it in each reader's own time). It's
 posted in the events channel with **Going**, **Maybe** and **Can't**
 buttons, and the post edits itself as answers come in. An hour before, one
-message pings only the members who said Going. An event can start the
+message pings only the members who said Going. Under **Event reminders**
+each Discord server can send a private message to each of them instead;
+anyone who blocks private messages from the server is pinged. An event can start the
 server 10 minutes before (skipped in maintenance mode).
 
 Who came is worked out from real data, by the event's kind:
@@ -268,8 +276,8 @@ shows every count and the result is posted below it.
 
 `/whitelist add <name>` is for Discord roles with **Players**. It sends the
 normal whitelist command and says "Sent" until the server's console
-confirms it, like the Players page. Anyone else can use `/whitelist ask`
-with their Minecraft name and why they'd like to join. The request shows in
+confirms it, like the Players page. Anyone else can use `/whitelist ask`:
+a pop-up form asks for their Minecraft name and why they'd like to join. The request shows in
 the alerts channel with **Approve** and **Say no**, and on the Players page
 (requests are kept 7 days, one per member, 30 per server). Approving sends
 the whitelist command; the asker hears the answer where they asked.

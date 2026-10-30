@@ -318,7 +318,7 @@ def test_simple_shows_seven_page_tabs_and_technical_nine(qapp, agent_http):
         "Backups",
         "Mods",
         "Schedules",
-        "Quests and events",
+        "Quests and Community events",
         "Settings",
     ]
     button(window, "Technical").click()
@@ -330,7 +330,7 @@ def test_simple_shows_seven_page_tabs_and_technical_nine(qapp, agent_http):
         "Backups",
         "Mods",
         "Schedules",
-        "Quests and events",
+        "Quests and Community events",
         "Performance",
         "Settings",
     ]

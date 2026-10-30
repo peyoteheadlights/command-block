@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 PORTAL = "https://discord.com/developers/applications"
 STEPS = 6  # discord.steps.1 to .6
 SERVER_STEPS = 3
-KINDS = ("alerts", "status", "chat", "quests", "events")
+KINDS = ("alerts", "status", "chat", "quests", "levels", "events")
 PER_SERVER = ("status", "chat")
 # Shared, and a server may have its own instead (None: the shared one).
 OWN_IF_WANTED = ("alerts",)
@@ -358,22 +358,36 @@ class Discord(Moderators):
         return box
 
     def leaving(self, guild: dict) -> QWidget:
-        """Take people off the whitelist when they leave this Discord server."""
-        box = QWidget()
-        grid = QGridLayout(box)
-        grid.setContentsMargins(0, 8, 0, 0)
-        tick = QCheckBox(text("discord.remove_on_leave"))
-        tick.setChecked(bool((guild.get("options") or {}).get("remove_on_leave")))
-        tick.toggled.connect(
-            lambda on: self.call(
+        """How event reminders are sent, and taking people off the whitelist
+        when they leave this Discord server."""
+        options = guild.get("options") or {}
+
+        def save(body: dict) -> None:
+            self.call(
                 "PUT",
                 f"/discord/guilds/{guild['id']}/options",
                 self.done(text("settings.saved")),
-                body={"remove_on_leave": on},
+                body=body,
             )
-        )
-        grid.addWidget(tick, 0, 0)
-        grid.addWidget(label(text("discord.remove_on_leave_hint"), "muted"), 1, 0)
+
+        box = QWidget()
+        grid = QGridLayout(box)
+        grid.setContentsMargins(0, 8, 0, 0)
+        grid.addWidget(label(text("discord.reminders")), 0, 0)
+        how = QComboBox()
+        how.setAccessibleName(text("discord.reminders"))
+        for value in ("ping", "private"):
+            how.addItem(text(f"discord.reminders.{value}"), value)
+        how.setCurrentIndex(max(how.findData(options.get("reminders")), 0))
+        how.activated.connect(lambda _i: save({"reminders": how.currentData()}))
+        grid.addWidget(how, 0, 1)
+        grid.addWidget(label(text("discord.reminders_hint"), "muted"), 1, 1)
+        tick = QCheckBox(text("discord.remove_on_leave"))
+        tick.setChecked(bool(options.get("remove_on_leave")))
+        tick.toggled.connect(lambda on: save({"remove_on_leave": on}))
+        grid.addWidget(tick, 2, 0, 1, 2)
+        grid.addWidget(label(text("discord.remove_on_leave_hint"), "muted"), 3, 0, 1, 2)
+        grid.setColumnStretch(1, 1)
         return box
 
     def roles(self, guild: dict, report: dict, servers: list[dict]) -> QWidget:

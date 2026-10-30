@@ -59,25 +59,25 @@ def count(core):
 
 def test_an_event_is_made_from_the_form_and_called_off(qapp, quests_page):  # noqa: F811
     window, page, core = quests_page
-    wait_for_window(qapp, lambda: "No events yet" in shown_text(page))
-    named(page, QtWidgets.QLineEdit, "Title, New event").setText("Dragon night")
-    kind = named(page, QtWidgets.QComboBox, "Who counts as there, New event")
+    wait_for_window(qapp, lambda: "No Community events yet" in shown_text(page))
+    named(page, QtWidgets.QLineEdit, "Title, New Community event").setText("Dragon night")
+    kind = named(page, QtWidgets.QComboBox, "Who counts as there, New Community event")
     kind.setCurrentIndex(kind.findData("advancement"))
-    goal = named(page, QtWidgets.QLineEdit, "Which advancement, New event")
+    goal = named(page, QtWidgets.QLineEdit, "Which advancement, New Community event")
     assert goal.isEnabled()
     goal.setText("end/kill_dragon")
-    starts = named(page, QtWidgets.QDateTimeEdit, "Starts, New event")
-    ends = named(page, QtWidgets.QDateTimeEdit, "Ends, New event")
+    starts = named(page, QtWidgets.QDateTimeEdit, "Starts, New Community event")
+    ends = named(page, QtWidgets.QDateTimeEdit, "Ends, New Community event")
     # Ends before it starts: the agent's words show in the form.
     ends.setDateTime(starts.dateTime().addSecs(-600))
-    button(page, "Make event").click()
+    button(page, "Make Community event").click()
     wait_for_window(qapp, lambda: "15 minutes to 24 hours" in shown_text(page))
     ends.setDateTime(starts.dateTime().addSecs(2 * HOUR))
     next(
         b for b in page.findChildren(QtWidgets.QCheckBox) if b.text().startswith("Start the server")
     ).setChecked(True)
-    named(page, QtWidgets.QSpinBox, "Level XP, New event").setValue(25)
-    button(page, "Make event").click()
+    named(page, QtWidgets.QSpinBox, "Level XP, New Community event").setValue(25)
+    button(page, "Make Community event").click()
     wait_for_window(qapp, lambda: "Dragon night" in shown_text(page))
     words = shown_text(page)
     assert "Counts if end/kill dragon is earned during it" in words

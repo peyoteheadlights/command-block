@@ -5,11 +5,12 @@ Only while the server is stopped, one open request per server, 10 minutes
 between requests on a server, 15 minutes to answer. The owner and moderators
 get a "start_request" alert (desktop, phone, the Discord alerts channel) and
 answer Start or Say no; Start runs the server's own start, the same as the
-apps' Start button. The requester hears the outcome through ``tell``.
+apps' Start button.
 
-Nothing here knows about Discord: the bot passes ``tell`` and sets
-``on_close`` to tidy its alert messages. Requests live in memory, like link
-codes, so an agent restart drops the open ones.
+Nothing here knows about Discord: the bot keeps where to answer in
+``reply`` and sets ``on_close`` to tell the requester (``TOLD``) and tidy its
+alert messages. Open requests are saved, so an agent restart keeps them; a
+request still ends 15 minutes after it was asked, by the clock.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ log = logging.getLogger("msc.startrequests")
 GAP = 600.0  # seconds between requests on one server
 LIFE = 900.0  # seconds the owner and moderators have to answer
 STOPPED = ("OFFLINE", "CRASHED")
+SAVED_KEY = "start_requests"  # {"open": server id -> request, "last": server id -> when}
 
 # What the requester hears, by how the request ended.
 TOLD = {
@@ -51,9 +53,19 @@ class StartRequest:
     server_id: str
     who: str  # the requester's name, as shown in the alert
     asked_at: float
-    tell: Callable[[str], Awaitable[None]] | None = None
-    # The Discord alert messages with Start / Say no buttons: (channel, message).
-    posts: list[tuple[str, str]] = field(default_factory=list)
+    # Where the requester hears the answer, kept by whoever asked (the bot:
+    # its channel and member ids).
+    reply: dict[str, str] | None = None
+    # The Discord alert messages with Start / Say no buttons: [channel, message].
+    posts: list[list[str]] = field(default_factory=list)
+
+    def saved(self) -> dict[str, Any]:
+        return {
+            "who": self.who,
+            "asked_at": self.asked_at,
+            "reply": self.reply,
+            "posts": self.posts,
+        }
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,8 +87,37 @@ class StartRequests:
     def get(self, server_id: str) -> StartRequest | None:
         return self.open.get(server_id)
 
+    def load(self) -> None:
+        """The requests open when the agent stopped, each with its own clock:
+        one asked 15 minutes ago or more ends now, as unanswered."""
+        saved = self.core.db.get_setting(SAVED_KEY, {}) or {}
+        now = time.time()
+        self.last = {sid: at for sid, at in (saved.get("last") or {}).items() if at + GAP > now}
+        for sid, row in (saved.get("open") or {}).items():
+            if sid not in self.core.servers or sid in self.open:
+                continue
+            try:
+                request = StartRequest(
+                    sid,
+                    str(row["who"]),
+                    float(row["asked_at"]),
+                    row.get("reply"),
+                    [list(p) for p in row.get("posts") or []],
+                )
+            except (KeyError, TypeError, ValueError):
+                continue  # a damaged entry is dropped, not guessed at
+            self.open[sid] = request
+            self._timers[sid] = asyncio.create_task(self._expire(sid), name=f"start-request-{sid}")
+        self.save()
+
+    def save(self) -> None:
+        self.core.db.set_setting(
+            SAVED_KEY,
+            {"open": {sid: r.saved() for sid, r in self.open.items()}, "last": self.last},
+        )
+
     async def ask(
-        self, ctx: ServerContext, who: str, tell: Callable[[str], Awaitable[None]] | None = None
+        self, ctx: ServerContext, who: str, reply: dict[str, str] | None = None
     ) -> StartRequest:
         sid = ctx.server_id
         state = ctx.server.state.value
@@ -94,9 +135,10 @@ class StartRequests:
             raise StartRequestError(
                 f"{ctx.name} was asked for a moment ago. Try again in {math.ceil(wait / 60)} min."
             )
-        request = StartRequest(sid, who, time.time(), tell)
+        request = StartRequest(sid, who, time.time(), reply)
         self.open[sid] = request
         self.last[sid] = request.asked_at
+        self.save()
         self._timers[sid] = asyncio.create_task(self._expire(sid), name=f"start-request-{sid}")
         await ctx.bus.publish(
             Event(
@@ -124,22 +166,17 @@ class StartRequests:
             timer.cancel()
         if request is None:
             return
-        ctx = self.core.servers.get(server_id)
-        words = TOLD[how].format(server=ctx.name if ctx else server_id)
-        for step in (request.tell(words) if request.tell else None, self._closed(request, how)):
-            if step is None:
-                continue
-            try:
-                await step
-            except Exception:
-                log.warning("couldn't tell how a start request ended", exc_info=True)
-
-    async def _closed(self, request: StartRequest, how: str) -> None:
-        if self.on_close is not None:
+        self.save()
+        if self.on_close is None:
+            return
+        try:
             await self.on_close(request, how)
+        except Exception:
+            log.warning("couldn't tell how a start request ended", exc_info=True)
 
     async def _expire(self, server_id: str) -> None:
-        await asyncio.sleep(LIFE)
+        request = self.open[server_id]
+        await asyncio.sleep(max(0.0, request.asked_at + LIFE - time.time()))
         await self.close(server_id, "expired")
 
     async def handle(self, event: Event) -> None:

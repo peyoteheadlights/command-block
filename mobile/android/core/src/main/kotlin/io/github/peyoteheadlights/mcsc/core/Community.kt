@@ -23,11 +23,38 @@ import kotlinx.serialization.json.put
 data class StartRequestAnswered(val answer: String)
 
 // ------------------------------------------------------------ the bot (owner)
+/** A channel the bot uses: its kind, the Minecraft server ("" when shared) and its name. */
+@Serializable
+data class TiedChannel(
+    val kind: String,
+    @SerialName("server_id") val serverId: String = "",
+    @SerialName("channel_id") val channelId: String,
+)
+
 @Serializable
 data class GuildReport(
     /** Null until the bot has checked this Discord server. */
     val problems: List<JsonObject>? = null,
     @SerialName("checked_at") val checkedAt: Double? = null,
+    /** Its Discord roles (highest first) and text channels, as read by the check. */
+    val roles: List<RoleName> = emptyList(),
+    val channels: List<RoleName> = emptyList(),
+    val tied: List<TiedChannel> = emptyList(),
+)
+
+@Serializable
+data class LevelRole(
+    val level: Int,
+    @SerialName("role_id") val roleId: String,
+    val name: String? = null,
+)
+
+@Serializable
+data class DiscordLevels(
+    val announce: Boolean = true,
+    /** 0 (Monday) to 6, or null for no weekly leaderboard. */
+    @SerialName("leaderboard_day") val leaderboardDay: Int? = null,
+    val roles: List<LevelRole> = emptyList(),
 )
 
 @Serializable
@@ -36,10 +63,17 @@ data class DiscordGuild(
     val name: String,
     val servers: List<String> = emptyList(),
     val options: JsonObject = JsonObject(emptyMap()),
+    val levels: DiscordLevels = DiscordLevels(),
     val report: GuildReport? = null,
 ) {
     val removeOnLeave: Boolean get() = (options["remove_on_leave"] as? JsonPrimitive)?.contentOrNull == "true"
+
+    /** How Community event reminders are sent: "ping" in #events or "private" messages. */
+    val reminders: String get() = (options["reminders"] as? JsonPrimitive)?.contentOrNull ?: "ping"
 }
+
+@Serializable
+data class DiscordSetupDone(val made: List<String> = emptyList(), val status: DiscordStatus)
 
 @Serializable
 data class DiscordStatus(
@@ -49,6 +83,7 @@ data class DiscordStatus(
     val detail: String = "",
     @SerialName("connected_at") val connectedAt: Double? = null,
     val name: String? = null,
+    @SerialName("invite_url") val inviteUrl: String? = null,
     /** message_content and members: on, off, or null until read from Discord. */
     val switches: Map<String, Boolean?> = emptyMap(),
     @SerialName("features_off") val featuresOff: List<String> = emptyList(),
@@ -256,17 +291,59 @@ data class QuestForm(
     val itemCount: Int = 1,
     val xpLevels: Int = 0,
     val levelXp: Int = 0,
+    /** The last day, like 2026-12-31 (on the PC's clock); empty for none. */
+    val lastDay: String = "",
     /** The /quest suggest idea it was made from, answered once made. */
     val suggestionId: Long? = null,
 )
+
+/** The new Community event form, as typed: times like "2026-10-30 20:00". */
+data class EventForm(
+    val title: String = "",
+    val details: String = "",
+    val kind: String = "online",
+    val goal: String = "",
+    val starts: String = "",
+    val ends: String = "",
+    val startServer: Boolean = false,
+    val roleId: String? = null,
+    val item: String = "",
+    val itemCount: Int = 1,
+    val xpLevels: Int = 0,
+    val levelXp: Int = 0,
+)
+
+/** The new poll form: 2 to 5 answers, closing at a time like "2026-10-31 20:00". */
+data class PollForm(
+    val question: String = "",
+    val answers: List<String> = List(Community.POLL_ANSWERS) { "" },
+    val closes: String = "",
+)
+
+/** One line of the Level roles: the Level and the Discord role it gives (null: none picked yet). */
+data class LevelRow(val level: Int, val roleId: String?)
+
+/** A channel picker: which kind, for which server ("" shared), and the words beside it. */
+data class ChannelRow(val kind: String, val serverId: String, val label: String, val channelId: String?)
 
 /** What the community screens say and send, the same as the desktop app. */
 object Community {
     /** Seconds a start request waits for an answer (agent/startrequests.py LIFE). */
     const val START_REQUEST_LIFE = 900.0
     const val START_REQUEST = "start_request"
+    /** Discord's own page for making a bot: the only web page the Discord screens open. */
+    const val DEVELOPER_PORTAL = "https://discord.com/developers/applications"
 
     val KINDS = listOf("stat", "advancement", "playtime", "joins", "items", "approval")
+    val EVENT_KINDS = listOf("online", "advancement", "approval")
+    const val POLL_ANSWERS = 5
+    // The channels, as the desktop app lists them (desktop/discord.py).
+    val SHARED_CHANNELS = listOf("alerts", "quests", "levels", "events")
+    /** Each server's own; alerts may be its own too, console only when picked. */
+    val SERVER_CHANNELS = listOf("status", "chat", "alerts", "console")
+    val REMINDERS = listOf("ping", "private")
+    private val DAY_RE = Regex("""^\d{4}-\d{2}-\d{2}$""")
+    private val WHEN = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
     val REPEATS = listOf("once", "daily", "weekly", "monthly", "yearly")
     private val NEEDS_GOAL = setOf("stat", "advancement", "items")
     private val NO_COUNT = setOf("advancement", "approval")
@@ -340,28 +417,121 @@ object Community {
         return hint
     }
 
+    /** The rewards picked, each in its template's limits (the agent checks again). */
+    private fun rewards(roleId: String?, item: String, itemCount: Int, xpLevels: Int, levelXp: Int) = JsonArray(
+        buildList<JsonElement> {
+            roleId?.let { add(buildJsonObject { put("kind", "role"); put("role_id", it) }) }
+            item.trim().takeIf { it.isNotEmpty() }?.let { add(buildJsonObject { put("kind", "item"); put("item", it); put("count", itemCount.coerceIn(1, 64)) }) }
+            if (xpLevels > 0) add(buildJsonObject { put("kind", "xp"); put("levels", xpLevels.coerceIn(1, 30)) })
+            if (levelXp > 0) add(buildJsonObject { put("kind", "level_xp"); put("amount", levelXp.coerceIn(1, 500)) })
+        },
+    )
+
+    /** A last day as typed: empty (none) or like 2026-12-31. */
+    fun lastDayOk(text: String): Boolean = text.isBlank() || DAY_RE.matches(text.trim())
+
     /** POST /quests: only the fields the kind uses, and only the rewards picked. */
-    fun questBody(form: QuestForm): JsonObject {
-        val rewards = buildList<JsonElement> {
-            form.roleId?.let { add(buildJsonObject { put("kind", "role"); put("role_id", it) }) }
-            form.item.trim().takeIf { it.isNotEmpty() }?.let { item ->
-                add(buildJsonObject { put("kind", "item"); put("item", item); put("count", form.itemCount.coerceIn(1, 64)) })
-            }
-            if (form.xpLevels > 0) add(buildJsonObject { put("kind", "xp"); put("levels", form.xpLevels.coerceIn(1, 30)) })
-            if (form.levelXp > 0) add(buildJsonObject { put("kind", "level_xp"); put("amount", form.levelXp.coerceIn(1, 500)) })
-        }
+    fun questBody(form: QuestForm): JsonObject = buildJsonObject {
+        put("title", form.title.trim())
+        put("details", form.details.trim())
+        put("kind", form.kind)
+        put("goal", if (needsGoal(form.kind)) form.goal.trim() else "")
+        put("count", if (needsCount(form.kind)) form.count.coerceIn(1, 100_000) else 1)
+        put("repeat", form.repeat)
+        put("ends", form.lastDay.trim().takeIf { it.isNotEmpty() }?.let(::JsonPrimitive) ?: JsonNull)
+        put("rewards", rewards(form.roleId, form.item, form.itemCount, form.xpLevels, form.levelXp))
+        put("suggestion_id", form.suggestionId?.let(::JsonPrimitive) ?: JsonNull)
+    }
+
+    /** "2026-10-30 20:00" on this phone's clock as seconds, or null when it can't be read. */
+    fun parseWhen(text: String, zone: java.time.ZoneId): Double? = try {
+        java.time.LocalDateTime.parse(text.trim(), WHEN).atZone(zone).toEpochSecond().toDouble()
+    } catch (e: java.time.format.DateTimeParseException) {
+        null
+    }
+
+    /** A time as the forms show it. */
+    fun showWhen(seconds: Double, zone: java.time.ZoneId): String =
+        java.time.Instant.ofEpochSecond(seconds.toLong()).atZone(zone).format(WHEN)
+
+    /** A new form's times: an event tomorrow at this hour for 2 hours; a poll open for a day. */
+    fun eventForm(now: Double, zone: java.time.ZoneId) = EventForm(starts = showWhen(now + 86_400, zone), ends = showWhen(now + 93_600, zone))
+
+    fun pollForm(now: Double, zone: java.time.ZoneId) = PollForm(closes = showWhen(now + 86_400, zone))
+
+    /** POST /quests/events, or null while a time can't be read. */
+    fun eventBody(form: EventForm, zone: java.time.ZoneId): JsonObject? {
+        val starts = parseWhen(form.starts, zone) ?: return null
+        val ends = parseWhen(form.ends, zone) ?: return null
         return buildJsonObject {
             put("title", form.title.trim())
             put("details", form.details.trim())
             put("kind", form.kind)
-            put("goal", if (needsGoal(form.kind)) form.goal.trim() else "")
-            put("count", if (needsCount(form.kind)) form.count.coerceIn(1, 100_000) else 1)
-            put("repeat", form.repeat)
-            put("ends", JsonNull)
-            put("rewards", JsonArray(rewards))
-            put("suggestion_id", form.suggestionId?.let(::JsonPrimitive) ?: JsonNull)
+            put("goal", if (form.kind == "advancement") form.goal.trim() else "")
+            put("starts_at", starts)
+            put("ends_at", ends)
+            put("start_server", form.startServer)
+            put("rewards", rewards(form.roleId, form.item, form.itemCount, form.xpLevels, form.levelXp))
         }
     }
+
+    /** POST /quests/polls, or null while the closing time can't be read. Empty answers are left out. */
+    fun pollBody(form: PollForm, zone: java.time.ZoneId): JsonObject? {
+        val closes = parseWhen(form.closes, zone) ?: return null
+        return buildJsonObject {
+            put("question", form.question.trim())
+            put("answers", JsonArray(form.answers.map { it.trim() }.filter { it.isNotEmpty() }.map(::JsonPrimitive)))
+            put("closes_at", closes)
+        }
+    }
+
+    fun eventGoalHint(strings: Strings, kind: String, kinds: List<String>): String {
+        var hint = strings.t("game_events.kind_hint.$kind")
+        if ("advancement" !in kinds.ifEmpty { listOf("advancement") }) hint += " " + strings.t("game_events.limited_kinds")
+        return hint
+    }
+
+    /** Which channel does what: the shared ones, then each of its servers' own. */
+    fun channelRows(strings: Strings, guild: DiscordGuild, servers: List<Pair<String, String>>): List<ChannelRow> {
+        val current = guild.report?.tied.orEmpty().associate { (it.kind to it.serverId) to it.channelId }
+        val shared = SHARED_CHANNELS.map { ChannelRow(it, "", strings.t("discord.kind.$it"), current[it to ""]) }
+        val own = servers.filter { it.first in guild.servers }.flatMap { (id, name) ->
+            SERVER_CHANNELS.map { ChannelRow(it, id, "${strings.t("discord.kind.$it")}: $name", current[it to id]) }
+        }
+        return shared + own
+    }
+
+    /** What "no channel" says for a row: a server's own alerts fall back to the shared ones. */
+    fun noChannel(row: ChannelRow): String = if (row.serverId.isNotEmpty() && row.kind == "alerts") "discord.same_alerts" else "discord.no_channel"
+
+    /** PUT /discord/guilds/{id}/channels. */
+    fun channelBody(row: ChannelRow, channelId: String?): JsonObject = buildJsonObject {
+        put("kind", row.kind)
+        put("server_id", row.serverId)
+        put("channel_id", channelId)
+    }
+
+    /** The roles a Level may give: not @everyone (its id is the Discord server's). */
+    fun levelRoleChoices(guild: DiscordGuild): List<RoleName> = guild.report?.roles.orEmpty().filter { it.id != guild.id }
+
+    /** PUT /discord/guilds/{id}/levels. The Level roles go only when changed:
+     * once changed, setup leaves them alone (like the desktop app). */
+    fun levelsBody(guild: DiscordGuild, announce: Boolean, day: Int?, rows: List<LevelRow>): JsonObject {
+        val wanted = rows.mapNotNull { r -> r.roleId?.let { r.level.coerceIn(1, 1000) to it } }.sortedWith(compareBy({ it.first }, { it.second }))
+        val saved = guild.levels.roles.map { it.level to it.roleId }.sortedWith(compareBy({ it.first }, { it.second }))
+        return buildJsonObject {
+            put("announce", announce)
+            put("leaderboard_day", day)
+            if (wanted != saved) {
+                put("roles", JsonArray(wanted.map { (at, id) -> buildJsonObject { put("level", at); put("role_id", id) } }))
+            }
+        }
+    }
+
+    /** Set up this Discord server for these Minecraft servers: the ticked ones, or with
+     * none yet the one there is when there's only one (the desktop app's default). */
+    fun setupServers(guild: DiscordGuild, servers: List<String>): List<String> =
+        guild.servers.filter { it in servers }.ifEmpty { if (servers.size == 1) servers else emptyList() }
 
     fun eventLine(strings: Strings, event: GameEvent, roles: Map<String, String>): String {
         val parts = mutableListOf(

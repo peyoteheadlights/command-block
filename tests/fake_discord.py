@@ -103,6 +103,7 @@ class FakeDiscord:
         self.gateway_sent: list[dict] = []
         self.sockets: list[FakeSocket] = []
         self.forbidden_channels: set[str] = set()
+        self.blocks_dms: set[str] = set()  # members who don't take private messages
         self.rate_limit_next: float | None = None
         self.lock = threading.Lock()
         self._ids = itertools.count(4000000000000000000)
@@ -209,6 +210,39 @@ class FakeDiscord:
         )
         return token
 
+    def submit(
+        self,
+        custom_id: str,
+        values: dict[str, str],
+        roles=(),
+        member: str = MEMBER_ID,
+        username: str = "sam",
+        channel: str | None = None,
+    ) -> str:
+        """A member fills in a pop-up form and sends it; returns the token."""
+        token = f"itoken{next(self._ids)}"
+        rows = [
+            {"type": 1, "components": [{"type": 4, "custom_id": k, "value": v}]}
+            for k, v in values.items()
+        ]
+        self.socket.dispatch(
+            "INTERACTION_CREATE",
+            {
+                "id": str(next(self._ids)),
+                "type": 5,
+                "token": token,
+                "guild_id": GUILD_ID,
+                "channel_id": channel or "2000000000000000010",
+                "member": {"user": {"id": member, "username": username}, "roles": list(roles)},
+                "data": {"custom_id": custom_id, "components": rows},
+            },
+        )
+        return token
+
+    def form(self, token: str) -> dict | None:
+        """The pop-up form the bot opened for an interaction, if it did."""
+        return next((b["data"] for b in self.answers(token) if b.get("type") == 9), None)
+
     def message(
         self,
         content: str,
@@ -292,6 +326,12 @@ class FakeDiscord:
             )
         if key == ("GET", "/applications/@me"):
             return httpx.Response(200, json={"id": APP_ID, "name": "My bot", "flags": self.flags})
+        if key == ("POST", "/users/@me/channels"):
+            return httpx.Response(200, json={"id": f"dm{body['recipient_id']}", "type": 1})
+        if path.startswith("/channels/dm") and path.split("/")[2][2:] in self.blocks_dms:
+            return httpx.Response(
+                403, json={"message": "Cannot send messages to this user", "code": 50007}
+            )
         if key == ("PATCH", "/users/@me"):
             self.bot_name = body.get("username") or self.bot_name
             return httpx.Response(200, json={"id": BOT_ID, "username": self.bot_name, "bot": True})
@@ -347,6 +387,12 @@ class FakeDiscord:
             parts = path.split("/")  # "", channels, thread, thread-members, user
             self.thread_members[parts[2]].add(parts[4])
             return httpx.Response(204)
+        if request.method == "PATCH" and path.count("/") == 2 and path.startswith("/channels/"):
+            channel = next((c for c in self.channels if c["id"] == path.split("/")[2]), None)
+            if channel is None:
+                return httpx.Response(404, json={"message": "Unknown Channel", "code": 10003})
+            channel.update(body)
+            return httpx.Response(200, json=channel)
         if request.method == "PUT" and "/reactions/" in path:
             return httpx.Response(204)
         if request.method == "PATCH" and path.startswith("/channels/") and "/messages/" in path:

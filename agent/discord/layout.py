@@ -75,13 +75,16 @@ CHATS = POSTS | ADD_REACTIONS | READ_MESSAGE_HISTORY
 
 # Channels shared by every Minecraft server the Discord server is for, and
 # the ones each of them gets. A shared kind can also be tied per server.
-SHARED_CHANNELS = ("alerts", "quests", "events")
+SHARED_CHANNELS = ("alerts", "quests", "levels", "events")
 SERVER_CHANNELS = ("chat", "status")
 # Never made by "Set up this Discord server": the owner picks one on purpose.
 # The console channel shows a server's console, read only.
 OPT_IN_CHANNELS = ("console",)
 KINDS = (*SHARED_CHANNELS, *SERVER_CHANNELS, *OPT_IN_CHANNELS)
 CATEGORY = "Command Block"
+# Discord's own slowmode on chat channels, in seconds: always on. It's
+# set back if someone turns it off or lower (a longer one is left alone).
+SLOWMODE = 5
 # The Discord roles setup makes: kind -> (name, colour). The mod role gets
 # the default permission level; a "level_<n>" role goes to members at Level
 # n (agent/levels.py). The owner can change the Level roles; setup then
@@ -205,9 +208,11 @@ OPTIONS_KEY = "discord_guild_options"  # guild id -> its options
 
 
 def guild_options(db, guild_id: str) -> dict[str, Any]:
-    """remove_on_leave: take someone off the whitelist when they leave."""
+    """remove_on_leave: take someone off the whitelist when they leave;
+    reminders: an event's reminder as a "ping" in the events channel or a
+    "private" message to each member going."""
     saved = (db.get_setting(OPTIONS_KEY, {}) or {}).get(guild_id) or {}
-    return {"remove_on_leave": False, **saved}
+    return {"remove_on_leave": False, "reminders": "ping", **saved}
 
 
 def set_guild_options(db, guild_id: str, **changes: Any) -> dict[str, Any]:
@@ -449,6 +454,15 @@ async def inspect(rest, db, guild_id: str, bot_id: str, names: dict[str, str]) -
     }
 
 
+async def keep_slowmode(rest, channel: dict) -> bool:
+    """Slowmode back on a chat channel where it's off or lower. True when
+    it had to be set."""
+    if int(channel.get("rate_limit_per_user") or 0) >= SLOWMODE:
+        return False
+    await rest.request("PATCH", f"/channels/{channel['id']}", {"rate_limit_per_user": SLOWMODE})
+    return True
+
+
 def slug(name: str, fallback: str) -> str:
     """A Discord channel name: lower case, dashes, letters and digits."""
     out = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -473,6 +487,8 @@ async def set_up(rest, db, guild_id: str, servers: dict[str, str]) -> dict[str, 
         body: dict[str, Any] = {"name": name, "type": type_}
         if parent:
             body["parent_id"] = parent
+        if kind == "chat":
+            body["rate_limit_per_user"] = SLOWMODE
         created = await rest.request("POST", f"/guilds/{guild_id}/channels", body)
         tie(db, guild_id, kind, server_id, created["id"])
         made.append(created["name"])
@@ -484,7 +500,11 @@ async def set_up(rest, db, guild_id: str, servers: dict[str, str]) -> dict[str, 
     several = len(servers) > 1
     for sid, name in servers.items():
         for kind in SERVER_CHANNELS:
-            await channel(kind, sid, f"{slug(name, sid)}-{kind}" if several else kind, category)
+            made_id = await channel(
+                kind, sid, f"{slug(name, sid)}-{kind}" if several else kind, category
+            )
+            if kind == "chat" and made_id in found:
+                await keep_slowmode(rest, found[made_id])
 
     ours = our_roles(db, guild_id)
     custom = level_settings(db, guild_id)["custom"]

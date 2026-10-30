@@ -370,7 +370,7 @@ class DiscordSetup(BaseModel):
 
 
 class DiscordTie(BaseModel):
-    kind: Literal["alerts", "quests", "events", "chat", "status", "console"]
+    kind: Literal["alerts", "quests", "levels", "events", "chat", "status", "console"]
     server_id: str = Field(default="", max_length=64)
     channel_id: str | None = Field(None, pattern=r"^\d{1,25}$")
 
@@ -412,7 +412,9 @@ class AddressAnswer(BaseModel):
 
 
 class DiscordGuildOptions(BaseModel):
-    remove_on_leave: bool
+    # Left out: stays as it is.
+    remove_on_leave: bool | None = None
+    reminders: Literal["ping", "private"] | None = None
 
 
 class DiscordLinkAnswer(BaseModel):

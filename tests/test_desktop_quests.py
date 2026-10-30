@@ -182,4 +182,4 @@ def test_without_quests_and_events_there_is_no_tab(qapp, fake, discord_http):  #
     wait_for_window(qapp, lambda: window.role == "helper" and "Survival" in shown_text(window))
     open_server(qapp, window, "Survival")
     tabs = [b.property("page") for b in window.server_screen.tabs.buttons()]
-    assert "Players and chat" in tabs and "Quests and events" not in tabs
+    assert "Players and chat" in tabs and "Quests and Community events" not in tabs

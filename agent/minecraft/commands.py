@@ -8,7 +8,10 @@ Rules:
   * exactly one line, no newlines, no NUL
   * bounded length
   * the first token must look like a Minecraft command name
-  * characters are restricted to a printable set that Minecraft commands use
+  * characters are restricted to a printable set that Minecraft commands use;
+    ``say`` may also carry letters, marks and digits of any language (chat
+    in Arabic, Chinese, ...), never symbols, spaces other than " " or
+    invisible characters
   * shell metacharacters (` ; & | < > $ and newlines) are rejected outright,
     even though nothing here is ever handed to a shell - defence in depth.
     None of them appear in Minecraft command syntax.
@@ -18,6 +21,7 @@ Rules:
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 MAX_LENGTH = 512
@@ -29,6 +33,18 @@ COMMAND_NAME_RE = re.compile(r"^/?[a-z][a-z0-9_:-]{0,31}$")
 # so they are excluded outright rather than only in their doubled forms.
 ALLOWED_CHARS_RE = re.compile(r"^[A-Za-z0-9 _:,.\-=+*/@~^\[\]{}()'\"!?#%\\]*$")
 SHELL_META_RE = re.compile(r"[`;&|<>$\r\n\0]")
+# Unicode categories: letters, marks (accents) and digits.
+WORD_CATEGORIES = ("L", "M", "N")
+
+
+def any_language(text: str, ascii_re: re.Pattern = ALLOWED_CHARS_RE) -> bool:
+    """Every character is in the ASCII set, or a letter, mark or digit of
+    any language (beyond ASCII: plain ASCII is checked by the set alone)."""
+    return all(
+        ascii_re.match(ch) if ch.isascii() else unicodedata.category(ch).startswith(WORD_CATEGORIES)
+        for ch in text
+    )
+
 
 DANGEROUS_COMMANDS = {
     "stop": "This shuts the Minecraft server down.",
@@ -93,7 +109,8 @@ def validate(command: str, confirm: bool = False, max_length: int = MAX_LENGTH) 
         raise CommandError("A command has to be one line.")
     if SHELL_META_RE.search(text):
         raise CommandError("That command has characters in it that aren't allowed.")
-    if not ALLOWED_CHARS_RE.match(text):
+    is_say = text.split(" ", 1)[0].lstrip("/").lower() == "say"
+    if not (any_language(text) if is_say else ALLOWED_CHARS_RE.match(text)):
         raise CommandError("That command has characters in it that aren't allowed.")
 
     name_token = text.split(" ", 1)[0]

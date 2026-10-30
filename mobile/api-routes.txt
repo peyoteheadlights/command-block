@@ -162,12 +162,17 @@ PUT /api/account/alerts
 GET /api/wake
 POST /api/wake/key
 # The Discord bot: read marks, start requests, the bot's checks, Linked
-# accounts, whitelist requests, quests, events and polls.
+# accounts, whitelist requests, quests, Community events and polls.
 POST /api/alerts/read
 POST /api/servers/{server_id}/start-request
 GET /api/discord
 POST /api/discord/check
+PUT /api/discord/token
+DELETE /api/discord/token
+POST /api/discord/guilds/{guild_id}/setup
+PUT /api/discord/guilds/{guild_id}/channels
 PUT /api/discord/guilds/{guild_id}/options
+PUT /api/discord/guilds/{guild_id}/levels
 GET /api/servers/{server_id}/discord-links
 DELETE /api/servers/{server_id}/discord-links/{uuid}
 POST /api/servers/{server_id}/discord-links/requests/{request_id}
@@ -182,7 +187,9 @@ POST /api/servers/{server_id}/quests/claims/{claim_id}
 GET /api/servers/{server_id}/quests/claims/{claim_id}/screenshot
 DELETE /api/servers/{server_id}/quests/suggestions/{suggestion_id}
 GET /api/servers/{server_id}/quests/events
+POST /api/servers/{server_id}/quests/events
 DELETE /api/servers/{server_id}/quests/events/{event_id}
 POST /api/servers/{server_id}/quests/events/{event_id}/approve
 PUT /api/servers/{server_id}/quests/events/{event_id}/attendance/{discord_id}
+POST /api/servers/{server_id}/quests/polls
 DELETE /api/servers/{server_id}/quests/polls/{poll_id}

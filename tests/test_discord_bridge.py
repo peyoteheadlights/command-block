@@ -1,18 +1,16 @@
 """The chat bridge (part 4), against the fake Discord and the fake Minecraft
 server: game lines into the chat channel, Discord messages into the game as
-tellraw, and what each side refuses."""
+a say line, and what each side refuses."""
 
 from __future__ import annotations
-
-import json
 
 import pytest
 
 from agent.discord import bot as discord_bot
 from agent.discord import bridge
 from agent.events import Event
-from agent.minecraft.chat import TELLRAW_MAX, tellraw
-from agent.minecraft.commands import validate
+from agent.minecraft.chat import ChatError, check_message
+from agent.minecraft.commands import CommandError, validate
 from tests.fake_discord import BOT_ID, GUILD_ID, MEMBER_ID, wait_for
 from tests.test_discord import (  # noqa: F401  (agent and fake are fixtures)
     agent,
@@ -32,19 +30,18 @@ def quick(monkeypatch):
     monkeypatch.setattr(discord_bot, "BATCH", 0.05)
 
 
-def tellraws(ctx) -> list[str]:
-    """The tellraw commands the agent sent to this server."""
+def sent(ctx) -> list[str]:
+    """Every command the agent sent to this server's console."""
     return [
         line.raw.removeprefix("> ")
         for line in ctx.server.console.tail(2000)
-        if line.source == "command" and line.raw.startswith("> tellraw")
+        if line.source == "command"
     ]
 
 
-def said_in_game(command: str) -> str:
-    """What a Java tellraw shows, read back the way Minecraft reads it."""
-    parts = json.loads(command.removeprefix("tellraw @a "))
-    return "".join(p["text"] for p in parts[2:])
+def says(ctx) -> list[str]:
+    """What the say commands sent to this server said."""
+    return [c.removeprefix("say ") for c in sent(ctx) if c.startswith("say ")]
 
 
 # ------------------------------------------------------------ the words
@@ -62,8 +59,8 @@ def test_mentions_become_plain_names_and_formatting_marks_go():
         ],
     }
     words = bridge.to_game(message, {"333": "rules", "444": "Minecraft mod"})
-    assert words == "hi @Sam and @Captain, see #rules or ask @Minecraft mod no x y"
-    assert bridge.to_game({"content": "<@999> <#998>"}, {}) == "@someone #channel"
+    assert words == "hi Sam and Captain, see #rules or ask Minecraft mod no x y"
+    assert bridge.to_game({"content": "<@999> <#998>"}, {}) == "someone #channel"
 
 
 def test_a_long_message_is_cut_to_one_line_of_220():
@@ -112,22 +109,86 @@ def test_lines_are_gathered_into_posts_under_discords_limit():
     assert posts == ["x" * 1500, "y" * 600 + "\nz"]
 
 
-def test_tellraw_keeps_every_letter_and_passes_the_console_check():
-    text = 'مرحبا "quoted" <tag> & ; $ ` | 𝒜 \\ end'
-    command = tellraw("java", "Discord", "Sam", text)
-    assert validate(command, max_length=TELLRAW_MAX).raw == command
-    assert said_in_game(command) == f"Sam: {text}"
-    assert json.loads(command.removeprefix("tellraw @a "))[1] == {
-        "text": "[Discord] ",
-        "color": "blue",
-    }
-    # The longest message in the widest letters still fits.
-    assert len(tellraw("java", "Discord", "ن" * 32, "ن" * bridge.LIMIT)) < TELLRAW_MAX
-    bedrock = tellraw("bedrock", "Discord", "Sam", "مرحبا")
-    assert validate(bedrock, max_length=TELLRAW_MAX).raw == bedrock
-    assert json.loads(bedrock.removeprefix("tellraw @a ")) == {
-        "rawtext": [{"text": "[Discord] Sam: مرحبا"}]
-    }
+# ------------------------------------------------------------ the say line
+def line(text: str, name: str = "Sam") -> str:
+    """What reaches the console for a Discord message, checked like the apps' chat."""
+    said = bridge.say_line(name, bridge.to_game({"content": text}, {}))
+    return validate(f"say {check_message(said)}", confirm=True).raw
+
+
+@pytest.mark.parametrize(
+    "text, shown",
+    [
+        ("@a", "Sam: at a"),
+        ("hi @e[type=creeper] and @p", "Sam: hi at e[type=creeper] and at p"),
+        ("@r @s @n @everyone", "Sam: at r at s at n at everyone"),
+        ("mail me at sam@example.com", "Sam: mail me at sam at example.com"),
+    ],
+)
+def test_target_selectors_never_expand(text, shown):
+    assert line(text) == f"say {shown}"
+    assert "@" not in line(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "hi\nstop",
+        "hi\rstop",
+        "hi\r\nop Sam",
+        "hi\u2028stop",  # Unicode's own line break
+        "hi\u2029stop",
+        "hi\u0085stop",
+        "hi\x00stop",
+        "hi; stop",
+        "hi && stop",
+        "hi | stop",
+        "hi `stop`",
+        "hi $(stop)",
+        "hi <stop>",
+    ],
+)
+def test_a_second_command_can_never_ride_along(text):
+    command = line(text)
+    assert command.startswith("say Sam: hi ")
+    for bad in "\n\r\x00\u2028\u2029\u0085;&|`$<>":
+        assert bad not in command
+    assert command.count("say ") == 1
+
+
+def test_colour_codes_and_invisible_characters_go():
+    assert line("§4red §lbold") == "say Sam: 4red lbold"
+    # Right-to-left override and zero-width space: shown text could lie.
+    assert line("a\u202eb\u200bc") == "say Sam: a b c"
+
+
+def test_letters_of_any_language_reach_say():
+    assert line("مرحبا يا أصدقاء", "سامي") == "say سامي: مرحبا يا أصدقاء"
+    assert line("héllo 你好 Привет") == "say Sam: héllo 你好 Привет"
+
+
+def test_a_very_long_line_is_cut_to_one_line_of_220():
+    command = line("word " * 100, "N" * 32)
+    said = command.removeprefix("say ")
+    assert len(said) == 220 and said.endswith("...") and said.startswith("N" * 32 + ": ")
+
+
+@pytest.mark.parametrize("text", ["<Alex> hi", "[12:00:01 INFO]: Done", "[Server] stop", "/op Sam"])
+def test_fake_chat_and_console_lines_are_refused(text):
+    assert bridge.looks_like_console(bridge.to_game({"content": text}, {}))
+
+
+def test_the_console_check_lets_say_carry_letters_and_nothing_more():
+    assert validate("say مرحبا", confirm=True).raw == "say مرحبا"
+    for bad in ("say hi §4", "say hi \u202e", "say hi ✨", "say hi\u2028stop", "say a;b"):
+        with pytest.raises(CommandError):
+            validate(bad, confirm=True)
+    # Only say: every other command keeps the ASCII set.
+    with pytest.raises(CommandError):
+        validate("tell Alex مرحبا", confirm=True)
+    assert check_message("مرحبا") == "مرحبا"
+    with pytest.raises(ChatError):
+        check_message("hi ✨")
 
 
 # ------------------------------------------------------------ game to Discord
@@ -175,15 +236,22 @@ def test_a_discord_message_shows_in_the_game(agent, fake):  # noqa: F811
         mentions=[{"id": "111", "username": "alex", "global_name": "Alex"}],
         nick="Sam",
     )
-    sent = wait_for(lambda: tellraws(ctx))
-    assert said_in_game(sent[0]) == "Sam: hi @Alex مرحبا"
+    wait_for(lambda: says(ctx))
+    assert says(ctx) == ["Sam: hi Alex مرحبا"]
     # Bots, webhooks and other channels don't go in.
     fake.message("from a bot", chat, author={"id": BOT_ID, "username": "bot", "bot": True})
     fake.message("from the webhook", chat, webhook_id="5")
     fake.message("in status", fake.channel_id("status"))
     fake.message("last", chat)
-    wait_for(lambda: len(tellraws(ctx)) == 2)
-    assert said_in_game(tellraws(ctx)[1]) == "sam: last"
+    wait_for(lambda: len(says(ctx)) == 2)
+    assert says(ctx)[1] == "sam: last"
+    # The console printed "[Server] Sam: ..." back: it shows in the apps'
+    # chat view, and isn't posted in Discord again.
+    wait_for(lambda: len([m for m in ctx.chat.tail(50) if m.kind == "server"]) == 2)
+    assert [m.text for m in ctx.chat.tail(50) if m.kind == "server"] == says(ctx)
+    console(agent, "say from the app")  # the owner's own "Server" message still goes
+    wait_for(lambda: any("from the app" in m["content"] for m in fake.in_channel("chat")))
+    assert not any("last" in m["content"] for m in fake.in_channel("chat"))
     agent.post("/api/servers/test/server/stop")
 
 
@@ -194,7 +262,7 @@ def test_command_looking_messages_get_a_reaction_and_stay_out(agent, fake):  # n
     reacted = wait_for(lambda: fake.made("PUT", f"/channels/{fake.channel_id('chat')}/messages/"))
     assert reacted is not None
     assert any(made in path and "/reactions/" in path for _m, path, _b in fake.calls)
-    assert tellraws(ctx) == []
+    assert says(ctx) == []
     agent.post("/api/servers/test/server/stop")
 
 
@@ -204,9 +272,9 @@ def test_each_member_is_limited(agent, fake):  # noqa: F811
     chat = fake.channel_id("chat")
     for i in range(8):
         fake.message(f"message {i}", chat)
-    wait_for(lambda: len(tellraws(ctx)) == 5)
+    wait_for(lambda: len(says(ctx)) == 5)
     fake.message("someone else", chat, member="3000000000000000099", username="lee")
-    wait_for(lambda: len(tellraws(ctx)) == 6)
+    wait_for(lambda: len(says(ctx)) == 6)
     agent.post("/api/servers/test/server/stop")
 
 
@@ -223,7 +291,7 @@ def test_nothing_goes_in_while_the_server_is_offline(agent, fake):  # noqa: F811
             "author": {"id": MEMBER_ID, "username": "sam"},
         }
         agent.portal.call(core.discord.from_discord, message)
-    assert tellraws(core.servers["test"]) == []
+    assert says(core.servers["test"]) == []
     assert not any("/reactions/" in path for _m, path, _b in fake.calls)
 
 

@@ -301,11 +301,27 @@ def test_the_console_channel_and_leaving_are_set_on_the_discord_page(qapp, fake,
     wait_for_window(qapp, lambda: layout.consoles(core.db, {GUILD_ID}))
     assert layout.consoles(core.db, {GUILD_ID}) == {"survival": ["2000000000000000010"]}
     wait_for_window(qapp, lambda: "Everyone can see #general" in shown_text(page))
-    tick = next(
+    # Reminders first: turning on "take people off" makes the bot log in again.
+    reminders = next(
         b
-        for b in page.findChildren(QtWidgets.QCheckBox)
-        if b.text().startswith("Take people off the whitelist") and b.isVisibleTo(page)
+        for b in page.findChildren(QtWidgets.QComboBox)
+        if b.accessibleName() == "Community event reminders" and b.isVisibleTo(page)
     )
+    assert reminders.currentData() == "ping"  # the default
+    reminders.setCurrentIndex(reminders.findData("private"))
+    reminders.activated.emit(reminders.currentIndex())
+    wait_for_window(qapp, lambda: layout.guild_options(core.db, GUILD_ID)["reminders"] == "private")
+
+    def leaving() -> list:  # the page is drawn again after the save
+        return [
+            b
+            for b in page.findChildren(QtWidgets.QCheckBox)
+            if b.text().startswith("Take people off the whitelist") and b.isVisibleTo(page)
+        ]
+
+    wait_for_window(qapp, leaving)
+    tick = leaving()[0]
     assert not tick.isChecked()
     tick.setChecked(True)
     wait_for_window(qapp, lambda: layout.guild_options(core.db, GUILD_ID)["remove_on_leave"])
+    assert layout.guild_options(core.db, GUILD_ID)["reminders"] == "private"  # kept

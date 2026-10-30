@@ -297,6 +297,44 @@ def test_starting_the_server_any_other_way_ends_the_request(agent, fake):  # noq
     stop(agent)
 
 
+def test_an_open_request_survives_an_agent_restart(agent, fake, monkeypatch):  # noqa: F811
+    """Saved with its clock: the new agent keeps it open for what's left of
+    the 15 minutes, keeps the 10-minute gap, and still tells the asker."""
+    set_up(agent)
+    run(fake, "request-start")
+    core = core_of(agent)
+    asked = core.start_requests.get("test")
+    wait_for(lambda: asked.posts)
+    core.start_requests.stop()  # the agent stops: the timers go, the saved copy stays
+
+    def restart():
+        core.start_requests = startrequests.StartRequests(core)
+        core.start_requests.on_close = core.discord.request_closed
+        agent.portal.call(asyncio_load, core.start_requests)
+        return core.start_requests
+
+    again = restart()
+    found = again.get("test")
+    assert found is not None and found.asked_at == asked.asked_at
+    assert found.reply == {"channel_id": asked.reply["channel_id"], "member_id": MEMBER_ID}
+    assert found.posts == asked.posts
+    assert "Someone already asked" in run(fake, "request-start", member=OTHER)[0]
+    # Restarted after the 15 minutes: it ends at once, and the asker hears it.
+    again.stop()
+    monkeypatch.setattr(startrequests, "LIFE", 0.0)
+    again = restart()
+    wait_for(lambda: again.get("test") is None)
+    wait_for(lambda: any("Nobody answered" in m.get("content", "") for m in fake.messages))
+    wait_for(lambda: fake.in_channel("alerts")[-1]["content"] == "Nobody answered.")
+    assert "Try again in 10 min" in run(fake, "request-start", member=OTHER)[0]
+    # Nothing open is saved any more.
+    assert core.db.get_setting(startrequests.SAVED_KEY)["open"] == {}
+
+
+async def asyncio_load(requests) -> None:
+    requests.load()  # the timers need the agent's event loop
+
+
 def test_answering_takes_the_start_permission(agent):  # noqa: F811
     from agent.api.routes import api_routes
 

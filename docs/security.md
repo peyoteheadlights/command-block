@@ -114,17 +114,18 @@ typed in the console (`agent/minecraft/commands.py`). Kick and ban need
 The chat box is the same story. A message sent from the Chat page becomes a
 `say` command and passes exactly the same validation
 (`agent/minecraft/chat.py` calls `agent/minecraft/commands.py`), with a
-narrower character set still: letters, digits and basic punctuation, up to
-220 characters, no newline or carriage return, so one message can never
-become two commands. Chat shown in the apps is read from the server's
+narrower character set still: letters and digits (of any language) and
+basic punctuation, up to 220 characters, no newline, carriage return or
+other control or invisible character, so one message can never become two
+commands. `say` is the only command allowed letters outside ASCII
+(`commands.any_language`); symbols, `§` and every other command keep the
+ASCII set. Chat shown in the apps is read from the server's
 own console output; nothing is reconstructed from what this app sent.
 
-The Discord chat bridge sends Discord messages as a `tellraw` command built
-in `agent/minecraft/chat.py`, never in `agent/discord/`. The message is one
-line, and every character outside a small safe set is written as a JSON
-`\u` escape, so the command passes the console check's character set and
-shell characters never appear in it. It has its own length limit (4,096)
-because escapes are long; everything else about the check is the same.
+The Discord chat bridge sends Discord messages through that same chat `say`,
+never from `agent/discord/`. Before that, `@` becomes "at", so target
+selectors (`@a`, `@e`, `@p`, `@r`, `@s`, `@n`) never expand, and lines that
+look like a command or a console line are refused.
 
 Auto-sleep adds no new way to run anything either: it stops a server through
 the same code path as a scheduled stop.

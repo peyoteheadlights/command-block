@@ -22,6 +22,7 @@ import math
 import re
 import time
 import urllib.parse
+from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -33,14 +34,14 @@ from ..config import PROJECT_ROOT
 from ..events import OWNER_ONLY_EVENTS, Event
 from ..game_events import ANSWERS
 from ..jobs import JobConflict
-from ..minecraft.chat import ChatError, relay
+from ..minecraft.chat import ChatError, say
 from ..minecraft.commands import CommandError
 from ..minecraft.playeractions import DONE, SENT, PlayerActionError, check_name
 from ..minecraft.process import ServerError
 from ..quests import MAX_STACK, QuestError
 from ..security import permissions as P
 from ..security.auth import AuthError, Principal, RateLimiter
-from ..startrequests import STOPPED, StartRequest, StartRequestError
+from ..startrequests import STOPPED, TOLD, StartRequest, StartRequestError
 from ..stats import player_stats
 from ..whitelist import WhitelistError, settled, settled_words
 from . import bridge, client, layout, live, progress
@@ -67,6 +68,7 @@ LIVE_FIRST = 5.0  # seconds after logging in (the Discord servers arrive first)
 LIVE_EVERY = 60.0  # seconds between status message and presence checks
 START_COOLDOWN = 300.0  # seconds between starts of one server from Discord
 BATCH = 1.0  # seconds game lines are gathered before they're posted
+ECHOES = 20  # Discord lines per server waiting for the console to print them
 REFUSED = "\N{NO ENTRY SIGN}"  # the reaction on a message that didn't go into the game
 SEEN_KEY = "discord_levels_seen"  # member id -> the Level their roles were last set for
 BOARDS_KEY = "discord_leaderboards"  # guild id -> the day its leaderboard was last posted
@@ -138,6 +140,10 @@ class Command:
     # Answered "thinking..." first, for work that can take longer than the
     # 3 seconds Discord waits for an answer.
     slow: bool = False
+    # A pop-up form (Discord's modal) asks for these instead of command
+    # options: text inputs, their values arriving as the options.
+    form: list[dict] = field(default_factory=list)
+    form_title: str = ""  # {server} filled in
 
     @property
     def group(self) -> str:
@@ -180,6 +186,7 @@ class Bot:
         self.rate = RateLimiter(8, 60.0)
         self.chat_rate = RateLimiter(5, 10.0)  # the chat bridge, per member
         self._outbox: dict[str, list[str]] = {}  # chat channel id -> game lines to post
+        self._echoes: dict[str, deque[str]] = {}  # server id -> Discord lines said in game
         self.started: dict[str, float] = {}  # server id -> last /start from Discord
         self._task: asyncio.Task | None = None
         self._live: asyncio.Task | None = None
@@ -280,6 +287,8 @@ class Bot:
             self.spawn(self.from_discord(data))
         elif name == "GUILD_MEMBER_REMOVE":
             self.spawn(self.member_left(data))
+        elif name == "CHANNEL_UPDATE":
+            self.spawn(self.channel_changed(data))
 
     # -- the status messages and the presence line ------------------------------
     async def _live_loop(self) -> None:
@@ -398,7 +407,7 @@ class Bot:
                     old = seen.get(member)
                     if old is not None and level > old and self._announces(gid):
                         name = found.get(role or "", {}).get("name") if role else None
-                        channel = layout.shared_channel(db, gid, "quests")
+                        channel = layout.shared_channel(db, gid, "levels")
                         await self.rest.request(
                             "POST",
                             f"/channels/{channel}/messages",
@@ -418,7 +427,7 @@ class Bot:
     def _announces(self, guild_id: str) -> bool:
         return bool(
             layout.level_settings(self.core.db, guild_id)["announce"]
-            and layout.shared_channel(self.core.db, guild_id, "quests")
+            and layout.shared_channel(self.core.db, guild_id, "levels")
         )
 
     async def _set_level_role(
@@ -465,7 +474,7 @@ class Bot:
         posted = db.get_setting(BOARDS_KEY, {}) or {}
         today = now.date().isoformat()
         for gid in list(self.guilds):
-            channel = layout.shared_channel(db, gid, "quests")
+            channel = layout.shared_channel(db, gid, "levels")
             day = layout.level_settings(db, gid)["leaderboard_day"]
             if day != now.weekday() or not channel or posted.get(gid) == today:
                 continue
@@ -676,7 +685,9 @@ class Bot:
 
     async def _remind(self, event: dict[str, Any], view: dict[str, Any], now: float) -> None:
         """An hour before: one message pinging only the members who said
-        Going. An event made less than an hour ahead gets none."""
+        Going, or (the Discord server's choice) a private message to each;
+        anyone who blocks those is pinged instead. An event made less than
+        an hour ahead gets none."""
         from ..game_events import REMIND_BEFORE
 
         if now < event["starts_at"] - REMIND_BEFORE:
@@ -694,8 +705,13 @@ class Bot:
             channel = layout.shared_channel(db, gid, "events")
             if not channel or event["server_id"] not in layout.servers_of(db, gid):
                 continue
-            for i in range(0, len(going), 50):  # Discord pings at most 100 a message
-                some = going[i : i + 50]
+            pinged = going
+            if layout.guild_options(db, gid)["reminders"] == "private":
+                server = self.core.servers[event["server_id"]].name
+                words = progress.private_reminder(event, server, self.guilds[gid]["name"])
+                pinged = [m for m in going if not await self._private(m, words)]
+            for i in range(0, len(pinged), 50):  # Discord pings at most 100 a message
+                some = pinged[i : i + 50]
                 await self.rest.request(
                     "POST",
                     f"/channels/{channel}/messages",
@@ -704,6 +720,21 @@ class Bot:
                         "allowed_mentions": {"users": some},
                     },
                 )
+
+    async def _private(self, member_id: str, words: str) -> bool:
+        """A private message; False when it couldn't be sent (the member
+        blocks them, left, or Discord didn't answer): they're pinged then."""
+        try:
+            dm = await self.rest.request("POST", "/users/@me/channels", {"recipient_id": member_id})
+            await self.rest.request(
+                "POST",
+                f"/channels/{dm['id']}/messages",
+                {"content": words, "allowed_mentions": {"parse": []}},
+            )
+        except client.DiscordError as exc:
+            log.info("couldn't send a private reminder: %s", exc)
+            return False
+        return True
 
     async def screenshot(self, attachment: dict) -> tuple[bytes, str]:
         """A screenshot sent with /quest done, from Discord's own image
@@ -755,11 +786,19 @@ class Bot:
             made = await self.rest.request("POST", f"/channels/{channel_id}/messages", body)
             sent += 1
             if request is not None:
-                request.posts.append((channel_id, str(made["id"])))
+                request.posts.append([channel_id, str(made["id"])])
+        if request is not None:
+            self.core.start_requests.save()
         return sent
 
     async def request_closed(self, request: StartRequest, how: str) -> None:
-        """A start request ended: its alerts lose their buttons and say how."""
+        """A start request ended: the asker hears it where they asked, and
+        its alerts lose their buttons and say how."""
+        reply = request.reply or {}
+        if reply.get("channel_id") and reply.get("member_id"):
+            ctx = self.core.servers.get(request.server_id)
+            told = TOLD[how].format(server=ctx.name if ctx else request.server_id)
+            self.spawn(self.tell(reply["channel_id"], reply["member_id"], told))
         words = {
             "started": "Answered: started.",
             "no": "Answered: not now.",
@@ -793,6 +832,13 @@ class Bot:
         if event.type == "console":
             self._to_console(event)
             return
+        data = event.data or {}
+        echoes = self._echoes.get(event.server_id or "")
+        if event.type == "chat" and data.get("kind") == "server" and echoes:
+            said = str(data.get("text") or "")
+            if said in echoes:
+                echoes.remove(said)
+                return  # came from Discord
         line = bridge.game_line(event)
         if line is None:
             return
@@ -802,6 +848,15 @@ class Bot:
                 waiting.append(line)
                 if len(waiting) == 1:
                     self.spawn(self._post_lines(row["channel_id"]))
+
+    async def channel_changed(self, channel: dict) -> None:
+        """Someone turned a chat channel's slowmode off or down: it goes back."""
+        gid = str(channel.get("guild_id") or "")
+        if gid in self.guilds and any(
+            r["channel_id"] == channel.get("id") for r in self.chat_channels([gid])
+        ):
+            if await layout.keep_slowmode(self.rest, channel):
+                log.info("set the chat channel's slowmode back to %s s", layout.SLOWMODE)
 
     async def _post_lines(self, channel_id: str) -> None:
         await asyncio.sleep(BATCH)
@@ -920,10 +975,17 @@ class Bot:
                 "PUT", f"/channels/{channel_id}/messages/{message['id']}/reactions/{emoji}/@me"
             )
             return
-        dialect = ctx.config.server_type.dialect
+        line = bridge.say_line(bridge.display_name(message), text)
+        if not line:
+            return
+        # The console prints it back as "[Server] Sam: hi": that line isn't
+        # posted in Discord again.
+        echoes = self._echoes.setdefault(ctx.server_id, deque(maxlen=ECHOES))
+        echoes.append(line)
         try:
-            await relay(ctx.server, dialect, "Discord", bridge.display_name(message), text)
+            await say(ctx.server, line)
         except (ChatError, CommandError, ServerError) as exc:
+            echoes.remove(line)
             log.info("a Discord message didn't reach %s: %s", ctx.name, exc)
 
     async def _after_ready(self) -> None:
@@ -1067,14 +1129,15 @@ class Bot:
 
     # -- commands -------------------------------------------------------------------
     async def interaction(self, data: dict) -> None:
-        """A slash command (type 2) or a button press (type 3): rate limit,
-        pick the server, check the permission like a route, run, answer, audit."""
+        """A slash command (type 2), a button press (type 3) or a filled-in
+        pop-up form (type 5): rate limit, pick the server, check the
+        permission like a route, run, answer, audit."""
         kind = data.get("type")
         body = data.get("data") or {}
         member = data.get("member") or {}
         user = member.get("user") or {}
         guild_id = data.get("guild_id")
-        if kind not in (2, 3) or not guild_id or not user.get("id"):
+        if kind not in (2, 3, 5) or not guild_id or not user.get("id"):
             return
         call = Call(
             guild_id=str(guild_id),
@@ -1088,7 +1151,16 @@ class Bot:
         )
         asking: Button | None = None  # a button that asks "Are you sure?" first
         on_prompt = False  # pressed on the "Are you sure?" message: edit it in place
-        if kind == 2:
+        form: Command | None = None  # a command whose pop-up form opens first
+        if kind == 5:  # "form:<command>:<server>", as the form was opened
+            _, wanted_command, wanted = (str(body.get("custom_id")).split(":", 2) + ["", ""])[:3]
+            command = COMMANDS.get(wanted_command)
+            if command is None or not command.form:
+                return
+            call.options = {**form_values(body), "server": wanted}
+            name, permission, handler = f"/{command.name}", command.permission, command.handler
+            needs_server, slow = True, command.slow
+        elif kind == 2:
             name = str(body.get("name"))
             if name in GROUPS:  # "/quest join": the part after the group is an option
                 sub: dict = next(iter(body.get("options") or []), {})
@@ -1101,6 +1173,7 @@ class Bot:
                 return
             name, permission, handler = f"/{command.name}", command.permission, command.handler
             needs_server, slow = command.needs_server, command.slow
+            form = command if command.form else None
         else:
             custom = str(body.get("custom_id") or "")
             if custom == "cancel":
@@ -1125,6 +1198,9 @@ class Bot:
             if asking and call.ctx is not None:
                 question = str(asking.sure).format(name=call.arg, server=call.ctx.name)
                 await self.respond(data, question, components=sure_buttons(asking, call))
+                return
+            if form and call.ctx is not None:
+                await self._callback(data, {"type": 9, "data": form_of(form, call.ctx)})
                 return
             if slow:
                 await self.defer(data, update=on_prompt)
@@ -1268,6 +1344,26 @@ def command_list(names: dict[str, str]) -> list[dict]:
             }
             out.append(group)
         group["options"].append(entry)  # a subcommand: an option of type 1
+    return out
+
+
+def form_of(command: Command, ctx: ServerContext) -> dict:
+    """A command's pop-up form, tied to the server it was opened for."""
+    return {
+        "custom_id": f"form:{command.name}:{ctx.server_id}",
+        "title": command.form_title.format(server=ctx.name)[:45],
+        "components": [{"type": 1, "components": [box]} for box in command.form],
+    }
+
+
+def form_values(body: dict) -> dict[str, str]:
+    """What was typed in a pop-up form, by field. Only text, and the same
+    checks as the command's options run on it afterwards."""
+    out: dict[str, str] = {}
+    for row in body.get("components") or []:
+        for box in row.get("components") or [row.get("component") or {}]:
+            if box.get("custom_id") and isinstance(box.get("value"), str):
+                out[str(box["custom_id"])] = box["value"]
     return out
 
 
@@ -1422,13 +1518,10 @@ async def start(bot: Bot, call: Call) -> str:
 async def request_start(bot: Bot, call: Call) -> str:
     ctx = call.ctx
     assert ctx is not None
-    channel, member = call.channel_id, call.member_id
-
-    async def tell(words: str) -> None:
-        if channel:
-            await bot.tell(channel, member, words)
-
-    await bot.core.start_requests.ask(ctx, f"{call.member_name} (Discord)", tell)
+    reply = (
+        {"channel_id": call.channel_id, "member_id": call.member_id} if call.channel_id else None
+    )
+    await bot.core.start_requests.ask(ctx, f"{call.member_name} (Discord)", reply)
     return (
         f"Asked. The owner and moderators of {ctx.name} have been told; "
         "you'll hear here within 15 minutes."
@@ -2223,16 +2316,27 @@ COMMANDS: dict[str, Command] = {
             "Ask the owner and moderators to let you in",
             P.SERVER_VIEW,
             whitelist_ask,
-            options=[
-                {**NAME_OPTION, "max_length": 20},
+            form=[
                 {
-                    "type": 3,
-                    "name": "why",
-                    "description": "Why you'd like to join",
+                    "type": 4,
+                    "custom_id": "name",
+                    "label": "Your Minecraft name",
+                    "style": 1,
+                    "min_length": 1,
+                    "max_length": 20,
                     "required": True,
+                },
+                {
+                    "type": 4,
+                    "custom_id": "why",
+                    "label": "Why you'd like to join",
+                    "style": 2,
+                    "min_length": 1,
                     "max_length": 300,
+                    "required": True,
                 },
             ],
+            form_title="Ask to join {server}",
         ),
         Command(
             "report",

@@ -238,6 +238,10 @@ def startup_lines() -> list[str]:
 
 
 def main() -> int:
+    # The agent writes and reads UTF-8, like Minecraft; a Windows pipe would
+    # otherwise use the old code page here.
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
     if CHECK_EULA and not eula_accepted():
         out(
             stamp(
