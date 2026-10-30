@@ -287,6 +287,8 @@ class Bot:
             self.spawn(self.from_discord(data))
         elif name == "GUILD_MEMBER_REMOVE":
             self.spawn(self.member_left(data))
+        elif name == "CHANNEL_UPDATE":
+            self.spawn(self.channel_changed(data))
 
     # -- the status messages and the presence line ------------------------------
     async def _live_loop(self) -> None:
@@ -845,6 +847,15 @@ class Bot:
                 waiting.append(line)
                 if len(waiting) == 1:
                     self.spawn(self._post_lines(row["channel_id"]))
+
+    async def channel_changed(self, channel: dict) -> None:
+        """Someone turned a chat channel's slowmode off or down: it goes back."""
+        gid = str(channel.get("guild_id") or "")
+        if gid in self.guilds and any(
+            r["channel_id"] == channel.get("id") for r in self.chat_channels([gid])
+        ):
+            if await layout.keep_slowmode(self.rest, channel):
+                log.info("set the chat channel's slowmode back to %s s", layout.SLOWMODE)
 
     async def _post_lines(self, channel_id: str) -> None:
         await asyncio.sleep(BATCH)

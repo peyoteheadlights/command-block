@@ -214,8 +214,14 @@ def test_setup_creates_only_whats_missing_and_never_touches_the_owners_things(ag
     chat = next(c for c in fake.channels if c["name"] == "chat")
     fake.channels.remove(chat)
     assert set_up(agent)["made"] == ["chat"]
-    # Nothing was ever renamed or deleted.
+    # Nothing was ever renamed or deleted (a chat channel's slowmode is the
+    # only change setup makes to a channel).
     assert not [c for c in fake.calls if c[0] in ("PATCH", "DELETE") and "/guilds/" in c[1]]
+    assert all(
+        c[2] == {"rate_limit_per_user": 5}
+        for c in fake.calls
+        if c[0] == "PATCH" and c[1].startswith("/channels/") and c[1].count("/") == 2
+    )
     assert any(c["name"] == "general" for c in fake.channels)
     # The mod role got the default level on the server.
     status = agent.get("/api/discord").json()
@@ -223,6 +229,29 @@ def test_setup_creates_only_whats_missing_and_never_touches_the_owners_things(ag
     assert [sorted(g["test"]) for g in grants.values()] == [sorted(P.LEVELS[P.DEFAULT_LEVEL])]
     assert status["guilds"][0]["servers"] == ["test"]
     assert status["guilds"][0]["report"]["problems"] == []
+
+
+def test_chat_channels_keep_discords_slowmode_on(agent, fake):
+    set_up(agent)
+    chat = next(c for c in fake.channels if c["name"] == "chat")
+    assert chat["rate_limit_per_user"] == layout.SLOWMODE == 5
+    assert all("rate_limit_per_user" not in c for c in fake.channels if c["name"] != "chat")
+    # Someone turns it off: the bot puts it back.
+    chat["rate_limit_per_user"] = 0
+    fake.socket.dispatch("CHANNEL_UPDATE", {**chat, "guild_id": GUILD_ID})
+    wait_for(lambda: chat["rate_limit_per_user"] == 5)
+    # A longer one is the owner's choice, and other channels aren't touched.
+    chat["rate_limit_per_user"] = 30
+    general = next(c for c in fake.channels if c["name"] == "general")
+    calls = len(fake.calls)
+    fake.socket.dispatch("CHANNEL_UPDATE", {**chat, "guild_id": GUILD_ID})
+    fake.socket.dispatch("CHANNEL_UPDATE", {**general, "guild_id": GUILD_ID})
+    assert run(fake, "status")  # the updates were handled before this answer
+    assert not [c for c in fake.calls[calls:] if c[0] == "PATCH" and c[1].count("/") == 2]
+    # Set up again on a chat channel without it: it's set.
+    chat["rate_limit_per_user"] = 2
+    set_up(agent)
+    assert chat["rate_limit_per_user"] == 5
 
 
 def test_several_servers_get_a_chat_and_status_channel_each(multi_agent, fake):

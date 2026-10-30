@@ -117,7 +117,9 @@ Each Minecraft server's chat channel and its game chat are joined.
   most 220 characters. Only a server's own chat channel goes in. A message that
   starts like a command (`/`) or a console line (`[12:00:00`, `[Server]`,
   `<Name>`) gets a 🚫 reaction and stays out of the game. Each member can
-  send 5 messages in 10 seconds; the rest are dropped. Bots and webhooks
+  send 5 messages in 10 seconds; the rest are dropped. Discord's own
+  slowmode is on in each chat channel (5 seconds), and the bot turns it
+  back on if someone turns it off or lower. Bots and webhooks
   are left out, and nothing goes in while the server isn't online.
 
 Discord to game needs the **Message Content** switch; without it the bridge

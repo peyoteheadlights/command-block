@@ -387,6 +387,12 @@ class FakeDiscord:
             parts = path.split("/")  # "", channels, thread, thread-members, user
             self.thread_members[parts[2]].add(parts[4])
             return httpx.Response(204)
+        if request.method == "PATCH" and path.count("/") == 2 and path.startswith("/channels/"):
+            channel = next((c for c in self.channels if c["id"] == path.split("/")[2]), None)
+            if channel is None:
+                return httpx.Response(404, json={"message": "Unknown Channel", "code": 10003})
+            channel.update(body)
+            return httpx.Response(200, json=channel)
         if request.method == "PUT" and "/reactions/" in path:
             return httpx.Response(204)
         if request.method == "PATCH" and path.startswith("/channels/") and "/messages/" in path:
