@@ -5,10 +5,11 @@ Game to Discord: chat, /me, the owner's "Server" messages, joins, leaves,
 deaths and advancements. Nothing a player types can ping anyone (the bot
 posts with no mentions allowed) or turn into Discord formatting.
 
-Discord to game: one ``say`` line, "Sam: hi", of at most 220 characters:
-letters of any language kept, emoji and symbols dropped, mentions as plain
-names, no formatting marks and no "@", so a target selector like @a can
-never expand. The say command itself is sent by agent/minecraft/chat.py,
+Discord to game: one ``say`` line, "[Discord] Sam: hi", of at most 220
+characters: letters of any language kept, emoji and symbols dropped,
+mentions as plain names, no formatting marks and no "@", so a target
+selector like @a can never expand. A name that mixes alphabets isn't used,
+and one that reads like staff ("Admin") gets "(Discord member)" after it. The say command itself is sent by agent/minecraft/chat.py,
 through the console check, so nothing in this folder reaches the console.
 """
 
@@ -17,6 +18,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import unicodedata
+from collections.abc import Iterable
 
 from ..events import Event
 from ..minecraft.chat import MESSAGE_CHAR_RE, MESSAGE_MAX
@@ -41,6 +43,21 @@ CONSOLE_RE = re.compile(
     r"^(?:/|\[\d{1,2}:\d{2}|\[(?:Server|Console|INFO|WARN|ERROR)\b|<[^>]{1,16}>)",
     re.IGNORECASE,
 )
+# Discord names that get "(Discord member)" after them in the game.
+STAFF_NAMES = {
+    "admin",
+    "administrator",
+    "console",
+    "mod",
+    "moderator",
+    "op",
+    "owner",
+    "server",
+    "staff",
+    "system",
+}
+# Alphabets written together in one name: Japanese, and Korean with Chinese.
+EAST_ASIAN = {"CJK", "HIRAGANA", "KATAKANA", "HANGUL"}
 # Discord's markdown, escaped in game lines so they show as typed.
 DISCORD_MARKS_RE = re.compile(r"([\\*_~`|<>\[\]()#@:-])")
 
@@ -63,7 +80,7 @@ def game_line(event: Event) -> str | None:
             return f"\\* {name} {said}"
         if kind == "server":
             return f"**[Server]**: {said}"
-        return None
+        return None  # "discord": it came from there
     if event.type == "player_joined":
         return f"_{name} joined the game_"
     if event.type == "player_left":
@@ -141,13 +158,36 @@ def plain(text: str) -> str:
     return " ".join(kept.split())
 
 
-def display_name(message: dict) -> str:
+def one_alphabet(name: str) -> bool:
+    """The name's letters all come from one alphabet, so a Cyrillic "а"
+    can't hide inside a Latin "Admin" (Unicode's mixed-script rule)."""
+    scripts = set()
+    for ch in name:
+        if unicodedata.category(ch).startswith("L"):
+            script = unicodedata.name(ch, "?").split()[0]
+            scripts.add("CJK" if script in EAST_ASIAN else script)
+    return len(scripts) <= 1
+
+
+def display_name(message: dict, staff: Iterable[str] = ()) -> str:
+    """The member's server nickname, else their Discord name, else their
+    username. ``staff``: more names, like the owner's, that get
+    "(Discord member)" after them too."""
     author = message.get("author") or {}
     nick = (message.get("member") or {}).get("nick")
+    shown = "someone"
     for name in (nick, author.get("global_name"), author.get("username")):
-        if name and (shown := plain(str(name))[:32]):
-            return shown
-    return "someone"
+        words = plain(str(name or "")).replace("[", "").replace("]", "")
+        if (words := " ".join(words.split())[:32]) and one_alphabet(words):
+            shown = words
+            break
+    taken = STAFF_NAMES | {_letters(s) for s in staff}
+    return f"{shown} (Discord member)" if _letters(shown) in taken else shown
+
+
+def _letters(name: str) -> str:
+    """ "Ad-min", "ADMIN" and full-width "Ａｄｍｉｎ" all give "admin"."""
+    return "".join(ch for ch in unicodedata.normalize("NFKC", name).casefold() if ch.isalnum())
 
 
 def to_game(message: dict, names: dict[str, str]) -> str:
@@ -198,10 +238,3 @@ def say_line(name: str, text: str) -> str:
     if len(line) > LIMIT:
         line = line[: LIMIT - 3].rstrip() + "..."
     return line
-
-
-def echo_key(line: str) -> str:
-    """A said line as it's matched against what the console prints back:
-    its ASCII characters without "?". A console that can't print a language
-    turns its letters into "?" or "\ufffd", and the line still matches."""
-    return "".join(ch for ch in line if ch.isascii() and ch != "?")

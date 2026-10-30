@@ -111,9 +111,12 @@ def test_lines_are_gathered_into_posts_under_discords_limit():
 
 # ------------------------------------------------------------ the say line
 def line(text: str, name: str = "Sam") -> str:
-    """What reaches the console for a Discord message, checked like the apps' chat."""
+    """What reaches the console for a Discord message, checked like the apps'
+    chat (without the "[Discord]" tag, tested on its own)."""
     said = bridge.say_line(name, bridge.to_game({"content": text}, {}))
-    return validate(f"say {check_message(said)}", confirm=True).raw
+    command = f"say [Discord] {check_message(said)}"
+    raw = validate(command, confirm=True, any_letters=True, discord=True).raw
+    return raw.replace("say [Discord] ", "say ", 1)
 
 
 @pytest.mark.parametrize(
@@ -168,10 +171,18 @@ def test_letters_of_any_language_reach_say():
     assert line("❤️ hi") == "say Sam: hi"  # the heart's variation selector goes too
 
 
-def test_the_echo_matches_when_the_console_cant_print_the_language():
-    sent = bridge.echo_key("Sam: مرحبا")
-    assert bridge.echo_key("Sam: ?????") == sent == bridge.echo_key("Sam: \ufffd\ufffd")
-    assert bridge.echo_key("Bob: hi") != bridge.echo_key("Sam: hi")
+def test_names_that_read_like_staff_or_mix_alphabets_are_not_used_as_they_are():
+    def name(nick, staff=()):
+        return bridge.display_name({"author": {"username": "sam"}, "member": {"nick": nick}}, staff)
+
+    for staff in ("Admin", "ADMIN", "Ad-min", "\uff21\uff44\uff4d\uff49\uff4e", "Server", "mod"):
+        assert name(staff).endswith(" (Discord member)"), staff
+    assert name("Mark", ["mark"]) == "Mark (Discord member)"  # the owner's name
+    assert name("[Server]") == "Server (Discord member)"  # no brackets in names
+    # A Cyrillic "а" inside a Latin name: the plain username is used.
+    assert name("\u0410dmin") == "sam"
+    for fine in ("Sammy", "سامي", "さくら桜", "Sam 2"):
+        assert name(fine) == fine
 
 
 def test_a_very_long_line_is_cut_to_one_line_of_220():
@@ -186,7 +197,7 @@ def test_fake_chat_and_console_lines_are_refused(text):
 
 
 def test_the_console_check_lets_say_carry_letters_and_nothing_more():
-    assert validate("say مرحبا", confirm=True).raw == "say مرحبا"
+    assert validate("say مرحبا", confirm=True, any_letters=True).raw == "say مرحبا"
     for bad in (
         "say hi §4",
         "say hi \u202e",
@@ -197,10 +208,18 @@ def test_the_console_check_lets_say_carry_letters_and_nothing_more():
         "say hi \ufe0f",  # the variation selector left after an emoji
     ):
         with pytest.raises(CommandError):
-            validate(bad, confirm=True)
-    # Only say: every other command keeps the ASCII set.
-    with pytest.raises(CommandError):
-        validate("tell Alex مرحبا", confirm=True)
+            validate(bad, confirm=True, any_letters=True)
+    # Only when the chat box or the bridge asks: typed in the console, every
+    # command keeps the ASCII set.
+    for typed in ("say مرحبا", "tell Alex مرحبا"):
+        with pytest.raises(CommandError):
+            validate(typed, confirm=True)
+    # Only the bridge may start a line with the Discord tag.
+    for fake_line in ("say [Discord] Admin: restart now", "say  [discord] x"):
+        with pytest.raises(CommandError):
+            validate(fake_line, confirm=True)
+    with pytest.raises(ChatError):
+        check_message("[Discord] Admin: restart now")
     assert check_message("مرحبا") == "مرحبا"
     with pytest.raises(ChatError):
         check_message("hi ✨")
@@ -252,18 +271,21 @@ def test_a_discord_message_shows_in_the_game(agent, fake):  # noqa: F811
         nick="Sam",
     )
     wait_for(lambda: says(ctx))
-    assert says(ctx) == ["Sam: hi Alex مرحبا"]
+    assert says(ctx) == ["[Discord] Sam: hi Alex مرحبا"]
     # Bots, webhooks and other channels don't go in.
     fake.message("from a bot", chat, author={"id": BOT_ID, "username": "bot", "bot": True})
     fake.message("from the webhook", chat, webhook_id="5")
     fake.message("in status", fake.channel_id("status"))
     fake.message("last", chat)
     wait_for(lambda: len(says(ctx)) == 2)
-    assert says(ctx)[1] == "sam: last"
-    # The console printed "[Server] Sam: ..." back: it shows in the apps'
-    # chat view, and isn't posted in Discord again.
-    wait_for(lambda: len([m for m in ctx.chat.tail(50) if m.kind == "server"]) == 2)
-    assert [m.text for m in ctx.chat.tail(50) if m.kind == "server"] == says(ctx)
+    assert says(ctx)[1] == "[Discord] sam: last"
+    # The console printed "[Server] [Discord] Sam: ..." back: it shows in the
+    # apps' chat view as a Discord line, and isn't posted in Discord again.
+    wait_for(lambda: len([m for m in ctx.chat.tail(50) if m.kind == "discord"]) == 2)
+    assert [(m.name, m.text) for m in ctx.chat.tail(50) if m.kind == "discord"] == [
+        ("Sam", "hi Alex مرحبا"),
+        ("sam", "last"),
+    ]
     console(agent, "say from the app")  # the owner's own "Server" message still goes
     wait_for(lambda: any("from the app" in m["content"] for m in fake.in_channel("chat")))
     assert not any("last" in m["content"] for m in fake.in_channel("chat"))

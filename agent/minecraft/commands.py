@@ -9,9 +9,10 @@ Rules:
   * bounded length
   * the first token must look like a Minecraft command name
   * characters are restricted to a printable set that Minecraft commands use;
-    ``say`` may also carry letters, marks and digits of any language (chat
-    in Arabic, Chinese, ...), never symbols, spaces other than " " or
-    invisible characters
+    the chat box and the Discord bridge may also let ``say`` carry letters,
+    marks and digits of any language (chat in Arabic, Chinese, ...), never
+    symbols, spaces other than " " or invisible characters
+  * only the Discord bridge may start a ``say`` with "[Discord]"
   * shell metacharacters (` ; & | < > $ and newlines) are rejected outright,
     even though nothing here is ever handed to a shell - defence in depth.
     None of them appear in Minecraft command syntax.
@@ -25,6 +26,8 @@ import unicodedata
 from dataclasses import dataclass
 
 MAX_LENGTH = 512
+# Lines from Discord start with this in the game (agent/discord/bridge.py).
+DISCORD_TAG = "[Discord]"
 
 COMMAND_NAME_RE = re.compile(r"^/?[a-z][a-z0-9_:-]{0,31}$")
 # Minecraft command text: letters, digits, and the punctuation used by
@@ -103,7 +106,17 @@ class ValidatedCommand:
         }
 
 
-def validate(command: str, confirm: bool = False, max_length: int = MAX_LENGTH) -> ValidatedCommand:
+def validate(
+    command: str,
+    confirm: bool = False,
+    max_length: int = MAX_LENGTH,
+    *,
+    any_letters: bool = False,
+    discord: bool = False,
+) -> ValidatedCommand:
+    """``any_letters``: a chat message, which may carry letters of any
+    language. ``discord``: a line from the Discord bridge, the only one
+    allowed to start with "[Discord]"."""
     if command is None:
         raise CommandError("Type a command first.")
     text = command.strip()
@@ -117,8 +130,7 @@ def validate(command: str, confirm: bool = False, max_length: int = MAX_LENGTH) 
         raise CommandError("A command has to be one line.")
     if SHELL_META_RE.search(text):
         raise CommandError("That command has characters in it that aren't allowed.")
-    is_say = text.split(" ", 1)[0].lstrip("/").lower() == "say"
-    if not (any_language(text) if is_say else ALLOWED_CHARS_RE.match(text)):
+    if not (any_language(text) if any_letters else ALLOWED_CHARS_RE.match(text)):
         raise CommandError("That command has characters in it that aren't allowed.")
 
     name_token = text.split(" ", 1)[0]
@@ -128,6 +140,9 @@ def validate(command: str, confirm: bool = False, max_length: int = MAX_LENGTH) 
         )
     name = name_token.lstrip("/").lower()
     args = text.split(" ", 1)[1] if " " in text else ""
+
+    if name == "say" and not discord and args.lstrip().lower().startswith(DISCORD_TAG.lower()):
+        raise CommandError("Only messages from Discord start with [Discord].")
 
     if name in BLOCKED_COMMANDS:
         raise CommandError(BLOCKED_COMMANDS[name])
