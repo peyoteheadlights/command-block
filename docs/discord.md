@@ -109,9 +109,12 @@ Each Minecraft server's chat channel and its game chat are joined.
   who's online. Lines are gathered for a second and posted together. The
   bot never pings anyone and Discord formatting in game chat shows as
   typed. Link codes never reach Discord.
-- **Discord to game:** `[Discord] Sam: hi`, sent with `tellraw`. Letters of
-  any language stay, emoji go, mentions become plain names, formatting
-  marks go, and it's one line of at most 220 characters. A message that
+- **Discord to game:** `[Server] Sam: hi`, sent with `say`, so the console
+  prints it and it shows in the apps' chat views too (it isn't posted back
+  in Discord). Letters of any language stay, emoji and symbols go, mentions
+  become plain names, formatting marks go, `@` becomes "at" so `@a` and the
+  other target selectors can never pick players, and it's one line of at
+  most 220 characters. Only a server's own chat channel goes in. A message that
   starts like a command (`/`) or a console line (`[12:00:00`, `[Server]`,
   `<Name>`) gets a 🚫 reaction and stays out of the game. Each member can
   send 5 messages in 10 seconds; the rest are dropped. Bots and webhooks
@@ -122,10 +125,11 @@ is game to Discord only and the Discord page says so. A Bedrock server
 doesn't print chat to its console, so there only joins and leaves reach
 Discord (the page says that too); Discord messages still reach the game.
 
-The `tellraw` text is JSON our code writes, with every character outside a
-small safe set written as a `\u` escape, so the command still passes the
-console check's character set (house rule 2). It's built and sent in
-`agent/minecraft/chat.py`; nothing in `agent/discord/` reaches the console.
+The `say` line goes through the same console check as every command (house
+rule 2): one line, no control or invisible characters, no shell characters,
+no `§` colour codes. `say` is the one command that may also carry letters
+and digits of any language. It's sent by `agent/minecraft/chat.py`; nothing
+in `agent/discord/` reaches the console.
 
 ## Linking accounts
 

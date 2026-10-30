@@ -22,6 +22,7 @@ import math
 import re
 import time
 import urllib.parse
+from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -33,7 +34,7 @@ from ..config import PROJECT_ROOT
 from ..events import OWNER_ONLY_EVENTS, Event
 from ..game_events import ANSWERS
 from ..jobs import JobConflict
-from ..minecraft.chat import ChatError, relay
+from ..minecraft.chat import ChatError, say
 from ..minecraft.commands import CommandError
 from ..minecraft.playeractions import DONE, SENT, PlayerActionError, check_name
 from ..minecraft.process import ServerError
@@ -67,6 +68,7 @@ LIVE_FIRST = 5.0  # seconds after logging in (the Discord servers arrive first)
 LIVE_EVERY = 60.0  # seconds between status message and presence checks
 START_COOLDOWN = 300.0  # seconds between starts of one server from Discord
 BATCH = 1.0  # seconds game lines are gathered before they're posted
+ECHOES = 20  # Discord lines per server waiting for the console to print them
 REFUSED = "\N{NO ENTRY SIGN}"  # the reaction on a message that didn't go into the game
 SEEN_KEY = "discord_levels_seen"  # member id -> the Level their roles were last set for
 BOARDS_KEY = "discord_leaderboards"  # guild id -> the day its leaderboard was last posted
@@ -184,6 +186,7 @@ class Bot:
         self.rate = RateLimiter(8, 60.0)
         self.chat_rate = RateLimiter(5, 10.0)  # the chat bridge, per member
         self._outbox: dict[str, list[str]] = {}  # chat channel id -> game lines to post
+        self._echoes: dict[str, deque[str]] = {}  # server id -> Discord lines said in game
         self.started: dict[str, float] = {}  # server id -> last /start from Discord
         self._task: asyncio.Task | None = None
         self._live: asyncio.Task | None = None
@@ -827,6 +830,12 @@ class Bot:
         if event.type == "console":
             self._to_console(event)
             return
+        data = event.data or {}
+        echoes = self._echoes.get(event.server_id or "")
+        if event.type == "chat" and data.get("kind") == "server" and echoes:
+            if data.get("text") in echoes:
+                echoes.remove(data.get("text"))
+                return  # came from Discord
         line = bridge.game_line(event)
         if line is None:
             return
@@ -954,10 +963,17 @@ class Bot:
                 "PUT", f"/channels/{channel_id}/messages/{message['id']}/reactions/{emoji}/@me"
             )
             return
-        dialect = ctx.config.server_type.dialect
+        line = bridge.say_line(bridge.display_name(message), text)
+        if not line:
+            return
+        # The console prints it back as "[Server] Sam: hi": that line isn't
+        # posted in Discord again.
+        echoes = self._echoes.setdefault(ctx.server_id, deque(maxlen=ECHOES))
+        echoes.append(line)
         try:
-            await relay(ctx.server, dialect, "Discord", bridge.display_name(message), text)
+            await say(ctx.server, line)
         except (ChatError, CommandError, ServerError) as exc:
+            echoes.remove(line)
             log.info("a Discord message didn't reach %s: %s", ctx.name, exc)
 
     async def _after_ready(self) -> None:

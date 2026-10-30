@@ -5,10 +5,11 @@ Game to Discord: chat, /me, the owner's "Server" messages, joins, leaves,
 deaths and advancements. Nothing a player types can ping anyone (the bot
 posts with no mentions allowed) or turn into Discord formatting.
 
-Discord to game: one line of at most 220 characters, letters of any
-language kept, emoji dropped, mentions as plain names and no formatting
-marks. The tellraw command itself is built in agent/minecraft/chat.py, so
-nothing in this folder reaches the console.
+Discord to game: one ``say`` line, "Sam: hi", of at most 220 characters:
+letters of any language kept, emoji and symbols dropped, mentions as plain
+names, no formatting marks and no "@", so a target selector like @a can
+never expand. The say command itself is sent by agent/minecraft/chat.py,
+through the console check, so nothing in this folder reaches the console.
 """
 
 from __future__ import annotations
@@ -18,9 +19,11 @@ import re
 import unicodedata
 
 from ..events import Event
+from ..minecraft.chat import MESSAGE_CHAR_RE, MESSAGE_MAX
+from ..minecraft.commands import any_language
 from ..minecraft.console import ANSI_RE
 
-LIMIT = 220  # characters of a Discord message shown in the game
+LIMIT = MESSAGE_MAX  # characters of a Discord message shown in the game
 POST_LIMIT = 2000  # characters in one Discord message
 
 # Discord's own markup inside a message's text.
@@ -163,8 +166,8 @@ def to_game(message: dict, names: dict[str, str]) -> str:
         if kind == "#":
             return "#" + names.get(wanted, "channel")
         if kind == "@&":
-            return "@" + names.get(wanted, "role")
-        return "@" + str(people.get(wanted, "someone"))
+            return names.get(wanted, "role")
+        return str(people.get(wanted, "someone"))
 
     text = CUSTOM_EMOJI_RE.sub(" ", str(message.get("content") or ""))
     text = MARKS_RE.sub("", MENTION_RE.sub(mention, text))
@@ -176,3 +179,22 @@ def to_game(message: dict, names: dict[str, str]) -> str:
 
 def looks_like_console(text: str) -> bool:
     return bool(CONSOLE_RE.match(text))
+
+
+def say_line(name: str, text: str) -> str:
+    """ "name: text" as the say command carries it: "@" becomes "at" (so
+    @a, @e, @p, @r, @s and @n never expand), and anything say can't carry
+    (like < > & ; | $ and symbols) becomes a space. "" when no words are left."""
+
+    def sayable(words: str) -> str:
+        words = re.sub(r"\s*@\s*", " at ", words)
+        kept = "".join(ch if any_language(ch, MESSAGE_CHAR_RE) else " " for ch in words)
+        return " ".join(kept.split())
+
+    said, who = sayable(text), sayable(name) or "someone"
+    if not said:
+        return ""
+    line = f"{who}: {said}"
+    if len(line) > LIMIT:
+        line = line[: LIMIT - 3].rstrip() + "..."
+    return line
