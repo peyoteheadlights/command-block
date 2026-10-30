@@ -412,7 +412,9 @@ class AddressAnswer(BaseModel):
 
 
 class DiscordGuildOptions(BaseModel):
-    remove_on_leave: bool
+    # Left out: stays as it is.
+    remove_on_leave: bool | None = None
+    reminders: Literal["ping", "private"] | None = None
 
 
 class DiscordLinkAnswer(BaseModel):

@@ -103,6 +103,7 @@ class FakeDiscord:
         self.gateway_sent: list[dict] = []
         self.sockets: list[FakeSocket] = []
         self.forbidden_channels: set[str] = set()
+        self.blocks_dms: set[str] = set()  # members who don't take private messages
         self.rate_limit_next: float | None = None
         self.lock = threading.Lock()
         self._ids = itertools.count(4000000000000000000)
@@ -292,6 +293,12 @@ class FakeDiscord:
             )
         if key == ("GET", "/applications/@me"):
             return httpx.Response(200, json={"id": APP_ID, "name": "My bot", "flags": self.flags})
+        if key == ("POST", "/users/@me/channels"):
+            return httpx.Response(200, json={"id": f"dm{body['recipient_id']}", "type": 1})
+        if path.startswith("/channels/dm") and path.split("/")[2][2:] in self.blocks_dms:
+            return httpx.Response(
+                403, json={"message": "Cannot send messages to this user", "code": 50007}
+            )
         if key == ("PATCH", "/users/@me"):
             self.bot_name = body.get("username") or self.bot_name
             return httpx.Response(200, json={"id": BOT_ID, "username": self.bot_name, "bot": True})

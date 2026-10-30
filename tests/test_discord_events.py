@@ -231,6 +231,31 @@ def test_the_reminder_pings_only_going_members_once(agent, fake):  # noqa: F811
     assert told[0]["allowed_mentions"] == {"users": [SAM]}
 
 
+def test_a_private_reminder_falls_back_to_the_ping(agent, fake):  # noqa: F811
+    set_up(agent)
+    core = core_of(agent)
+    answer = agent.put(f"/api/discord/guilds/{GUILD_ID}/options", json={"reminders": "private"})
+    assert answer.status_code == 200
+    options = answer.json()["guilds"][0]["options"]
+    assert options == {"remove_on_leave": False, "reminders": "private"}  # the other kept
+    fake.blocks_dms.add(BOB)
+    event = make_event(agent)
+    for member in (SAM, BOB):
+        core.game_events.rsvp("test", event["id"], member, "x", "going")
+    move(core, event["id"], time.time() + 30 * 60, time.time() + 90 * 60)
+    core.db.execute("UPDATE game_events SET created_at = created_at - 7200")
+    update(agent)
+    private = [m for m in fake.messages if m["channel_id"] == f"dm{SAM}"]
+    assert len(private) == 1 and "You said you're going" in private[0]["content"]
+    assert private[0]["allowed_mentions"] == {"parse": []}
+    told = [m for m in fake.in_channel("events") if "starts <t:" in m["content"]]
+    assert len(told) == 1 and told[0]["allowed_mentions"] == {"users": [BOB]}
+    assert (
+        agent.put(f"/api/discord/guilds/{GUILD_ID}/options", json={"reminders": "loud"}).status_code
+        == 422
+    )
+
+
 def test_an_event_made_less_than_an_hour_ahead_has_no_reminder(agent, fake):  # noqa: F811
     set_up(agent)
     core = core_of(agent)

@@ -205,9 +205,11 @@ OPTIONS_KEY = "discord_guild_options"  # guild id -> its options
 
 
 def guild_options(db, guild_id: str) -> dict[str, Any]:
-    """remove_on_leave: take someone off the whitelist when they leave."""
+    """remove_on_leave: take someone off the whitelist when they leave;
+    reminders: an event's reminder as a "ping" in the events channel or a
+    "private" message to each member going."""
     saved = (db.get_setting(OPTIONS_KEY, {}) or {}).get(guild_id) or {}
-    return {"remove_on_leave": False, **saved}
+    return {"remove_on_leave": False, "reminders": "ping", **saved}
 
 
 def set_guild_options(db, guild_id: str, **changes: Any) -> dict[str, Any]:

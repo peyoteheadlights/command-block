@@ -238,7 +238,9 @@ with `/event create` (the start typed on the PC's clock, like
 `2026-10-30 20:00`; Discord shows it in each reader's own time). It's
 posted in the events channel with **Going**, **Maybe** and **Can't**
 buttons, and the post edits itself as answers come in. An hour before, one
-message pings only the members who said Going. An event can start the
+message pings only the members who said Going. Under **Event reminders**
+each Discord server can send a private message to each of them instead;
+anyone who blocks private messages from the server is pinged. An event can start the
 server 10 minutes before (skipped in maintenance mode).
 
 Who came is worked out from real data, by the event's kind:

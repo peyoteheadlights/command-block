@@ -235,7 +235,7 @@ def test_leaving_the_discord_server_takes_them_off_only_when_asked(agent, fake):
     identifies = fake.identifies
     turned_on = agent.put(f"/api/discord/guilds/{GUILD_ID}/options", json={"remove_on_leave": True})
     assert turned_on.status_code == 200, turned_on.text
-    assert turned_on.json()["guilds"][0]["options"] == {"remove_on_leave": True}
+    assert turned_on.json()["guilds"][0]["options"]["remove_on_leave"] is True
     # The bot logs in again to ask Discord who leaves.
     wait_for(lambda: fake.identifies > identifies)
     wait_for(lambda: agent.get("/api/discord").json()["state"] == "connected")

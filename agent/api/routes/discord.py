@@ -173,20 +173,22 @@ async def set_options(
     principal: Principal = Depends(require(DISCORD_MANAGE)),
     core=Depends(get_core),
 ):
-    """Per Discord server choices. Taking people off the whitelist when they
-    leave needs Discord to say who left, which the bot only asks for while
-    one Discord server uses it, so the bot logs in again to ask."""
+    """Per Discord server choices: how event reminders are sent, and taking
+    people off the whitelist when they leave. That needs Discord to say who
+    left, which the bot only asks for while one Discord server uses it, so
+    the bot logs in again to ask."""
     from ...discord import client
 
     bot = bot_of(core)
     guild_of(bot, guild_id)
-    layout.set_guild_options(core.db, guild_id, remove_on_leave=payload.remove_on_leave)
+    changes = payload.model_dump(exclude_none=True)
+    layout.set_guild_options(core.db, guild_id, **changes)
     audit(
         core,
         request,
         "discord_options",
         target=guild_id,
-        detail=f"remove_on_leave={payload.remove_on_leave}",
+        detail=", ".join(f"{k}={v}" for k, v in changes.items()),
     )
     if bot.wants_members() != bool(bot.gateway.intents & client.GUILD_MEMBERS):
         await bot.gateway.relogin()

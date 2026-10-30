@@ -676,7 +676,9 @@ class Bot:
 
     async def _remind(self, event: dict[str, Any], view: dict[str, Any], now: float) -> None:
         """An hour before: one message pinging only the members who said
-        Going. An event made less than an hour ahead gets none."""
+        Going, or (the Discord server's choice) a private message to each;
+        anyone who blocks those is pinged instead. An event made less than
+        an hour ahead gets none."""
         from ..game_events import REMIND_BEFORE
 
         if now < event["starts_at"] - REMIND_BEFORE:
@@ -694,8 +696,13 @@ class Bot:
             channel = layout.shared_channel(db, gid, "events")
             if not channel or event["server_id"] not in layout.servers_of(db, gid):
                 continue
-            for i in range(0, len(going), 50):  # Discord pings at most 100 a message
-                some = going[i : i + 50]
+            pinged = going
+            if layout.guild_options(db, gid)["reminders"] == "private":
+                server = self.core.servers[event["server_id"]].name
+                words = progress.private_reminder(event, server, self.guilds[gid]["name"])
+                pinged = [m for m in going if not await self._private(m, words)]
+            for i in range(0, len(pinged), 50):  # Discord pings at most 100 a message
+                some = pinged[i : i + 50]
                 await self.rest.request(
                     "POST",
                     f"/channels/{channel}/messages",
@@ -704,6 +711,21 @@ class Bot:
                         "allowed_mentions": {"users": some},
                     },
                 )
+
+    async def _private(self, member_id: str, words: str) -> bool:
+        """A private message; False when it couldn't be sent (the member
+        blocks them, left, or Discord didn't answer): they're pinged then."""
+        try:
+            dm = await self.rest.request("POST", "/users/@me/channels", {"recipient_id": member_id})
+            await self.rest.request(
+                "POST",
+                f"/channels/{dm['id']}/messages",
+                {"content": words, "allowed_mentions": {"parse": []}},
+            )
+        except client.DiscordError as exc:
+            log.info("couldn't send a private reminder: %s", exc)
+            return False
+        return True
 
     async def screenshot(self, attachment: dict) -> tuple[bytes, str]:
         """A screenshot sent with /quest done, from Discord's own image
