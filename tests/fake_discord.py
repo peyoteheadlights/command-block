@@ -210,6 +210,39 @@ class FakeDiscord:
         )
         return token
 
+    def submit(
+        self,
+        custom_id: str,
+        values: dict[str, str],
+        roles=(),
+        member: str = MEMBER_ID,
+        username: str = "sam",
+        channel: str | None = None,
+    ) -> str:
+        """A member fills in a pop-up form and sends it; returns the token."""
+        token = f"itoken{next(self._ids)}"
+        rows = [
+            {"type": 1, "components": [{"type": 4, "custom_id": k, "value": v}]}
+            for k, v in values.items()
+        ]
+        self.socket.dispatch(
+            "INTERACTION_CREATE",
+            {
+                "id": str(next(self._ids)),
+                "type": 5,
+                "token": token,
+                "guild_id": GUILD_ID,
+                "channel_id": channel or "2000000000000000010",
+                "member": {"user": {"id": member, "username": username}, "roles": list(roles)},
+                "data": {"custom_id": custom_id, "components": rows},
+            },
+        )
+        return token
+
+    def form(self, token: str) -> dict | None:
+        """The pop-up form the bot opened for an interaction, if it did."""
+        return next((b["data"] for b in self.answers(token) if b.get("type") == 9), None)
+
     def message(
         self,
         content: str,

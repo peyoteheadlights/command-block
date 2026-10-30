@@ -138,6 +138,10 @@ class Command:
     # Answered "thinking..." first, for work that can take longer than the
     # 3 seconds Discord waits for an answer.
     slow: bool = False
+    # A pop-up form (Discord's modal) asks for these instead of command
+    # options: text inputs, their values arriving as the options.
+    form: list[dict] = field(default_factory=list)
+    form_title: str = ""  # {server} filled in
 
     @property
     def group(self) -> str:
@@ -1097,14 +1101,15 @@ class Bot:
 
     # -- commands -------------------------------------------------------------------
     async def interaction(self, data: dict) -> None:
-        """A slash command (type 2) or a button press (type 3): rate limit,
-        pick the server, check the permission like a route, run, answer, audit."""
+        """A slash command (type 2), a button press (type 3) or a filled-in
+        pop-up form (type 5): rate limit, pick the server, check the
+        permission like a route, run, answer, audit."""
         kind = data.get("type")
         body = data.get("data") or {}
         member = data.get("member") or {}
         user = member.get("user") or {}
         guild_id = data.get("guild_id")
-        if kind not in (2, 3) or not guild_id or not user.get("id"):
+        if kind not in (2, 3, 5) or not guild_id or not user.get("id"):
             return
         call = Call(
             guild_id=str(guild_id),
@@ -1118,7 +1123,16 @@ class Bot:
         )
         asking: Button | None = None  # a button that asks "Are you sure?" first
         on_prompt = False  # pressed on the "Are you sure?" message: edit it in place
-        if kind == 2:
+        form: Command | None = None  # a command whose pop-up form opens first
+        if kind == 5:  # "form:<command>:<server>", as the form was opened
+            _, wanted_command, wanted = (str(body.get("custom_id")).split(":", 2) + ["", ""])[:3]
+            command = COMMANDS.get(wanted_command)
+            if command is None or not command.form:
+                return
+            call.options = {**form_values(body), "server": wanted}
+            name, permission, handler = f"/{command.name}", command.permission, command.handler
+            needs_server, slow = True, command.slow
+        elif kind == 2:
             name = str(body.get("name"))
             if name in GROUPS:  # "/quest join": the part after the group is an option
                 sub: dict = next(iter(body.get("options") or []), {})
@@ -1131,6 +1145,7 @@ class Bot:
                 return
             name, permission, handler = f"/{command.name}", command.permission, command.handler
             needs_server, slow = command.needs_server, command.slow
+            form = command if command.form else None
         else:
             custom = str(body.get("custom_id") or "")
             if custom == "cancel":
@@ -1155,6 +1170,9 @@ class Bot:
             if asking and call.ctx is not None:
                 question = str(asking.sure).format(name=call.arg, server=call.ctx.name)
                 await self.respond(data, question, components=sure_buttons(asking, call))
+                return
+            if form and call.ctx is not None:
+                await self._callback(data, {"type": 9, "data": form_of(form, call.ctx)})
                 return
             if slow:
                 await self.defer(data, update=on_prompt)
@@ -1298,6 +1316,26 @@ def command_list(names: dict[str, str]) -> list[dict]:
             }
             out.append(group)
         group["options"].append(entry)  # a subcommand: an option of type 1
+    return out
+
+
+def form_of(command: Command, ctx: ServerContext) -> dict:
+    """A command's pop-up form, tied to the server it was opened for."""
+    return {
+        "custom_id": f"form:{command.name}:{ctx.server_id}",
+        "title": command.form_title.format(server=ctx.name)[:45],
+        "components": [{"type": 1, "components": [box]} for box in command.form],
+    }
+
+
+def form_values(body: dict) -> dict[str, str]:
+    """What was typed in a pop-up form, by field. Only text, and the same
+    checks as the command's options run on it afterwards."""
+    out: dict[str, str] = {}
+    for row in body.get("components") or []:
+        for box in row.get("components") or [row.get("component") or {}]:
+            if box.get("custom_id") and isinstance(box.get("value"), str):
+                out[str(box["custom_id"])] = box["value"]
     return out
 
 
@@ -2250,16 +2288,27 @@ COMMANDS: dict[str, Command] = {
             "Ask the owner and moderators to let you in",
             P.SERVER_VIEW,
             whitelist_ask,
-            options=[
-                {**NAME_OPTION, "max_length": 20},
+            form=[
                 {
-                    "type": 3,
-                    "name": "why",
-                    "description": "Why you'd like to join",
+                    "type": 4,
+                    "custom_id": "name",
+                    "label": "Your Minecraft name",
+                    "style": 1,
+                    "min_length": 1,
+                    "max_length": 20,
                     "required": True,
+                },
+                {
+                    "type": 4,
+                    "custom_id": "why",
+                    "label": "Why you'd like to join",
+                    "style": 2,
+                    "min_length": 1,
                     "max_length": 300,
+                    "required": True,
                 },
             ],
+            form_title="Ask to join {server}",
         ),
         Command(
             "report",

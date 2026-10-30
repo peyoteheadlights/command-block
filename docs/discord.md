@@ -270,8 +270,8 @@ shows every count and the result is posted below it.
 
 `/whitelist add <name>` is for Discord roles with **Players**. It sends the
 normal whitelist command and says "Sent" until the server's console
-confirms it, like the Players page. Anyone else can use `/whitelist ask`
-with their Minecraft name and why they'd like to join. The request shows in
+confirms it, like the Players page. Anyone else can use `/whitelist ask`:
+a pop-up form asks for their Minecraft name and why they'd like to join. The request shows in
 the alerts channel with **Approve** and **Say no**, and on the Players page
 (requests are kept 7 days, one per member, 30 per server). Approving sends
 the whitelist command; the asker hears the answer where they asked.
