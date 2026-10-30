@@ -1955,6 +1955,7 @@
 "discord.kind.chat": ["Chat", "chat"],
 "discord.no_game_chat": ["{server} doesn't show its game chat to Command Block, so only joins and leaves reach Discord. Discord messages still reach the game.", "No game chat in the console ({server}): joins and leaves only; Discord to game still works."],
 "discord.kind.quests": ["Quests", "quests"],
+"discord.kind.levels": ["Levels", "levels"],
 "discord.kind.events": ["Events", "events"],
 "discord.kind.console": ["Console", "console"],
 "discord.console_hint": ["The server's console, read only. Pick a channel only you can see: it shows everything the server prints (addresses are hidden).", "Read-only console feed; IPs and link codes are hidden. Keep the channel private."],

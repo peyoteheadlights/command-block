@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 PORTAL = "https://discord.com/developers/applications"
 STEPS = 6  # discord.steps.1 to .6
 SERVER_STEPS = 3
-KINDS = ("alerts", "status", "chat", "quests", "events")
+KINDS = ("alerts", "status", "chat", "quests", "levels", "events")
 PER_SERVER = ("status", "chat")
 # Shared, and a server may have its own instead (None: the shared one).
 OWN_IF_WANTED = ("alerts",)

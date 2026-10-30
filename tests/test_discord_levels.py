@@ -30,9 +30,8 @@ OTHER = "3000000000000000099"
 
 
 def bot_posts(discord) -> list[dict]:
-    """What the bot posted in #quests, leaving out the quests board it can post
-    there at any time once it's connected."""
-    return [m for m in discord.in_channel("quests") if not m["content"].startswith("**Quests**")]
+    """What the bot posted in #levels: level-ups and the leaderboard."""
+    return discord.in_channel("levels")
 
 
 def write_stats(world, uuid=ALEX, stats=None, advancements=None, saved_at=None):
@@ -223,6 +222,8 @@ def test_level_roles_replace_each_other_and_level_ups_are_posted(agent, fake):  
         posted[-1]["content"] == f"<@{MEMBER_ID}> reached **Level 5**! They're a **Regular** now."
     )
     assert posted[-1]["allowed_mentions"] == {"parse": []}
+    # #quests keeps only the quest board.
+    assert all(m["content"].startswith("**Quests**") for m in fake.in_channel("quests"))
     core.db.execute("UPDATE players SET total_seconds = 80 * 3600 WHERE uuid = ?", (ALEX,))
     call(agent, core.discord.update_levels)
     assert fake.members[MEMBER_ID] == [level_role(core, 10)]  # Regular taken away

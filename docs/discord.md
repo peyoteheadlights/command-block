@@ -31,7 +31,7 @@ Everything is on the desktop app's gear → **Discord**.
    private threads.
 6. Tick which Minecraft servers that Discord server is for and press **Set
    up this Discord server**. It adds a "Command Block" category with
-   alerts, quests and events channels, a chat and status channel for each
+   alerts, quests, levels and events channels, a chat and status channel for each
    Minecraft server, and the Discord roles "Minecraft mod", "Regular",
    "Veteran" and "Legend". It only adds what's missing and finds its own
    channels and roles by id, so it never deletes or renames anything.
@@ -176,12 +176,12 @@ checks say so). A role that stops being a Level role is taken back from
 members. Once changed, setup leaves the Level roles alone.
 
 Once a minute the bot works out everyone's Level and only calls Discord
-for a member whose Level changed. Level-ups are posted in the quests
+for a member whose Level changed. Level-ups are posted in the levels
 channel (no ping), and can be turned off. A member seen for the first time
 gets their role without a post.
 
 The **weekly leaderboard** is off until you pick a day. It's posted in the
-quests channel at 18:00 on the PC's clock: the top 10 by playtime in the
+levels channel at 18:00 on the PC's clock: the top 10 by playtime in the
 last 7 days on that Discord server's Minecraft servers, and the top 10
 Levels. It's remembered, so a restart doesn't post it twice.
 

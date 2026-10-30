@@ -75,7 +75,7 @@ CHATS = POSTS | ADD_REACTIONS | READ_MESSAGE_HISTORY
 
 # Channels shared by every Minecraft server the Discord server is for, and
 # the ones each of them gets. A shared kind can also be tied per server.
-SHARED_CHANNELS = ("alerts", "quests", "events")
+SHARED_CHANNELS = ("alerts", "quests", "levels", "events")
 SERVER_CHANNELS = ("chat", "status")
 # Never made by "Set up this Discord server": the owner picks one on purpose.
 # The console channel shows a server's console, read only.

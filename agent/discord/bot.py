@@ -398,7 +398,7 @@ class Bot:
                     old = seen.get(member)
                     if old is not None and level > old and self._announces(gid):
                         name = found.get(role or "", {}).get("name") if role else None
-                        channel = layout.shared_channel(db, gid, "quests")
+                        channel = layout.shared_channel(db, gid, "levels")
                         await self.rest.request(
                             "POST",
                             f"/channels/{channel}/messages",
@@ -418,7 +418,7 @@ class Bot:
     def _announces(self, guild_id: str) -> bool:
         return bool(
             layout.level_settings(self.core.db, guild_id)["announce"]
-            and layout.shared_channel(self.core.db, guild_id, "quests")
+            and layout.shared_channel(self.core.db, guild_id, "levels")
         )
 
     async def _set_level_role(
@@ -465,7 +465,7 @@ class Bot:
         posted = db.get_setting(BOARDS_KEY, {}) or {}
         today = now.date().isoformat()
         for gid in list(self.guilds):
-            channel = layout.shared_channel(db, gid, "quests")
+            channel = layout.shared_channel(db, gid, "levels")
             day = layout.level_settings(db, gid)["leaderboard_day"]
             if day != now.weekday() or not channel or posted.get(gid) == today:
                 continue

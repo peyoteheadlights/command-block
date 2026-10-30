@@ -199,7 +199,15 @@ def test_wrong_tokens_are_refused_before_they_reach_env(agent):
 # ------------------------------------------------------------ setup and checks
 def test_setup_creates_only_whats_missing_and_never_touches_the_owners_things(agent, fake):
     first = set_up(agent)
-    assert set(first["made"]) >= {"Command Block", "alerts", "chat", "status", "quests", "events"}
+    assert set(first["made"]) >= {
+        "Command Block",
+        "alerts",
+        "chat",
+        "status",
+        "quests",
+        "levels",
+        "events",
+    }
     assert {"Minecraft mod", "Regular", "Veteran", "Legend"} <= set(first["made"])
     assert set_up(agent)["made"] == []
     # The owner deletes the chat channel: the next press makes it again.
