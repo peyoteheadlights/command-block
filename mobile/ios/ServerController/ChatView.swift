@@ -52,7 +52,8 @@ struct ChatView: View {
 
     private func line(_ message: ChatMessage, _ palette: Palette) -> some View {
         let server = message.kind == "server"
-        let who = server ? model.t("chat.server") : (message.name ?? "")
+        let name = message.name ?? ""
+        let who = server ? model.t("chat.server") : message.kind == "discord" ? model.t("chat.from_discord", ["name": name]) : name
         let words = message.kind == "action" ? "• " + message.text : message.text
         return (
             Text(verbatim: Display.clock(message.ts) + "  ").foregroundStyle(palette.textSecondary)

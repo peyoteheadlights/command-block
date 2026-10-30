@@ -6,6 +6,7 @@ network."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import secrets
 import time
@@ -64,19 +65,25 @@ async def start_export(
         for ctx in core.servers.values():
             protected += [ctx.config.server_dir, ctx.config.backup_dir]
         try:
-            save_in = filebrowse.writable_folder(payload.folder, protected)
+            save_in = await asyncio.to_thread(filebrowse.writable_folder, payload.folder, protected)
         except filebrowse.BrowseError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     token = secrets.token_hex(16)
     filename = f"command-block-export-{time.strftime('%Y%m%d')}.zip"
+    # Also deletes old exports there that were never downloaded.
+    exports = await asyncio.to_thread(transfer.folder, core.config)
     # Written straight into the picked folder under a ".part" name, so a
     # full drive never leaves a cut-off file with an export's name.
     if save_in is not None:
         target = save_in / f"{filename}.{token[:8]}.part"
     else:
-        target = transfer.folder(core.config) / f"{token}.zip"
+        target = exports / f"{token}.zip"
 
     async def run(job) -> dict[str, Any]:
+        if save_in is not None:
+            # Left by an export the agent was stopped in the middle of.
+            parts = save_in.glob("command-block-export-*.zip.*.part")
+            await asyncio.to_thread(transfer.remove_old, parts)
         total = await asyncio.to_thread(transfer.count_items, core, options)
         job.step("Writing the export file", total=total, unit="files")
         try:
@@ -92,7 +99,10 @@ async def start_export(
                 saved = await asyncio.to_thread(transfer.place, target, save_in, filename)
                 result["saved_to"] = str(saved)
         except BaseException:
-            target.unlink(missing_ok=True)
+            # Windows refuses while a stopped export still writes it: an
+            # export into this folder a day later deletes it.
+            with contextlib.suppress(OSError):
+                target.unlink(missing_ok=True)
             raise
         return result
 

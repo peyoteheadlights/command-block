@@ -95,7 +95,8 @@ final class PcPages {
             said = try await work(client)
         } catch {
             let problem = client.translateFailure(error)
-            noted(problem)
+            // After a sign-out the old PC's answer isn't shown on the new sign-in.
+            if !stopped { noted(problem) }
             said = Said(text: problem.message(strings), good: false)
         }
         busy = nil
@@ -232,6 +233,7 @@ final class PcPages {
         let started = Date()
         while !stopped {
             try? await Task.sleep(nanoseconds: 5_000_000_000)
+            if stopped { return }
             // While it restarts the PC doesn't answer: that is expected, not a problem to show.
             if let now = try? await client.updates(), PcUpdate.back(before: before, now: now, target: target) {
                 update = now
@@ -269,6 +271,7 @@ final class PcPages {
             exporting = state
             while case .running = state, !stopped {
                 try await Task.sleep(nanoseconds: 1_000_000_000)
+                if stopped { return nil }
                 state = PcSettings.exporting(try await client.exportJob(started.jobId))
                 exporting = state
             }

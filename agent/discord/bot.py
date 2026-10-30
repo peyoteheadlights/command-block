@@ -22,7 +22,6 @@ import math
 import re
 import time
 import urllib.parse
-from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -68,7 +67,6 @@ LIVE_FIRST = 5.0  # seconds after logging in (the Discord servers arrive first)
 LIVE_EVERY = 60.0  # seconds between status message and presence checks
 START_COOLDOWN = 300.0  # seconds between starts of one server from Discord
 BATCH = 1.0  # seconds game lines are gathered before they're posted
-ECHOES = 20  # Discord lines per server waiting for the console to print them
 REFUSED = "\N{NO ENTRY SIGN}"  # the reaction on a message that didn't go into the game
 SEEN_KEY = "discord_levels_seen"  # member id -> the Level their roles were last set for
 BOARDS_KEY = "discord_leaderboards"  # guild id -> the day its leaderboard was last posted
@@ -186,7 +184,6 @@ class Bot:
         self.rate = RateLimiter(8, 60.0)
         self.chat_rate = RateLimiter(5, 10.0)  # the chat bridge, per member
         self._outbox: dict[str, list[str]] = {}  # chat channel id -> game lines to post
-        self._echoes: dict[str, deque[str]] = {}  # server id -> Discord lines said in game
         self.started: dict[str, float] = {}  # server id -> last /start from Discord
         self._task: asyncio.Task | None = None
         self._live: asyncio.Task | None = None
@@ -407,7 +404,7 @@ class Bot:
                     old = seen.get(member)
                     if old is not None and level > old and self._announces(gid):
                         name = found.get(role or "", {}).get("name") if role else None
-                        channel = layout.shared_channel(db, gid, "levels")
+                        channel = layout.levels_channel(db, gid)
                         await self.rest.request(
                             "POST",
                             f"/channels/{channel}/messages",
@@ -427,7 +424,7 @@ class Bot:
     def _announces(self, guild_id: str) -> bool:
         return bool(
             layout.level_settings(self.core.db, guild_id)["announce"]
-            and layout.shared_channel(self.core.db, guild_id, "levels")
+            and layout.levels_channel(self.core.db, guild_id)
         )
 
     async def _set_level_role(
@@ -474,7 +471,7 @@ class Bot:
         posted = db.get_setting(BOARDS_KEY, {}) or {}
         today = now.date().isoformat()
         for gid in list(self.guilds):
-            channel = layout.shared_channel(db, gid, "levels")
+            channel = layout.levels_channel(db, gid)
             day = layout.level_settings(db, gid)["leaderboard_day"]
             if day != now.weekday() or not channel or posted.get(gid) == today:
                 continue
@@ -701,6 +698,7 @@ class Bot:
         going = [r["discord_id"] for r in view["going"]]
         if not going or event["created_at"] > event["starts_at"] - REMIND_BEFORE:
             return
+        messaged: set[str] = set()  # once, even when two Discord servers want it private
         for gid in list(self.guilds):
             channel = layout.shared_channel(db, gid, "events")
             if not channel or event["server_id"] not in layout.servers_of(db, gid):
@@ -709,7 +707,14 @@ class Bot:
             if layout.guild_options(db, gid)["reminders"] == "private":
                 server = self.core.servers[event["server_id"]].name
                 words = progress.private_reminder(event, server, self.guilds[gid]["name"])
-                pinged = [m for m in going if not await self._private(m, words)]
+                pinged = []
+                for member in going:
+                    if member in messaged:
+                        continue
+                    if await self._private(member, words):
+                        messaged.add(member)
+                    else:
+                        pinged.append(member)
             for i in range(0, len(pinged), 50):  # Discord pings at most 100 a message
                 some = pinged[i : i + 50]
                 await self.rest.request(
@@ -832,13 +837,6 @@ class Bot:
         if event.type == "console":
             self._to_console(event)
             return
-        data = event.data or {}
-        echoes = self._echoes.get(event.server_id or "")
-        if event.type == "chat" and data.get("kind") == "server" and echoes:
-            said = str(data.get("text") or "")
-            if said in echoes:
-                echoes.remove(said)
-                return  # came from Discord
         line = bridge.game_line(event)
         if line is None:
             return
@@ -975,17 +973,15 @@ class Bot:
                 "PUT", f"/channels/{channel_id}/messages/{message['id']}/reactions/{emoji}/@me"
             )
             return
-        line = bridge.say_line(bridge.display_name(message), text)
+        name = bridge.display_name(message, [self.core.auth.owner_username])
+        line = bridge.say_line(name, text)
         if not line:
             return
-        # The console prints it back as "[Server] Sam: hi": that line isn't
-        # posted in Discord again.
-        echoes = self._echoes.setdefault(ctx.server_id, deque(maxlen=ECHOES))
-        echoes.append(line)
+        # The console prints it back as "[Server] [Discord] Sam: hi": the
+        # chat log reads that as a Discord line, which isn't posted again.
         try:
-            await say(ctx.server, line)
+            await say(ctx.server, line, discord=True)
         except (ChatError, CommandError, ServerError) as exc:
-            echoes.remove(line)
             log.info("a Discord message didn't reach %s: %s", ctx.name, exc)
 
     async def _after_ready(self) -> None:

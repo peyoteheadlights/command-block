@@ -109,9 +109,14 @@ Each Minecraft server's chat channel and its game chat are joined.
   who's online. Lines are gathered for a second and posted together. The
   bot never pings anyone and Discord formatting in game chat shows as
   typed. Link codes never reach Discord.
-- **Discord to game:** `[Server] Sam: hi`, sent with `say`, so the console
-  prints it and it shows in the apps' chat views too (it isn't posted back
-  in Discord). Letters of any language stay, emoji and symbols go, mentions
+- **Discord to game:** `[Server] [Discord] Sam: hi`, sent with `say`, so
+  the console prints it and it shows in the apps' chat views as "Sam
+  (Discord)". The tag is how the bot knows not to post it back in Discord,
+  and only the bridge may start a `say` with it. A name that reads like
+  staff ("Admin", "Server", the owner's name) gets "(Discord member)" after
+  it, brackets are taken out of names, and a name that mixes alphabets (a
+  Cyrillic "а" inside "Admin") is replaced by the member's username.
+  Letters of any language stay, emoji and symbols go, mentions
   become plain names, formatting marks go, `@` becomes "at" so `@a` and the
   other target selectors can never pick players, and it's one line of at
   most 220 characters. Only a server's own chat channel goes in. A message that
@@ -129,8 +134,9 @@ Discord (the page says that too); Discord messages still reach the game.
 
 The `say` line goes through the same console check as every command (house
 rule 2): one line, no control or invisible characters, no shell characters,
-no `§` colour codes. `say` is the one command that may also carry letters
-and digits of any language. It's sent by `agent/minecraft/chat.py`; nothing
+no `§` colour codes. Only the chat box and the bridge may let `say` carry
+letters and digits of any language; typed in the console, it keeps the
+ASCII set. It's sent by `agent/minecraft/chat.py`; nothing
 in `agent/discord/` reaches the console.
 
 ## Linking accounts

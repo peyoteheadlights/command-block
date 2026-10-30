@@ -1279,6 +1279,7 @@
 "start.discord_not_set_up": ["No Discord server is set up for this server yet.", "No Discord server has channels tied to this server."],
 "start.discord_problem": ["The Discord page shows something to fix.", "A Discord check failed: see the Discord page."],
 "chat.server": ["Server", "Server"],
+"chat.from_discord": ["{name} (Discord)", "{name} (Discord)"],
 "chat.empty": ["No chat yet", "No chat lines yet"],
 "chat.empty_hint": ["Anything players say in the game shows up here.", "Chat is read from the server console as it prints."],
 "chat.log_label": ["In-game chat", "In-game chat"],

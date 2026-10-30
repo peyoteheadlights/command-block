@@ -18,6 +18,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .commands import DISCORD_TAG
+
 if TYPE_CHECKING:
     from .console import ConsoleLine
 
@@ -56,6 +58,8 @@ def check_message(text: str) -> str:
         raise ChatError("Keep a message to 220 characters or fewer.")
     if not any_language(text, MESSAGE_CHAR_RE):
         raise ChatError("Use letters, numbers and basic punctuation only.")
+    if text.lower().startswith(DISCORD_TAG.lower()):
+        raise ChatError("Only messages from Discord start with [Discord].")
     return text
 
 
@@ -63,7 +67,7 @@ def check_message(text: str) -> str:
 class ChatMessage:
     seq: int
     ts: float
-    kind: str  # player | server | action
+    kind: str  # player | server | action | discord
     name: str | None  # who said it, as the console printed it
     text: str
 
@@ -91,22 +95,29 @@ def parse_chat(line: ConsoleLine) -> tuple[str, str | None, str] | None:
     if m := PLAYER_CHAT_RE.match(text):
         return "player", m.group("name"), m.group("text")
     if m := SERVER_CHAT_RE.match(text):
-        return "server", None, m.group("text")
+        said = m.group("text")
+        if said.startswith(DISCORD_TAG + " "):  # "[Server] [Discord] Sam: hi"
+            name, _, words = said.removeprefix(DISCORD_TAG + " ").partition(": ")
+            return "discord", name, words
+        return "server", None, said
     if m := ACTION_RE.match(text):
         return "action", m.group("name"), m.group("text")
     return None
 
 
-async def say(server, text: str) -> str:
+async def say(server, text: str, discord: bool = False) -> str:
     """Send one message to everyone in the game, as "Server".
 
     The text is checked here, turned into a normal ``say`` command, and
     validated like any console command before it reaches the server.
+    ``discord``: a line from the Discord bridge, sent with "[Discord]" in
+    front so players can tell it from the owner's messages.
     """
     from .commands import validate
 
     message = check_message(text)
-    validated = validate(f"say {message}", confirm=True)
+    line = f"{DISCORD_TAG} {message}" if discord else message
+    validated = validate(f"say {line}", confirm=True, any_letters=True, discord=discord)
     if not server.running or server.state.value != "ONLINE":
         raise ChatError("The server has to be running to send a message.")
     await server.send_command(validated.raw)

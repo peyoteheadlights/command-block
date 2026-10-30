@@ -117,15 +117,17 @@ The chat box is the same story. A message sent from the Chat page becomes a
 narrower character set still: letters and digits (of any language) and
 basic punctuation, up to 220 characters, no newline, carriage return or
 other control or invisible character, so one message can never become two
-commands. `say` is the only command allowed letters outside ASCII
-(`commands.any_language`); symbols, `§` and every other command keep the
-ASCII set. Chat shown in the apps is read from the server's
+commands. Only the chat box (and the Discord bridge through it) may send
+letters outside ASCII (`validate(any_letters=True)`, `commands.any_language`);
+symbols, `§` and every command typed in the console keep the ASCII set. Chat shown in the apps is read from the server's
 own console output; nothing is reconstructed from what this app sent.
 
 The Discord chat bridge sends Discord messages through that same chat `say`,
 never from `agent/discord/`. Before that, `@` becomes "at", so target
 selectors (`@a`, `@e`, `@p`, `@r`, `@s`, `@n`) never expand, and lines that
-look like a command or a console line are refused.
+look like a command or a console line are refused. Each line starts with
+"[Discord]", which no other `say` may start with, so players can tell a
+Discord member from the owner.
 
 Auto-sleep adds no new way to run anything either: it stops a server through
 the same code path as a scheduled stop.

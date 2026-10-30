@@ -82,7 +82,11 @@ fun ChatScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
 @Composable
 private fun ChatLine(message: ChatMessage) {
     val colors = LocalColors.current
-    val who = if (message.kind == "server") t("chat.server") else message.name.orEmpty()
+    val who = when (message.kind) {
+        "server" -> t("chat.server")
+        "discord" -> t("chat.from_discord", "name" to message.name.orEmpty())
+        else -> message.name.orEmpty()
+    }
     val words = if (message.kind == "action") "• ${message.text}" else message.text
     Text(
         buildAnnotatedString {

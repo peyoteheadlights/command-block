@@ -9,9 +9,10 @@ Rules:
   * bounded length
   * the first token must look like a Minecraft command name
   * characters are restricted to a printable set that Minecraft commands use;
-    ``say`` may also carry letters, marks and digits of any language (chat
-    in Arabic, Chinese, ...), never symbols, spaces other than " " or
-    invisible characters
+    the chat box and the Discord bridge may also let ``say`` carry letters,
+    marks and digits of any language (chat in Arabic, Chinese, ...), never
+    symbols, spaces other than " " or invisible characters
+  * only the Discord bridge may start a ``say`` with "[Discord]"
   * shell metacharacters (` ; & | < > $ and newlines) are rejected outright,
     even though nothing here is ever handed to a shell - defence in depth.
     None of them appear in Minecraft command syntax.
@@ -25,6 +26,8 @@ import unicodedata
 from dataclasses import dataclass
 
 MAX_LENGTH = 512
+# Lines from Discord start with this in the game (agent/discord/bridge.py).
+DISCORD_TAG = "[Discord]"
 
 COMMAND_NAME_RE = re.compile(r"^/?[a-z][a-z0-9_:-]{0,31}$")
 # Minecraft command text: letters, digits, and the punctuation used by
@@ -35,13 +38,21 @@ ALLOWED_CHARS_RE = re.compile(r"^[A-Za-z0-9 _:,.\-=+*/@~^\[\]{}()'\"!?#%\\]*$")
 SHELL_META_RE = re.compile(r"[`;&|<>$\r\n\0]")
 # Unicode categories: letters, marks (accents) and digits.
 WORD_CATEGORIES = ("L", "M", "N")
+# Letters and marks that show nothing: fillers and variation selectors (the
+# ones Unicode lists as "default ignorable"). A line of them looks blank.
+INVISIBLE_RE = re.compile(
+    "[\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\ufe00-\ufe0f\uffa0\U000e0100-\U000e01ef]"
+)
 
 
 def any_language(text: str, ascii_re: re.Pattern = ALLOWED_CHARS_RE) -> bool:
     """Every character is in the ASCII set, or a letter, mark or digit of
-    any language (beyond ASCII: plain ASCII is checked by the set alone)."""
+    any language that shows (beyond ASCII: plain ASCII is checked by the
+    set alone)."""
     return all(
-        ascii_re.match(ch) if ch.isascii() else unicodedata.category(ch).startswith(WORD_CATEGORIES)
+        ascii_re.match(ch)
+        if ch.isascii()
+        else unicodedata.category(ch).startswith(WORD_CATEGORIES) and not INVISIBLE_RE.match(ch)
         for ch in text
     )
 
@@ -95,7 +106,17 @@ class ValidatedCommand:
         }
 
 
-def validate(command: str, confirm: bool = False, max_length: int = MAX_LENGTH) -> ValidatedCommand:
+def validate(
+    command: str,
+    confirm: bool = False,
+    max_length: int = MAX_LENGTH,
+    *,
+    any_letters: bool = False,
+    discord: bool = False,
+) -> ValidatedCommand:
+    """``any_letters``: a chat message, which may carry letters of any
+    language. ``discord``: a line from the Discord bridge, the only one
+    allowed to start with "[Discord]"."""
     if command is None:
         raise CommandError("Type a command first.")
     text = command.strip()
@@ -109,8 +130,7 @@ def validate(command: str, confirm: bool = False, max_length: int = MAX_LENGTH) 
         raise CommandError("A command has to be one line.")
     if SHELL_META_RE.search(text):
         raise CommandError("That command has characters in it that aren't allowed.")
-    is_say = text.split(" ", 1)[0].lstrip("/").lower() == "say"
-    if not (any_language(text) if is_say else ALLOWED_CHARS_RE.match(text)):
+    if not (any_language(text) if any_letters else ALLOWED_CHARS_RE.match(text)):
         raise CommandError("That command has characters in it that aren't allowed.")
 
     name_token = text.split(" ", 1)[0]
@@ -120,6 +140,9 @@ def validate(command: str, confirm: bool = False, max_length: int = MAX_LENGTH) 
         )
     name = name_token.lstrip("/").lower()
     args = text.split(" ", 1)[1] if " " in text else ""
+
+    if name == "say" and not discord and args.lstrip().lower().startswith(DISCORD_TAG.lower()):
+        raise CommandError("Only messages from Discord start with [Discord].")
 
     if name in BLOCKED_COMMANDS:
         raise CommandError(BLOCKED_COMMANDS[name])

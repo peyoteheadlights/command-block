@@ -639,7 +639,10 @@ class PlayersPage(Page):
         self.chat.verticalScrollBar().setValue(self.chat.verticalScrollBar().maximum())
 
     def chat_words(self, message: dict) -> str:
-        who = text("chat.server") if message.get("kind") == "server" else message.get("name") or ""
+        kind, name = message.get("kind"), message.get("name") or ""
+        who = text("chat.server") if kind == "server" else name
+        if kind == "discord":
+            who = text("chat.from_discord", name=name)
         said = message.get("text", "")
         if message.get("kind") == "action":
             said = f"• {said}"

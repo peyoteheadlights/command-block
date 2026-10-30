@@ -13,12 +13,13 @@ the world picker can point at them.
 from __future__ import annotations
 
 import os
+import secrets
 import string
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from .security.paths import _system_folders, is_inside
+from .security.paths import is_inside, system_folders
 
 MAX_ENTRIES = 500
 
@@ -86,18 +87,19 @@ def writable_folder(value: str, protected: Iterable[Path] = ()) -> Path:
     if not path.is_dir():
         raise BrowseError(f"{path} isn't there, or isn't a folder.")
     resolved = path.resolve()
-    for system in _system_folders():
+    for system in system_folders():
         if is_inside(system, resolved):
-            raise BrowseError(f"{path} is a Windows folder. Choose another one.")
+            raise BrowseError(f"{path} is inside a system folder ({system}). Choose another one.")
     for folder in protected:
         if is_inside(Path(folder), resolved):
             raise BrowseError(
                 f"{path} is inside {folder}. Choose a folder outside the servers "
                 "and this app, or the next export packs this file too."
             )
-    probe = resolved / f".mcsc-write-test-{os.getpid()}"
+    # A new name, so no file that is already there gets deleted.
+    probe = resolved / f".command-block-write-test-{secrets.token_hex(4)}"
     try:
-        os.close(os.open(probe, os.O_CREAT | os.O_WRONLY))
+        os.close(os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
         probe.unlink()
     except OSError as exc:
         raise BrowseError(f"Windows doesn't let this app save in {path}.") from exc

@@ -33,7 +33,7 @@ import os
 import secrets
 import time
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -233,11 +233,22 @@ def place(part: Path, folder: Path, filename: str) -> Path:
         try:
             os.close(os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError):
+            # Windows says PermissionError when a folder has this name.
+            if not target.exists():
+                raise
             target = folder / f"{stem} ({number}){suffix}"
             number += 1
     try:
-        os.replace(part, target)
+        # Windows Defender or Search can hold the new empty file for a moment.
+        for wait in (0.5, 1, 2, None):
+            try:
+                os.replace(part, target)
+                break
+            except PermissionError:
+                if wait is None:
+                    raise
+                time.sleep(wait)
     except OSError:
         target.unlink(missing_ok=True)
         raise
@@ -336,14 +347,19 @@ def count_items(core, options: Options) -> int:
 def folder(config) -> Path:
     path = Path(config.data_dir) / FOLDER
     path.mkdir(parents=True, exist_ok=True)
+    remove_old(path.iterdir())
+    return path
+
+
+def remove_old(paths: Iterable[Path]) -> None:
+    """Deletes the files older than KEEP_SECONDS."""
     now = time.time()
-    for old in path.iterdir():
+    for old in paths:
         try:
             if now - old.stat().st_mtime > KEEP_SECONDS:
                 old.unlink()
         except OSError:
             pass
-    return path
 
 
 # ----------------------------------------------------------------------

@@ -354,7 +354,10 @@ private fun LevelSettings(pages: DiscordPages, guild: DiscordGuild, strings: Str
 /** A Level from 1 to 1000; an empty box reads as 1. */
 @Composable
 private fun LevelNumber(label: String, value: Int, onChange: (Int) -> Unit) {
-    var typed by remember(value) { mutableStateOf(value.toString()) }
+    var typed by remember { mutableStateOf(value.toString()) }
+    // Only a new value from outside (a row removed above) replaces the text,
+    // so the box can be emptied while typing.
+    if ((typed.toIntOrNull() ?: 1).coerceIn(1, 1000) != value) typed = value.toString()
     OutlinedTextField(
         value = typed,
         onValueChange = { text ->

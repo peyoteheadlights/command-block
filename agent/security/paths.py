@@ -187,7 +187,7 @@ def directory_size(path: Path, exclude: Iterable[Path] = ()) -> int:
     return total
 
 
-def _system_folders() -> list[Path]:
+def system_folders() -> list[Path]:
     """Folders a Minecraft server must never be registered in or above."""
     names = ["SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]
     found = [Path(os.environ[n]) for n in names if os.environ.get(n)]
@@ -235,7 +235,7 @@ def check_new_server_folder(
     home = Path.home().resolve()
     if resolved == home:
         raise PathSafetyError("Your home folder can't be a server folder; pick a folder inside it.")
-    for system in _system_folders():
+    for system in system_folders():
         if is_inside(system, resolved):
             raise PathSafetyError(f"{path} is inside a system folder ({system}).")
     for folder in protected:
@@ -283,7 +283,7 @@ def check_server_folder(
         raise PathSafetyError(
             "Your home folder can't be a server folder. Pick the server's own folder."
         )
-    for system in _system_folders():
+    for system in system_folders():
         if is_inside(system, resolved):
             raise PathSafetyError(f"{path} is inside a system folder ({system}).")
     for folder in protected:
