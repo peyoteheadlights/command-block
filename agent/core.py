@@ -431,6 +431,9 @@ class AgentCore:
         self.wake.start()
         self.game_events.start()
         self.start_discord()
+        # After the bot, so a request that ran out while the agent was off
+        # still tells its asker.
+        self.start_requests.load()
         for ctx in list(self.servers.values()):
             await ctx.autostart()
 

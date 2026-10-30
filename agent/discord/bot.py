@@ -40,7 +40,7 @@ from ..minecraft.process import ServerError
 from ..quests import MAX_STACK, QuestError
 from ..security import permissions as P
 from ..security.auth import AuthError, Principal, RateLimiter
-from ..startrequests import STOPPED, StartRequest, StartRequestError
+from ..startrequests import STOPPED, TOLD, StartRequest, StartRequestError
 from ..stats import player_stats
 from ..whitelist import WhitelistError, settled, settled_words
 from . import bridge, client, layout, live, progress
@@ -755,11 +755,19 @@ class Bot:
             made = await self.rest.request("POST", f"/channels/{channel_id}/messages", body)
             sent += 1
             if request is not None:
-                request.posts.append((channel_id, str(made["id"])))
+                request.posts.append([channel_id, str(made["id"])])
+        if request is not None:
+            self.core.start_requests.save()
         return sent
 
     async def request_closed(self, request: StartRequest, how: str) -> None:
-        """A start request ended: its alerts lose their buttons and say how."""
+        """A start request ended: the asker hears it where they asked, and
+        its alerts lose their buttons and say how."""
+        reply = request.reply or {}
+        if reply.get("channel_id") and reply.get("member_id"):
+            ctx = self.core.servers.get(request.server_id)
+            told = TOLD[how].format(server=ctx.name if ctx else request.server_id)
+            self.spawn(self.tell(reply["channel_id"], reply["member_id"], told))
         words = {
             "started": "Answered: started.",
             "no": "Answered: not now.",
@@ -1422,13 +1430,10 @@ async def start(bot: Bot, call: Call) -> str:
 async def request_start(bot: Bot, call: Call) -> str:
     ctx = call.ctx
     assert ctx is not None
-    channel, member = call.channel_id, call.member_id
-
-    async def tell(words: str) -> None:
-        if channel:
-            await bot.tell(channel, member, words)
-
-    await bot.core.start_requests.ask(ctx, f"{call.member_name} (Discord)", tell)
+    reply = (
+        {"channel_id": call.channel_id, "member_id": call.member_id} if call.channel_id else None
+    )
+    await bot.core.start_requests.ask(ctx, f"{call.member_name} (Discord)", reply)
     return (
         f"Asked. The owner and moderators of {ctx.name} have been told; "
         "you'll hear here within 15 minutes."
