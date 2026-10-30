@@ -698,7 +698,7 @@ class Updates(Section):
     WORDS = "desktop.gear.updates"
 
     def __init__(self, window: MainWindow) -> None:
-        super().__init__(window, ["old", "update"])
+        super().__init__(window, ["old", "update", "notes"])
 
     def allowed(self) -> bool:
         return self.owner()
@@ -706,6 +706,27 @@ class Updates(Section):
     def load(self) -> None:
         self.call("GET", "/updates/old-copy", lambda found: self.show_old(found.get("old_copy")))
         self.call("GET", "/updates", self.show_update)
+        if mode["technical"]:
+            self.call("GET", "/safety-notes", self.show_notes)
+        else:
+            self.fill("notes")
+
+    def show_notes(self, status: dict) -> None:
+        """What the agent knows from the signed notes file (Technical only)."""
+        frame, layout = card(text("notes.title"))
+        kind = "ok" if status.get("state") == "good" else "problem"
+        layout.addWidget(label(status.get("message") or "", kind))
+        for line in (status.get("reason"), status.get("update_app")):
+            if line:
+                layout.addWidget(label(line, "sub"))
+        if status.get("serial"):
+            words = text("notes.facts", serial=status["serial"], expires=status.get("expires"))
+            layout.addWidget(label(words, "muted"))
+        if status.get("checked_at"):
+            layout.addWidget(
+                label(text("update.checked", when=clock(status["checked_at"])), "muted")
+            )
+        self.fill("notes", frame)
 
     def show_update(self, status: dict) -> None:
         frame, layout = card(text("update.title"))

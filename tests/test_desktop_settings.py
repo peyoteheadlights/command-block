@@ -203,3 +203,40 @@ def test_a_moderator_sees_settings_they_cant_change_greyed_out(qapp, agent_http)
     assert not card_of(page, "When it crashes").isEnabled()
     assert card_of(page, "Game settings").isEnabled()
     assert "Duplicate this server" not in shown_text(page)
+
+
+def test_update_bedrock_by_itself_is_an_owner_switch_off_by_default(qapp, agent_http):
+    window, page = settings_page(qapp, agent_http)
+    window.server_screen.row = {**window.server_screen.row, "edition": "bedrock"}
+    page.row = window.server_screen.row
+    page.load()
+    words = "Update Bedrock by itself"
+    wait_for(qapp, lambda: words in [b.text() for b in page.findChildren(QtWidgets.QCheckBox)])
+    frame = card_of(page, "Bedrock updates")
+    switch = next(b for b in frame.findChildren(QtWidgets.QCheckBox) if b.text() == words)
+    assert not switch.isChecked()
+    switch.setChecked(True)
+    button(frame, "Save").click()
+    core = core_of(agent_http)
+    wait_for(qapp, lambda: core.servers["survival"].config.server.bedrock_auto_update)
+
+
+def test_the_version_picker_says_how_old_a_saved_list_is(qapp, agent_http, monkeypatch):
+    from .test_keeping_current import sources
+
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(sources()))
+    agent_http.get("/api/server-types/fabric/versions", headers=owner(agent_http))  # saved
+    monkeypatch.setattr(
+        downloads, "TRANSPORT", httpx.MockTransport(sources(down=("meta.fabricmc.net",)))
+    )
+    _window, page = settings_page(qapp, agent_http)
+    wait_for(
+        qapp,
+        lambda: (
+            "Change the kind or version"
+            in [b.text() for b in page.findChildren(QtWidgets.QPushButton)]
+        ),
+    )
+    version = card_of(page, "Kind and version")
+    button(version, "Change the kind or version").click()
+    wait_for(qapp, lambda: "ago, couldn't reach Fabric." in shown_text(version), 20)

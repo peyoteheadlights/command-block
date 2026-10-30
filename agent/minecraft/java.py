@@ -29,6 +29,14 @@ MINECRAFT_JAVA_REQUIREMENTS: list[tuple[tuple[int, ...], int]] = [
 ]
 
 
+# What Mojang's own version files say, filled by agent/servertypes/versions.py
+# from live or saved answers. Checked before the table above.
+FROM_MOJANG: dict[str, int] = {}
+# Rows from the signed notes file (agent/notes.py), only ever newer than the
+# table's newest.
+NOTES_ROWS: list[tuple[tuple[int, ...], int]] = []
+
+
 @dataclass
 class JavaInfo:
     requested: str = ""
@@ -108,7 +116,8 @@ def parse_minecraft(version: str) -> tuple[int, ...] | None:
 
 
 def _parse_minecraft(version: str) -> tuple[int, ...] | None:
-    cleaned = re.match(r"^(\d+(?:\.\d+)*)", str(version or "").strip())
+    # Not a snapshot name like 24w40a, whose leading number is a year.
+    cleaned = re.match(r"^(\d+(?:\.\d+)*)(?![\dw])", str(version or "").strip())
     if not cleaned:
         return None
     try:
@@ -118,12 +127,15 @@ def _parse_minecraft(version: str) -> tuple[int, ...] | None:
 
 
 def required_java(minecraft_version: str | None) -> int | None:
-    """Minimum Java major version for a Minecraft version, or None if the
-    Minecraft version is unknown or unrecognised."""
+    """Minimum Java major version for a Minecraft version: Mojang's answer
+    when one was read, else the table. None if the version is unknown or
+    unrecognised."""
+    if minecraft_version in FROM_MOJANG:
+        return FROM_MOJANG[minecraft_version]
     parsed = _parse_minecraft(minecraft_version) if minecraft_version else None
     if not parsed:
         return None
-    for threshold, java_major in MINECRAFT_JAVA_REQUIREMENTS:
+    for threshold, java_major in sorted(NOTES_ROWS + MINECRAFT_JAVA_REQUIREMENTS, reverse=True):
         if parsed >= threshold:
             return java_major
     return 8

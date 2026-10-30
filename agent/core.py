@@ -38,11 +38,13 @@ from .mods.manager import ModManager
 from .monitoring.metrics import MetricsMonitor
 from .monitoring.players import PlayerTracker
 from .monitoring.tps import TpsMonitor
+from .notes import SafetyNotes
 from .notifications.dispatcher import Notifier
 from .ports import PortManager
 from .quests import Quests
 from .scheduler.scheduler import Scheduler
 from .security.auth import AuthManager
+from .softwarecheck import SoftwareCheck
 from .startrequests import StartRequests
 from .tailscale_watch import TailscaleWatch
 from .updates import Updater
@@ -305,6 +307,12 @@ class AgentCore:
         from .servertypes import bedrock
 
         bedrock.configure(config.data_dir)
+        # The last good answer from each official site (agent/savedlists.py).
+        from . import savedlists
+        from .servertypes import versions
+
+        savedlists.configure(config.data_dir)
+        versions.load_java()
         self.servers: dict[str, ServerContext] = {}
         self.notifier = Notifier(config, self.bus, self.db, servers=self.servers)
         self.notifier.can_see = self.auth.may_see_alert
@@ -315,6 +323,10 @@ class AgentCore:
         self.keepawake = KeepAwake(self)
         # Looks for a newer version of the app (agent/updates.py).
         self.updates = Updater(self)
+        # The signed notes file (agent/notes.py) and the daily look for newer
+        # server software (agent/softwarecheck.py).
+        self.notes = SafetyNotes(self)
+        self.software = SoftwareCheck(self)
         # Moves the agent onto Tailscale and checks it every minute after.
         self.tailscale = TailscaleWatch(self)
         self.wake = Wake(self)
@@ -427,6 +439,8 @@ class AgentCore:
             Event(type="agent_started", level="success", message="Server agent started")
         )
         await self.updates.start()
+        self.notes.start()
+        self.software.start()
         self.tailscale.start()
         self.wake.start()
         self.game_events.start()
@@ -524,6 +538,8 @@ class AgentCore:
         if self._cert_task:
             self._cert_task.cancel()
         await self.updates.stop()
+        await self.notes.stop()
+        await self.software.stop()
         self.tailscale.stop()
         self.wake.stop()
         if self.discord is not None:

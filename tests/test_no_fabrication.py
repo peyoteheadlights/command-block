@@ -598,3 +598,48 @@ def test_stats_nobody_saved_are_never_numbers(tmp_path):
     found = {"player": "Alex", "source": "files", **read_files(tmp_path, uuid)}
     assert found["values"] == {}
     assert "last saved <t:" in stats(found, "Survival")
+
+
+# ---------------------------------------------------------------- keeping current
+def test_no_problems_are_claimed_without_a_good_notes_file(config):
+    """With no good safety notes file the status says it couldn't check;
+    it never says nothing was found."""
+    core = AgentCore(config)
+    try:
+        status = core.notes.status()
+        assert status["state"] == "none"
+        assert status["message"] == "Couldn't check for safety notes."
+        assert not any(
+            w in str(status).lower() for w in ("no problems", "you're safe", "all clear")
+        )
+    finally:
+        core.db.close()
+
+
+def test_a_saved_list_always_carries_its_age():
+    from agent import savedlists
+
+    saved_at, problem = savedlists.problem(
+        [{"site": "PaperMC", "saved_at": 1000.0}], now=1000.0 + 3 * 86400
+    )
+    assert saved_at == 1000.0
+    assert problem == "From 3 days ago, couldn't reach PaperMC."
+    assert savedlists.problem([]) == (None, None)
+
+
+def test_a_snapshot_name_gets_no_java_guess():
+    # Its leading number is a year, not a Minecraft version.
+    assert required_java("24w40a") is None
+
+
+async def test_newer_software_never_counts_as_installed(config):
+    """The installed version shown is only ever what the console printed,
+    not what an offered update would make it."""
+    core = AgentCore(config)
+    try:
+        ctx = core.default
+        assert await core.software.check_server(ctx) == {}  # unknown: nothing offered
+        assert ctx.server.status()["minecraft_version"] is None
+    finally:
+        await core.jobs.stop()
+        core.db.close()

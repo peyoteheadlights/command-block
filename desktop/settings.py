@@ -221,9 +221,28 @@ class SettingsPage(Page):
             self.keep(data["backups"]),
             self.timing(server),
         ]
+        if self.row.get("edition") == "bedrock" and self.window_.role != "helper":
+            cards.insert(3, self.bedrock_updates(server))
         for frame in cards:
             frame.setEnabled(editable)
         refill(self.slots["server"], cards)
+
+    def bedrock_updates(self, server: dict) -> QFrame:
+        """Bedrock players' games update themselves, then can't join an older
+        server. Off by default, and only the owner sees it."""
+        frame, layout = card(text("serverset.bedrock_update"))
+        on = QCheckBox(text("serverset.bedrock_update_label"))
+        on.setChecked(bool(server.get("bedrock_auto_update")))
+        layout.addWidget(on)
+        layout.addWidget(label(text("serverset.bedrock_update_note"), "muted"))
+
+        def collect() -> dict:
+            if on.isChecked() != bool(server.get("bedrock_auto_update")):
+                return {"server.bedrock_auto_update": on.isChecked()}
+            return {}
+
+        self.save_button(layout, collect)
+        return frame
 
     def identity(self, data: dict) -> QFrame:
         frame, layout = card(text("serverset.identity"))

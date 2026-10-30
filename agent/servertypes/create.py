@@ -41,7 +41,7 @@ from .. import colors, servertypes
 from ..config import PROJECT_ROOT, check_server_id
 from ..security.paths import check_new_server_folder
 from .install import InstallError, install_plan
-from .versions import list_versions, make_plan
+from .versions import java_for, list_versions, make_plan
 
 if TYPE_CHECKING:
     from ..core import AgentCore
@@ -266,6 +266,7 @@ async def create_server(
     if entry is None:
         raise InstallError(f"{server_type.name} doesn't offer Minecraft {minecraft}.")
     if server_type.needs_java:
+        await java_for(minecraft)
         problem = java_problem(minecraft, core.config.server.java)
         if problem:
             raise InstallError(problem["problem"])

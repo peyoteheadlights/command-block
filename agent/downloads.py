@@ -218,12 +218,12 @@ def _plain_status(status: int, host: str) -> str:
 
 
 async def _send(
-    client: httpx.AsyncClient, url: str, stream: bool = False
+    client: httpx.AsyncClient, url: str, stream: bool = False, headers: dict | None = None
 ) -> tuple[httpx.Response, str]:
     """GET ``url``, following up to five redirects between allowed hosts."""
     for _ in range(6):
         check_url(url)
-        request = client.build_request("GET", url)
+        request = client.build_request("GET", url, headers=headers)
         try:
             response = await client.send(request, stream=stream)
         except httpx.TimeoutException as exc:
@@ -232,12 +232,13 @@ async def _send(
             raise DownloadError(
                 f"Couldn't reach {source_name(url)}. Check the PC's internet connection."
             ) from exc
-        if response.is_redirect:
+        if response.has_redirect_location:
             location = response.headers.get("location", "")
             await response.aclose()
             url = urljoin(url, location)
             continue
-        if response.status_code >= 400:
+        # 304: unchanged since the ETag asked with (fetch_if_changed).
+        if response.status_code >= 300 and response.status_code != 304:
             await response.aclose()
             raise DownloadError(_plain_status(response.status_code, source_name(url)))
         return response, url
@@ -246,18 +247,37 @@ async def _send(
     )
 
 
+async def _read(response: httpx.Response, final: str, max_bytes: int) -> bytes:
+    try:
+        data = bytearray()
+        async for chunk in response.aiter_bytes():
+            data.extend(chunk)
+            if len(data) > max_bytes:
+                raise DownloadError(f"{source_name(final)} sent more data than expected.")
+        return bytes(data)
+    finally:
+        await response.aclose()
+
+
 async def fetch_bytes(url: str, max_bytes: int = MAX_LIST_BYTES) -> bytes:
     async with _client() as client:
         response, final = await _send(client, url, stream=True)
-        try:
-            data = bytearray()
-            async for chunk in response.aiter_bytes():
-                data.extend(chunk)
-                if len(data) > max_bytes:
-                    raise DownloadError(f"{source_name(final)} sent more data than expected.")
-            return bytes(data)
-        finally:
+        return await _read(response, final, max_bytes)
+
+
+async def fetch_if_changed(
+    url: str, etag: str | None, max_bytes: int = MAX_LIST_BYTES
+) -> tuple[bytes | None, str | None]:
+    """(the answer, its ETag), or (None, etag) when the site says nothing
+    changed since the answer with that ETag."""
+    async with _client() as client:
+        headers = {"If-None-Match": etag} if etag else None
+        response, final = await _send(client, url, stream=True, headers=headers)
+        if response.status_code == 304:
             await response.aclose()
+            return None, etag
+        new_etag = response.headers.get("etag")
+        return await _read(response, final, max_bytes), new_etag
 
 
 async def fetch_json(url: str, max_bytes: int = MAX_LIST_BYTES) -> Any:

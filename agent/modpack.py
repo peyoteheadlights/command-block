@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from . import downloads, servertypes
+from . import downloads, notes, servertypes
 from .downloads import DownloadError, FileSpec
 from .events import Event
 from .security.paths import (
@@ -189,6 +189,10 @@ def _check_file(entry: Any) -> PackFile:
     sha512 = str(hashes.get("sha512") or "")
     if not SHA512_RE.match(sha512):
         found.status, found.reason = REFUSED, "the pack gives no SHA-512 to check it against"
+        return found
+    bad = notes.BAD_FILES.get(sha512.lower())
+    if bad:
+        found.status, found.reason = REFUSED, f"it's on the list of known bad files ({bad['why']})"
         return found
     urls = [str(u) for u in (entry.get("downloads") or []) if isinstance(u, str)]
     modrinth = [

@@ -187,6 +187,7 @@ notifications:
     player_managed: true     # a player was whitelisted, made operator, kicked or banned
     modpack_imported: true   # a modpack was imported into a server
     autosleep: true          # a server was stopped because nobody was playing
+    server_software: true    # a newer stable build or Minecraft release is out for a server
   email:
     host: ""                 # e.g. smtp.gmail.com
     port: 587

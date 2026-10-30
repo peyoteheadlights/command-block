@@ -22,6 +22,7 @@ from ..responses import (
     OldCopyRemoveResult,
     OldCopyStatus,
     PairingCode,
+    SafetyNotesStatus,
     UpdatePreflight,
     UpdateStarted,
     UpdateStatus,
@@ -43,6 +44,16 @@ async def pairing_code(principal: Principal = Depends(require(ACCOUNT)), core=De
     """What the "Open on your phone" code holds: the address, port,
     certificate fingerprint and API version. No password or token."""
     return await asyncio.to_thread(pairing.pairing_code, core.config)
+
+
+@router.get("/safety-notes", response_model=SafetyNotesStatus)
+async def safety_notes(
+    principal: Principal = Depends(require(SETTINGS_VIEW)), core=Depends(get_core)
+):
+    """What the agent knows from the signed notes file (agent/notes.py):
+    good, expired, refused or none, with its age or the reason. Its warnings
+    reach each server's Recommendations."""
+    return core.notes.status()
 
 
 @router.get("/updates", response_model=UpdateStatus)

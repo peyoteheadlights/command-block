@@ -156,6 +156,9 @@ class ServerSettings(Section):
     # default). It is never started again on its own: see agent/autosleep.py.
     autosleep: bool = False
     autosleep_minutes: int = 30
+    # Bedrock only: put a newer Bedrock server in by itself once nobody is
+    # online (off by default; agent/softwarecheck.py).
+    bedrock_auto_update: bool = False
 
 
 @dataclass(frozen=True)
@@ -322,6 +325,7 @@ class NotificationSettings(Section):
             "quests": True,
             "whitelist_requests": True,
             "reports": True,
+            "server_software": True,
         }
     )
     email: EmailSettings = field(default_factory=EmailSettings)

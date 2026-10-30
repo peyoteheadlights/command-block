@@ -67,6 +67,19 @@ class Facts:
     online_at: float | None = None  # when the server last came online, None when off
     # The Discord bot's first problem (agent/discord/bot.py), None when fine or off.
     discord: dict[str, Any] | None = None
+    # The server's type and what its console last printed (None: not yet).
+    type_id: str = ""
+    type_name: str = ""
+    minecraft_version: str | None = None
+    loader_version: str | None = None
+    # Safety notes (agent/notes.py): warnings matching this server, known
+    # bad files found on it, and the "Notes from 40 days ago" label when the
+    # notes file is out of date.
+    advisories: list[dict[str, Any]] = field(default_factory=list)
+    bad_files: list[dict[str, Any]] = field(default_factory=list)
+    notes_age: str | None = None
+    # Newer server software (agent/softwarecheck.py), as last checked.
+    software: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -90,7 +103,7 @@ class Recommendation:
         }
 
 
-Rule = Callable[[Facts], Recommendation | None]
+Rule = Callable[[Facts], Recommendation | list[Recommendation] | None]
 
 
 def _days(seconds: float) -> str:
@@ -445,7 +458,109 @@ def discord_problem(f: Facts) -> Recommendation | None:
     )
 
 
+def security_advisories(f: Facts) -> list[Recommendation]:
+    """One per warning in the signed notes file that matches this server's
+    type and the version its console printed. The link is only shown."""
+    found = []
+    for a in f.advisories:
+        evidence = (
+            f"{f.type_name} {f.minecraft_version} is in the affected range "
+            f"({a['from']} to {a['to']}). From the signed safety notes."
+        )
+        if f.notes_age:
+            evidence += f" {f.notes_age}"
+        found.append(
+            Recommendation(
+                id=f"advisory_{a['id']}",
+                title=a["title"],
+                reason=a["what_to_do"],
+                evidence=evidence,
+                action={"label": "Read more", "url": a["link"]},
+                fingerprint=f"advisory:{a['id']}",
+                details={**a, "source": "signed safety notes file"},
+            )
+        )
+    return found
+
+
+def known_bad_files(f: Facts) -> Recommendation | None:
+    if not f.bad_files:
+        return None
+    names = [b["filename"] for b in f.bad_files]
+    first = f.bad_files[0]
+    return Recommendation(
+        id="known_bad_files",
+        title="Remove a known bad file",
+        reason=f"{first['name']}: {first['why']}",
+        evidence=f"On the safety notes' list of known bad files: {', '.join(names)}.",
+        action={"label": "Open mods", "page": "mods"},
+        fingerprint="bad:" + ",".join(sorted(names)),
+        details={"files": f.bad_files, "source": "SHA-512 of each file, signed safety notes"},
+    )
+
+
+def _version_fix(f: Facts, minecraft: str, loader: str | None) -> dict[str, Any]:
+    """The button runs the normal version change: backup first, one Undo."""
+    return {
+        "kind": "version",
+        "title": "Update",
+        "type": f.type_id,
+        "minecraft_version": minecraft,
+        "loader_version": loader,
+    }
+
+
+def newer_build(f: Facts) -> Recommendation | None:
+    """Only while the console still prints the build the offer was made for."""
+    from .softwarecheck import build_of
+
+    offer = f.software.get("build")
+    if (
+        not offer
+        or offer["minecraft"] != f.minecraft_version
+        or offer["installed"] != build_of(f.type_id, f.loader_version)
+    ):
+        return None
+    return Recommendation(
+        id="newer_build",
+        title=f"{f.type_name} build {offer['build']} is out",
+        reason="Newer builds of the same Minecraft version fix bugs and security holes.",
+        evidence=f"This server runs build {offer['installed']}; {offer['build']} is the newest "
+        f"stable build for Minecraft {offer['minecraft']}.",
+        action={"label": "Update", "page": "settings"},
+        fingerprint=f"build:{offer['build']}",
+        details={
+            **offer,
+            "fix": _version_fix(f, offer["minecraft"], offer["loader"]),
+            "source": "the official source's build list, checked once a day",
+        },
+    )
+
+
+def newer_minecraft(f: Facts) -> Recommendation | None:
+    offer = f.software.get("minecraft")
+    if not offer or offer["from"] != f.minecraft_version:
+        return None
+    return Recommendation(
+        id="newer_minecraft",
+        title=f"Minecraft {offer['minecraft']} is out",
+        reason="Move up when your mods and plugins support it. A backup is taken first, "
+        "and the change can be rolled back.",
+        evidence=f"This server runs Minecraft {offer['from']}; {f.type_name} offers "
+        f"{offer['minecraft']} as its newest stable release.",
+        action={"label": "Update", "page": "settings"},
+        fingerprint=f"minecraft:{offer['minecraft']}",
+        details={
+            **offer,
+            "fix": _version_fix(f, offer["minecraft"], None),
+            "source": "the official source's version list, checked once a day",
+        },
+    )
+
+
 RULES: tuple[Rule, ...] = (
+    security_advisories,
+    known_bad_files,
     tailscale_stopped,
     discord_problem,
     java_too_old,
@@ -460,6 +575,8 @@ RULES: tuple[Rule, ...] = (
     auto_restart_off,
     install_spark,
     mod_updates,
+    newer_build,
+    newer_minecraft,
 )
 
 
@@ -467,7 +584,9 @@ def evaluate(facts: Facts) -> list[Recommendation]:
     found = []
     for rule in RULES:
         result = rule(facts)
-        if result is not None:
+        if isinstance(result, list):
+            found.extend(result)
+        elif result is not None:
             found.append(result)
     return found
 
@@ -525,7 +644,35 @@ def gather(ctx) -> Facts:
         mods=installed,
         online_at=status.get("online_at") if status.get("state") == "ONLINE" else None,
         discord=ctx.core.discord.problem() if getattr(ctx.core, "discord", None) else None,
+        type_id=server_type.id,
+        type_name=server_type.name,
+        minecraft_version=status.get("minecraft_version"),
+        loader_version=status.get("loader_version"),
+        advisories=matching_advisories(ctx, server_type.id, status.get("minecraft_version")),
+        bad_files=[
+            b
+            for b in ctx.core.notes.bad_installed.get(ctx.server_id, [])
+            if any(m["filename"] == b["filename"] for m in installed)
+        ],
+        notes_age=ctx.core.notes.age_label(),
+        software=ctx.db.get_setting("software_offers") or {},
     )
+
+
+def matching_advisories(ctx, type_id: str, minecraft: str | None) -> list[dict[str, Any]]:
+    """The notes' warnings for this type and the version the console printed.
+    Nothing matches an unknown version: no guess."""
+    from .servertypes.versions import version_key
+
+    notes = ctx.core.notes.notes
+    if notes is None or not minecraft:
+        return []
+    return [
+        a
+        for a in notes.advisories
+        if type_id in a["types"]
+        and version_key(a["from"]) <= version_key(minecraft) <= version_key(a["to"])
+    ]
 
 
 STATE_KEY = "recommendations"

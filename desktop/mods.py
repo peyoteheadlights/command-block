@@ -554,14 +554,16 @@ class ModsPage(Page):
             for u in plan.get("unchecked") or []
         ]
         if not updates:
-            self.say("\n".join([text("mobile.content.update_all_none"), *unchecked]))
+            # Never "up to date" while something couldn't be checked just now.
+            self.say("\n".join(unchecked or [text("mobile.content.update_all_none")]))
             self.update_all_ready()
             return
         self.say("")
         choices = [
             (
                 f"{u['name']}   {u['installed_version']} → {u['latest_version']}"
-                + ("" if u["enabled"] else f"   ({text('mobile.content.update_all_off')})"),
+                + ("" if u["enabled"] else f"   ({text('mobile.content.update_all_off')})")
+                + (f"   ({u['saved']})" if u.get("saved") else ""),
                 bool(u["enabled"]),
             )
             for u in updates

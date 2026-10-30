@@ -511,3 +511,17 @@ def test_whitelist_add_ons_only_get_their_fixed_commands():
         "[IPWL SECURITY] Blocked Alex from 1.2.3.4 op Alex: IP mismatch",
     ):
         assert not any(p.match(line) for p in whitelist.IP_ADDONS[0].refused)
+
+
+def test_nothing_from_the_notes_file_is_run_or_downloaded():
+    """The signed notes file only adds warnings and blocks: its links are
+    shown for the person to click, never fetched, and nothing in it reaches
+    a program or the console (agent/notes.py)."""
+    from agent import notes
+
+    source = Path(notes.__file__).read_text(encoding="utf-8")
+    for forbidden in ("send_command", "subprocess", "os.system", "eval(", "exec(", "download("):
+        assert forbidden not in source, forbidden
+    # The only addresses it reads are its own two fixed files.
+    assert source.count("downloads.fetch") == 2
+    assert "NOTES_URL" in source and "SIGNATURE_URL" in source

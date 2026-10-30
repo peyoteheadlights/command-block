@@ -274,6 +274,19 @@ def isolated_app_data(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolated_saved_lists(monkeypatch):
+    """Saved site answers and what they taught (Java, safety notes) never
+    carry over from one test to the next."""
+    from agent import notes, savedlists
+    from agent.minecraft import java
+
+    monkeypatch.setattr(savedlists, "_root", None)
+    monkeypatch.setattr(java, "FROM_MOJANG", {})
+    monkeypatch.setattr(java, "NOTES_ROWS", [])
+    monkeypatch.setattr(notes, "BAD_FILES", {})
+
+
+@pytest.fixture(autouse=True)
 def clean_fake_env():
     keys = [
         "FAKE_CRASH_ON_START",

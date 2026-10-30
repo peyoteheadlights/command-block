@@ -540,6 +540,22 @@ SHA-512 (`allow_unverified=False`), and a mismatch stops the import: a new
 server is removed again, and an existing one is put back from the backup
 taken first.
 
+Version lists (never files) are kept as saved copies in the data folder
+(`agent/savedlists.py`), written only after the answer was read correctly.
+When a site is down the saved list is shown with its age; a file picked
+from it is still downloaded from the official site and checked as above.
+
+The signed notes file (`data/catalog.json`, published as `catalog.json` on
+the `data` pre-release, `agent/notes.py`) is read at start and once a day,
+from this repo's release path only. It is signed with its own Ed25519 data
+key, separate from the update key, and refused as a whole if the
+signature, serial (it only goes up), size (256 KB), shape or any link
+(https only) is wrong. It can only add warnings, known bad file hashes
+(installs of those are refused) and newer Java rows; links in it are shown,
+never fetched. Until the real data key exists the built-in key is a test key
+whose private half was never kept, so every copy refuses every file and
+says "Couldn't check for safety notes".
+
 Nothing downloaded is executed by the agent, with the documented exceptions
 under Command injection: the loader installer, Mojang's Bedrock server
 program, and an update of this app, which runs only after its signature and

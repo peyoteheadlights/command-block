@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .. import savedlists
 from ..events import Event, EventBus
 from ..security.paths import (
     PathSafetyError,
@@ -55,6 +56,18 @@ PLAN_CHECKS_AT_ONCE = 6
 
 class ModError(RuntimeError):
     """Operator-visible mod management problem."""
+
+
+def refuse_known_bad(data: bytes, filename: str) -> None:
+    """Refuse a file the signed safety notes list as known bad (agent/notes.py)."""
+    from .. import notes
+
+    bad = notes.known_bad(data)
+    if bad:
+        raise ModError(
+            f"{filename} is on the safety notes' list of known bad files ({bad['why']}), "
+            "so it wasn't installed."
+        )
 
 
 class ModManager:
@@ -503,6 +516,7 @@ class ModManager:
             )
 
         data, filename, sha256 = await self.modrinth.download(version)
+        refuse_known_bad(data, filename)
         temp = self.mods_dir / f".{filename}.part"
         temp.write_bytes(data)
         try:
@@ -608,6 +622,7 @@ class ModManager:
         target = safe_join(self.mods_dir, filename, allowed_extensions=JAR_EXT)
         if target.exists() and not allow_replace:
             raise ModError(f"{filename} is already there, so nothing was changed.")
+        refuse_known_bad(data, filename)
         temp = self.mods_dir / f".{filename}.part"
         temp.write_bytes(data)
         try:
@@ -753,25 +768,39 @@ class ModManager:
         mods = self.scan()
         asking = asyncio.Semaphore(PLAN_CHECKS_AT_ONCE)
 
-        async def ask(mod: ModInfo) -> tuple[str, dict[str, Any] | None | ModrinthError]:
+        async def ask(
+            mod: ModInfo,
+        ) -> tuple[str, dict[str, Any] | None | ModrinthError, str | None]:
             project = self._project(mod)
             async with asking:
-                try:
-                    return project, await self.modrinth.latest_for(project, mc_version)
-                except ModrinthError as exc:
-                    return project, exc
+                with savedlists.watch() as used:
+                    try:
+                        latest = await self.modrinth.latest_for(project, mc_version)
+                    except ModrinthError as exc:
+                        return project, exc, None
+                # "From 3 days ago, couldn't reach Modrinth." when the
+                # answer is Modrinth's saved list.
+                return project, latest, savedlists.problem(used)[1]
 
         answers = await asyncio.gather(*(ask(mod) for mod in mods))
         found: list[tuple[ModInfo, dict[str, Any]]] = []
         unchecked: list[tuple[ModInfo, str]] = []
-        for mod, (project, latest) in zip(mods, answers, strict=True):
+        for mod, (project, latest, saved) in zip(mods, answers, strict=True):
+            entry = None
             if isinstance(latest, ModrinthError):
                 unchecked.append((mod, str(latest)))
-            elif latest:
-                entry = self._note_update(mod, project, latest)
-                if entry:
-                    found.append((mod, entry))
-        self.db.set_setting("mod_updates_checked_at", time.time())
+                continue
+            if latest:
+                entry = self._note_update(mod, project, latest, saved)
+            if entry:
+                found.append((mod, entry))
+            elif saved:
+                # A saved list is never "up to date": nobody checked just now.
+                unchecked.append((mod, f"{saved} The saved list shows nothing newer."))
+        if any(
+            saved is None and not isinstance(latest, ModrinthError) for _, latest, saved in answers
+        ):
+            self.db.set_setting("mod_updates_checked_at", time.time())
         return found, unchecked
 
     def _project(self, mod: ModInfo) -> str:
@@ -779,16 +808,18 @@ class ModManager:
         return source.get("modrinth_project") or mod.modrinth_project or mod.mod_id
 
     def _note_update(
-        self, mod: ModInfo, project: str, latest: dict[str, Any]
+        self, mod: ModInfo, project: str, latest: dict[str, Any], saved: str | None = None
     ) -> dict[str, Any] | None:
         """Save what Modrinth said about ``mod`` for the Mods list; returns
-        the update, or None when it is up to date."""
+        the update, or None when it is up to date. ``saved`` says how old
+        the list was when it came from a saved copy."""
         if (
             not latest["version_number"]
             or latest["version_number"] == mod.version
             or self._is_installed_file(mod, latest)
         ):
-            self.db.set_setting(f"mod_update:{mod.mod_id}", None)
+            if not saved:
+                self.db.set_setting(f"mod_update:{mod.mod_id}", None)
             return None
         entry = {
             "mod_id": mod.mod_id,
@@ -801,6 +832,7 @@ class ModManager:
             "game_versions": latest.get("game_versions", []),
             "project": project,
             "changelog": (latest.get("changelog") or "")[:400],
+            "saved": saved,
         }
         self.db.set_setting(f"mod_update:{mod.mod_id}", entry)
         return entry
@@ -830,7 +862,7 @@ class ModManager:
         def row(mod: ModInfo) -> dict[str, Any]:
             return {"mod_id": mod.mod_id, "name": mod.name or mod.mod_id, "filename": mod.filename}
 
-        keys = ("installed_version", "latest_version", "version_id", "project")
+        keys = ("installed_version", "latest_version", "version_id", "project", "saved")
         return {
             "updates": [
                 {**row(mod), "enabled": mod.enabled, **{key: entry[key] for key in keys}}
@@ -860,9 +892,9 @@ class ModManager:
                 f"{mod.name} is already this version ({version['version_number']}), "
                 "so nothing was changed."
             )
-        archived = self.archive(old_path, mod, source="pre-update")
-
         data, new_filename, sha256 = await self.modrinth.download(version)
+        refuse_known_bad(data, new_filename)
+        archived = self.archive(old_path, mod, source="pre-update")
         target = safe_join(self.mods_dir, new_filename, allowed_extensions=JAR_EXT)
         if not mod.enabled:
             # A turned-off mod is updated, and stays off.

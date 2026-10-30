@@ -27,6 +27,7 @@ SERVER_SETTABLE = (
     "server.cpu_cores",
     "server.autosleep",
     "server.autosleep_minutes",
+    "server.bedrock_auto_update",
     "monitor.",
     "backups.keep_",
     "backups.include",
@@ -89,6 +90,9 @@ async def update_server_settings(
     for key, value in payload.updates.items():
         if not any(key == p or key.startswith(p) for p in SERVER_SETTABLE):
             rejected[key] = "This setting can't be changed here."
+            continue
+        if key == "server.bedrock_auto_update" and not principal.is_owner:
+            rejected[key] = "Only the owner can turn this on or off."
             continue
         if key == "server.autosleep_minutes":
             try:

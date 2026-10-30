@@ -1280,6 +1280,9 @@ class UpdateAllRow(Open):
     installed_version: str
     latest_version: str
     version_id: str
+    saved: str | None = Field(
+        None, description="How old Modrinth's list was, when only its saved copy could be read"
+    )
 
 
 class UpdateAllUnchecked(Open):
@@ -1298,7 +1301,7 @@ class UpdateAllPlan(Open):
     )
     server_running: bool
     blocked_by: str | None = Field(None, description="The task holding the server, if any")
-    checked_at: float
+    checked_at: float | None = Field(None, description="When Modrinth last answered; null: never")
 
 
 class UpdateAllDone(Open):
@@ -1540,6 +1543,24 @@ class OfferedVersion(Open):
     latest: bool = False
 
 
+class SafetyNotesStatus(Open):
+    """The signed notes file as the agent knows it. With no good file the
+    message is "Couldn't check for safety notes.", never "no problems"."""
+
+    state: str = Field(description="good, expired, refused or none")
+    message: str
+    reason: str | None = Field(None, description="Why the newest try gave no good file")
+    serial: int | None = None
+    issued: str | None = None
+    expires: str | None = None
+    fetched_at: float | None = None
+    checked_at: float | None = None
+    needs_newer_app: bool = False
+    update_app: str | None = None
+    advisories: int = 0
+    known_bad_files: int = 0
+
+
 class TypeVersions(Open):
     type: str
     type_name: str
@@ -1549,7 +1570,13 @@ class TypeVersions(Open):
     loader_name: str | None = None
     latest_stable: str | None = None
     versions: list[OfferedVersion]
-    source_problem: str | None = None
+    source_problem: str | None = Field(
+        None,
+        description='Why the list may be out of date ("From 3 days ago, couldn\'t reach PaperMC.")',
+    )
+    saved_at: float | None = Field(
+        None, description="When the saved list shown was read; null when it was read just now"
+    )
 
 
 class LastVersionChange(Open):

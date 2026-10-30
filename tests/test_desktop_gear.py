@@ -423,3 +423,12 @@ def test_a_saved_tailscale_key_makes_the_invites_share_link(qapp, agent_http, mo
     button(page, "Make share link (API)").click()
     share = page.findChild(QtWidgets.QLineEdit, "shareLink")
     wait_for(qapp, lambda: share.text() == "https://login.tailscale.com/admin/invite/abc")
+
+
+def test_technical_updates_shows_the_safety_notes_status(qapp, agent_http):
+    window, page = gear(qapp, agent_http, "updates")
+    wait_for(qapp, lambda: "Check now" in shown_buttons(page))
+    window.set_mode(True)
+    page.load()
+    # No good notes file (the built-in data key is a test key): never "no problems".
+    wait_for(qapp, lambda: "Couldn't check for safety notes." in shown_text(page))

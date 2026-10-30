@@ -89,6 +89,26 @@ def test_every_recommendation_has_evidence_and_a_way_to_the_fix():
         crashes=[oom(1)],
         tailscale_down=True,
         discord={"id": "role_too_low", "guild": "Friends", "role": "Legend"},
+        type_id="paper",
+        type_name="Paper",
+        minecraft_version="1.21",
+        loader_version="1.21-100",
+        advisories=[
+            {
+                "id": "hole",
+                "types": ["paper"],
+                "from": "1.17",
+                "to": "1.21.1",
+                "title": "Fix a hole",
+                "what_to_do": "Update.",
+                "link": "https://example.org/hole",
+            }
+        ],
+        bad_files=[{"filename": "bad.jar", "name": "Bad", "why": "It steals accounts"}],
+        software={
+            "build": {"minecraft": "1.21", "installed": "100", "build": "130", "loader": "130"},
+            "minecraft": {"from": "1.21", "minecraft": "1.21.1"},
+        },
     )
     found = rec.evaluate(f)
     assert len(found) == len(rec.RULES)

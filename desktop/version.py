@@ -225,6 +225,8 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
                 lines = (
                     [(text("new.bedrock_versions"), "sub")] if payload.get("latest_only") else []
                 )
+                if payload.get("source_problem"):
+                    lines.append((payload["source_problem"], "problem"))
                 fill_versions()
                 say_found(lines)
 

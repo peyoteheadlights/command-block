@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .. import downloads
+from .. import downloads, savedlists
 from ..security.paths import PathSafetyError, safe_filename
 
 log = logging.getLogger("msc.modrinth")
@@ -190,8 +190,20 @@ class ModrinthClient:
             params["loaders"] = _json.dumps(list(loaders))
         if minecraft_version:
             params["game_versions"] = _json.dumps([minecraft_version])
-        data = await self._get(f"/project/{id_or_slug}/version", params)
-        return [self._version_summary(v) for v in data]
+        path = f"/project/{id_or_slug}/version"
+        key = f"{self.base}{path}?{_json.dumps(params, sort_keys=True)}"
+        try:
+            data = await self._get(path, params)
+            if not isinstance(data, list):
+                raise ModrinthError("Modrinth sent an answer that couldn't be read.")
+        except ModrinthNotFound:
+            raise
+        except ModrinthError as exc:
+            # The last good list, its age noted (agent/savedlists.py).
+            data = savedlists.fall_back(key, "api.modrinth.com", exc)
+        else:
+            savedlists.save(key, data)
+        return [self._version_summary(v) for v in data if isinstance(v, dict)]
 
     async def version(self, version_id: str) -> dict[str, Any]:
         return self._version_summary(await self._get(f"/version/{version_id}"))

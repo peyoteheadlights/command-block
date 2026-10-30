@@ -100,6 +100,28 @@ def run_fix(window: MainWindow, sid: str, fix: dict, say: Say) -> None:
                 )
 
             call("POST", path, done, body, slow=update)  # a Modrinth download can be slow
+    elif kind == "version":
+        # Newer server software: the normal version change (backup first),
+        # and Undo is its roll back.
+        name = " ".join(filter(None, (fix["minecraft_version"], fix.get("loader_version"))))
+        if window.confirm(
+            text("version.confirm_title", name=name),
+            text("version.confirm_body"),
+            text("version.confirm_button"),
+        ):
+            body = {k: fix.get(k) for k in ("type", "minecraft_version", "loader_version")}
+            call(
+                "POST",
+                "/version",
+                lambda _r: say(
+                    text("version.changed", version=name),
+                    lambda: call(
+                        "POST", "/version/roll-back", lambda _r: say(text("desktop.fix.undone"))
+                    ),
+                ),
+                {**body, "confirm": True},
+                slow=True,
+            )
     elif kind == "java":
         if window.agent.place != "this PC":
             say(text("desktop.fix.java_elsewhere"))

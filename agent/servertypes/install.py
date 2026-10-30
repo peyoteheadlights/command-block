@@ -38,7 +38,7 @@ from ..safechange import SafeChange, run_safe_change
 from ..safechange import before as before_change
 from ..security.paths import is_inside
 from . import ServerType
-from .versions import Plan, VersionError, list_versions, make_plan
+from .versions import Plan, VersionError, java_for, list_versions, make_plan
 
 if TYPE_CHECKING:
     from ..core import ServerContext
@@ -380,6 +380,7 @@ async def preflight(
     if not target.needs_java:
         java: dict[str, Any] = {"verdict": "not_needed", "detail": None}
     else:
+        await java_for(minecraft)
         if ctx.server.java_info is None:
             await asyncio.to_thread(ctx.server.detect_java)
         java_info = ctx.server.java_info
@@ -493,6 +494,8 @@ async def change_version(
         except bedrock.BedrockError as exc:
             raise InstallError(str(exc)) from exc
     plan = await make_plan(target.id, minecraft, loader)
+    if target.needs_java:
+        await java_for(minecraft)
     directory = _server_dir(ctx)
     type_change = target.id != current.id
     # What the console last reported, kept before the change clears it.

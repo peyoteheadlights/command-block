@@ -132,6 +132,7 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
         "{server}: a player tried to join from a new address",
     ),
     "player_report": ("reports", 0xED4245, "{server}: a player was reported"),
+    "server_software_available": ("server_software", 0x5865F2, "{server}: newer server software"),
 }
 
 
@@ -186,6 +187,7 @@ ALERT_PAGES = {
     "whitelist_form": "players",
     "new_address": "players",
     "player_report": "players",
+    "server_software_available": "overview",
 }
 APP_PAGES = {"security", "helpers", "app-settings", "discord"}
 
