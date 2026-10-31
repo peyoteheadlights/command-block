@@ -670,6 +670,34 @@ Help has a read-only fractureiser check (Technical, owner only): it looks for
 the known files, startup entries and Run key values and lists what it
 checked. It deletes nothing, and finding nothing isn't a clean bill.
 
+## Join protection
+
+Join protection (`agent/joinguard.py`, off by default, Java only) moves the
+server to 127.0.0.1 on a private port for that run (`server-ip` in
+server.properties and `--port` on the start line, both put back when it
+starts without it) and listens on the server's own port in a thread of the
+agent. It reads only the handshake, a server list ping or Login Start
+(each packet at most 8 KB, all of it within 5 seconds), then copies bytes
+both ways without reading them. It never sees passwords or the game.
+
+- Limits per address (IPv6 per /64), automatic blocks (1 hour doubling to
+  24 hours) and blocks the owner adds are checked before anything is read.
+- A PROXY header is believed only from this PC (127.0.0.1 or ::1, where
+  playit's agent connects from). The guard sends one to the server only
+  when the type's add-on and its setting are on disk, since a server that
+  doesn't expect one turns every player away.
+- Without the add-on the server sees every player as 127.0.0.1, so
+  `prevent-proxy-connections` is off for that run and `ban-ip` from the
+  app's console becomes a guard block (a server ban on 127.0.0.1 would shut
+  everyone out). An operator's in-game `/ban-ip` still reaches the server:
+  a hand check.
+- It fails open: a check that throws lets that player in, a stopped guard
+  thread is started again within seconds, and a port it can't take means
+  the server starts direct. Each sends a "Join protection stepped aside"
+  alert.
+- "Start when someone joins" uses the same listener while auto-sleep has
+  stopped a server; a login starts it once through the normal start path.
+
 ## Web surface
 
 - Bearer tokens, not cookies, so CSRF doesn't apply.

@@ -443,7 +443,7 @@ class SimpleOverview(QWidget):
     def show_address(self, join: dict) -> None:
         java = join.get("java") or {}
         tailscale = java.get("tailscale") or {}
-        host = address(
+        host = java.get("shared") or address(
             (tailscale.get("dns_name") or "").rstrip(".") or tailscale.get("address") or "",
             java.get("port"),
         )

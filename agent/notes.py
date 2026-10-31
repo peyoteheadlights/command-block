@@ -103,7 +103,7 @@ PLAYED_BY = ("friends", "kids", "community")
 # What an add-on is for on the Protection card (agent/protection.py): the
 # login add-on an offline-mode server is offered, or an anti-bot add-on.
 # Such an entry is only suggested where it applies, never as "Good to have".
-ROLES = ("", "login", "antibot")
+ROLES = ("", "login", "antibot", "proxy")
 
 # SHA-512 -> entry, from the last good notes file. Read by the mod and
 # plugin installer (agent/mods/manager.py) and modpack import.

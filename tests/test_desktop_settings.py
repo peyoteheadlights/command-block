@@ -249,3 +249,24 @@ def test_the_version_picker_says_how_old_a_saved_list_is(qapp, agent_http, monke
     version = card_of(page, "Kind and version")
     button(version, "Change the version").click()
     wait_for(qapp, lambda: "ago, couldn't reach Fabric." in shown_text(version), 20)
+
+
+def test_join_protection_is_one_switch_and_saves(qapp, agent_http):
+    _window, page = settings_page(qapp, agent_http)
+    join = card_of(page, "Join protection")
+    # The fake servers run from a start command, which can't take --port.
+    assert "started with its own start command" in shown_text(join)
+    assert "Blocked addresses" not in shown_text(join)  # Technical only
+    [switch] = [
+        b for b in join.findChildren(QtWidgets.QCheckBox) if b.text() == "Turn on Join protection"
+    ]
+    switch.setChecked(True)
+    button(join, "Save").click()
+    headers = owner(agent_http)
+    wait_for(
+        qapp,
+        lambda: agent_http.get("/api/servers/survival/settings", headers=headers).json()["server"][
+            "join_protection"
+        ],
+        20,
+    )

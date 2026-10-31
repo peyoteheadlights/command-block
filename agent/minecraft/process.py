@@ -147,6 +147,13 @@ class MinecraftServer:
         # True when auto-sleep stopped this server because nobody was
         # playing, so the apps can say why it is off. Cleared on start.
         self.stopped_for_sleep = False
+        # Join protection (agent/joinguard.py): called as the server starts,
+        # gives extra start arguments (["--port", private] behind the guard).
+        # behind_guard is then the public port the guard holds, and
+        # launch_args what this run was started with.
+        self.before_launch: Callable[[], Awaitable[list[str]]] | None = None
+        self.behind_guard: int | None = None
+        self.launch_args: list[str] = []
 
     # ------------------------------------------------------------------
     # info
@@ -257,7 +264,7 @@ class MinecraftServer:
         are launched from the argument file their installer wrote."""
         raw = self.config.server.raw_command
         if raw:
-            return [str(x) for x in raw]
+            return [str(x) for x in raw] + self.launch_args
         if self.config.server_type.launch == "exe":
             # Bedrock: the program the app unpacked, by its full path inside
             # the server folder (checked in preflight). No Java, no memory
@@ -266,7 +273,7 @@ class MinecraftServer:
         java = self.config.server.java
         jvm = [str(a) for a in self.config.server.jvm_args]
         jvm += cpu.jvm_args(self.config.server.cpu_cores, jvm)
-        args = [str(a) for a in self.config.server.server_args]
+        args = [str(a) for a in self.config.server.server_args] + self.launch_args
         args_file = self.config.server.args_file.strip()
         if self.config.server_type.launch == "args_file" and args_file:
             # The path is written by the installer this app ran, and is
@@ -497,6 +504,7 @@ class MinecraftServer:
                 )
                 raise ServerError("; ".join(pre.problems))
 
+            self.launch_args = await self.before_launch() if self.before_launch else []
             cmd = self.build_command()
             self._stop_requested = False
             self._stop_reason = ExitReason.UNKNOWN
@@ -633,7 +641,9 @@ class MinecraftServer:
         if sig.eula_required:
             self.eula_required = True
         if sig.port:
-            self.detected_port = sig.port
+            # Behind Join protection the console names the private port; players
+            # use the one the guard holds.
+            self.detected_port = self.behind_guard or sig.port
         if sig.mod_count is not None:
             self.mod_count = sig.mod_count
         if sig.tps is not None:

@@ -114,7 +114,8 @@ def test_bedrock_players_get_the_home_address_too(adapters, monkeypatch):
         bedrock_port_of=lambda ctx: SimpleNamespace(port=19132),
     )
     ctx = SimpleNamespace(
-        core=SimpleNamespace(ports=ports),
+        core=SimpleNamespace(ports=ports, db=SimpleNamespace(get_setting=lambda key, d=None: d)),
+        server_id="survival",
         server=SimpleNamespace(running=False),
         config=SimpleNamespace(server_type=servertypes.get("paper")),
     )

@@ -668,6 +668,22 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        21,
+        # Join protection's name-to-address log (agent/joinguard.py): the
+        # address masked (1.2.x.x), the newest few hundred per server.
+        """
+        CREATE TABLE join_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            address TEXT NOT NULL,
+            result TEXT NOT NULL,
+            ts REAL NOT NULL
+        );
+        CREATE INDEX join_log_server ON join_log(server_id, id DESC);
+        """,
+    ),
 ]
 
 

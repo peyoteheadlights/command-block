@@ -36,6 +36,11 @@ public enum ServerForm {
             Field("server.autosleep", "bool", "serverset.sleep_label"),
             Field("server.autosleep_minutes", "int", "serverset.sleep_minutes", "serverset.sleep_minutes_hint"),
         ], noteKey: "serverset.sleep_restart_note"),
+        // Join protection (agent/joinguard.py). The agent says no for Bedrock.
+        Group(titleKey: "serverset.join", fields: [
+            Field("server.join_protection", "bool", "serverset.join_label"),
+            Field("server.start_on_join", "bool", "serverset.wake_label", "serverset.wake_note"),
+        ], noteKey: "serverset.join_note"),
         Group(titleKey: "serverset.keep_label", fields: [
             Field("backups.keep_daily", "int", "serverset.keep_daily"),
             Field("backups.keep_weekly", "int", "serverset.keep_weekly"),

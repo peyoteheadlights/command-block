@@ -114,6 +114,9 @@ class ServerType:
     # Where a running server is checked as listening: "tcp" (a connect) or
     # "raknet" (Bedrock's unconnected ping over UDP).
     ping: str = "tcp"
+    # Can sit behind Join protection and wake when someone joins (agent/
+    # joinguard.py): a Java server on TCP.
+    wakes_on_join: bool = True
     # The port a new server of this type starts looking from.
     default_port: int = 25565
     # True when the official source offers only the newest version, so
@@ -421,6 +424,7 @@ TYPES: dict[str, ServerType] = {
             world_root="worlds",
             default_level_name="Bedrock level",
             ping="raknet",
+            wakes_on_join=False,
             default_port=19132,
             latest_only=True,
             download_terms=(

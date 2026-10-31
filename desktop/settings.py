@@ -10,6 +10,7 @@ every value. Saving reloads the page."""
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -76,6 +77,22 @@ GROUPS = [
     ("game.group_world", ["level-seed", "view-distance", "simulation-distance", "server-port"]),
 ]
 CHOICES = {"peaceful", "easy", "normal", "hard", "survival", "creative", "adventure", "spectator"}
+
+
+# Join protection's limits and what happened to a join, by the agent's ids.
+LIMIT_WORDS = {
+    "connections": "serverset.join_connections",
+    "new_names": "serverset.join_new_names",
+    "pings": "serverset.join_pings",
+    "slow_rate": "serverset.join_slow_rate",
+}
+RESULT_WORDS = {
+    "in": "serverset.join_result_in",
+    "too_fast": "serverset.join_result_too_fast",
+    "known_only": "serverset.join_result_known_only",
+    "in_line": "serverset.join_result_in_line",
+    "asleep": "serverset.join_result_asleep",
+}
 
 
 def choice_words(value: str) -> str:
@@ -231,6 +248,7 @@ class SettingsPage(Page):
             self.identity(data),
             self.crashes(data["monitor"]),
             self.sleep(server, data.get("sleep") or {}),
+            *([self.join(server, data["join"])] if data.get("join") else []),
             self.cpu(data["cpu"], server.get("cpu_cores") or []),
             self.keep(data["backups"]),
             self.timing(server),
@@ -392,6 +410,232 @@ class SettingsPage(Page):
 
         self.save_button(layout, collect)
         return frame
+
+    def join(self, server: dict, now: dict) -> QFrame:
+        """Join protection (agent/joinguard.py): one switch in Simple, and in
+        Technical the size, limits, home-only, Launch mode, blocks and log."""
+        frame, layout = card(text("serverset.join"))
+        on = QCheckBox(text("serverset.join_label"))
+        on.setChecked(bool(server.get("join_protection")))
+        layout.addWidget(on)
+        if now.get("why_not") == "start_command":
+            line = text("serverset.join_start_command")
+        elif now.get("restart_needed"):
+            line = text("serverset.join_restart")
+        elif now.get("running"):
+            line = text("serverset.join_running", blocked=now.get("blocked_today", 0))
+        else:
+            line = text(
+                "serverset.join_off" if not server.get("join_protection") else "serverset.join_next"
+            )
+        layout.addWidget(label(line, "sub"))
+        layout.addWidget(label(text("serverset.join_note"), "muted"))
+        wake = QCheckBox(text("serverset.wake_label"))
+        wake.setChecked(bool(server.get("start_on_join")))
+        layout.addWidget(wake)
+        layout.addWidget(label(text("serverset.wake_note"), "muted"))
+        size, home, limits = QComboBox(), QCheckBox(text("serverset.join_home_only")), {}
+        if mode["technical"]:
+            for value, words in (
+                ("", "serverset.join_size_auto"),
+                ("small", "serverset.join_small"),
+                ("big", "serverset.join_big"),
+            ):
+                size.addItem(text(words), value)
+            size.setCurrentIndex(max(0, size.findData(server.get("join_size") or "")))
+            home.setChecked(bool(server.get("join_home_only")))
+            used = now.get("limits") or {}
+            for key in LIMIT_WORDS:
+                limits[key] = number(used.get(key, 1), 1, 10000)
+            layout.addLayout(
+                grid(
+                    [
+                        field(
+                            text("serverset.join_size"),
+                            size,
+                            text("serverset.join_size_hint", size=now.get("size", "")),
+                        ),
+                        *(field(text(LIMIT_WORDS[k]), box) for k, box in limits.items()),
+                    ]
+                )
+            )
+            layout.addWidget(home)
+        details = QVBoxLayout()
+        layout.addLayout(details)
+
+        def collect() -> dict:
+            out: dict = {}
+            if on.isChecked() != bool(server.get("join_protection")):
+                out["server.join_protection"] = on.isChecked()
+            if wake.isChecked() != bool(server.get("start_on_join")):
+                out["server.start_on_join"] = wake.isChecked()
+            if mode["technical"]:
+                if size.currentData() != (server.get("join_size") or ""):
+                    out["server.join_size"] = size.currentData()
+                if home.isChecked() != bool(server.get("join_home_only")):
+                    out["server.join_home_only"] = home.isChecked()
+                used = now.get("limits") or {}
+                picked = {k: box.value() for k, box in limits.items() if box.value() != used.get(k)}
+                if picked:
+                    out["server.join_limits"] = {**(server.get("join_limits") or {}), **picked}
+            return out
+
+        self.save_button(layout, collect)
+        if mode["technical"]:
+            self.ask(
+                "GET",
+                "/join-protection",
+                lambda data: refill(details, self.join_details(data)),
+                lambda exc: refill(details, [label(str(exc), "problem")]),
+            )
+        return frame
+
+    def join_details(self, data: dict) -> list[QWidget]:
+        """Technical: Launch mode, the block list with expiry and the
+        name-to-address log (addresses masked)."""
+        status, shown = data["status"], []
+        launch = QWidget()
+        rows = QVBoxLayout(launch)
+        rows.setContentsMargins(0, 8, 0, 0)
+        rows.addWidget(label(text("serverset.launch"), "step"))
+        if status.get("launch_until"):
+            rows.addWidget(
+                label(
+                    text(
+                        "serverset.launch_on",
+                        duration=duration(status["launch_until"] - time.time()),
+                    ),
+                    "sub",
+                )
+            )
+            end = push(text("serverset.launch_end"))
+            end.clicked.connect(
+                lambda: self.ask(
+                    "DELETE",
+                    "/join-protection/launch",
+                    lambda _r: self.done(text("serverset.launch_ended")),
+                )
+            )
+            rows.addWidget(end)
+        elif not status.get("can_launch"):
+            rows.addWidget(label(text("serverset.launch_not_set_up"), "muted"))
+        else:
+            hours, players = number(24, 1, 168), number(100, 1, 100000)
+            rows.addLayout(
+                grid(
+                    [
+                        field(text("serverset.launch_hours"), hours),
+                        field(text("serverset.launch_players"), players),
+                    ]
+                )
+            )
+            go = push(text("serverset.launch_start"))
+            go.clicked.connect(
+                lambda: self.ask(
+                    "POST",
+                    "/join-protection/launch",
+                    lambda _r: self.done(text("serverset.launch_started")),
+                    body={"hours": hours.value(), "players": players.value()},
+                )
+            )
+            rows.addWidget(go)
+        rows.addWidget(label(text("serverset.launch_note"), "muted"))
+        shown.append(launch)
+
+        blocks = QWidget()
+        rows = QVBoxLayout(blocks)
+        rows.setContentsMargins(0, 8, 0, 0)
+        rows.addWidget(label(text("serverset.join_blocks"), "step"))
+        for block in data.get("blocks") or []:
+            row = QHBoxLayout()
+            until = (
+                text("serverset.join_block_forever")
+                if block["until"] is None
+                else text(
+                    "serverset.join_block_until", duration=duration(block["until"] - time.time())
+                )
+            )
+            row.addWidget(label(f"{block['address']}  ·  {until}", "sub"), 1)
+            remove = push(text("serverset.join_unblock"), "plain")
+            remove.clicked.connect(
+                lambda _=False, a=block["address"]: self.ask(
+                    "DELETE",
+                    "/join-protection/blocks",
+                    lambda _r: self.done(text("serverset.join_unblocked")),
+                    body={"address": a},
+                )
+            )
+            row.addWidget(remove)
+            rows.addLayout(row)
+        if not data.get("blocks"):
+            rows.addWidget(label(text("serverset.join_no_blocks"), "muted"))
+        add_row = QHBoxLayout()
+        address = QLineEdit()
+        address.setPlaceholderText(text("serverset.join_block_hint"))
+        add = push(text("serverset.join_block"))
+        add.clicked.connect(
+            lambda: self.ask(
+                "POST",
+                "/join-protection/blocks",
+                lambda _r: self.done(text("serverset.join_blocked")),
+                body={"address": address.text().strip()},
+            )
+        )
+        add_row.addWidget(address, 1)
+        add_row.addWidget(add)
+        rows.addLayout(add_row)
+        shown.append(blocks)
+
+        log = QWidget()
+        rows = QVBoxLayout(log)
+        rows.setContentsMargins(0, 8, 0, 0)
+        rows.addWidget(label(text("serverset.join_log"), "step"))
+        for entry in (data.get("log") or [])[:20]:
+            rows.addWidget(
+                label(
+                    text(
+                        "serverset.join_log_row",
+                        name=entry["name"],
+                        address=entry["address"],
+                        result=text(
+                            RESULT_WORDS.get(entry["result"], "serverset.join_result_other")
+                        ),
+                        when=duration(time.time() - entry["ts"]),
+                    ),
+                    "sub",
+                )
+            )
+        if not data.get("log"):
+            rows.addWidget(label(text("serverset.join_no_log"), "muted"))
+        shown.append(log)
+
+        playit = QWidget()
+        rows = QVBoxLayout(playit)
+        rows.setContentsMargins(0, 8, 0, 0)
+        rows.addWidget(label(text("serverset.join_address"), "step"))
+        row = QHBoxLayout()
+        typed = QLineEdit(status.get("shared_address") or "")
+        typed.setMaxLength(253)
+        typed.setPlaceholderText("example.joinmc.link")
+        save = push(text("action.save"))
+        sid = self.row["id"]
+        save.clicked.connect(
+            lambda: self.window_.run(
+                lambda: self.window_.agent.call(
+                    "PUT",
+                    "/discord/addresses",
+                    {"server_id": sid, "address": typed.text().strip() or None},
+                ),
+                lambda _r: self.done(text("serverset.join_address_saved")),
+                self.window_.page_problem,
+            )
+        )
+        row.addWidget(typed, 1)
+        row.addWidget(save)
+        rows.addLayout(row)
+        rows.addWidget(label(text("serverset.join_address_hint"), "muted"))
+        shown.append(playit)
+        return shown
 
     def cpu(self, info: dict, chosen: list[int]) -> QFrame:
         """Which cores this server may use. What it really uses is read back

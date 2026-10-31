@@ -136,6 +136,8 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "ops_changed": ("ops_changed", 0xED4245, "{server}: operators changed outside the app"),
     "lists_changed": ("lists_changed", 0xFAA61A, "{server}: player list changed outside the app"),
     "chat_spam": ("chat_spam", 0xED4245, "{server}: chat spam from new names"),
+    "join_protection_off": ("join_protection", 0xFAA61A, "{server}: Join protection stepped aside"),
+    "launch_mode_ended": ("join_protection", 0x5865F2, "{server}: Launch mode ended"),
 }
 
 

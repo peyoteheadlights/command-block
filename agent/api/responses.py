@@ -130,7 +130,10 @@ class CommandCheck(Open):
 
 
 class CommandSent(Open):
-    result: str = Field(description="SENT: written to the console, not yet answered")
+    result: str = Field(
+        description="SENT: written to the console, not yet answered. BLOCKED: ban-ip went "
+        "to Join protection instead"
+    )
     detail: str
     command: str
     name: str = Field(description="The command's first word")
@@ -1579,6 +1582,42 @@ class ProtectionFixed(Open):
     ok: bool
     fix: str
     undo: dict[str, Any] | None = None
+
+
+class JoinProtectionStatus(Open):
+    on: bool = Field(description="The setting")
+    running: bool = Field(description="The guard holds the port for the running server now")
+    restart_needed: bool
+    why_not: str | None = Field(None, description="java_only or start_command, or null")
+    blocked_today: int = Field(description="Connections turned away today")
+    size: str = Field(description="small or big, as used now")
+    limits: dict[str, int]
+    launch_until: float | None = None
+    real_addresses: bool | None = Field(
+        None, description="The server gets PROXY headers; null when the guard isn't running"
+    )
+    playit_seen: bool = Field(description="playit sent a real address within 7 days")
+    asleep: bool = Field(description="Answering for a slept server")
+
+
+class JoinBlock(Open):
+    address: str
+    until: float | None = Field(None, description="null: stays until removed")
+    why: str
+    by: str
+
+
+class JoinLogRow(Open):
+    name: str
+    address: str = Field(description="Masked, like 1.2.x.x")
+    result: str
+    ts: float
+
+
+class JoinProtection(Open):
+    status: JoinProtectionStatus
+    blocks: list[JoinBlock]
+    log: list[JoinLogRow]
 
 
 class FractureiserCheck(Open):

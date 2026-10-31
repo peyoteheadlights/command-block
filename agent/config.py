@@ -169,6 +169,18 @@ class ServerSettings(Section):
     # "Who's this server for?"), "" when not answered. Picks Simple mode's
     # one add-on suggestion (agent/suggestions.py).
     played_by: str = ""
+    # Join protection (agent/joinguard.py): the guard in front of a Java
+    # server, off by default. Size "" picks small or big by itself; limits
+    # the owner changed in Technical; only home network and Tailscale.
+    join_protection: bool = False
+    join_size: str = ""
+    join_limits: dict[str, int] = field(default_factory=dict)
+    join_home_only: bool = False
+    # Launch mode: Slow mode with raised limits until this time (0: off).
+    launch_until: float = 0
+    launch_players: int = 0
+    # Start a server auto-sleep stopped when someone tries to join.
+    start_on_join: bool = False
 
 
 @dataclass(frozen=True)
@@ -350,6 +362,7 @@ class NotificationSettings(Section):
             "ops_changed": True,
             "lists_changed": True,
             "chat_spam": True,
+            "join_protection": True,
         }
     )
     email: EmailSettings = field(default_factory=EmailSettings)
@@ -758,6 +771,8 @@ class Config:
             raise ConfigError(f"{prefix}.bedrock_port has to be a port number from 1 to 65535.")
         if settings.played_by not in ("", "friends", "kids", "community"):
             raise ConfigError(f"{prefix}.played_by has to be friends, kids or community.")
+        if settings.join_size not in ("", "small", "big"):
+            raise ConfigError(f"{prefix}.join_size has to be small or big.")
 
         problems = shape_problems(settings.cpu_cores, f"{prefix}.cpu_cores")
         if problems:

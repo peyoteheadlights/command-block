@@ -459,6 +459,38 @@
       "played_by": [
         "community"
       ]
+    },
+    {
+      "project": "mfONdVnp",
+      "name": "Proxy Protocol Support",
+      "types": [
+        "fabric",
+        "quilt"
+      ],
+      "kind": "good_to_have",
+      "role": "proxy",
+      "players_need": "server"
+    },
+    {
+      "project": "qepfBTp0",
+      "name": "HAProxyCompat",
+      "types": [
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "role": "proxy",
+      "players_need": "server"
+    },
+    {
+      "project": "VVMQoiHH",
+      "name": "ProperProxyProtocol",
+      "types": [
+        "forge"
+      ],
+      "kind": "good_to_have",
+      "role": "proxy",
+      "players_need": "server",
+      "technical_only": true
     }
   ]
 }

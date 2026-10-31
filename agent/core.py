@@ -29,6 +29,7 @@ from .discord.links import Links
 from .events import AGENT_SCOPE, Event, EventBus, ServerBus
 from .game_events import GameEvents
 from .jobs import JobConflict, JobHandle, JobTracker
+from .joinguard import GuardHub
 from .keepawake import KeepAwake
 from .minecraft.chat import ChatLog, parse_chat
 from .minecraft.crash import CrashReporter
@@ -104,9 +105,11 @@ class ServerContext:
         self.server.maintenance = core.config.maintenance.enabled
         self.server.start_guard = lambda: core.ports.start_conflicts(self)
         self.server.start_warnings = lambda: [
-            *core.ports.start_warnings(self),
+            # The guard holding the port isn't "another program".
+            *([] if core.guard.holds(self) else core.ports.start_warnings(self)),
             *memory.start_warnings(self),
         ]
+        self.server.before_launch = lambda: core.guard.before_launch(self)
         self._update_task: asyncio.Task | None = None
 
     def _whitelist_addon(self, kind: str):
@@ -171,6 +174,8 @@ class ServerContext:
             except Exception:  # pragma: no cover
                 log.exception("could not clear the online player list")
         try:
+            if event.type == "player_joined":
+                self.core.guard.note_peak(self)
             if event.type == "server_started":
                 await watchers.compare(self)
                 await protection.router_open(self)
@@ -349,6 +354,8 @@ class AgentCore:
         # Moves the agent onto Tailscale and checks it every minute after.
         self.tailscale = TailscaleWatch(self)
         self.wake = Wake(self)
+        # Join protection and "Start when someone joins" (agent/joinguard.py).
+        self.guard = GuardHub(self)
         # Linked accounts work without the bot (the apps list and remove
         # them); the bot itself only exists while a token is set.
         self.links = Links(self.db)
@@ -462,6 +469,7 @@ class AgentCore:
         self.software.start()
         self.tailscale.start()
         self.wake.start()
+        self.guard.start()
         self.game_events.start()
         self.start_discord()
         # After the bot, so a request that ran out while the agent was off
@@ -570,6 +578,7 @@ class AgentCore:
         await self.jobs.stop()
         for ctx in list(self.servers.values()):
             await ctx.stop()
+        await self.guard.stop()
         self.keepawake.stop()
         await self.notifier.stop()
         await self.events.stop()

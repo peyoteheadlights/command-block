@@ -567,6 +567,17 @@ class ProtectionFixRequest(BaseModel):
     port: int | None = Field(None, ge=1024, le=65535)
 
 
+class JoinLaunchRequest(BaseModel):
+    """Launch mode: how long (1 hour to 7 days) and how many players are expected."""
+
+    hours: float = Field(24, ge=1, le=168)
+    players: int = Field(ge=1, le=100000)
+
+
+class JoinBlockRequest(BaseModel):
+    address: str = Field(min_length=2, max_length=64)
+
+
 class ConfigFileRequest(BaseModel):
     path: str = Field(min_length=1, max_length=400)
 

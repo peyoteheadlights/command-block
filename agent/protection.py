@@ -172,6 +172,9 @@ class Facts:
     login: list[dict[str, Any]] = field(default_factory=list)  # login add-ons for the type
     antibot: list[dict[str, Any]] = field(default_factory=list)
     spam: dict[str, Any] = field(default_factory=dict)
+    join: dict[str, Any] | None = None  # Join protection's status (agent/joinguard.py)
+    join_burst_seen: bool = False  # 15+ new names in one minute within 7 days
+    proxy: list[dict[str, Any]] = field(default_factory=list)  # proxy add-ons for the type
 
     def prop(self, key: str, default: str) -> str:
         return ((self.properties or {}).get(key) or default).strip().lower()
@@ -233,7 +236,26 @@ def facts(ctx: ServerContext) -> Facts:
             "names": security.chat_spam_names,
             "seconds": int(security.chat_spam_seconds),
         },
+        join=ctx.core.guard.status(ctx),
+        join_burst_seen=_burst_seen(ctx),
+        proxy=[_addon(e) for e in offered if e.get("role") == "proxy"],
     )
+
+
+def _burst_seen(ctx: ServerContext) -> bool:
+    """Whether 15 or more names new to this server joined within one minute
+    in the last 7 days (from the join history, so measured even while Join
+    protection is off)."""
+    import time
+
+    from .joinguard import PRESETS
+
+    row = ctx.db.query_one(
+        "SELECT COUNT(*) AS n FROM players WHERE server_id = ? AND first_seen > ? "
+        "GROUP BY CAST(first_seen / 60 AS INTEGER) ORDER BY n DESC LIMIT 1",
+        (ctx.server_id, time.time() - 7 * 86400),
+    )
+    return bool(row and row["n"] >= PRESETS["small"]["new_names"])
 
 
 def _addon(entry: dict[str, Any]) -> dict[str, Any]:
@@ -362,11 +384,40 @@ def lines(f: Facts) -> list[dict[str, Any]]:
     elif row:
         found.append(_line("log4shell", "worst", "log4shell", version=f.minecraft))
 
+    found += _join(f)
     found.append(_line("big_attacks", "info", "stop_and_close"))
     if java and f.spam.get("on"):
         found.append(_line("chat_spam", "info", technical=True, **f.spam))
     order = {level: i for i, level in enumerate(LEVELS)}
     return sorted(found, key=lambda line: order[line["level"]])
+
+
+def _join(f: Facts) -> list[dict[str, Any]]:
+    """Join protection's lines: suggested when the server is for a community,
+    its port is open or a burst of new names was measured."""
+    import time
+
+    join = f.join
+    if join is None or join["why_not"] == "java_only":
+        return []
+    if join["why_not"]:
+        return [_line("join_start_command", "info", technical=True)]
+    if not join["on"]:
+        wanted = f.played_by == "community" or bool(f.router) or f.join_burst_seen
+        return [_line("join_off", "suggest" if wanted else "info", "join_on", technical=not wanted)]
+    if not join["running"]:
+        return [_line("join_restart" if join["restart_needed"] else "join_ready", "info")]
+    found = [_line("join_on", "info", blocked=join["blocked_today"])]
+    if join.get("launch_until"):
+        hours = max(1, round((join["launch_until"] - time.time()) / 3600))
+        found.append(_line("join_launch", "info", hours=hours))
+    if join["real_addresses"]:
+        found.append(_line("join_real_addresses", "info", technical=True))
+    else:
+        found.append(_line("join_vanilla_fallback", "info", technical=True, addons=f.proxy))
+    if join["playit_seen"]:
+        found.append(_line("join_playit", "info"))
+    return found
 
 
 def _paper(values: dict[tuple[str, str], Any]) -> list[dict[str, Any]]:
@@ -450,6 +501,15 @@ def _yaml(items: tuple, title: str):
     return apply
 
 
+async def _join_on(ctx: ServerContext, user: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Turn Join protection on (Server settings turns it off). It starts
+    with the server's next start."""
+    ctx.config.set("server.join_protection", True)
+    ctx.config.save()
+    ctx.db.audit("join_protection_on", user=user, target=ctx.server_id)
+    return {"undo": None}
+
+
 async def _log4shell(ctx: ServerContext, user: str, body: dict[str, Any]) -> dict[str, Any]:
     """Mojang's fix: its settings file next to the server for 1.7 to 1.16.5,
     and the launch flag. Changed the same way as the memory setting, so it is
@@ -496,6 +556,7 @@ FIXES: dict[str, tuple[str, FixFunction]] = {
     "dupes_off": (P.SETTINGS_GAME, _yaml(DUPES, "Turning duplication tricks off")),
     "log4shell": (P.SETTINGS_SERVER, _log4shell),
     "stop_and_close": (P.SERVER_CONTROL, _stop_and_close),
+    "join_on": (P.SETTINGS_SERVER, _join_on),
 }
 
 

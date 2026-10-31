@@ -17,6 +17,17 @@ import sys
 import time
 
 
+def configured(key: str) -> str:
+    try:
+        with open("server.properties", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith(key + "="):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
 def configured_port() -> str:
     """server-port from server.properties in the working folder, like the
     real server."""
@@ -288,7 +299,23 @@ def main() -> int:
     time.sleep(BOOT_DELAY)
     if SERVER_TYPE in ("fabric", "quilt"):
         out(stamp("Server thread", "INFO", f"Starting minecraft server version {MC_VERSION}"))
-    out(stamp("Server thread", "INFO", f"Starting Minecraft server on *:{configured_port()}"))
+    if "--port" in sys.argv:
+        # Started behind Join protection: listen like a real server would,
+        # on server-ip and the port it was given.
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from fake_game_port import FakeGamePort
+
+        port = int(sys.argv[sys.argv.index("--port") + 1])
+        game = FakeGamePort(configured("server-ip") or "0.0.0.0", port)
+        out(
+            stamp(
+                "Server thread",
+                "INFO",
+                f"Starting Minecraft server on {configured('server-ip') or '*'}:{game.port}",
+            )
+        )
+    else:
+        out(stamp("Server thread", "INFO", f"Starting Minecraft server on *:{configured_port()}"))
     if os.environ.get("FAKE_HANG") == "1":
         while True:
             time.sleep(1)

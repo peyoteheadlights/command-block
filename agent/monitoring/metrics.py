@@ -228,6 +228,10 @@ class MetricsMonitor:
 
     # ------------------------------------------------------------------
     def port_listening(self, port: int | None = None, host: str = "127.0.0.1") -> bool:
+        args = self.server.launch_args
+        if not port and self.server.behind_guard and "--port" in args:
+            # Asked of the server itself, not of the guard in front of it.
+            port = int(args[args.index("--port") + 1])
         port = port or int(self.server.detected_port or self.config.server.port)
         if self.config.server_type.ping == "raknet":
             # Bedrock listens on UDP: asked with RakNet's unconnected ping.
