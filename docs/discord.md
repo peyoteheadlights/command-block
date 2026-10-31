@@ -324,6 +324,36 @@ The alert has **See the report**, which adds whoever presses it (it needs
 Players on that server), because a role can't be added to a private thread.
 Three reports an hour per member; reports are kept 30 days.
 
+## Several PCs
+
+With two or more PCs in **Your PCs**, one of them is the **Bot PC**: the PC
+where the token was pasted. Only it keeps the live connection to Discord,
+but Discord works for every PC's servers (`agent/discord/botpc.py`).
+
+- **Bot links.** Picking the Bot PC makes a Bot link for every other PC,
+  and for a PC that joins later. Settings > Discord on the Bot PC lists
+  them with **Remove bot link** (and **Add bot link** to bring one back).
+  Removing a PC from Your PCs removes its Bot link too.
+- **Commands and buttons** for a server on another PC are passed on to that
+  PC, which checks the Discord roles and answers Discord itself. Two servers
+  with one name show their PC in the server choices.
+- **Alerts, the chat bridge, the console channel, status messages, events
+  and quest rewards** are posted by each server's own PC with the same
+  token, so they still come when the Bot PC is off. Each PC posts its own
+  quest board in the quests channel. Levels, the leaderboard and `/links`
+  count every PC.
+- **That PC is off.** When a server's PC doesn't answer within 2 seconds,
+  Discord hears "That PC is off". `/start` first sends that PC's wake signal
+  (and asks its helping PC) when Wake-on-LAN is set up on it.
+- **Bot offline.** On the other PCs, Settings > Discord says **Bot offline:
+  <PC> is off** while the Bot PC doesn't answer, with **Run the bot on this
+  PC instead**. The token and every Discord setting are already on every PC,
+  so nothing changes in Discord. The old Bot PC hears it before it starts its
+  bot, so two bots never run.
+
+The bot's settings (channels, Discord roles, grants, the address to share)
+are changed on the Bot PC; the other PCs get a copy within a minute.
+
 ## On the phone
 
 The Android and iPhone apps look after what the bot brings in; setting the
@@ -352,7 +382,7 @@ token and never retries it, leaves a channel alone for 10 minutes after a
 403, waits as long as Discord asks on a 429 and resumes after a drop with
 growing waits. `bot.py` holds the commands and buttons, `live.py` what the status
 commands, status message and presence say, `bridge.py` the chat bridge's words, `progress.py` what /stats, /level, the leaderboard and the quest board say, `layout.py` the channels, roles,
-Level roles, grants and checks, `links.py` the linked accounts. The stats reader is `agent/stats.py`, Levels are `agent/levels.py`, quests `agent/quests.py`, events and polls `agent/game_events.py` and whitelist requests and addresses `agent/whitelist.py`, with no Discord inside. Without a token none of it
+Level roles, grants and checks, `links.py` the linked accounts, `botpc.py` the Bot PC and Bot links. The stats reader is `agent/stats.py`, Levels are `agent/levels.py`, quests `agent/quests.py`, events and polls `agent/game_events.py` and whitelist requests and addresses `agent/whitelist.py`, with no Discord inside. Without a token none of it
 runs and the client isn't imported.
 
 Tests use a fake Discord (`tests/fake_discord.py`). There's also an opt-in

@@ -311,7 +311,7 @@ class WrongCertificate(OSError):
     """The PC answered with a certificate other than the one pinned."""
 
 
-def pinned_context(host: str, port: int, fingerprint: str) -> ssl.SSLContext:
+def pinned_context(host: str, port: int, fingerprint: str, timeout: float = 5) -> ssl.SSLContext:
     """A TLS context that trusts only the certificate with this SHA-256
     fingerprint (64 hex digits), checked before anything is sent: the
     pairing link's pin, used by the desktop app and by one PC calling
@@ -319,7 +319,7 @@ def pinned_context(host: str, port: int, fingerprint: str) -> ssl.SSLContext:
     probe = ssl.create_default_context()
     probe.check_hostname = False
     probe.verify_mode = ssl.CERT_NONE
-    with socket.create_connection((host, port), timeout=5) as raw:
+    with socket.create_connection((host, port), timeout=timeout) as raw:
         with probe.wrap_socket(raw, server_hostname=host) as tls:
             der = tls.getpeercert(binary_form=True)
     import hashlib

@@ -22,7 +22,7 @@ def page_of(ctx) -> dict:
     from ...discord import layout
 
     quests, bot = ctx.core.quests, ctx.core.discord
-    connected = bot is not None and bot.gateway.state == "connected"
+    connected = bot is not None and bot.connected
     guilds = []
     if connected:
         for gid, guild in bot.guilds.items():
@@ -64,7 +64,7 @@ async def checked_rewards(ctx, given) -> list[dict]:
         if reward["kind"] != "role":
             continue
         bot = ctx.core.discord
-        if bot is None or bot.gateway.state != "connected":
+        if bot is None or not bot.connected:
             raise HTTPException(status_code=409, detail="The bot has to be connected first.")
         try:
             await bot.reward_role(ctx.server_id, reward.get("role_id", ""))

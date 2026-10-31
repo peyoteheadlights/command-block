@@ -332,6 +332,8 @@ class FakeDiscord:
             return httpx.Response(
                 403, json={"message": "Cannot send messages to this user", "code": 50007}
             )
+        if key == ("GET", "/users/@me"):
+            return httpx.Response(200, json={"id": BOT_ID, "username": self.bot_name, "bot": True})
         if key == ("PATCH", "/users/@me"):
             self.bot_name = body.get("username") or self.bot_name
             return httpx.Response(200, json={"id": BOT_ID, "username": self.bot_name, "bot": True})

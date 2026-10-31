@@ -42,6 +42,38 @@ SLEPT_FOR = 60
 TRY_FOR = 24 * 3600  # a "Try it" nobody finished stops waiting after this
 
 
+PORT = 47391  # the helping PC listens here, on its Tailscale address only
+WAKE_PORT = 9  # where wake signals go (the "discard" port, as is usual)
+PREFIX = b"CBWAKE1 "
+EVERY = 30.0  # at most one wake this often
+
+
+def magic_packet(mac: str) -> bytes:
+    raw = bytes.fromhex(mac.replace(":", "").replace("-", ""))
+    if len(raw) != 6:
+        raise ValueError(f"{mac!r} isn't a MAC address.")
+    return b"\xff" * 6 + raw * 16
+
+
+def send_wake(mac: str, broadcast: str | None) -> None:
+    """The wake signal on this network. Does nothing useful away from home,
+    and harms nothing either."""
+    packet = magic_packet(mac)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for target in {broadcast or "255.255.255.255", "255.255.255.255"}:
+            try:
+                sock.sendto(packet, (target, WAKE_PORT))
+            except OSError:
+                pass  # no network here: the helping PC is the other way
+
+
+def ask_helper(address: str, port: int, key: str) -> None:
+    """One request to the helping PC, over Tailscale (encrypted there)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(PREFIX + key.encode(), (address, port))
+
+
 class WakeRefused(ValueError):
     """Said to the owner as it is."""
 
@@ -304,7 +336,28 @@ class Wake:
             f"WHERE wake_key_hash IS NOT NULL AND {live_session()}",
             (time.time(),),
         )
-        return sorted({r["wake_key_hash"] for r in rows if self.may_wake(r["user"])})
+        found = {r["wake_key_hash"] for r in rows if self.may_wake(r["user"])}
+        if self.saved().get("bot_key"):
+            found.add(key_hash(self.saved()["bot_key"]))
+        return sorted(found)
+
+    def for_bot(self) -> dict[str, Any] | None:
+        """What the Bot PC keeps to wake this PC for /start from Discord
+        (agent/discord/botpc.py): like a device's, with its own key. None
+        while Wake-on-LAN isn't set up."""
+        saved = self.saved()
+        if not (saved.get("on") and saved.get("mac")):
+            return None
+        key = saved.get("bot_key") or secrets.token_urlsafe(24)
+        if key != saved.get("bot_key"):
+            self._save(bot_key=key)
+        helper = self.helper()
+        return {
+            "mac": saved["mac"],
+            "broadcast": saved.get("broadcast"),
+            "helper": {"address": helper["address"], "port": helper["port"]} if helper else None,
+            "key": key,
+        }
 
     # -------------------------------------------------------- a device that may wake it
     def for_device(self, session: str | None) -> dict[str, Any]:

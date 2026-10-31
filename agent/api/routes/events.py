@@ -27,7 +27,7 @@ def page_of(ctx, changed: bool = True) -> dict:
         "events": found.page(ctx.server_id),
         "polls": found.poll_page(ctx.server_id),
         "kinds": allowed_kinds(ctx),
-        "bot": bot is not None and bot.gateway.state == "connected",
+        "bot": bot is not None and bot.connected,
     }
 
 

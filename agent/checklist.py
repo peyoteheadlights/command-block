@@ -114,7 +114,7 @@ def _discord(ctx: ServerContext) -> dict[str, Any] | None:
         return None
     from .discord import layout
 
-    connected = bot.gateway.state == "connected"
+    connected = bot.connected
     guilds = [g for g in bot.guilds if ctx.server_id in layout.servers_of(ctx.core.db, g)]
     problem = bot.problem()
     done = connected and bool(guilds) and problem is None

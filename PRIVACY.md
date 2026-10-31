@@ -22,7 +22,7 @@ here.
 | **Discord** | Only if you set up Discord alerts | The alert text (for example "Server crashed") to the webhook you entered |
 | **Your email server** | Only if you set up email alerts | The alert text to the addresses you entered |
 | **Google Firebase Cloud Messaging** (Android) and **Apple Push Notification service** (iPhone) | Only if the owner set up lock-screen alerts for the phone app, and only to phones that turned them on | A wake-up with an alert number and no words in it. The phone then reads the alert from your PC |
-| **Your other PCs** (Your PCs) | Only after you join two of your own PCs into one account: when an account changes, and when a PC starts | The owner and moderator accounts (names and password hashes, never passwords), which servers each moderator was given, and the signed-in devices, straight from PC to PC over your own network. No server in between |
+| **Your other PCs** (Your PCs) | Only after you join two of your own PCs into one account: when an account changes, and when a PC starts | The owner and moderator accounts (names and password hashes, never passwords), which servers each moderator was given, and the signed-in devices; with the Discord bot, its token (encrypted), its Discord settings, and each PC's server names, Levels XP, linked Minecraft names and wake details. Straight from PC to PC over your own network. No server in between |
 | **Tailscale** (`pkgs.tailscale.com`, `api.tailscale.com`) | When you select Install Tailscale in the desktop app, and when you make a share link for a moderator with a Tailscale key you saved | Which Tailscale setup to download, or the key and this PC's Tailscale address, to make the link |
 
 Each of these services has its own privacy policy, and sees your PC's

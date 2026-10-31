@@ -39,6 +39,8 @@ KEY_FILE = "account-keys.bin"
 # moderator, sign-in or PC back.
 STICKY = {"account", "session", "pc"}
 KINDS = {"owner", "owner_reset", "account", "grants", "session", "pc"}
+# The Discord bot across the PCs (agent/discord/botpc.py).
+KINDS |= {"bot", "bot_settings", "bot_link", "bot_news"}
 
 
 def canonical(body: dict[str, Any]) -> str:
@@ -203,6 +205,14 @@ class Records:
             write_keys(self.path, self.keys)
             self._sign_all(key)
 
+    def set_key(self, name: str, value: bytes | None) -> None:
+        """Keep (or forget) one more key in the encrypted key file."""
+        with self._lock:
+            self.keys = {k: v for k, v in self.keys.items() if k != name}
+            if value is not None:
+                self.keys[name] = value
+            write_keys(self.path, self.keys)
+
     def sync_key_hash(self) -> str:
         return hashlib.sha256(self.keys["sync"]).hexdigest()
 
@@ -326,6 +336,8 @@ class Records:
             return "refused"
         if row["kind"] == "grants" and not row["key"].startswith(row["pc"] + ":"):
             return "refused"  # a server's permissions are only changed by its own PC
+        if row["kind"] == "bot_news" and row["key"] != row["pc"]:
+            return "refused"  # what a PC says about its own servers comes from that PC
         with self._lock:
             old = self.raw(row["kind"], row["key"])
             if old is not None:

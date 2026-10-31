@@ -120,25 +120,33 @@ def status_message(ctx: ServerContext, shared: str | None) -> str:
     return "\n".join(lines)[:2000]
 
 
-def presence(servers: list[ServerContext]) -> str | None:
+def seen(ctx: ServerContext) -> dict[str, Any]:
+    """What the presence line needs from one server on this PC (another
+    PC's come from its bot_news, with no player count)."""
+    state = ctx.server.state.value
+    count = len(ctx.players.online()) if state == "ONLINE" and ctx.players.verified else None
+    return {"name": ctx.name, "state": state, "players": count}
+
+
+def presence(servers: list[dict[str, Any]]) -> str | None:
     """The line under the bot's name. One server: "3 playing on Survival";
     several: "Survival 3 · Creative offline"."""
     if not servers:
         return None
     if len(servers) == 1:
-        ctx = servers[0]
-        state = ctx.server.state.value
-        if state == "ONLINE" and ctx.players.verified:
-            return f"{len(ctx.players.online())} playing on {ctx.name}"
-        if state == "ONLINE":
-            return f"{ctx.name} is online"
-        return f"{ctx.name} is {state_words(state)}"
+        s = servers[0]
+        if s["state"] == "ONLINE" and s.get("players") is not None:
+            return f"{s['players']} playing on {s['name']}"
+        if s["state"] == "ONLINE":
+            return f"{s['name']} is online"
+        return f"{s['name']} is {state_words(s['state'])}"
     parts = []
-    for ctx in servers:
-        state = ctx.server.state.value
-        if state == "ONLINE":
-            count = len(ctx.players.online()) if ctx.players.verified else "?"
-            parts.append(f"{ctx.name} {count}")
+    for s in servers:
+        if s["state"] == "ONLINE":
+            count = s.get("players")
+            parts.append(f"{s['name']} {'?' if count is None else count}")
         else:
-            parts.append(f"{ctx.name} {'offline' if state in ('OFFLINE', 'CRASHED') else '...'}")
+            parts.append(
+                f"{s['name']} {'offline' if s['state'] in ('OFFLINE', 'CRASHED') else '...'}"
+            )
     return " · ".join(parts)[:128]

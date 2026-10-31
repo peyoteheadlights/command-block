@@ -68,7 +68,12 @@ class Discord(Moderators):
     def show_state(self, found: tuple[dict, dict]) -> None:
         self.state, self.data = found
         state = self.state
-        self.fill("status", self.status_card(state))
+        links = (state.get("bot_pc") or {}).get("links")
+        self.fill("status", self.status_card(state), *([self.links_card(links)] if links else []))
+        if state.get("state") == "elsewhere":  # the bot's settings are on the Bot PC
+            for name in ("token", "invite", "profile", "sharing", "guilds"):
+                self.fill(name)
+            return
         self.fill("token", self.token_card(state))
         connected = state.get("state") == "connected"
         self.fill("invite", *([self.invite_card(state)] if connected else []))
@@ -88,6 +93,9 @@ class Discord(Moderators):
     def status_card(self, state: dict) -> QFrame:
         frame, layout = card(text("discord.bot"))
         now = state.get("state", "off")
+        bot_pc = state.get("bot_pc") or {}
+        if bot_pc and not bot_pc.get("this"):
+            return self.elsewhere_card(frame, layout, bot_pc)
         line = label(
             text(f"discord.state.{now}", name=state.get("name") or ""),
             "ok" if now == "connected" else "problem" if now != "off" else "sub",
@@ -115,6 +123,40 @@ class Discord(Moderators):
         awake = push(text("discord.keep_awake"), "plain")
         awake.clicked.connect(lambda: self.window_.open_list("PC settings", "pc"))
         layout.addLayout(buttons(awake))
+        return frame
+
+    def elsewhere_card(self, frame: QFrame, layout, bot_pc: dict) -> QFrame:
+        """Another of the owner's PCs runs the bot (agent/discord/botpc.py)."""
+        off = (bot_pc.get("reach") or {}).get("state") == "unreachable"
+        if off:
+            layout.addWidget(label(text("discord.bot_offline", pc=bot_pc["name"]), "problem"))
+        else:
+            layout.addWidget(label(text("discord.state.elsewhere", pc=bot_pc["name"]), "ok"))
+        layout.addWidget(label(text("discord.settings_elsewhere", pc=bot_pc["name"]), "muted"))
+        here = push(text("discord.run_here"), "primary" if off else "plain")
+        here.clicked.connect(
+            lambda: self.call("POST", "/discord/bot-pc", self.done(text("discord.run_here_done")))
+        )
+        layout.addLayout(buttons(here))
+        return frame
+
+    def links_card(self, links: list[dict]) -> QFrame:
+        """On the Bot PC: each other PC's Bot link, with Remove or Add."""
+        frame, layout = card(text("discord.links_title"))
+        for link in links:
+            on = link.get("linked")
+            words = text("discord.link_on" if on else "discord.link_off", pc=link["name"])
+            layout.addWidget(label(("✓ " if on else "✗ ") + words, "ok" if on else "sub"))
+            change = push(text("discord.link_remove" if on else "discord.link_add"), "plain")
+            done = self.done(
+                text("discord.link_removed" if on else "discord.link_added", pc=link["name"])
+            )
+            change.clicked.connect(
+                lambda _=False, pc=link["pc"], on=on, done=done: self.call(
+                    "DELETE" if on else "PUT", f"/discord/bot-links/{pc}", done
+                )
+            )
+            layout.addLayout(buttons(change))
         return frame
 
     def token_card(self, state: dict) -> QFrame:
@@ -268,7 +310,8 @@ class Discord(Moderators):
 
         # Which Minecraft servers it's for, then the one button.
         layout.addWidget(label(text("discord.for_servers"), "step"))
-        servers = self.data.get("servers") or []
+        # Every PC's servers, once there are several (the agent names them).
+        servers = self.state.get("servers") or self.data.get("servers") or []
         tied = set(guild.get("servers") or [])
         ticks: dict[str, QCheckBox] = {}
         for s in servers:

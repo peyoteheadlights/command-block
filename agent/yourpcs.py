@@ -100,6 +100,9 @@ class YourPCs:
         self._wake: asyncio.Event | None = None
         self._task: asyncio.Task | None = None
         self._tasks: set[asyncio.Task] = set()
+        # Set once the other PCs were asked what changed while this one was
+        # off (the bot waits for it: agent/discord/botpc.py).
+        self.pulled = asyncio.Event()
 
     # -- facts ---------------------------------------------------------------
     @property
@@ -271,6 +274,7 @@ class YourPCs:
         assert self._wake is not None
         for peer in self.peers():
             await self._pull(peer)
+        self.pulled.set()
         while True:
             try:
                 await self._round()
@@ -535,6 +539,7 @@ class YourPCs:
             raise PcError("This PC's own address isn't known yet, so the new PC can't reach it.")
         body = {k: found[k] for k in ("name", "address", "port", "fingerprint", "sync_key_hash")}
         self.records.put("pc", found["pc"], body)
+        self.core.botpc.update_soon()  # the first bot of a joined account picks its PC
         self.db.audit("pc_joined", user=principal.user, target=found["name"])
         self.core.bus.publish_soon(
             Event(
@@ -635,6 +640,7 @@ class YourPCs:
         self._reached(other)
         self.db.set_setting("pcs_joining", None)
         self._record_me()
+        self.core.botpc.update_soon()
         self.core.bus.publish_soon(
             Event(
                 type="pc_joined",
@@ -651,6 +657,7 @@ class YourPCs:
         if pc == self.pc:
             raise PcError("Remove this PC from one of your other PCs.")
         self.records.remove("pc", pc)
+        self.core.botpc.remove_link(pc)
         self.state.pop(pc, None)
         self._save_state()
         self.db.audit("pc_removed", user=principal.user, target=found["body"].get("name"))
@@ -680,6 +687,7 @@ class YourPCs:
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
         elif record["removed"]:
+            self.core.botpc.remove_link(record["key"])
             self.state.pop(record["key"], None)
             self._save_state()
 
@@ -689,6 +697,7 @@ class YourPCs:
         if not self.records.all("pc", removed=True):
             return
         log.warning("this PC no longer shares its accounts: %s", why)
+        await self.core.botpc.split()
         owner = self.auth.owner()
         self.records.set_signing_key(secrets.token_bytes(32))
         for kind in ("pc", "owner_reset"):

@@ -2415,7 +2415,16 @@ class TailscaleState(Open):
 class DiscordStatus(Open):
     token_set: bool
     state: str = Field(
-        description="off (no token), connecting, connected, token_rejected, intents_refused or stopped"
+        description="off (no token), connecting, connected, token_rejected, intents_refused, "
+        "stopped, or elsewhere (another of the owner's PCs runs the bot)"
+    )
+    bot_pc: dict[str, Any] | None = Field(
+        None,
+        description="With several PCs: the Bot PC's id, name, this, and its reach "
+        "(another PC) or each PC's Bot link (this PC)",
+    )
+    servers: list[dict[str, Any]] = Field(
+        default_factory=list, description="Servers a Discord server can be set up for, every PC's"
     )
     detail: str = ""
     connected_at: float | None = None
@@ -2599,6 +2608,13 @@ class JoinAnswer(Open):
 class SyncChanges(Open):
     records: list[dict[str, Any]]
     seq: int
+
+
+class BotLinkAnswer(Open):
+    ok: bool
+    done: bool | None = None
+    played: list[dict[str, Any]] | None = None
+    members: list[str] | None = None
 
 
 class SyncTaken(Open):

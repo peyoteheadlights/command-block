@@ -20,36 +20,28 @@ import threading
 import time
 from collections.abc import Callable
 
-PORT = 47391  # the helping PC listens here, on its Tailscale address only
-WAKE_PORT = 9  # where wake signals go (the "discard" port, as is usual)
-PREFIX = b"CBWAKE1 "
-EVERY = 30.0  # at most one wake this often
+# The wake signal itself is the agent's too: the Bot PC sends it for /start
+# (agent/discord/botpc.py).
+from agent.wake import (
+    EVERY,
+    PORT,
+    PREFIX,
+    WAKE_PORT,
+    ask_helper,
+    magic_packet,
+    send_wake,
+)
 
-
-def magic_packet(mac: str) -> bytes:
-    raw = bytes.fromhex(mac.replace(":", "").replace("-", ""))
-    if len(raw) != 6:
-        raise ValueError(f"{mac!r} isn't a MAC address.")
-    return b"\xff" * 6 + raw * 16
-
-
-def send_wake(mac: str, broadcast: str | None) -> None:
-    """The wake signal on this network. Does nothing useful away from home,
-    and harms nothing either."""
-    packet = magic_packet(mac)
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        for target in {broadcast or "255.255.255.255", "255.255.255.255"}:
-            try:
-                sock.sendto(packet, (target, WAKE_PORT))
-            except OSError:
-                pass  # no network here: the helping PC is the other way
-
-
-def ask_helper(address: str, port: int, key: str) -> None:
-    """One request to the helping PC, over Tailscale (encrypted there)."""
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.sendto(PREFIX + key.encode(), (address, port))
+__all__ = [
+    "EVERY",
+    "PORT",
+    "PREFIX",
+    "WAKE_PORT",
+    "Helper",
+    "ask_helper",
+    "magic_packet",
+    "send_wake",
+]
 
 
 class Helper:

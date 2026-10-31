@@ -9,12 +9,22 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ...security.auth import AccountError, Principal
-from ...security.permissions import ACCOUNT, SECURITY_MANAGE, require
+from ...discord.botpc import LINK_HEADER
+from ...security.auth import AccountError, AuthError, Principal
+from ...security.permissions import ACCOUNT, SECURITY_MANAGE, check_bot_link, require
 from ...yourpcs import KEY_HEADER, PC_HEADER, PcError, Refused
 from ..deps import audit, client_ip, get_core
-from ..responses import JoinAnswer, JoinLink, Ok, PcList, SyncChanges, SyncHello, SyncTaken
-from .models import PcJoinRequest, SyncChangesRequest, SyncJoinRequest
+from ..responses import (
+    BotLinkAnswer,
+    JoinAnswer,
+    JoinLink,
+    Ok,
+    PcList,
+    SyncChanges,
+    SyncHello,
+    SyncTaken,
+)
+from .models import BotLinkRequest, PcJoinRequest, SyncChangesRequest, SyncJoinRequest
 
 router = APIRouter()
 
@@ -142,3 +152,28 @@ async def sync_receive(payload: SyncChangesRequest, request: Request, core=Depen
     """Changes made on (or passed on by) one of the owner's PCs."""
     pc = _peer(request, core)
     return {"ok": True, "taken": core.pcs.receive(pc, payload.records)}
+
+
+@router.post("/sync/bot/{what}", response_model=BotLinkAnswer)
+async def bot_link_call(
+    what: str, payload: BotLinkRequest, request: Request, core=Depends(get_core)
+):
+    """What Discord asked about one of this PC's servers, passed on by the
+    Bot PC over its Bot link: only what Discord can do (BOT_LINK_CALLS)."""
+    core.auth.api_rate.check(f"api:{client_ip(request)}")
+    try:
+        core.botpc.check_link(
+            request.headers.get(PC_HEADER, ""), request.headers.get(LINK_HEADER, "")
+        )
+        if what == "interaction":
+            from ...discord.bot import on_the_list
+
+            check_bot_link(what, on_the_list(payload.interaction or {}))
+        else:
+            check_bot_link(what)
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    try:
+        return core.botpc.answer(what, payload.model_dump())
+    except PcError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -454,7 +454,7 @@ class DiscordSetup(BaseModel):
 
 class DiscordTie(BaseModel):
     kind: Literal["alerts", "quests", "levels", "events", "chat", "status", "console"]
-    server_id: str = Field(default="", max_length=64)
+    server_id: str = Field(default="", max_length=100)  # "survival@<pc>" on another PC
     channel_id: str | None = Field(None, pattern=r"^\d{1,25}$")
 
 
@@ -477,7 +477,7 @@ class DiscordLevelSettings(BaseModel):
 
 
 class DiscordAddress(BaseModel):
-    server_id: str = Field(max_length=64)
+    server_id: str = Field(max_length=100)
     # A name or address and maybe a port, as friends type it into Minecraft.
     address: str | None = Field(None, max_length=253, pattern=r"^[A-Za-z0-9.\-]+(:\d{1,5})?$")
 
@@ -608,3 +608,16 @@ class SyncJoinRequest(BaseModel):
 
 class SyncChangesRequest(BaseModel):
     records: list[dict[str, Any]] = Field(max_length=5000)
+
+
+class BotLinkRequest(BaseModel):
+    """From the Bot PC, over a Bot link (agent/discord/botpc.py)."""
+
+    interaction: dict[str, Any] | None = None
+    server: str | None = Field(None, max_length=100)
+    message: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
+    member: str | None = Field(None, max_length=25)
+    name: str | None = Field(None, max_length=20)
+    servers: list[str] = Field(default_factory=list, max_length=50)
+    until: float | None = None

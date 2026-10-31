@@ -328,6 +328,10 @@ class AgentCore:
         from .yourpcs import YourPCs
 
         self.pcs = YourPCs(self)
+        from .discord.botpc import BotPC
+
+        # Which of the PCs runs the Discord bot (agent/discord/botpc.py).
+        self.botpc = BotPC(self)
         self.jobs = JobTracker(self.db, self.bus)
         self.jobs.mark_interrupted()
         self.ports = PortManager(self)
@@ -507,23 +511,34 @@ class AgentCore:
 
     def start_discord(self) -> None:
         """Start the bot when a token is set. Without one the Discord client
-        isn't even imported (weak mini PCs come first)."""
+        isn't even imported (weak mini PCs come first). With several PCs,
+        once this PC has heard which one is the Bot PC."""
         token = self.config.discord_bot_token
-        if token and self.discord is None:
+        if self.pcs.joined():
+            self.botpc.update_soon()
+        elif token and self.discord is None:
             from .discord.bot import Bot
 
             self.discord = Bot(self, token)
             self.discord.start()
 
-    async def set_discord_token(self, token: str | None) -> None:
-        """Save a new bot token in .env (or remove it), then reconnect."""
+    async def save_discord_token(self, token: str) -> None:
         from installer.setup_tool import write_env_value
 
         from .appinfo import default_env_path
 
         path = self.config.env_path or default_env_path()
-        await asyncio.to_thread(write_env_value, path, "MCSC_DISCORD_BOT_TOKEN", token or "")
-        os.environ["MCSC_DISCORD_BOT_TOKEN"] = token or ""
+        await asyncio.to_thread(write_env_value, path, "MCSC_DISCORD_BOT_TOKEN", token)
+        os.environ["MCSC_DISCORD_BOT_TOKEN"] = token
+
+    async def set_discord_token(self, token: str | None) -> None:
+        """Save a new bot token in .env (or remove it), then reconnect. With
+        several PCs this PC becomes the Bot PC (or the bot stops on all)."""
+        await self.save_discord_token(token or "")
+        if self.pcs.joined():
+            self.botpc.set_token(token or "")
+            await self.botpc.update()
+            return
         if self.discord is not None:
             await self.discord.stop()
             self.discord = None

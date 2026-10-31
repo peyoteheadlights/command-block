@@ -104,6 +104,21 @@ keeps a full copy and sends changes straight to the others.
   and take it only when an owner device signed in to one of them before the
   reset confirms it. Then every owner sign-in made before the change ends.
 - **Sign out everywhere** ends every sign-in on every PC.
+- **The Discord bot across PCs** (`agent/discord/botpc.py`). The Bot PC's
+  token is in a signed record, encrypted (AES-GCM) with a key made from the
+  account's signing key, so it can only be read on the owner's PCs; it goes
+  only PC to PC over the pinned connection, and no route sends it back.
+  A **Bot link** is a random 32-byte key per PC made by the Bot PC, kept in
+  its `account-keys.bin`; the other PC keeps only its SHA-256. The other PC
+  takes a Bot link call only from the PC its record names as the Bot PC,
+  still in Your PCs, and only what Discord can do
+  (`permissions.BOT_LINK_CALLS`: a slash command or button from the bot's
+  own list, a chat line, someone leaving Discord, unlinking an account, the
+  leaderboard's numbers). It is never a sign-in: the API refuses it. A
+  passed-on command is checked on that PC against the Discord member's
+  roles, like one from Discord itself. Each PC's own news for the bot (its
+  servers, Levels XP, linked names, wake key) is only ever written by that
+  PC.
 
 ## Secrets
 

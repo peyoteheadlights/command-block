@@ -192,6 +192,19 @@ WS_ACTIONS = {
     "status": SERVER_VIEW,
 }
 
+# What the Bot PC may ask of another of the owner's PCs over its Bot link
+# (agent/discord/botpc.py): only what Discord can do there, a slash command
+# or button from the bot's own list, a chat line, someone leaving Discord.
+# Never the API, a console line or anything an owner does.
+BOT_LINK_CALLS = frozenset({"interaction", "message", "member_left", "unlink", "leaderboard"})
+
+
+def check_bot_link(call: str, discord_list: bool = True) -> None:
+    """Refuse a Bot link call outside the Discord list. ``discord_list`` is
+    False for an interaction whose command or button the bot doesn't have."""
+    if call not in BOT_LINK_CALLS or not discord_list:
+        raise AuthError("A Bot link can only do what Discord can.", status=403)
+
 
 def grant(permissions) -> frozenset[str]:
     """A set the owner ticked for one server, made whole: anything ticked
