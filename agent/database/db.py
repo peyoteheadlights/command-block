@@ -684,6 +684,29 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX join_log_server ON join_log(server_id, id DESC);
         """,
     ),
+    (
+        22,
+        # Shared accounts (agent/security/records.py, agent/yourpcs.py): the
+        # signed records the owner's PCs share, seq counting changes made
+        # here. Each moderator gets an id that stays when their name
+        # changes ("Sam 2").
+        """
+        CREATE TABLE sync_records (
+            kind TEXT NOT NULL,
+            key TEXT NOT NULL,
+            body TEXT NOT NULL,
+            hlc TEXT NOT NULL,
+            pc TEXT NOT NULL,
+            removed INTEGER NOT NULL DEFAULT 0,
+            sig TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            PRIMARY KEY (kind, key)
+        );
+        CREATE INDEX sync_records_seq ON sync_records(seq);
+        ALTER TABLE accounts ADD COLUMN id TEXT;
+        UPDATE accounts SET id = lower(hex(randomblob(8)));
+        """,
+    ),
 ]
 
 

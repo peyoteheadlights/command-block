@@ -211,6 +211,17 @@ async def change_account(
     except AccountError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     audit(core, request, "helper_change", target=account["username"])
+    if account.get("removed"):
+        # Taken off their last server on any of the owner's PCs.
+        await core.bus.publish(
+            Event(
+                type="helper_removed",
+                level="warn",
+                message=f"{account['username']} has no servers left on any PC, so they were removed",
+                data={"username": account["username"]},
+            )
+        )
+        return {"ok": True, "username": account["username"], "removed": True}
     return {"ok": True, "username": account["username"]}
 
 

@@ -57,8 +57,9 @@ from .overview import SimpleOverview, TechnicalOverview
 from .pc import WindowsPC
 from .server_tab import BUSY, ServerScreen, state_words
 from .tailscale_step import TailscaleStep
-from .ui import clock, content_page, has_packs, label, push
+from .ui import clock, content_page, has_packs, label, push, refill
 from .words import mode, text
+from .yourpcs import YourPCs
 
 log = logging.getLogger(__name__)
 
@@ -167,7 +168,12 @@ class SignInScreen(QWidget):
 
 
 class ServerRow(QFrame):
-    def __init__(self, window: MainWindow, row: dict) -> None:
+    """One server on All servers. ``act`` starts or stops a server on another
+    of the owner's PCs (that PC checks the account may)."""
+
+    def __init__(
+        self, window: MainWindow, row: dict, act: Callable[[str], None] | None = None
+    ) -> None:
         super().__init__()
         self.setProperty("kind", "row")
         layout = QHBoxLayout(self)
@@ -195,8 +201,11 @@ class ServerRow(QFrame):
         button = push(text(f"action.{action}"), "primary" if action == "start" else "")
         button.setEnabled(state not in BUSY)
         button.setAccessibleName(f"{text(f'action.{action}')} {row['name']}")
-        button.clicked.connect(lambda: window.server_action(row["id"], action))
-        button.setVisible(window.may(row["id"], "server.control"))
+        if act is not None:
+            button.clicked.connect(lambda: act(action))
+        else:
+            button.clicked.connect(lambda: window.server_action(row["id"], action))
+            button.setVisible(window.may(row["id"], "server.control"))
         layout.addWidget(button)
 
 
@@ -271,6 +280,7 @@ class AllServersScreen(QWidget):
         self.rows.setSpacing(8)
         outer.addLayout(self.rows)
         outer.addStretch()
+        self.servers: list[dict] = []
 
     def failed(self, exc: AgentError) -> None:
         self.problem.setText(str(exc))
@@ -282,14 +292,33 @@ class AllServersScreen(QWidget):
 
     def fill(self, servers: list[dict]) -> None:
         self.problem.hide()
-        while self.rows.count():
-            old = self.rows.takeAt(0).widget()
-            if old is not None:
-                old.setParent(None)
-        if not servers:
+        self.servers = servers
+        self.show_all()
+
+    def show_all(self) -> None:
+        """This PC's servers, then each of the owner's other PCs' (Your
+        PCs), under the PC's name."""
+        refill(self.rows, [])
+        others = self.window_.other_pcs()
+        if others:
+            self.rows.addWidget(label(self.window_.this_pc_name(), name="h2"))
+        if not self.servers:
             self.rows.addWidget(label(text("servers.none"), "sub"))
-        for row in servers:
+        for row in self.servers:
             self.rows.addWidget(ServerRow(self.window_, row))
+        for pc in others:
+            self.rows.addWidget(label(pc.get("name") or "", name="h2"))
+            found = self.window_.elsewhere.get(pc["id"])
+            if found is None:
+                self.rows.addWidget(label(text("desktop.pcs.loading"), "sub"))
+            elif isinstance(found, str):
+                self.rows.addWidget(label(found, "sub"))
+            elif not found:
+                self.rows.addWidget(label(text("servers.none"), "sub"))
+            else:
+                for row in found:
+                    act = lambda action, p=pc, r=row: self.window_.act_elsewhere(p, r, action)  # noqa: E731
+                    self.rows.addWidget(ServerRow(self.window_, row, act))
 
 
 class MainWindow(QMainWindow):
@@ -311,6 +340,9 @@ class MainWindow(QMainWindow):
         self.dark = dark if dark is not None else self.dark_look(pc.setting("look"))
         self.scale = pc.text_scale()
         self.servers: list[dict] = []
+        # Other PCs' servers (Your PCs), by PC id: rows, or why there are none.
+        self.elsewhere: dict[str, list[dict] | str] = {}
+        self._elsewhere_at = 0.0
         self.types: list[dict] = []  # the server types, asked for once (/server-types)
         self.server_id: str | None = None
         self.alerts: list[dict] = []  # newest first, as the bell lists them
@@ -397,6 +429,7 @@ class MainWindow(QMainWindow):
                 "updates": Updates(self),
                 "moderators": Moderators(self),
                 "discord": Discord(self),
+                "pcs": YourPCs(self),
                 "devices": Devices(self),
                 "account": Account(self),
             },
@@ -645,6 +678,59 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------ data
     def refresh(self) -> None:
         self.run(self.agent.servers, self.servers_loaded, self.screens["All servers"].failed)  # type: ignore[attr-defined]
+        if time.time() - self._elsewhere_at >= self.ELSEWHERE_EVERY:
+            self._elsewhere_at = time.time()
+            self.run(lambda: self.agent.call("GET", "/pcs"), self.pcs_loaded, lambda _e: None)
+
+    # -- the owner's other PCs (Your PCs) ---------------------------------
+    ELSEWHERE_EVERY = 30  # seconds: other PCs' servers are asked for this often at most
+
+    def pcs_loaded(self, found: dict) -> None:
+        """Keep the PC list on this device (it is learned from the agent's
+        synced list), then ask each other PC for its servers, with this same
+        sign-in: it works on every PC of the account."""
+        pcs = [p for p in found.get("pcs") or [] if p.get("address") and p.get("fingerprint")]
+        self.pc.set_setting("pcs", pcs)
+        for pc in self.other_pcs():
+            self.run(
+                partial(self._servers_of, pc),
+                partial(self._elsewhere_found, pc),
+                partial(self._elsewhere_failed, pc),
+            )
+        self.screens["All servers"].show_all()  # type: ignore[attr-defined]
+
+    def other_pcs(self) -> list[dict]:
+        return [p for p in self.pc.setting("pcs") or [] if not p.get("this")]
+
+    def this_pc_name(self) -> str:
+        mine = next((p for p in self.pc.setting("pcs") or [] if p.get("this")), None)
+        return (mine or {}).get("name") or text("desktop.pcs.this_pc")
+
+    def _client_for(self, pc: dict) -> AgentClient:
+        client = AgentClient.connect(pc["address"], int(pc["port"]), pc["fingerprint"])
+        client.token = self.agent.token
+        return client
+
+    def _servers_of(self, pc: dict) -> list[dict]:
+        return self._client_for(pc).servers()
+
+    def _elsewhere_failed(self, pc: dict, exc: AgentError) -> None:
+        self._elsewhere_found(pc, str(exc))
+
+    def _elsewhere_found(self, pc: dict, rows: list[dict] | str) -> None:
+        self.elsewhere[pc["id"]] = rows
+        self.screens["All servers"].show_all()  # type: ignore[attr-defined]
+
+    def act_elsewhere(self, pc: dict, row: dict, action: str) -> None:
+        def done(_result: Any) -> None:
+            self._elsewhere_at = 0.0
+            self.refresh()
+
+        self.run(
+            lambda: self._client_for(pc).server_action(row["id"], action),
+            done,
+            lambda exc: self.screens["All servers"].failed(exc),  # type: ignore[attr-defined]
+        )
 
     def servers_loaded(self, servers: list[dict]) -> None:
         self.servers = servers

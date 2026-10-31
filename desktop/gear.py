@@ -1,6 +1,7 @@
 """The gear's screen and "?": sections listed on the left, one shown on the
 right. The gear has PC settings, Updates, Moderators (moderators.py),
-Signed-in devices and Your account; a moderator sees only the last two.
+Your PCs (yourpcs.py), Signed-in devices and Your account; a moderator sees
+only the last two.
 
 Every value comes from the agent and every change goes to it, which checks
 the account may do it. The look (light, dark, follow Windows) is the one

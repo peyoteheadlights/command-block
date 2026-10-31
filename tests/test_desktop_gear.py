@@ -71,7 +71,7 @@ def add_moderator(agent_http, name="sam", password="moderator password", **more)
 
 
 # ------------------------------------------------------------ the list
-def test_the_gear_lists_six_sections_for_the_owner_and_two_for_a_moderator(qapp, agent_http):
+def test_the_gear_lists_seven_sections_for_the_owner_and_two_for_a_moderator(qapp, agent_http):
     window, _pc = gear(qapp, agent_http, "pc")
     assert window.screen_name == "PC settings"
     assert listed(window) == [
@@ -79,6 +79,7 @@ def test_the_gear_lists_six_sections_for_the_owner_and_two_for_a_moderator(qapp,
         "Updates",
         "Moderators",
         "Discord",
+        "Your PCs",
         "Signed-in devices",
         "Your account",
     ]
@@ -432,3 +433,61 @@ def test_technical_updates_shows_the_safety_notes_status(qapp, agent_http):
     page.load()
     # No good notes file (the built-in data key is a test key): never "no problems".
     wait_for(qapp, lambda: "Couldn't check for safety notes." in shown_text(page))
+
+
+# ------------------------------------------------------------ Your PCs
+def test_your_pcs_on_its_own_offers_add_and_join(qapp, agent_http):
+    window, page = gear(qapp, agent_http, "pcs")
+    wait_for(qapp, lambda: "own owner account" in shown_text(page))
+    assert "Join another PC" in shown_text(page)
+    button(page, "Make a join link").click()
+    # No HTTPS in this test agent: the reason, never a link that can't work.
+    wait_for(qapp, lambda: "HTTPS is turned off" in shown_text(page))
+
+
+def test_reach_words_never_say_synced_unless_it_is_true():
+    from desktop.yourpcs import reach_words
+
+    def words(state, waiting=False):
+        return reach_words(
+            {"name": "Bedroom", "reach": {"state": state, "since": 1.0, "waiting": waiting}}
+        )
+
+    assert words("ok") == "Has every change"
+    assert words("sending") == "Sending changes now"
+    away = words("unreachable", waiting=True)
+    assert away.startswith("Couldn't reach Bedroom since")
+    assert "Saved here, will reach Bedroom when it's back." in away
+    assert "Saved here" not in words("unreachable")
+    assert words("unknown") == "Not heard from yet"
+
+
+def test_all_servers_groups_other_pcs_servers_by_pc(qapp, agent_http):
+    window = open_window(qapp, agent_http)
+    sign_in(qapp, window)
+    on_all_servers(qapp, window)
+    window.pc.set_setting(
+        "pcs",
+        [
+            {"id": "a", "name": "Living room", "this": True},
+            {
+                "id": "b",
+                "name": "Bedroom",
+                "this": False,
+                "address": "x",
+                "port": 1,
+                "fingerprint": "f",
+            },
+        ],
+    )
+    window.elsewhere["b"] = [{"id": "kids", "name": "Kids world", "state": "OFFLINE"}]
+    window._elsewhere_at = 10**12  # the agent's own list (this PC alone) isn't asked for again
+    screen = window.screens["All servers"]
+    screen.show_all()
+    qapp.processEvents()
+    shown = shown_text(screen)
+    assert "Living room" in shown and "Bedroom" in shown and "Kids world" in shown
+    window.elsewhere["b"] = "Can't reach x:1."
+    screen.show_all()
+    qapp.processEvents()
+    assert "Can't reach x:1." in shown_text(screen)

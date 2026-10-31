@@ -7,10 +7,8 @@ before it sends anything, then trusts that one certificate and nothing else.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import socket
 import ssl
 from pathlib import Path
 from typing import Any
@@ -62,26 +60,17 @@ def local_pairing() -> dict[str, Any] | None:
 
 def pinned_context(host: str, port: int, fingerprint: str) -> ssl.SSLContext:
     """A TLS context that trusts only the certificate with this fingerprint."""
-    probe = ssl.create_default_context()
-    probe.check_hostname = False
-    probe.verify_mode = ssl.CERT_NONE
+    from agent.security import tls
+
     try:
-        with socket.create_connection((host, port), timeout=5) as raw:
-            with probe.wrap_socket(raw, server_hostname=host) as tls:
-                der = tls.getpeercert(binary_form=True)
-    except OSError as exc:
-        raise Unreachable(f"Can't reach {host}:{port}.") from exc
-    if not der or hashlib.sha256(der).hexdigest() != fingerprint.lower():
+        return tls.pinned_context(host, port, fingerprint)
+    except tls.WrongCertificate as exc:
         raise WrongCertificate(
             "This PC's certificate isn't the one in the pairing link, so Command Block "
             "won't connect. Get a new pairing link from the PC."
-        )
-    context = ssl.create_default_context(cadata=ssl.DER_cert_to_PEM_cert(der))
-    context.check_hostname = False
-    # The pinned certificate is the only trust anchor; it is checked exactly.
-    context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
-    context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-    return context
+        ) from exc
+    except OSError as exc:
+        raise Unreachable(f"Can't reach {host}:{port}.") from exc
 
 
 class AgentClient:

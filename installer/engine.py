@@ -843,13 +843,11 @@ class Engine:
         return None
 
     def step_password(self) -> str | None:
-        from agent.security.auth import hash_password
+        from agent.security.auth import hash_password, is_password_hash
 
         from .setup_tool import read_env, step_secrets, write_env_value
 
-        has_password = (
-            read_env(self.env_path).get("MCSC_ADMIN_PASSWORD_HASH", "").startswith("pbkdf2")
-        )
+        has_password = is_password_hash(read_env(self.env_path).get("MCSC_ADMIN_PASSWORD_HASH", ""))
         if has_password and not (self.c.action == INSTALL and self.c.password):
             step_secrets(self._setup_context())  # adds an API token if one is missing
             return "Your existing password is kept."

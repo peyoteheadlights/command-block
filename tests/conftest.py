@@ -245,10 +245,13 @@ def client(config, monkeypatch):
 @pytest.fixture(autouse=True)
 def quick_password_hashing(monkeypatch):
     """Tests hash with 1,000 rounds (the real count takes about half a
-    second per sign-in); test_password_rehash covers the real figure."""
+    second per sign-in) and a tiny scrypt; test_password_rehash covers the
+    real figures."""
     from agent.security import auth
 
     monkeypatch.setattr(auth, "PBKDF2_ROUNDS", 1000)
+    monkeypatch.setattr(auth, "SCRYPT_N", 16)
+    monkeypatch.setattr(auth, "SCRYPT_P", 1)
 
 
 @pytest.fixture(autouse=True)

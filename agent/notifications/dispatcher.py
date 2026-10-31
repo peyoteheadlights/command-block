@@ -138,6 +138,16 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "chat_spam": ("chat_spam", 0xED4245, "{server}: chat spam from new names"),
     "join_protection_off": ("join_protection", 0xFAA61A, "{server}: Join protection stepped aside"),
     "launch_mode_ended": ("join_protection", 0x5865F2, "{server}: Launch mode ended"),
+    # Your PCs (agent/yourpcs.py) and the account records' safety checks.
+    "pc_join_request": ("your_pcs", 0xFAA61A, "A PC asks to join your account"),
+    "pc_joined": ("your_pcs", 0xFAA61A, "A PC joined your account"),
+    "pc_join_ran_out": ("your_pcs", 0x9AA0A6, "Joining your account ran out"),
+    "pc_removed": ("your_pcs", 0xFAA61A, "A PC was removed from your account"),
+    "owner_password_changed": ("your_pcs", 0xFAA61A, "The owner password was changed"),
+    "owner_password_reset": ("your_pcs", 0xFAA61A, "The owner password was reset on a PC"),
+    "moderator_renamed": ("your_pcs", 0xFAA61A, "Two moderators had one name"),
+    "records_tampered": ("your_pcs", 0xED4245, "An account record failed its safety check"),
+    "database_shared": ("your_pcs", 0xED4245, "Other accounts can open the account database"),
 }
 
 
@@ -196,8 +206,15 @@ ALERT_PAGES = {
     "ops_changed": "players",
     "lists_changed": "players",
     "chat_spam": "players",
+    "pc_join_request": "your-pcs",
+    "pc_joined": "your-pcs",
+    "pc_removed": "your-pcs",
+    "owner_password_reset": "your-pcs",
+    "moderator_renamed": "helpers",
+    "records_tampered": "security",
+    "database_shared": "security",
 }
-APP_PAGES = {"security", "helpers", "app-settings", "discord"}
+APP_PAGES = {"security", "helpers", "app-settings", "discord", "your-pcs"}
 
 # How many alerts the agent keeps for the phone app to read.
 APP_ALERTS_KEPT = 200
@@ -247,6 +264,8 @@ class Notifier:
         # Whether an account may see a server's alerts (user, server id);
         # set by AgentCore from the accounts. None: everyone sees everything.
         self.can_see: Callable[[str, str | None], bool] | None = None
+        # This PC's name once it shares its accounts (agent/yourpcs.py).
+        self.pc_label: Callable[[], str | None] = lambda: None
         # The Discord bot, when there is one (set by AgentCore).
         self.bot: Callable[[], Any] | None = None
 
@@ -334,7 +353,10 @@ class Notifier:
         colour, title = EVENT_MAP.get(event.type, (event.type, 0x5865F2, event.type))[1:]
         if event.type == "server_crashed" and (event.data or {}).get("reason") == "startup_failure":
             title = "{server} failed to start"
-        return colour, title.replace("{server}", self.server_name(event))
+        title = title.replace("{server}", self.server_name(event))
+        pc = self.pc_label()
+        # With several PCs, every alert says which one it came from.
+        return colour, f"{pc}: {title}" if pc else title
 
     # ------------------------------------------------------------------
     def _fields(self, event: Event) -> list[dict[str, Any]]:
@@ -553,6 +575,7 @@ class Notifier:
         _, event_title = self.title(event)
         return {
             "title": title or event_title,
+            "pc": self.pc_label(),  # which of the owner's PCs, once there are several
             "body": (event.message or event_title)[:300],
             "event": event.type,
             "level": event.level,

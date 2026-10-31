@@ -134,7 +134,8 @@ def test_the_list_shows_each_mod_and_changes_wait_until_the_server_stops(qapp, a
     with_mods(agent_http)
     running(qapp, agent_http)
     window, page = mods_page(qapp, agent_http)
-    wait_for(qapp, lambda: "3 mods installed" in shown_text(page))
+    # The rows are shown on the next turn of the event loop, after the count.
+    wait_for(qapp, lambda: "3 mods installed" in shown_text(page) and "Alpha" in shown_text(page))
     text = shown_text(page)
     assert "Alpha" in text and "Beta" in text and "Off" in text and "Working" in text
     assert "Stop the server first" in text
@@ -608,6 +609,8 @@ def test_suggestions_map_link_and_speed_ups_are_shown(qapp, agent_http, monkeypa
     wait_for(qapp, lambda: page.players_card.isVisibleTo(page))
     assert "Sodium" in shown_text(page.players_card)
     assert not page.ideas_card.isVisibleTo(page)  # the lists are Technical only
+    # Qt shows a button added to a shown page on the next turn of the event loop.
+    wait_for(qapp, lambda: buttons_named(page, "Open the BlueMap map"))
     buttons_named(page, "Open the BlueMap map")[0].click()
     assert pc.opened == ["http://100.64.0.9:8100/"]
 

@@ -363,6 +363,7 @@ class NotificationSettings(Section):
             "lists_changed": True,
             "chat_spam": True,
             "join_protection": True,
+            "your_pcs": True,
         }
     )
     email: EmailSettings = field(default_factory=EmailSettings)

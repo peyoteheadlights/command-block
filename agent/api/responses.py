@@ -2554,3 +2554,60 @@ class EventsPage(Open):
     )
     kinds: list[str] = Field(description="The event kinds this server can check")
     bot: bool = Field(description="The Discord bot is connected (events are answered there)")
+
+
+# ------------------------------------------------------------ your PCs
+class PcReach(Open):
+    state: str = Field(description="this, ok, sending, unreachable or unknown")
+    since: float | None = Field(None, description="out of reach since; null when it answers")
+    last_reached: float | None = None
+    waiting: bool = Field(description="changes saved here that it hasn't got yet")
+
+
+class PcRow(Open):
+    id: str
+    name: str
+    address: str | None = None
+    port: int | None = None
+    fingerprint: str | None = None
+    this: bool
+    reach: PcReach
+
+
+class PcList(Open):
+    this_pc: str
+    joined: bool
+    pcs: list[PcRow]
+    joins: list[dict[str, Any]] | None = Field(None, description="owner only: PCs asking to join")
+    resets: list[dict[str, Any]] | None = Field(None, description="owner only: resets to confirm")
+    joining: bool | None = None
+
+
+class JoinLink(Open):
+    ok: bool
+    url: str
+    qr: list[str]
+    expires_at: float
+
+
+class JoinAnswer(Open):
+    ok: bool
+    waiting: bool | None = None
+    allowed: bool | None = None
+
+
+class SyncChanges(Open):
+    records: list[dict[str, Any]]
+    seq: int
+
+
+class SyncTaken(Open):
+    ok: bool
+    taken: int
+
+
+class SyncHello(Open):
+    pc: str
+    signing_key: str
+    records: list[dict[str, Any]]
+    seq: int

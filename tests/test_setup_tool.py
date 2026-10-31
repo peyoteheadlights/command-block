@@ -111,7 +111,7 @@ def test_setup_configures_a_fresh_copy(root, monkeypatch):
     assert str(server) in config_text
     assert "# Required. The folder that contains your server jar." in config_text, "comments kept"
     env = read_env(r / ".env")
-    assert env["MCSC_ADMIN_PASSWORD_HASH"].startswith("pbkdf2_sha256$")
+    assert env["MCSC_ADMIN_PASSWORD_HASH"].startswith("scrypt$")
     assert env["MCSC_API_TOKEN"]
     assert "Setup completed successfully." in "\n".join(out)
 
@@ -194,7 +194,7 @@ def test_mismatched_password_entries_are_retried(root, monkeypatch):
     setup_tool.run(ctx)
     text = "\n".join(out)
     assert "Too short" in text and "did not match" in text
-    assert read_env(r / ".env")["MCSC_ADMIN_PASSWORD_HASH"].startswith("pbkdf2_sha256$")
+    assert read_env(r / ".env")["MCSC_ADMIN_PASSWORD_HASH"].startswith("scrypt$")
 
 
 def test_a_missing_dependency_is_named(root, monkeypatch):

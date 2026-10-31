@@ -13,12 +13,14 @@
 
 ## Authentication
 
-- Passwords are stored as PBKDF2-HMAC-SHA256 with 600,000 rounds (OWASP's
-  Password Storage Cheat Sheet figure) and a per-install salt. The password
-  itself never touches disk, logs, or the database. Each stored hash records
-  its own round count, so a password saved with the older 240,000 rounds
-  still works and is re-hashed with 600,000 the next time that person signs
-  in (the owner's in `.env`, a helper's in the database).
+- Passwords are stored as scrypt with N=2^15, r=8, p=3 (one of OWASP's
+  Password Storage Cheat Sheet settings: 32 MiB, about 0.23 s on a 4-core
+  test machine, so under a second on a weak mini PC) and a per-password
+  salt. The password itself never touches disk, logs, or the database. Each
+  stored hash records how it was made, so a PBKDF2 hash from before still
+  works and is re-made with scrypt the next time that person signs in. A
+  hash asking for more than N=2^17 is refused, so a hash from another PC
+  can't make this one run out of memory.
 - Signing in returns a random 256-bit session token; only its SHA-256 is
   stored, so a stolen database yields no usable tokens.
 - Sessions expire after 12 hours by default, and can be rotated or revoked.
@@ -54,8 +56,54 @@
 - The owner's password can't be changed over the network. It is reset on
   the PC with `python -m installer.reset_password`, which asks twice, writes
   only the hash to `.env`, never shows or logs the password, and deletes
-  every session. A running agent notices `.env` changed and uses the new
-  hash at once. `tests/test_helpers.py` checks no route reaches it.
+  every session on that PC. A running agent notices `.env` changed and
+  uses the new hash at once. `tests/test_helpers.py` checks no route
+  reaches it.
+
+## Shared accounts (Your PCs)
+
+An owner with several PCs has one account on all of them (`agent/yourpcs.py`,
+`agent/security/records.py`). There is no cloud and no main PC: each PC
+keeps a full copy and sends changes straight to the others.
+
+- **Where the owner lives.** The owner's name and hash move from `.env`
+  into the database at the first start, next to the moderators. `.env`
+  keeps the first-run value; a new hash there (the reset tool, the
+  installer run again) counts as a reset on that PC.
+- **Signed records.** The owner, each moderator, each PC's permissions for
+  that moderator, each sign-in and each PC are rows of `sync_records`, each
+  signed with HMAC-SHA256. The key is shared by the joined PCs and kept in
+  `account-keys.bin` in the data folder, encrypted with DPAPI for the
+  agent's Windows account. A row that fails its check is never used (the
+  sign-in it was for is refused) and the owner gets an alert. A moderator or
+  sign-in row in the ordinary tables must match its signed record. When
+  the key file can't be opened (the data folder moved to another account or
+  PC), a new key is made, the rows are signed again and the owner is told:
+  anything able to delete that file can already run as the agent.
+- **The database file** is in the private data folder. On Windows the
+  agent checks at each start that no shared group (Users, Everyone, ...)
+  can open it, and alerts when one can.
+- **Joining.** PC A's join link is its pairing link plus a random code
+  that works once, for 10 minutes (only its SHA-256 is kept). The new PC
+  checks A's certificate against the link's fingerprint before sending
+  anything, then sends the code, the owner's name and password (counted and
+  locked out like a sign-in), its own address and certificate fingerprint,
+  and its sync key. A only takes it in when an owner device that was signed
+  in **before** the request presses Allow, so someone who just learned the
+  password can't join their own PC. Every owner device is alerted.
+- **Syncing.** PCs call each other's normal HTTPS port, pinned to the
+  certificate in the other PC's record, with a header naming the PC and its
+  sync key (a random 32-byte key; the others keep only its SHA-256). The
+  `/api/sync/*` routes take nothing else. Newest wins by a hybrid logical
+  clock. A removed moderator, sign-in or PC stays removed. Each PC's
+  permissions for a moderator are only ever written by that PC.
+- **Removing a PC** puts a "removed" marker on its record: every PC that
+  hears refuses its sync key (410) at once, and the removed PC goes back to
+  its own owner account with a new key.
+- **A reset on a joined PC** works on that PC only. The other PCs show it
+  and take it only when an owner device signed in to one of them before the
+  reset confirms it. Then every owner sign-in made before the change ends.
+- **Sign out everywhere** ends every sign-in on every PC.
 
 ## Secrets
 

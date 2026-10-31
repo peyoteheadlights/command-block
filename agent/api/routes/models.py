@@ -586,3 +586,25 @@ class ConfigFileSaveRequest(BaseModel):
     path: str = Field(min_length=1, max_length=400)
     text: str = Field(max_length=512 * 1024)
     version: str = Field(min_length=64, max_length=64)
+
+
+class PcJoinRequest(BaseModel):
+    """On the new PC: join the account the link is from."""
+
+    link: str = Field(max_length=1024)
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=256)
+
+
+class SyncJoinRequest(BaseModel):
+    """From a new PC to a PC already in the account (agent/yourpcs.py)."""
+
+    code: str = Field(max_length=128)
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=256)
+    pc: dict[str, Any]
+    sync_key: str = Field(max_length=128)
+
+
+class SyncChangesRequest(BaseModel):
+    records: list[dict[str, Any]] = Field(max_length=5000)

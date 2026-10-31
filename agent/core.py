@@ -324,6 +324,10 @@ class AgentCore:
         self.db = Database(config.database_path)
         self.events = EventWriter(self.db)
         self.auth = AuthManager(config, self.db, self.bus)
+        # The owner's other PCs, sharing one account (agent/yourpcs.py).
+        from .yourpcs import YourPCs
+
+        self.pcs = YourPCs(self)
         self.jobs = JobTracker(self.db, self.bus)
         self.jobs.mark_interrupted()
         self.ports = PortManager(self)
@@ -340,6 +344,7 @@ class AgentCore:
         self.servers: dict[str, ServerContext] = {}
         self.notifier = Notifier(config, self.bus, self.db, servers=self.servers)
         self.notifier.can_see = self.auth.may_see_alert
+        self.notifier.pc_label = self.pcs.label
         for server_id in config.server_ids:
             self.servers[server_id] = ServerContext(self, server_id)
 
@@ -470,6 +475,8 @@ class AgentCore:
         self.tailscale.start()
         self.wake.start()
         self.guard.start()
+        self.pcs.start()
+        await self._check_database_access()
         self.game_events.start()
         self.start_discord()
         # After the bot, so a request that ran out while the agent was off
@@ -477,6 +484,26 @@ class AgentCore:
         self.start_requests.load()
         for ctx in list(self.servers.values()):
             await ctx.autostart()
+
+    async def _check_database_access(self, windows: bool = os.name == "nt") -> None:
+        """The database holds every password hash: only the agent's Windows
+        account (and SYSTEM, Administrators) may open it. The installer sets
+        that; this says so when it isn't true any more."""
+        from .security.certs import folder_access
+
+        if not windows:
+            return  # Windows only, like the installer that sets it
+        status, detail = await asyncio.to_thread(folder_access, self.config.database_path)
+        if status == "shared":
+            await self.bus.publish(
+                Event(
+                    type="database_shared",
+                    level="error",
+                    message="Other Windows accounts on this PC can open Command Block's "
+                    f"account database. {detail}.",
+                    data={"path": str(self.config.database_path)},
+                )
+            )
 
     def start_discord(self) -> None:
         """Start the bot when a token is set. Without one the Discord client
@@ -579,6 +606,7 @@ class AgentCore:
         for ctx in list(self.servers.values()):
             await ctx.stop()
         await self.guard.stop()
+        await self.pcs.stop()
         self.keepawake.stop()
         await self.notifier.stop()
         await self.events.stop()

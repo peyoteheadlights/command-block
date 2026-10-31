@@ -216,3 +216,9 @@ POST /api/servers/{server_id}/config-files/save
 GET /api/servers/{server_id}/protection
 POST /api/servers/{server_id}/protection/fix
 POST /api/security/fractureiser-check
+GET /api/pcs
+POST /api/pcs/link
+POST /api/pcs/join
+POST /api/pcs/joins/{join_id}/{answer}
+POST /api/pcs/resets/{pc}/confirm
+DELETE /api/pcs/{pc}

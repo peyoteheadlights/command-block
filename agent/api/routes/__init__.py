@@ -39,6 +39,7 @@ from . import (
     jobs,
     modpacks,
     mods,
+    pcs,
     phoneapp,
     players,
     protection,
@@ -97,6 +98,7 @@ GLOBAL = (
     updates,
     wake,
     discord,
+    pcs,
 )
 MODULES = (*GLOBAL, *PER_SERVER)
 SERVER_PREFIX = "/servers/{server_id}"

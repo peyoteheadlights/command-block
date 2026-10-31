@@ -709,7 +709,7 @@ def test_a_new_install_sets_everything_up(tmp_path, places, program_files):
     _, result, _ = run_engine(choices, program_files, system)
     assert result.ok, result.message + result.details
     env = (places["data"] / "config" / ".env").read_text()
-    assert "MCSC_ADMIN_PASSWORD_HASH=pbkdf2_sha256$" in env
+    assert "MCSC_ADMIN_PASSWORD_HASH=scrypt$" in env
     assert PASSWORD not in env
     config = (places["data"] / "config" / "config.yaml").read_text()
     assert str(server) in config and "path\\to" not in config
