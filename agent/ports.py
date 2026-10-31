@@ -33,6 +33,16 @@ BEDROCK_DEFAULT_PORT = 19132
 SUGGEST_RANGE = 200
 
 
+def address(host: str, port: int | None, default: int = MINECRAFT_DEFAULT_PORT) -> str:
+    """The address players type: the host, with ":port" when the port isn't
+    the default (Minecraft only fills in 25565 by itself). The one place
+    that builds a join address, for the desktop app's Server address card
+    and Discord's /ip and status message."""
+    if not host or not port or port == default or ":" in host:
+        return host
+    return f"{host}:{port}"
+
+
 @dataclass(frozen=True)
 class GamePort:
     port: int

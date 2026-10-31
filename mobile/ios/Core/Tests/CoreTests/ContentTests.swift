@@ -405,7 +405,7 @@ final class ContentTests: XCTestCase {
         StubAgent.json(#"{"ok": true, "installed": {"filename": "e.jar", "name": "Epsilon", "version": "3.0"}}"#)
         let added = try await c.uploadMod(serverId: "s", file: PickedFile(name: "e.jar", url: jar))
         XCTAssertEqual(added.installed?.name, "Epsilon")
-        XCTAssertEqual(path(0), "/api/servers/s/mods/upload")
+        XCTAssertEqual(path(0), "/api/servers/s/mods/upload?confirm=true")
         let type = StubAgent.requests[0].request.value(forHTTPHeaderField: "Content-Type") ?? ""
         XCTAssertTrue(type.hasPrefix("multipart/form-data; boundary="), type)
 

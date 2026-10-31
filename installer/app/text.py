@@ -63,6 +63,8 @@ TEXT = {
     "start_with_pc_sub": "Your servers can be managed even before anyone signs in to Windows.",
     "allow_devices": "Allow my phone and other devices to connect",
     "allow_devices_sub": "Only your own devices on Tailscale can reach it.",
+    "server_ports_only": "Let players in only on my servers' ports",
+    "server_ports_only_sub": "Replaces Windows' rule that lets Java use every port.",
     "advanced": "Advanced",
     "install_folder": "Install location",
     "older_here": "An older version is installed here. Do you want to replace it with the new "

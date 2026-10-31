@@ -1187,6 +1187,9 @@ class ModrinthHit(Open):
     blocked: bool | None = Field(
         None, description="CurseForge: its author doesn't let other apps download it"
     )
+    look_alike: str | None = Field(
+        None, description="A far more downloaded result whose name is nearly the same"
+    )
 
 
 class ModSearch(Open):
@@ -1550,6 +1553,37 @@ class GuideAnswer(Open):
     command: str = Field(description="What was sent to the console")
     lines: list[dict[str, str]] = Field(description="What the console said next: raw, level")
     answered: bool = Field(description="False: the console said nothing within a few seconds")
+
+
+# ------------------------------------------------------------ protection
+class ProtectionLine(Open):
+    id: str
+    level: str = Field(description="worst, problem, suggest or info")
+    words: str = Field(description="Its key in shared/strings.json")
+    values: dict[str, Any]
+    fix: str | None = Field(None, description="The fix id this account may use, or null")
+    permission: str | None = None
+    addons: list[dict[str, Any]] = Field(
+        description="Add-ons to offer: project, name, small (a small community project)"
+    )
+    link: str | None = None
+    technical: bool = Field(description="Only shown in Technical mode")
+
+
+class ProtectionCard(Open):
+    lines: list[ProtectionLine]
+    running: bool
+
+
+class ProtectionFixed(Open):
+    ok: bool
+    fix: str
+    undo: dict[str, Any] | None = None
+
+
+class FractureiserCheck(Open):
+    found: list[str] = Field(description="Known markers found on this PC; empty: none found")
+    checked: list[str] = Field(description="What was looked at")
 
 
 # ------------------------------------------------------------ settings files

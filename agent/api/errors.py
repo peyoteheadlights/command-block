@@ -40,6 +40,7 @@ from ..modpack import ModpackError
 from ..mods.dependencies import DependencyError
 from ..mods.manager import ModError
 from ..mods.sources import SourceError
+from ..protection import ProtectionError
 from ..safechange import SafeChangeError
 from ..scheduler.scheduler import ScheduleError
 from ..security.auth import AuthError
@@ -92,6 +93,7 @@ ERROR_STATUS: dict[type[Exception], int] = {
     GuideError: 400,
     ConfigFileError: 400,
     FileChanged: 409,  # the file changed on the PC since it was opened
+    ProtectionError: 400,
 }
 DOMAIN_ERRORS: tuple[type[Exception], ...] = tuple(ERROR_STATUS)
 

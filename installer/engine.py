@@ -78,6 +78,9 @@ class Choices:
     password: str | None = None
     start_with_pc: bool = True
     allow_devices: bool = True
+    # One firewall rule per Minecraft server port instead of Windows' broad
+    # "allow Java on every port" rule.
+    server_ports_only: bool = True
     import_file: Path | None = None
     import_to: Path | None = None
     import_passphrase: str | None = None
@@ -107,6 +110,7 @@ class Choices:
             "password_given": bool(self.password),
             "start_with_pc": self.start_with_pc,
             "allow_devices": self.allow_devices,
+            "server_ports_only": self.server_ports_only,
             "import_file": str(self.import_file) if self.import_file else None,
             "install_java": self.install_java,
             "java_path": self.java_path,
@@ -892,17 +896,48 @@ class Engine:
         return None if step.status == "OK" else step.detail
 
     def step_firewall(self) -> str | None:
+        from agent.config import Config
+
+        script = Path(__file__).resolve().parent / "firewall.ps1"
+        config = Config.load(self.config_path, self.env_path)
+        if self.c.server_ports_only:
+            self.server_port_rules(config, script)
         if not self.c.allow_devices:
             if self.c.action == INSTALL:
                 return "Skipped: only this PC can reach the agent."
             return "Left as it was."
         port, _, _ = self._settings()
-        from agent.config import Config
-
-        redirect = Config.load(self.config_path, self.env_path).tls.http_redirect_port
-        script = Path(__file__).resolve().parent / "firewall.ps1"
-        self.system.firewall(script, port, redirect)
+        self.system.firewall(script, port, config.tls.http_redirect_port)
         return None
+
+    def server_port_rules(self, config, script: Path) -> None:
+        """Every server's game ports (Java TCP, Bedrock and Geyser UDP), one
+        rule each. Only an offer: if Windows refuses, the install goes on and
+        the note says so."""
+        from agent.ports import bedrock_v6_port, game_port
+
+        ports: set[tuple[str, int]] = set()
+        for server_id in config.server_ids:
+            server = config.for_server(server_id)
+            kind = server.server_type
+            found = game_port(server.server_dir, None, kind.game_protocol, kind.default_port)
+            ports.add((found.protocol, found.port))
+            if kind.edition == "bedrock":
+                ports.add(("udp", bedrock_v6_port(server.server_dir).port))
+            if server.server.crossplay and server.server.bedrock_port:
+                ports.add(("udp", int(server.server.bedrock_port)))
+        if not ports:
+            return
+        try:
+            self.system.server_ports(script, sorted(ports))
+        except SystemError_ as exc:
+            self.log.write("server_ports_failed", error=str(exc), details=exc.details)
+            self.notes.append(
+                "Windows didn't let the installer add one rule per server port, so the firewall "
+                "was left as it was."
+            )
+            return
+        self.log.write("server_ports", ports=[f"{p}:{n}" for p, n in sorted(ports)])
 
     def step_startup(self) -> str | None:
         self.previous_launch = self.previous_launch or self.system.previous_startup_launch()

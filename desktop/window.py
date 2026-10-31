@@ -698,6 +698,16 @@ class MainWindow(QMainWindow):
             self.set_mode(True)  # Simple hides these; Technical has every page
         self.server_screen.show_page(page)
 
+    def install_addon(self, project: str) -> None:
+        """Open the Mods page and run its normal install for one add-on (a
+        Protection card or game settings offer), with its version check."""
+        from .mods import ModsPage
+
+        self.open_page("Mods")
+        page = self.server_screen.page_widgets["Mods"]
+        if isinstance(page, ModsPage):
+            page.install_hit({"slug": project})
+
     def open_activity(self, crashes: bool = False) -> None:
         """Activity, with everything or only the crashes."""
         self.server_screen.activity.crashes_only = crashes
@@ -724,6 +734,9 @@ class MainWindow(QMainWindow):
         self.run(lambda: self.agent.status(sid), here(screen.header.show_status), lambda _e: None)
         if self.role in (None, "owner"):  # the agent refuses moderators too
             self.run(self.agent.support_ask, here(self.show_ask), lambda _e: None)
+        # Read once when the Overview opens, not on the graphs' timer.
+        overview = screen.technical_overview if mode["technical"] else screen.simple_overview
+        overview.protection.load(sid)
         if mode["technical"]:
             self.load_technical()
             return

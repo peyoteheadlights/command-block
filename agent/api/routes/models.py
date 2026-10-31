@@ -81,6 +81,7 @@ class ModLinkRequest(BaseModel):
 
 class ModLinkAddRequest(BaseModel):
     version_id: str = Field(max_length=200)
+    confirm: bool = False  # the "no site lists this file" warning was shown
 
 
 class UpdateAllRequest(BaseModel):
@@ -556,6 +557,14 @@ class GuideButtonRequest(BaseModel):
 
     values: dict[str, int | bool | str] = Field(default_factory=dict, max_length=10)
     confirm: bool = False
+
+
+class ProtectionFixRequest(BaseModel):
+    """One fix from the Protection card, and for "change_port" the port
+    (else the next free one)."""
+
+    fix: str = Field(min_length=1, max_length=40, pattern=r"^[a-z0-9_]+$")
+    port: int | None = Field(None, ge=1024, le=65535)
 
 
 class ConfigFileRequest(BaseModel):

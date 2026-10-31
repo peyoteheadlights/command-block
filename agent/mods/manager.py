@@ -32,7 +32,7 @@ from typing import Any
 
 from .. import savedlists
 from ..events import Event, EventBus
-from ..minecraft.properties import FILENAME, PropertiesFile, world_folder
+from ..minecraft.properties import FILENAME, FormError, PropertiesFile, world_folder
 from ..security.paths import (
     PathSafetyError,
     assert_not_symlink,
@@ -63,6 +63,12 @@ JAR_EXT = {".jar"}
 # What can be added from a file or a link: mods and plugins, and datapacks.
 FILE_EXT = {".jar", ".zip"}
 MAX_FILE_BYTES = 300 * 1024 * 1024
+# A jar Modrinth, Hangar and CurseForge don't list (agent/mods/addfrom.py).
+# Never "scanned" or "checked": nothing can tell what a jar will do.
+UNKNOWN_FILE = (
+    "Modrinth, Hangar and CurseForge don't list this file, so the app can't tell what it "
+    "is or who made it. Add it only if you trust where it came from."
+)
 # A jar with one of these is a mod or plugin (agent/mods/jarinfo.py reads them).
 MOD_FILES = (
     "fabric.mod.json",
@@ -912,10 +918,13 @@ class ModManager:
         allow_replace: bool = False,
         source: str = "file",
         version: dict[str, Any] | None = None,
+        ask_first: bool = False,
     ) -> dict[str, Any]:
         """Install a jar or datapack from the PC, or from a GitHub link
         (``source`` and ``version`` say where it came from). Same rules as
-        a Modrinth install; it is read to check it fits this server first."""
+        a Modrinth install; it is read to check it fits this server first.
+        ``ask_first``: a jar no site lists. Every check runs, then it stops
+        with the warning to confirm, and nothing is written."""
         self.require_server_offline(f"install a {self.word}")
         safe_filename(filename, FILE_EXT)
         if not data.startswith(b"PK"):
@@ -939,6 +948,10 @@ class ModManager:
         try:
             info = read_mod_jar(temp, compute_hash=True)
             self._check_loader(info)
+            if ask_first:
+                raise FormError(
+                    {"confirm": UNKNOWN_FILE, "sha512": hashlib.sha512(data).hexdigest()}
+                )
             if target.exists():
                 old = read_mod_jar(target)
                 self.archive(target, old, source="replaced-on-upload")

@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import notes, savedlists
+from . import notes, savedlists, whitelist
 from .minecraft.properties import FILENAME, PropertiesFile
 from .mods.manager import ModError
 from .mods.sources import LABELS, SourceError, split
@@ -280,7 +280,14 @@ async def check(ctx: ServerContext) -> dict[str, Any]:
         found["to_fabric"] = await to_fabric(ctx, minecraft)
     if not server_type.has_content:
         return found
-    entries = [e for e in notes.RECOMMENDED if server_type.id in e["types"]]
+    # A login add-on only for an offline-mode server (the Protection card
+    # offers it too); an anti-bot add-on by who the server is for, as usual.
+    offline = whitelist.online_mode(ctx) is False
+    entries = [
+        e
+        for e in notes.RECOMMENDED
+        if server_type.id in e["types"] and (e.get("role") != "login" or offline)
+    ]
     if not entries:
         return found
     have, recorded = _here(ctx)

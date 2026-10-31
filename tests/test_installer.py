@@ -90,6 +90,9 @@ class FakeSystem:
     def firewall(self, script, port, redirect_port, remove=False):
         self.calls.append(("firewall", port))
 
+    def server_ports(self, script, ports):
+        self.calls.append(("server_ports", tuple(ports)))
+
     def register_updater_task(self, program_dir):
         self.calls.append(("updater_task", str(program_dir)))
 
@@ -711,8 +714,43 @@ def test_a_new_install_sets_everything_up(tmp_path, places, program_files):
     config = (places["data"] / "config" / "config.yaml").read_text()
     assert str(server) in config and "path\\to" not in config
     assert system.called("firewall") and system.called("shortcuts")
+    # One rule for the server's own port in place of "allow Java everywhere".
+    assert ("server_ports", (("tcp", 25565),)) in system.calls
     assert system.called("register_startup")[-1][2] == "boot"
     assert ("api", "PUT", "/servers/survival/color", {"color": "teal"}) in system.calls
+
+
+def test_server_port_rules_are_an_offer_that_never_stops_the_install(
+    tmp_path, places, program_files
+):
+    from installer.system import SystemError_
+
+    server = make_server(tmp_path)
+    (server / "server.properties").write_text("server-port=25570\n", encoding="utf-8")
+    system = FakeSystem()
+
+    def refuse(script, ports):
+        system.calls.append(("server_ports", tuple(ports)))
+        raise SystemError_("Windows said no.", "firewall.ps1 exited 1")
+
+    system.server_ports = refuse
+    choices = Choices(
+        action=engine.INSTALL,
+        program_dir=places["program"],
+        data_root=places["data"],
+        servers=[{"folder": str(server), "name": "Survival"}],
+        password=PASSWORD,
+    )
+    eng, result, _ = run_engine(choices, program_files, system)
+    assert result.ok, result.message + result.details
+    assert ("server_ports", (("tcp", 25570),)) in system.calls
+    assert any("one rule per server port" in note for note in eng.notes)
+    assert system.called("firewall"), "the agent's own rule is still made"
+
+    kept = FakeSystem()
+    choices.server_ports_only = False
+    run_engine(choices, program_files, kept)
+    assert not kept.called("server_ports")
 
 
 def test_a_new_install_with_no_server_yet_keeps_the_java_for_the_first_one(places, program_files):

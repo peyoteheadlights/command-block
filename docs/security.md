@@ -647,6 +647,29 @@ opens a sign-in page on `login.tailscale.com` (`desktop/pc.py`). The agent
 moves onto the Tailscale address only once `tailscale status` says it is
 connected (`agent/tailscale_watch.py`).
 
+## The Protection card
+
+Each server's Overview has a Protection card. It only reports what it read
+from the server's own files (server.properties, the player lists, Paper's
+YAML files, the Java options) and never says a server is "safe": a line it
+can't check says it doesn't know (the router port until the app opens it
+itself). Each one-click fix goes through the same safe change as Game
+settings (backup, change, check, one Undo) and needs its own permission,
+checked on the server (`agent/protection.py`, `FIXES`). The Log4Shell fix
+downloads Mojang's settings file with its SHA-1 and adds the launch flag to
+the Java options, where it can be taken off.
+
+Two watchers send alerts (`agent/watchers.py`): ops, whitelist or ban
+changes made outside the app (a bracketed console line such as
+"[Steve: Made Bob a server operator]", or a file edited while the server was
+off), and the chat spam rule (several new names saying the same line turn
+the whitelist on with Minecraft's own command). The failed sign-in alert
+counts the tries from the same rows the lockout reads.
+
+Help has a read-only fractureiser check (Technical, owner only): it looks for
+the known files, startup entries and Run key values and lists what it
+checked. It deletes nothing, and finding nothing isn't a clean bill.
+
 ## Web surface
 
 - Bearer tokens, not cookies, so CSRF doesn't apply.

@@ -213,3 +213,6 @@ GET /api/servers/{server_id}/config-files
 GET /api/servers/{server_id}/config-files/file
 POST /api/servers/{server_id}/config-files/show
 POST /api/servers/{server_id}/config-files/save
+GET /api/servers/{server_id}/protection
+POST /api/servers/{server_id}/protection/fix
+POST /api/security/fractureiser-check

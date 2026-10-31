@@ -411,9 +411,10 @@ def undo(client, headers):
 
 
 # ---------------------------------------------------------------- add from a file
-def upload(client, headers, name, data):
+def upload(client, headers, name, data, confirm=True):
+    """``confirm``: the person said yes to "no site lists this file"."""
     return client.post(
-        "/api/mods/upload",
+        f"/api/mods/upload?confirm={str(confirm).lower()}",
         files={"file": (name, data, "application/octet-stream")},
         headers=headers,
     )
@@ -460,6 +461,19 @@ def test_a_dropped_plugin_nobody_lists_is_marked_and_left_out_of_update_all(pape
     assert not (folder / "Rocks-1.0.jar").exists() and (folder / "Trees-1.0.jar").is_file()
 
 
+def test_a_file_no_site_lists_asks_first_and_writes_nothing(paper):
+    client, headers, folder = paper
+    asked = upload(client, headers, "Trees-1.0.jar", plugin_jar("Trees"), confirm=False)
+    assert asked.status_code == 400
+    problems = asked.json()["problems"]
+    assert "can't tell what it is" in problems["confirm"] and len(problems["sha512"]) == 128
+    assert "scanned" not in problems["confirm"] and "safe" not in problems["confirm"]
+    assert not (folder / "Trees-1.0.jar").exists()
+    assert not list(folder.glob(".*.part"))
+    added = upload(client, headers, "Trees-1.0.jar", plugin_jar("Trees"))
+    assert added.status_code == 200 and (folder / "Trees-1.0.jar").is_file()
+
+
 def test_a_dropped_file_a_site_lists_is_treated_as_that_sites(paper, sites):
     client, headers, folder = paper
     via = sites.jar(300)
@@ -496,7 +510,9 @@ def test_a_github_release_link_lists_its_files_and_installs_the_one_picked(paper
         "TreePlugin-1.2-sources.jar",
     ]
     added = client.post(
-        "/api/mods/link/add", json={"version_id": read["files"][0]["version_id"]}, headers=headers
+        "/api/mods/link/add",
+        json={"version_id": read["files"][0]["version_id"], "confirm": True},
+        headers=headers,
     ).json()
     assert added["source"] == "github" and added["checked_by"] is None
     assert (folder / "TreePlugin-1.2.jar").is_file()

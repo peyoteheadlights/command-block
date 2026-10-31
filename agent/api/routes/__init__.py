@@ -41,6 +41,7 @@ from . import (
     mods,
     phoneapp,
     players,
+    protection,
     pushalerts,
     quests,
     recommendations,
@@ -79,6 +80,7 @@ PER_SERVER = (
     whitelist,
     guides,
     configfiles,
+    protection,
 )
 GLOBAL = (
     auth,

@@ -6,7 +6,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ... import tailscale_share
+from ... import protection, tailscale_share
 from ...security.auth import Principal
 from ...security.permissions import PC_SETTINGS, SECURITY_MANAGE, SECURITY_VIEW, require
 from ...tailscale import tailscale_status
@@ -14,6 +14,7 @@ from ...tailscale_watch import MoveRefused
 from ..deps import audit, get_core
 from ..responses import (
     AuditLog,
+    FractureiserCheck,
     SecurityOverview,
     SessionsRevoked,
     ShareKey,
@@ -174,3 +175,14 @@ async def make_share_link(
         raise HTTPException(400, str(exc)) from exc
     audit(core, request, "tailscale_share_link")
     return {"url": url}
+
+
+@router.post("/security/fractureiser-check", response_model=FractureiserCheck)
+async def fractureiser_check(
+    request: Request, principal: Principal = Depends(require(SECURITY_VIEW)), core=Depends(get_core)
+):
+    """Look for the known fractureiser markers on this PC. Read only: it
+    never deletes or changes anything, and finding none isn't a clean bill."""
+    result = await asyncio.to_thread(protection.fractureiser_check)
+    audit(core, request, "fractureiser_check", detail=f"{len(result['found'])} found")
+    return result

@@ -819,6 +819,10 @@ class ModsPage(Page):
                     "muted",
                 )
             )
+        if hit.get("look_alike"):
+            words.addWidget(
+                label(text("desktop.mods.look_alike", name=hit["look_alike"]), "problem")
+            )
         h.addLayout(words, 1)
         if hit.get("blocked"):
             # Its author keeps it from other apps: its page, never a download.
@@ -1095,9 +1099,23 @@ class ModsPage(Page):
         self.ask("POST", "/mods/copy/check", confirm, self.said, body=body, slow=True)
 
     # ------------------------------------------------------------ files from this PC
-    def run_here(self, work: Callable[[], Any], done: Callable[[Any], None]) -> None:
+    def run_here(
+        self,
+        work: Callable[[], Any],
+        done: Callable[[Any], None],
+        failed: Callable[[AgentError], None] | None = None,
+    ) -> None:
         here = self.window_.still_on(self.row["id"])
-        self.window_.run(work, here(done), here(self.said))
+        self.window_.run(work, here(done), here(failed or self.said))
+
+    def sure_unknown(self, name: str, problems: dict) -> bool:
+        """A jar no site lists: the agent's warning and its hash, then the person decides."""
+        body = f"{name}\n\n{problems['confirm']}"
+        if problems.get("sha512"):
+            body += "\n\n" + text("desktop.mods.unknown_hash", hash=problems["sha512"])
+        return self.window_.confirm(
+            text("desktop.mods.unknown_title"), body, text("desktop.mods.unknown_add")
+        )
 
     def take(self, paths: list[str]) -> None:
         """Files dropped on the window: .jar files, or one modpack."""
@@ -1113,26 +1131,32 @@ class ModsPage(Page):
         if path:
             self.add_files([path])
 
-    def add_files(self, paths: list[str]) -> None:
-        # No check here: a drop opens the page before /mods answers, and the
-        # agent says "stop the server first" itself.
+    def add_files(self, paths: list[str], added: list[dict] | None = None, sure=False) -> None:
+        """One file at a time, so a file no site lists can be asked about.
+        No check here: a drop opens the page before /mods answers, and the
+        agent says "stop the server first" itself."""
+        added = added or []
+        if not paths:
+            self.added(added)
+            return
         sid, agent = self.row["id"], self.window_.agent
+        path, rest = paths[0], paths[1:]
 
-        def send() -> tuple[list[dict], str]:
-            added: list[dict] = []
-            for path in paths:
-                try:
-                    added.append(agent.upload(f"/servers/{sid}/mods/upload", path))
-                except AgentError as exc:  # the ones before it stay added
-                    return added, f"{Path(path).name}: {exc}"
-            return added, ""
-
-        def done(result: tuple[list[dict], str]) -> None:
-            added, problem = result
-            self.added(added, problem)
+        def failed(exc: AgentError) -> None:
+            if exc.problems.get("confirm") and not sure:
+                if self.sure_unknown(Path(path).name, exc.problems):
+                    self.add_files(paths, added, sure=True)
+                else:
+                    self.add_files(rest, added)
+                return
+            self.added(added, f"{Path(path).name}: {exc}")  # the ones before it stay added
 
         self.say(text("mobile.content.reading"))
-        self.run_here(send, done)
+        self.run_here(
+            lambda: agent.upload(f"/servers/{sid}/mods/upload?confirm={str(sure).lower()}", path),
+            lambda result: self.add_files(rest, [*added, result]),
+            failed,
+        )
 
     def added(self, results: list[dict], problem: str = "") -> None:
         """What was added from files or a link, and Undo for the last one."""
@@ -1169,15 +1193,29 @@ class ModsPage(Page):
             )
             if picked is None:
                 return
-            self.say(text("mobile.content.working"))
-            self.ask(
-                "POST",
-                "/mods/link/add",
-                lambda result: self.added([result]),
-                self.said,
-                body={"version_id": files[picked]["version_id"]},
-                slow=True,
-            )
+            version_id = files[picked]["version_id"]
+
+            def failed(exc: Exception) -> None:
+                problems = getattr(exc, "problems", {})
+                if not problems.get("confirm"):
+                    self.said(exc)
+                elif self.sure_unknown(files[picked]["filename"], problems):
+                    send(True)
+                else:
+                    self.say("")
+
+            def send(sure: bool) -> None:
+                self.say(text("mobile.content.working"))
+                self.ask(
+                    "POST",
+                    "/mods/link/add",
+                    lambda result: self.added([result]),
+                    failed,
+                    body={"version_id": version_id, "confirm": sure},
+                    slow=True,
+                )
+
+            send(False)
 
         self.ask("POST", "/mods/link", offer, self.said, body={"url": url}, slow=True)
 

@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
-from ... import suggestions
+from ... import protection, suggestions
 from ...jobs import JobConflict
 from ...mods import copy as copy_module
 from ...mods.addfrom import add_file, add_from_link, read_link
@@ -97,7 +97,8 @@ async def search_mods(
     if mods.curseforge.loaders:
         other = mods.curseforge
     if other is None:
-        return await mods.modrinth.search(q, minecraft_version=version, limit=limit, offset=offset)
+        found = await mods.modrinth.search(q, minecraft_version=version, limit=limit, offset=offset)
+        return {**found, "hits": protection.flag_look_alikes(found["hits"])}
     # Modrinth and Hangar (plugin servers) or CurseForge (mod servers) side
     # by side, each named. Their files share no checksum, so the same add-on
     # can show twice; installing it twice is refused by its hash.
@@ -125,7 +126,11 @@ async def search_mods(
         for hit in answer["hits"] if isinstance(answer, dict) else []:
             hit.setdefault("source_name", name)
     hits = [hit for pair in zip_longest(*(a["hits"] for a in found)) for hit in pair if hit]
-    return {"hits": hits, "total": sum(a.get("total") or 0 for a in found), "problems": problems}
+    return {
+        "hits": protection.flag_look_alikes(hits),
+        "total": sum(a.get("total") or 0 for a in found),
+        "problems": problems,
+    }
 
 
 @router.get("/mods/project/{project}", response_model=ModProject)
@@ -183,12 +188,13 @@ async def install_mod(
 async def upload_mod(
     request: Request,
     file: UploadFile = File(...),
+    confirm: bool = False,
     principal: Principal = Depends(require(MODS_MANAGE)),
     ctx=Depends(get_server),
 ):
     data = await file.read(320 * 1024 * 1024)
     with audit_failure(ctx, request, "mod_upload", target=file.filename):
-        result = await add_file(ctx, file.filename or "", data, user=principal.user)
+        result = await add_file(ctx, file.filename or "", data, principal.user, confirm=confirm)
     audit(ctx, request, "mod_upload", target=file.filename)
     return {"ok": True, **result}
 
@@ -213,7 +219,7 @@ async def mod_link_add(
     ctx=Depends(get_server),
 ):
     with audit_failure(ctx, request, "mod_link_add", target=payload.version_id):
-        result = await add_from_link(ctx, payload.version_id, user=principal.user)
+        result = await add_from_link(ctx, payload.version_id, principal.user, payload.confirm)
     audit(ctx, request, "mod_link_add", target=result["installed"]["filename"])
     return {"ok": True, **result}
 

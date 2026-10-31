@@ -133,6 +133,9 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     ),
     "player_report": ("reports", 0xED4245, "{server}: a player was reported"),
     "server_software_available": ("server_software", 0x5865F2, "{server}: newer server software"),
+    "ops_changed": ("ops_changed", 0xED4245, "{server}: operators changed outside the app"),
+    "lists_changed": ("lists_changed", 0xFAA61A, "{server}: player list changed outside the app"),
+    "chat_spam": ("chat_spam", 0xED4245, "{server}: chat spam from new names"),
 }
 
 
@@ -188,6 +191,9 @@ ALERT_PAGES = {
     "new_address": "players",
     "player_report": "players",
     "server_software_available": "overview",
+    "ops_changed": "players",
+    "lists_changed": "players",
+    "chat_spam": "players",
 }
 APP_PAGES = {"security", "helpers", "app-settings", "discord"}
 

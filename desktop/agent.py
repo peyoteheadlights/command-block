@@ -315,6 +315,13 @@ class AgentClient:
     def join(self, server_id: str) -> dict:
         return self.call("GET", f"/servers/{server_id}/join")
 
+    def protection(self, server_id: str) -> dict:
+        return self.call("GET", f"/servers/{server_id}/protection")
+
+    def protection_fix(self, server_id: str, fix: str, port: int | None = None) -> dict:
+        body = {"fix": fix, "port": port} if port else {"fix": fix}
+        return self.call("POST", f"/servers/{server_id}/protection/fix", body, slow=True)
+
     def backups(self, server_id: str) -> dict:
         return self.call("GET", f"/servers/{server_id}/backups")
 

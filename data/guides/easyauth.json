@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "id": "easyauth",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "easyauth"
+    ],
+    "modrinth": "easyauth"
+  },
+  "versions": ">=3.0.0 <4",
+  "title": "EasyAuth",
+  "what": "Players need a password to play. Needed when the server lets in players without a real Minecraft account.",
+  "steps": [
+    "New players type /register <password> <password> the first time and /login <password> after.",
+    "If someone forgets their password, forget it for them: they register again next time they join.",
+    "Its settings are in config/EasyAuth. /auth reload reads them again."
+  ],
+  "source": "https://github.com/NikitaCartes/EasyAuth",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "remove",
+      "label": "Forget a player's password",
+      "command": "auth remove {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "changes_world": true,
+      "permission": "players.manage",
+      "warning": "The player has to register again, and anyone joining with that name first gets it."
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "auth reload"
+    }
+  ]
+}

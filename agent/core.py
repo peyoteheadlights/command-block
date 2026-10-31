@@ -19,7 +19,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from . import __version__, colors, memory, supportask
+from . import __version__, colors, memory, protection, supportask, watchers
 from .autosleep import AutoSleep
 from .backups.manager import BackupManager
 from .config import ConfigError
@@ -97,6 +97,7 @@ class ServerContext:
         # a server nobody is playing on (off unless this server turns it on).
         self.chat = ChatLog()
         self.autosleep = AutoSleep(self)
+        self.spam = watchers.ChatSpam(self)
 
         self.server.signal_hook = self._console_signals
         self.server.crash_hook = self.crashes.collect
@@ -116,9 +117,12 @@ class ServerContext:
         await self.players.handle_signals(sig, line)
         await self.player_actions.handle(sig, line)
         await self.core.whitelist.heard(self, line)
+        await watchers.heard(self, line)
         said = parse_chat(line)
         if said and said[0] == "player" and self.core.links.hear(self, said[1] or "", said[2]):
             return  # a link code: kept out of the chat log, so never bridged to Discord
+        if said and said[0] == "player":
+            await self.spam.heard(said[1] or "", said[2])
         message = self.chat.add(line)
         if message is not None:
             # Not stored in the database: chat is as chatty as the console
@@ -166,6 +170,17 @@ class ServerContext:
                 await self.players.clear_online()
             except Exception:  # pragma: no cover
                 log.exception("could not clear the online player list")
+        try:
+            if event.type == "server_started":
+                await watchers.compare(self)
+                await protection.router_open(self)
+            elif event.type in ("server_stopped", "server_crashed"):
+                watchers.remember(self)
+                await protection.router_close(self)
+            elif event.type == "backup_restored":
+                watchers.remember(self)
+        except Exception:  # pragma: no cover - reported, never stops the server's events
+            log.exception("the Protection card's start/stop work failed")
 
     async def start(self) -> None:
         # Establish facts before the apps can ask for them, so the first

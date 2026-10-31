@@ -261,6 +261,18 @@ class System:
                 f"firewall.ps1 exited {code}: {(err or out).strip()[:2000]}",
             )
 
+    def server_ports(self, script: Path, ports: list[tuple[str, int]]) -> None:
+        """One firewall rule per server port, in place of Windows' broad
+        "allow Java" rules (firewall.ps1 -ServerPorts)."""
+        listed = ",".join(f"{protocol.upper()}:{int(port)}" for protocol, port in ports)
+        args = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"]
+        code, out, err = self.run([*args, "-File", str(script), "-ServerPorts", listed])
+        if code != 0:
+            raise SystemError_(
+                "Windows didn't let the installer add the server port rules.",
+                f"firewall.ps1 exited {code}: {(err or out).strip()[:2000]}",
+            )
+
     def register_updater_task(self, program_dir: Path) -> None:
         """The task the in-app updater asks Windows to run. It runs one fixed
         program from the Program Files folder (which only Administrators can

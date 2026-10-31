@@ -100,6 +100,10 @@ GROUPS = ("starter", "protect", "bedrock", "maps", "voice")
 PLAYERS_NEED = ("server", "optional", "both")
 # Who a server is for (first run's "Who's this server for?").
 PLAYED_BY = ("friends", "kids", "community")
+# What an add-on is for on the Protection card (agent/protection.py): the
+# login add-on an offline-mode server is offered, or an anti-bot add-on.
+# Such an entry is only suggested where it applies, never as "Good to have".
+ROLES = ("", "login", "antibot")
 
 # SHA-512 -> entry, from the last good notes file. Read by the mod and
 # plugin installer (agent/mods/manager.py) and modpack import.
@@ -280,6 +284,8 @@ def _recommended(row: dict) -> dict[str, Any]:
         raise NotesRefused("The notes file has a bad 'types' or 'kind'.")
     if row.get("group", "") not in ("", *GROUPS) or row.get("players_need") not in PLAYERS_NEED:
         raise NotesRefused("The notes file has a bad 'group' or 'players_need'.")
+    if row.get("role", "") not in ROLES:
+        raise NotesRefused("The notes file has a bad 'role'.")
     used_with = row.get("with", [])
     if not isinstance(used_with, list) or len(used_with) > 10:
         raise NotesRefused("The notes file has a bad 'with'.")
@@ -298,6 +304,7 @@ def _recommended(row: dict) -> dict[str, Any]:
         "technical_only": _flag(row, "technical_only"),
         "with": used_with,
         "played_by": _choices(row, "played_by", PLAYED_BY, len(PLAYED_BY)),
+        "role": row.get("role", ""),
     }
 
 

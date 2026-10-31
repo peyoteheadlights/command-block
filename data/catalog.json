@@ -3,7 +3,26 @@
   "serial": 2,
   "issued": "2026-10-31",
   "expires": "2026-11-30",
-  "advisories": [],
+  "advisories": [
+    {
+      "id": "log4shell",
+      "types": [
+        "vanilla",
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge",
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "from": "1.7",
+      "to": "1.18",
+      "title": "Log4Shell (CVE-2021-44228)",
+      "what_to_do": "Update to Minecraft 1.18.1 or newer. If you can't, use Mojang's fix: the Protection card puts it in with one click.",
+      "link": "https://www.minecraft.net/en-us/article/important-message--security-vulnerability-java-edition"
+    }
+  ],
   "known_bad_files": [],
   "java": [],
   "recommended_addons": [
@@ -363,6 +382,82 @@
       "players_need": "optional",
       "with": [
         "sodium"
+      ]
+    },
+    {
+      "project": "authmereloaded",
+      "name": "AuthMe Reloaded",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "good_to_have",
+      "role": "login",
+      "players_need": "server"
+    },
+    {
+      "project": "easyauth",
+      "name": "EasyAuth",
+      "types": [
+        "fabric"
+      ],
+      "kind": "good_to_have",
+      "role": "login",
+      "players_need": "server"
+    },
+    {
+      "project": "nedologin",
+      "name": "Nedologin",
+      "types": [
+        "forge",
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "role": "login",
+      "players_need": "server",
+      "technical_only": true
+    },
+    {
+      "project": "S4Tu3Hn2",
+      "name": "Login System",
+      "types": [
+        "forge",
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "role": "login",
+      "players_need": "server",
+      "technical_only": true
+    },
+    {
+      "project": "sonar",
+      "name": "Sonar",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "good_to_have",
+      "role": "antibot",
+      "players_need": "server",
+      "played_by": [
+        "community"
+      ]
+    },
+    {
+      "project": "grimac",
+      "name": "Grim Anticheat",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "good_to_have",
+      "group": "protect",
+      "players_need": "server",
+      "played_by": [
+        "community"
       ]
     }
   ]

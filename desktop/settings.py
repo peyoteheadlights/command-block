@@ -57,6 +57,7 @@ LABELS = {
     "max-players": ("game.max_players", "game.max_players_hint"),
     "level-seed": ("game.seed", "game.seed_hint"),
     "white-list": ("game.whitelist", "game.whitelist_hint"),
+    "online-mode": ("game.online_mode", "game.online_mode_hint"),
     "pvp": ("game.pvp", "game.pvp_hint"),
     "view-distance": ("game.view_distance", "game.view_distance_hint"),
     "simulation-distance": ("game.simulation_distance", "game.simulation_distance_hint"),
@@ -68,7 +69,10 @@ LABELS = {
 }
 GROUPS = [
     ("game.group_play", ["gamemode", "difficulty", "pvp", "allow-cheats"]),
-    ("game.group_who", ["motd", "server-name", "max-players", "white-list", "allow-list"]),
+    (
+        "game.group_who",
+        ["motd", "server-name", "max-players", "white-list", "allow-list", "online-mode"],
+    ),
     ("game.group_world", ["level-seed", "view-distance", "simulation-distance", "server-port"]),
 ]
 CHOICES = {"peaceful", "easy", "normal", "hard", "survival", "creative", "adventure", "spectator"}
@@ -688,12 +692,29 @@ class SettingsPage(Page):
 
             def done(result: dict) -> None:
                 self.done(text("game.saved_running" if result.get("running") else "game.saved"))
+                if (result.get("changed") or {}).get("online-mode") == "false":
+                    self.ask("GET", "/protection", self.offer_login, lambda _e: None)
 
             self.ask("PUT", "/game-settings", done, failed, body={"values": values})
 
         save.clicked.connect(save_game)
         refill(self.slots["game"], [self.banner, frame])
         refill(self.slots["raw"], [self.raw(data)] if mode["technical"] else [])
+
+    def offer_login(self, card: dict) -> None:
+        """Offline mode was just turned on: offer this type's login add-on
+        (never added without this click)."""
+        lines = [line for line in card.get("lines") or [] if line["id"] == "not_protected"]
+        login = next((a for line in lines for a in line.get("addons") or []), None)
+        if login is None:
+            return
+        name = login["name"]
+        if self.window_.confirm(
+            text("protect.title"),
+            text("desktop.game.offer_login", name=name),
+            text("desktop.protect.add", name=name),
+        ):
+            self.window_.install_addon(login["project"])
 
     def field_words(self, f: dict) -> tuple[str, str]:
         words, hint = LABELS[f["key"]]

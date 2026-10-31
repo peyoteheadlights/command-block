@@ -88,7 +88,7 @@ def press(client, button, values=None, confirm=False, headers=None, guide="chunk
 def test_every_shipped_guide_passes_the_schema():
     files = sorted(guides.FOLDER.glob("*.json"))
     loaded = guides.load()
-    assert len(files) == len(loaded) == 25
+    assert len(files) == len(loaded) == 26  # 25 plugins and EasyAuth (a Fabric mod)
     for path in files:
         guides.check_guide(json.loads(path.read_text("utf-8")), path.stem)
     # Two guides for one add-on would show twice.

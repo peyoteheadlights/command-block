@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..ports import MINECRAFT_DEFAULT_PORT, address
+
 if TYPE_CHECKING:
     from ..core import ServerContext
 
@@ -75,18 +77,17 @@ def ip(ctx: ServerContext, shared: str | None, info: dict[str, Any]) -> str:
     side = java or info.get("bedrock") or {}
     port = side.get("port")
     edition = "Java" if java else "Bedrock"
+    # Minecraft Java fills in 25565 itself; Bedrock players always type the port.
+    default = MINECRAFT_DEFAULT_PORT if java else 0
     if shared:
-        lines = [f"Join {ctx.name} ({edition}): `{shared}`"]
-        if port and ":" not in shared and not side.get("default_port", True):
-            lines.append(f"Port: `{port}`")
-        return "\n".join(lines)
+        return f"Join {ctx.name} ({edition}): `{address(shared, port, default)}`"
     lines = [f"Ways to join {ctx.name} ({edition}) the agent can see:"]
     home = [a["address"] for a in side.get("local") or [] if not a.get("virtual")]
     if home:
-        lines.append(f"On the owner's home network: `{home[0]}:{port}`")
+        lines.append(f"On the owner's home network: `{address(home[0], port, default)}`")
     tailscale = (side.get("tailscale") or {}).get("address") or side.get("address")
     if tailscale:
-        lines.append(f"On the owner's Tailscale: `{tailscale}:{port}`")
+        lines.append(f"On the owner's Tailscale: `{address(tailscale, port, default)}`")
     lines.append(
         "From the internet: the owner hasn't added an address to share yet. Ask them for it."
     )

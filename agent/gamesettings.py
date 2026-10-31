@@ -133,6 +133,37 @@ async def save(
         if not changed:
             return {"changed": {}, "keys": [], "nothing_changed": True, **_after(ctx)}
 
+    return await write_properties(ctx, edited, changed, others, user)
+
+
+async def set_values(
+    ctx: ServerContext, values: dict[str, str], title: str, user: str = "system"
+) -> dict[str, Any]:
+    """Set server.properties keys the form doesn't show (online-mode,
+    enable-rcon...) to fixed values, the same safe way as the form: one
+    backup, one Undo. Used by the Protection card's fixes."""
+    path = ctx.config.server_dir / properties.FILENAME
+    if not path.is_file():
+        raise properties.FormError(
+            {properties.FILENAME: "server.properties isn't there yet. Start the server once."}
+        )
+    edited = properties.PropertiesFile.read(path)
+    changed = {key: value for key, value in values.items() if edited.set(key, value)}
+    if not changed:
+        return {"changed": {}, "keys": [], "nothing_changed": True, **_after(ctx)}
+    return await write_properties(ctx, edited, changed, sorted(changed), user, title)
+
+
+async def write_properties(
+    ctx: ServerContext,
+    edited: properties.PropertiesFile,
+    changed: dict[str, str],
+    others: list[str],
+    user: str,
+    title: str = "Changing game settings",
+) -> dict[str, Any]:
+    path = ctx.config.server_dir / properties.FILENAME
+
     async def change(job: JobHandle | None) -> dict[str, Any]:
         await asyncio.to_thread(edited.write, path)
         return {"changed": changed, "keys": others}
@@ -146,13 +177,12 @@ async def save(
         return True, f"{len(result['keys'])} setting(s) read back as saved"
 
     plan = SafeChange(
-        title="Changing game settings",
+        title=title,
         change=change,
         check=check,
         stop_server=False,
         take_backup=path.is_file(),
         backup_name="pre-game-settings",
-        backup_note="Before changing game settings",
         backup_includes=[properties.FILENAME],
     )
 
@@ -161,7 +191,7 @@ async def save(
 
     _, outcome = await ctx.core.jobs.run(
         "game_settings",
-        f"Changing game settings on {ctx.name}",
+        f"{title} on {ctx.name}",
         run,
         server_id=ctx.server_id,
         risky=True,
@@ -249,15 +279,14 @@ VANILLA_SPAWNS: tuple[tuple[str, Any], ...] = (
 )
 
 
-def write_vanilla_spawns(directory: Path) -> None:
-    """Set the fixed values in spigot.yml, keeping its other settings."""
-    path = directory / SPIGOT_FILE
+def write_yaml(path: Path, pairs: tuple[tuple[str, Any], ...]) -> None:
+    """Set each dotted key in a YAML settings file, keeping its other settings."""
     data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
     if not isinstance(data, dict):
         raise properties.FormError(
-            {SPIGOT_FILE: "spigot.yml couldn't be read, so it wasn't changed."}
+            {path.name: f"{path.name} couldn't be read, so it wasn't changed."}
         )
-    for dotted, value in VANILLA_SPAWNS:
+    for dotted, value in pairs:
         node = data
         *parents, last = dotted.split(".")
         for part in parents:
@@ -265,25 +294,33 @@ def write_vanilla_spawns(directory: Path) -> None:
                 node[part] = {}
             node = node[part]
         node[last] = value
-    temp = path.with_name(f".{SPIGOT_FILE}.part")
+    temp = path.with_name(f".{path.name}.part")
     temp.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     os.replace(temp, path)
 
 
+def read_yaml(path: Path, dotted: str) -> Any:
+    """One dotted key's value from a YAML settings file, or None."""
+    try:
+        node = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    for part in dotted.split("."):
+        node = node.get(part) if isinstance(node, dict) else None
+    return node
+
+
+def yaml_has(path: Path, pairs: tuple[tuple[str, Any], ...]) -> bool:
+    return all(read_yaml(path, dotted) == value for dotted, value in pairs)
+
+
+def write_vanilla_spawns(directory: Path) -> None:
+    write_yaml(directory / SPIGOT_FILE, VANILLA_SPAWNS)
+
+
 def read_vanilla_spawns(directory: Path) -> bool:
     """Whether spigot.yml holds every value of the fixed list now."""
-    path = directory / SPIGOT_FILE
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        return False
-    for dotted, value in VANILLA_SPAWNS:
-        node = data
-        for part in dotted.split("."):
-            node = node.get(part) if isinstance(node, dict) else None
-        if node != value:
-            return False
-    return True
+    return yaml_has(directory / SPIGOT_FILE, VANILLA_SPAWNS)
 
 
 async def use_vanilla_spawns(ctx: ServerContext, user: str = "system") -> dict[str, Any]:
@@ -293,27 +330,40 @@ async def use_vanilla_spawns(ctx: ServerContext, user: str = "system") -> dict[s
         raise properties.FormError(
             {SPIGOT_FILE: f"{ctx.config.server_type.name} already spawns mobs like vanilla."}
         )
-    directory = ctx.config.server_dir
-    path = directory / SPIGOT_FILE
+    result = await set_yaml(ctx, SPIGOT_FILE, VANILLA_SPAWNS, "Using vanilla spawn settings", user)
+    ctx.core.db.audit("vanilla_spawns", user=user, target=ctx.server_id, server_id=ctx.server_id)
+    return {**result, "changed": {SPIGOT_FILE: "vanilla spawns"}}
+
+
+async def set_yaml(
+    ctx: ServerContext,
+    name: str,
+    pairs: tuple[tuple[str, Any], ...],
+    title: str,
+    user: str = "system",
+) -> dict[str, Any]:
+    """Set keys in one YAML file in the server folder (spigot.yml,
+    config/paper-global.yml) as a safe change with one Undo. It takes effect
+    the next time the server starts."""
+    path = ctx.config.server_dir / name
 
     async def change(job: JobHandle | None) -> dict[str, Any]:
-        await asyncio.to_thread(write_vanilla_spawns, directory)
-        return {"file": SPIGOT_FILE}
+        await asyncio.to_thread(write_yaml, path, pairs)
+        return {"file": name}
 
     async def check(result: dict[str, Any]) -> tuple[bool, str]:
-        ok = await asyncio.to_thread(read_vanilla_spawns, directory)
-        return ok, "spigot.yml reads back as saved" if ok else "spigot.yml didn't read back"
+        ok = await asyncio.to_thread(yaml_has, path, pairs)
+        return ok, f"{name} reads back as saved" if ok else f"{name} didn't read back"
 
     plan = SafeChange(
-        title="Using vanilla spawn settings",
+        title=title,
         change=change,
         check=check,
         stop_server=False,
         take_backup=path.is_file(),
-        backup_name="pre-spawn-settings",
-        backup_note="Before using vanilla spawn settings",
-        backup_includes=[SPIGOT_FILE],
-        undo_scope=[SPIGOT_FILE],
+        backup_name="pre-settings-file",
+        backup_includes=[name],
+        undo_scope=[name],
     )
 
     async def run(job: JobHandle | None) -> dict[str, Any]:
@@ -321,16 +371,15 @@ async def use_vanilla_spawns(ctx: ServerContext, user: str = "system") -> dict[s
 
     _, outcome = await ctx.core.jobs.run(
         "game_settings",
-        f"Using vanilla spawn settings on {ctx.name}",
+        f"{title} on {ctx.name}",
         run,
         server_id=ctx.server_id,
         risky=True,
         user=user,
     )
-    ctx.core.db.audit("vanilla_spawns", user=user, target=ctx.server_id, server_id=ctx.server_id)
     return {
-        "changed": {SPIGOT_FILE: "vanilla spawns"},
-        "keys": [dotted for dotted, _ in VANILLA_SPAWNS],
+        "changed": {name: title},
+        "keys": [dotted for dotted, _ in pairs],
         "undo": outcome.get("undo"),
         "safety_backup": (outcome.get("safety_backup") or {}).get("name"),
         **_after(ctx),

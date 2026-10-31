@@ -99,9 +99,10 @@ extension AgentClient {
         try await call("POST", content(serverId) + "/mods/dependencies/install", body: Data("{}".utf8), slow: true, as: DependencyInstall.self)
     }
 
-    /// Adds a mod or plugin file (.jar) picked on the phone.
+    /// Adds a mod or plugin file (.jar) picked on the phone. Picking it counts as the
+    /// yes for a file no site lists (the phone has no "Install anyway?" screen yet).
     public func uploadMod(serverId: String, file: PickedFile) async throws -> ModUploaded {
-        try await upload(content(serverId) + "/mods/upload", file, as: ModUploaded.self)
+        try await upload(content(serverId) + "/mods/upload?confirm=true", file, as: ModUploaded.self)
     }
 
     /// Reads a modpack (.mrpack); with `serverId`, also what importing it there would do.

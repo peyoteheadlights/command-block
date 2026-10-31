@@ -36,6 +36,7 @@ SETTABLE_PREFIXES = (
     "server.autostart_minecraft",
     "server.jvm_args",
     "security.session_hours",
+    "security.chat_spam_",
     "power.keep_awake",
     "updates.check",
 )

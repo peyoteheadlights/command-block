@@ -231,6 +231,7 @@ class Wizard:
             password=body.get("password") or None,
             start_with_pc=bool(body.get("start_with_pc", True)),
             allow_devices=bool(body.get("allow_devices", True)),
+            server_ports_only=bool(body.get("server_ports_only", True)),
             import_file=Path(body["import_file"]) if body.get("import_file") else None,
             import_to=Path(body["import_to"]) if body.get("import_to") else None,
             import_passphrase=body.get("import_passphrase") or None,
@@ -359,6 +360,7 @@ def quiet(wizard: Wizard) -> int:
         "password": os.environ.get(args.password_env) if args.password_env else None,
         "start_with_pc": not args.no_startup,
         "allow_devices": not args.no_firewall,
+        "server_ports_only": not args.keep_java_rule,
         "servers": [{"folder": f, "name": Path(f).name} for f in args.server_folder or []],
         "java_path": args.java,
     }
@@ -398,6 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--no-startup", action="store_true")
     parser.add_argument("--no-firewall", action="store_true")
+    parser.add_argument("--keep-java-rule", action="store_true")
     parser.add_argument("--result-file", help="write the outcome here as JSON")
     return parser
 

@@ -236,6 +236,12 @@ class SecuritySettings(Section):
     lockout_minutes: float = 15
     rate_limit_requests: int = 120
     rate_limit_window: float = 60
+    # The chat spam rule (agent/watchers.py): this many names new to the
+    # server saying the same line within this many seconds turns the
+    # whitelist on and sends an alert.
+    chat_spam_rule: bool = True
+    chat_spam_names: int = 5
+    chat_spam_seconds: float = 60
 
 
 @dataclass(frozen=True)
@@ -341,6 +347,9 @@ class NotificationSettings(Section):
             "whitelist_requests": True,
             "reports": True,
             "server_software": True,
+            "ops_changed": True,
+            "lists_changed": True,
+            "chat_spam": True,
         }
     )
     email: EmailSettings = field(default_factory=EmailSettings)

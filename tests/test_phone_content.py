@@ -386,7 +386,7 @@ def test_the_installed_list_and_one_mods_changes_answer_in_their_typed_shapes(
 
     jar = make_jar(tmp_path / "epsilon.jar", "epsilon", version="3.0", name="Epsilon")
     added = client.post(
-        "/api/mods/upload",
+        "/api/mods/upload?confirm=true",
         files={"file": ("epsilon.jar", jar.read_bytes(), "application/java-archive")},
         headers=headers,
     ).json()

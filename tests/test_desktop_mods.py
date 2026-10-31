@@ -305,11 +305,13 @@ def test_add_a_file_and_drop_jar_files_on_the_window(qapp, agent_http, tmp_path)
     folder = with_mods(agent_http)
     pc = FakePC()
     window, page = mods_page(qapp, agent_http, pc)
+    asked = []
+    window.confirm = lambda title, *words: asked.append(title) or True  # no site lists these jars
     wait_for(qapp, lambda: button(page, "Add a file").isEnabled())
     pc.picked = str(make_jar(tmp_path / "one.jar", "one", name="One"))
     button(page, "Add a file").click()
     wait_for(qapp, lambda: "Added One" in page.note.text(), 20)
-    assert (folder / "one.jar").exists()
+    assert (folder / "one.jar").exists() and asked
 
     two, three = (
         make_jar(tmp_path / "two.jar", "two", name="Two"),
@@ -472,6 +474,7 @@ def test_a_datapack_drop_and_a_github_link_are_marked_not_checked(
 
     picks = []
     window.pick = lambda title, body, choices: picks.append((title, choices)) or 0
+    window.confirm = lambda *words: True  # no site lists this jar: asked first
     page.link_box.setText("https://github.com/tree-maker/trees/releases/tag/v1.2")
     page.read.click()
     wait_for(qapp, lambda: "Added Trees" in page.note.text(), 20)

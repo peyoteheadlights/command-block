@@ -8,6 +8,8 @@ Modrinth and Hangar first, and on CurseForge by its fingerprint (a jar
 dropped for a mod under "Needs you" is matched that way, never by its
 name); one a site lists is treated as theirs, its updates included. Anything else stays "file" (or "github" with its repo and
 tag): shown as "Not checked by Modrinth", and only a GitHub one gets updates.
+A jar no site lists is only added after the person confirms a warning: the
+app can't tell what it is, and it never says a file was scanned.
 
 Links are read only for GitHub releases. Every other link (Planet Minecraft,
 SpigotMC, a creator's own page) gets "Download it in your browser and drop
@@ -75,8 +77,10 @@ async def add_file(
     user: str,
     source: str = "file",
     version: dict[str, Any] | None = None,
+    confirm: bool = False,
 ) -> dict[str, Any]:
-    """Add one file as a change of its own (backup first, one Undo)."""
+    """Add one file as a change of its own (backup first, one Undo). A jar
+    no site lists needs ``confirm`` (the warning was shown)."""
     mods = ctx.mods
     ctx.require_free()
     mods.require_server_offline(f"add a {mods.word}")
@@ -85,6 +89,10 @@ async def add_file(
         found = await known_source(mods, data)
         if found:
             source, version = found
+        elif not confirm:
+            # Read and checked like any add (wrong kind, known bad, already
+            # there), then stopped before anything is written: it asks first.
+            await mods.install_local_file(filename, data, user, ask_first=True)
     folder = folder_in_server(ctx, mods.datapacks_dir if datapack else ctx.config.mods_dir)
     title = f"Add {filename}"
 
@@ -138,10 +146,12 @@ async def read_link(mods: ModManager, url: str) -> dict[str, Any]:
     }
 
 
-async def add_from_link(ctx: ServerContext, version_id: str, user: str) -> dict[str, Any]:
+async def add_from_link(
+    ctx: ServerContext, version_id: str, user: str, confirm: bool = False
+) -> dict[str, Any]:
     """Download the GitHub release file the owner picked, then add it."""
     ctx.require_free()
     ctx.mods.require_server_offline(f"add a {ctx.mods.word}")
     version = await ctx.mods.github.version(version_id)
     data, filename, _ = await ctx.mods.github.download(version)
-    return await add_file(ctx, filename, data, user, source="github", version=version)
+    return await add_file(ctx, filename, data, user, "github", version, confirm)

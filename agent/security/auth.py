@@ -400,12 +400,29 @@ class AuthManager:
             if self.bus:
                 from ..events import Event
 
+                # Counted from the same rows the lockout reads, so the alert
+                # says how many tries there really were (house rule 1).
+                minutes = int(self.config.security.lockout_minutes)
+                tries = len(
+                    self.db.query(
+                        "SELECT ts FROM login_attempts WHERE success = 0 AND ts > ? "
+                        "AND (user = ? OR source_ip = ?)",
+                        (time.time() - minutes * 60, username, source_ip),
+                    )
+                )
+                where = source_ip or "unknown address"
+                message = f"Failed sign-in for '{username}' from {where}"
+                if tries > 1:
+                    message = (
+                        f"{tries} failed sign-ins in {minutes} minutes for '{username}' "
+                        f"or from {where}"
+                    )
                 self.bus.publish_soon(
                     Event(
                         type="auth_failure",
                         level="warn",
-                        message=f"Failed sign-in for '{username}' from {source_ip or 'unknown address'}",
-                        data={"username": username, "source_ip": source_ip},
+                        message=message,
+                        data={"username": username, "source_ip": source_ip, "tries": tries},
                     )
                 )
             raise AuthError("That username or password isn't right.")

@@ -6,19 +6,63 @@
 # which is the only range your tailnet peers can come from. Anything arriving
 # from your LAN or from the internet is still blocked by the default policy.
 
+#
+# With -ServerPorts "TCP:25565,UDP:19132" it does the other job instead: one
+# inbound rule per Minecraft server port, and the broad "allow Java on every
+# port" rules Windows made when Java first asked are turned off (not deleted,
+# so -Remove turns them back on).
+
 param(
     [int]$Port = 8765,
     [int]$RedirectPort = 8080,
+    [string]$ServerPorts = "",
     [switch]$Remove
 )
 
 $RuleName  = "Command Block (HTTPS, Tailscale only)"
 $RedirName = "Command Block (HTTP redirect, Tailscale only)"
+$GameRule  = "Command Block game port"
+$JavaNote  = "Turned off by Command Block, which uses one rule per server port instead."
+
+function Remove-GamePorts {
+    Get-NetFirewallRule -DisplayName "$GameRule *" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+}
 
 if ($Remove) {
     Remove-NetFirewallRule -DisplayName $RuleName  -ErrorAction SilentlyContinue
     Remove-NetFirewallRule -DisplayName $RedirName -ErrorAction SilentlyContinue
+    Remove-GamePorts
+    # Put back the Java rules this script turned off.
+    Get-NetFirewallRule -Direction Inbound | Where-Object { $_.Description -eq $JavaNote } |
+        Set-NetFirewallRule -Enabled True -Description ""
     Write-Host "Removed the Command Block firewall rules."
+    exit 0
+}
+
+if ($ServerPorts) {
+    Remove-GamePorts
+    foreach ($item in $ServerPorts.Split(",")) {
+        $protocol, $number = $item.Split(":")
+        if ($protocol -notin @("TCP", "UDP") -or $number -notmatch '^[0-9]{1,5}$') {
+            Write-Error "Not a port: $item"
+            exit 2
+        }
+        New-NetFirewallRule `
+            -DisplayName "$GameRule $protocol $number" `
+            -Description "Lets players reach one Minecraft server, on this port only." `
+            -Direction Inbound -Action Allow -Protocol $protocol -LocalPort ([int]$number) `
+            -Profile Any | Out-Null
+        Write-Host "Allowed $protocol $number"
+    }
+    # The rules Windows made for java.exe or javaw.exe on every port.
+    $java = Get-NetFirewallApplicationFilter |
+        Where-Object { $_.Program -match '\\javaw?\.exe$' } |
+        Get-NetFirewallRule |
+        Where-Object { $_.Direction -eq "Inbound" -and $_.Action -eq "Allow" -and $_.Enabled -eq "True" }
+    foreach ($rule in $java) {
+        Set-NetFirewallRule -Name $rule.Name -Enabled False -Description $JavaNote
+        Write-Host "Turned off: $($rule.DisplayName)"
+    }
     exit 0
 }
 
