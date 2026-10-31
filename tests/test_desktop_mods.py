@@ -631,3 +631,90 @@ def test_speed_ups_need_a_measured_reason(qapp, agent_http, monkeypatch):
     page = open_page(qapp, window, "Performance")
     wait_for(qapp, lambda: "No measured lag" in shown_text(page))
     assert not buttons_named(page, "Add")
+
+
+# ---------------------------------------------------------------- guides and Edit settings
+def plugin_server(agent_http):
+    """Survival as a Paper server with Chunky and its settings file."""
+    from .test_guides import plugin_jar
+
+    ctx = core_of(agent_http).servers["survival"]
+    ctx.config.set("server.type", "paper")
+    plugin_jar(ctx.config.mods_dir, "Chunky", "1.4.40")
+    (ctx.config.mods_dir / "Chunky").mkdir()
+    (ctx.config.mods_dir / "Chunky" / "config.yml").write_text("language: en\n", encoding="utf-8")
+    return ctx
+
+
+def dialog_of(qapp, kind):
+    from desktop.editor import FileEditor, GuideWindow
+
+    wanted = {"guide": GuideWindow, "file": FileEditor}[kind]
+    found: list = []
+    wait_for(
+        qapp,
+        lambda: (
+            found.extend(
+                w for w in qapp.topLevelWidgets() if isinstance(w, wanted) and w.isVisible()
+            )
+            or found
+        ),
+    )
+    return found[0]
+
+
+def test_a_guide_button_sends_its_command_and_shows_the_console_answer(qapp, agent_http):
+    plugin_server(agent_http)
+    running(qapp, agent_http)
+    window = signed_in_on(qapp, agent_http)
+    window.refresh()
+    page = open_page(qapp, window, "Mods")
+    wait_for(qapp, lambda: row_buttons(page, "Guide", "Chunky"))
+    row_button(page, "Guide", "Chunky").click()
+    guide = dialog_of(qapp, "guide")
+    assert "Loads the world ahead of time" in shown_text(guide)
+    assert "chunky progress" not in shown_text(guide)  # Simple: no raw commands
+    asked_titles: list = []
+    window.confirm = lambda title, body, yes: asked_titles.append(title) or False
+    start = [
+        b for b in guide.findChildren(QtWidgets.QPushButton) if b.text() == "Load the world ahead"
+    ]
+    start[0].click()
+    assert asked_titles == ["Load the world ahead"]  # it changes the world, so it asked
+    button(guide, "Show progress").click()
+    wait_for(qapp, lambda: "[Console] chunky progress" in shown_text(guide), 20, 0.1)
+    guide.close()
+
+
+def test_edit_settings_refuses_broken_yaml_on_its_line_then_saves_with_undo(qapp, agent_http):
+    ctx = plugin_server(agent_http)
+    window = signed_in_on(qapp, agent_http)
+    window.refresh()
+    page = open_page(qapp, window, "Mods")
+    wait_for(qapp, lambda: row_buttons(page, "Guide", "Chunky"))
+    menu_item(page, "Edit settings").trigger()
+    editor = dialog_of(qapp, "file")
+    assert editor.box.toPlainText() == "language: en\n"
+    assert "Careful" in shown_text(editor)
+    editor.box.setPlainText("language: en\n  bad: [\n")
+    editor.save.click()
+    wait_for(qapp, lambda: editor.problem.isVisible())
+    assert editor.box.textCursor().blockNumber() in (1, 2)
+    editor.box.setPlainText("language: de\n")
+    editor.save.click()
+    wait_for(qapp, lambda: not editor.isVisible())
+    path = ctx.config.mods_dir / "Chunky" / "config.yml"
+    assert path.read_text(encoding="utf-8") == "language: de\n"
+    wait_for(qapp, lambda: "Undo puts the old one back" in page.note.text())
+
+
+def test_the_settings_page_lists_the_folders_other_config_files(qapp, agent_http):
+    ctx = plugin_server(agent_http)
+    (ctx.config.server_dir / "bukkit.yml").write_text("a: 1\n", encoding="utf-8")
+    window = signed_in_on(qapp, agent_http)
+    page = open_page(qapp, window, "Settings")
+    wait_for(qapp, lambda: page.findChildren(QtWidgets.QListWidget))
+    listed = page.findChildren(QtWidgets.QListWidget)[0]
+    names = [listed.item(i).text() for i in range(listed.count())]
+    assert "bukkit.yml" in names and "plugins/Chunky/config.yml" in names
+    assert "server.properties" not in names

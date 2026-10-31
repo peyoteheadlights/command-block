@@ -1,0 +1,133 @@
+{
+  "schema": 1,
+  "id": "worldguard",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "WorldGuard"
+    ],
+    "modrinth": "worldguard",
+    "hangar": "EngineHub/WorldGuard"
+  },
+  "versions": ">=7.0.0 <8",
+  "title": "WorldGuard",
+  "what": "Protects areas (regions) so only their members can build there, and sets rules like no PvP.",
+  "steps": [
+    "Needs WorldEdit. In the game, select an area with the WorldEdit wand, then type /rg define <name>.",
+    "Add members to a region so they can build in it.",
+    "The region called __global__ is the whole world: rules set on it count everywhere."
+  ],
+  "source": "https://worldguard.enginehub.org/en/latest/regions/commands/",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "list",
+      "label": "List the regions",
+      "command": "rg list -w {world}",
+      "fields": [
+        {
+          "id": "world",
+          "kind": "world",
+          "label": "World"
+        }
+      ]
+    },
+    {
+      "id": "info",
+      "label": "Show a region",
+      "command": "rg info -w {world} {region}",
+      "fields": [
+        {
+          "id": "world",
+          "kind": "world",
+          "label": "World"
+        },
+        {
+          "id": "region",
+          "kind": "name",
+          "label": "Region"
+        }
+      ]
+    },
+    {
+      "id": "addmember",
+      "label": "Let a player build in a region",
+      "command": "rg addmember -w {world} {region} {player}",
+      "fields": [
+        {
+          "id": "world",
+          "kind": "world",
+          "label": "World"
+        },
+        {
+          "id": "region",
+          "kind": "name",
+          "label": "Region"
+        },
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "permission": "players.manage"
+    },
+    {
+      "id": "removemember",
+      "label": "Stop a player building in a region",
+      "command": "rg removemember -w {world} {region} {player}",
+      "fields": [
+        {
+          "id": "world",
+          "kind": "world",
+          "label": "World"
+        },
+        {
+          "id": "region",
+          "kind": "name",
+          "label": "Region"
+        },
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "permission": "players.manage"
+    },
+    {
+      "id": "pvp",
+      "label": "PvP in the whole world",
+      "command": "rg flag __global__ -w {world} pvp {pvp}",
+      "fields": [
+        {
+          "id": "world",
+          "kind": "world",
+          "label": "World"
+        },
+        {
+          "id": "pvp",
+          "kind": "choice",
+          "label": "PvP",
+          "options": [
+            {
+              "value": "allow",
+              "label": "Allowed"
+            },
+            {
+              "value": "deny",
+              "label": "Not allowed"
+            }
+          ]
+        }
+      ],
+      "changes_world": true,
+      "warning": "This changes the rule for everyone in that world."
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "wg reload"
+    }
+  ]
+}

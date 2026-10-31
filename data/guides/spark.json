@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "id": "spark",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "spark"
+    ],
+    "modrinth": "spark"
+  },
+  "versions": ">=1.9.0 <2",
+  "title": "spark",
+  "what": "Finds out what makes the server lag: it measures for a while and shows the result on a web page.",
+  "steps": [
+    "Start measuring while the lag happens, wait a minute or two, then stop: the console gives a link to the result.",
+    "Health shows memory, CPU and ticks per second right away."
+  ],
+  "source": "https://github.com/lucko/spark/tree/master/spark-common/src/main/java/me/lucko/spark/common/command/modules",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "health",
+      "label": "Show the server's health",
+      "command": "spark health"
+    },
+    {
+      "id": "tps",
+      "label": "Ticks per second and CPU",
+      "command": "spark tps"
+    },
+    {
+      "id": "start",
+      "label": "Start measuring",
+      "command": "spark profiler start --timeout {seconds}",
+      "fields": [
+        {
+          "id": "seconds",
+          "kind": "number",
+          "label": "Stop by itself after seconds",
+          "min": 30,
+          "max": 600,
+          "default": 120
+        }
+      ]
+    },
+    {
+      "id": "stop",
+      "label": "Stop and get the link",
+      "command": "spark profiler stop"
+    }
+  ]
+}

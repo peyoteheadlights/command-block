@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "id": "skinsrestorer",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "SkinsRestorer"
+    ],
+    "modrinth": "skinsrestorer",
+    "hangar": "SRTeam/SkinsRestorer"
+  },
+  "versions": ">=15.0.0 <16",
+  "title": "SkinsRestorer",
+  "what": "Gives players their skins on servers that let in players without a real account, and lets them change skin.",
+  "steps": [
+    "Players type /skin <name> to wear the skin of that Minecraft account.",
+    "/skin clear goes back to their own skin."
+  ],
+  "source": "https://github.com/SkinsRestorer/SkinsRestorer/tree/dev/shared/src/main/java/net/skinsrestorer/shared/commands",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "clear",
+      "label": "Reset a player's skin",
+      "command": "skin clear {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "info",
+      "label": "Show a player's skin",
+      "command": "sr info player {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "status",
+      "label": "Check it works",
+      "command": "sr status"
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "sr reload"
+    }
+  ]
+}

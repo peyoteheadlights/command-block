@@ -37,6 +37,7 @@ class AgentError(Exception):
     """The agent said no, in words a person can read."""
 
     problems: dict[str, str] = {}  # a form's reasons, by field, when the agent gave them
+    line: int | None = None  # a refused settings file: the line it is about
 
 
 class Unreachable(AgentError):
@@ -211,6 +212,8 @@ class AgentClient:
             error = AgentError(message)
             found = body.get("problems") if isinstance(body, dict) else None
             error.problems = found if isinstance(found, dict) else {}
+            line = body.get("line") if isinstance(body, dict) else None
+            error.line = line if isinstance(line, int) else None
             raise error
 
     def sign_in(self, username: str, password: str, remember: bool, device: str) -> dict:

@@ -25,6 +25,7 @@ from . import (
     backups,
     changes,
     chat,
+    configfiles,
     console,
     discord,
     discord_links,
@@ -33,6 +34,7 @@ from . import (
     files,
     friends,
     gamesettings,
+    guides,
     helpdesk,
     jobs,
     modpacks,
@@ -75,6 +77,8 @@ PER_SERVER = (
     quests,
     events,
     whitelist,
+    guides,
+    configfiles,
 )
 GLOBAL = (
     auth,

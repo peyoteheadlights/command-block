@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "id": "floodgate",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "floodgate"
+    ],
+    "modrinth": "floodgate",
+    "hangar": "GeyserMC/Floodgate"
+  },
+  "versions": ">=2.0.0 <3",
+  "title": "Floodgate",
+  "what": "Geyser's partner: Bedrock players join without a Java account. Their names start with a dot.",
+  "steps": [
+    "Bedrock players show up with a . in front of their name (for example .Steve).",
+    "With the whitelist on, add Bedrock players here: the dot isn't needed."
+  ],
+  "source": "https://geysermc.org/wiki/floodgate/features/",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "whitelist",
+      "label": "Let a Bedrock player join",
+      "command": "fwhitelist add {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "permission": "players.manage"
+    },
+    {
+      "id": "unwhitelist",
+      "label": "Take a Bedrock player off the whitelist",
+      "command": "fwhitelist remove {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "permission": "players.manage"
+    }
+  ]
+}

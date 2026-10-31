@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "id": "viaversion",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "ViaVersion"
+    ],
+    "modrinth": "viaversion",
+    "hangar": "ViaVersion/ViaVersion"
+  },
+  "versions": ">=5.0.0 <6",
+  "title": "ViaVersion",
+  "what": "Lets players with a newer Minecraft version join this server.",
+  "steps": [
+    "Nothing to set up: players on newer versions can join as soon as it's installed.",
+    "For older versions than the server's, add ViaBackwards too."
+  ],
+  "source": "https://github.com/ViaVersion/ViaVersion/tree/master/common/src/main/java/com/viaversion/viaversion/commands/defaultsubs",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "list",
+      "label": "Which versions are players on",
+      "command": "viaversion list"
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "viaversion reload"
+    }
+  ]
+}

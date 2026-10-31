@@ -1510,6 +1510,84 @@ class CopyDone(Open):
     undo: Undo | None = None
 
 
+# ------------------------------------------------------------ guides
+class GuideField(Open):
+    id: str
+    kind: str = Field(description="number, player, toggle, choice, world or name")
+    label: str
+    min: int | None = None
+    max: int | None = None
+    default: int | None = None
+    options: list[dict[str, str]] | None = Field(None, description="value and label, for choices")
+
+
+class GuideButton(Open):
+    id: str
+    label: str
+    help: str = ""
+    command: str = Field(description="The template; Technical mode shows it")
+    fields: list[GuideField] = []
+    changes_world: bool = Field(description="Ask before pressing it")
+    warning: str | None = None
+
+
+class Guide(Open):
+    id: str
+    title: str
+    what: str
+    steps: list[str]
+    source: str = Field(description="The add-on's own page the guide was written from")
+    filename: str = Field(description="The installed add-on it is for")
+    addon_version: str
+    buttons: list[GuideButton]
+
+
+class GuideList(Open):
+    guides: list[Guide]
+
+
+class GuideAnswer(Open):
+    command: str = Field(description="What was sent to the console")
+    lines: list[dict[str, str]] = Field(description="What the console said next: raw, level")
+    answered: bool = Field(description="False: the console said nothing within a few seconds")
+
+
+# ------------------------------------------------------------ settings files
+class ConfigFileRow(Open):
+    path: str = Field(description="Inside the server folder, with / between folders")
+    format: str = Field(description="json, toml, yaml, properties or text")
+    size: int
+    modified: float
+    too_big: bool
+
+
+class ConfigFileList(Open):
+    name: str | None = Field(None, description="The add-on, for its own files")
+    files: list[ConfigFileRow]
+    truncated: bool = False
+
+
+class ConfigFile(Open):
+    path: str
+    format: str
+    text: str = Field(description="Hidden values show as ••••••")
+    hidden: list[dict[str, Any]] = Field(description="line and key of each hidden value")
+    version: str = Field(description="The file's sha256, sent back with a save")
+    size: int
+    running: bool
+
+
+class ConfigFileSaved(Open):
+    ok: bool
+    path: str
+    nothing_changed: bool | None = None
+    version: str | None = None
+    safety_backup: str | None = None
+    undo: Undo | None = None
+    running: bool
+    restart_needed: bool = False
+
+
 # ------------------------------------------------------------ modpacks
 class ModpackFile(Open):
     name: str

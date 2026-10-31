@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "id": "discordsrv",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "DiscordSRV"
+    ],
+    "modrinth": "discordsrv"
+  },
+  "versions": ">=1.26.0 <2",
+  "title": "DiscordSRV",
+  "what": "Links the game chat with a Discord channel. Command Block has its own Discord bot too, so you may not need both.",
+  "steps": [
+    "Put the bot token and channel id in plugins/DiscordSRV/config.yml (Edit settings; the token stays hidden).",
+    "Players type /discord link in the game to link their Discord account."
+  ],
+  "source": "https://github.com/DiscordSRV/DiscordSRV/blob/master/src/main/resources/plugin.yml",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "linked",
+      "label": "Is a player linked?",
+      "command": "discord linked {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "discord reload"
+    }
+  ]
+}

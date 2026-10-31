@@ -401,7 +401,7 @@ class PerformancePage(Page):
         if not reason:
             refill(self.speed_ups, [label(words("perf.nothing_measured"), "muted")])
             return
-        shown = [label(reason["evidence"], "sub")]
+        shown: list[QWidget] = [label(reason["evidence"], "sub")]
         sid, change = self.row["id"], self.window_.may(self.row["id"], "mods.manage")
         for item in found.get("performance") or []:
             row = QHBoxLayout()

@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "gsit",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "GSit"
+    ],
+    "modrinth": "gsit",
+    "hangar": "Gecolay/GSit"
+  },
+  "versions": ">=2.0.0 <4",
+  "title": "GSit",
+  "what": "Lets players sit on stairs and blocks, lay down and crawl.",
+  "steps": [
+    "Players type /sit, /lay or /crawl, or right-click stairs to sit.",
+    "/sit toggle turns right-click sitting off for that player."
+  ],
+  "source": "https://modrinth.com/plugin/gsit",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "gsitreload"
+    }
+  ]
+}

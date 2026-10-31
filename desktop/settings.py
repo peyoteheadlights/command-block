@@ -1,7 +1,8 @@
 """The Settings tab: one page in four sections, with buttons at the top
 that jump to each. Server settings (name and color, crashes, sleep when
 empty, CPU cores, backups kept, start and stop limits, duplicate, remove),
-Game settings (server.properties and memory), Version, and Bedrock players
+Game settings (server.properties, memory and the folder's other config
+files, opened in desktop/editor.py), Version, and Bedrock players
 on a Java server (version.py has those two).
 
 Each card has its own Save, which sends only what changed; the agent checks
@@ -23,6 +24,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QRadioButton,
     QSlider,
@@ -32,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from .agent import AgentError
+from .editor import edit_file
 from .overview import card
 from .ui import Page, duration, field, label, push, refill, swatches
 from .version import crossplay_card, type_card, version_card
@@ -126,7 +130,9 @@ class SettingsPage(Page):
             heading = label(text(words), name="title")
             self.headings[key] = heading
             self.column.addWidget(heading)
-            for slot in [key] + {"server": ["manage"], "game": ["memory", "raw"]}.get(key, []):
+            for slot in [key] + {"server": ["manage"], "game": ["memory", "raw", "files"]}.get(
+                key, []
+            ):
                 self.slots[slot] = QVBoxLayout()
                 self.slots[slot].setSpacing(12)
                 self.column.addLayout(self.slots[slot])
@@ -159,6 +165,9 @@ class SettingsPage(Page):
             self.ask("GET", "/duplicate", self.show_manage, lambda exc: self.show_manage(None, exc))
         else:
             refill(self.slots["manage"], [])
+        refill(self.slots["files"], [])
+        if self.may("mods.manage"):
+            self.ask("GET", "/config-files", self.show_files, lambda e: self.problem("files", e))
 
     def changed(self) -> None:
         """Only the line about restarting follows the live feed: reloading the
@@ -764,6 +773,45 @@ class SettingsPage(Page):
             )
         )
         return frame
+
+    # ------------------------------------------------------------ other files
+    def show_files(self, data: dict) -> None:
+        """The server folder's other config files (server.properties is above)."""
+        frame, layout = card(text("desktop.files.title"))
+        layout.addWidget(label(text("desktop.files.intro"), "sub"))
+        find = QLineEdit()
+        find.setPlaceholderText(text("desktop.files.find"))
+        find.setAccessibleName(text("desktop.files.find"))
+        listed = QListWidget()
+        listed.setAccessibleName(text("desktop.files.title"))
+        listed.setMinimumHeight(180)
+        for row in data.get("files") or []:
+            item = QListWidgetItem(row["path"])
+            item.setData(Qt.ItemDataRole.UserRole, row["path"])
+            item.setFlags(item.flags() if not row["too_big"] else Qt.ItemFlag.NoItemFlags)
+            listed.addItem(item)
+
+        def only(words: str) -> None:
+            for i in range(listed.count()):
+                item = listed.item(i)
+                item.setHidden(words.lower() not in item.text().lower())
+
+        find.textChanged.connect(only)
+        edit = push(text("desktop.files.edit"))
+
+        def open_chosen() -> None:
+            item = listed.currentItem()
+            if item is not None:
+                edit_file(self, item.data(Qt.ItemDataRole.UserRole))
+
+        edit.clicked.connect(open_chosen)
+        listed.itemDoubleClicked.connect(lambda _item: open_chosen())
+        layout.addWidget(find)
+        layout.addWidget(listed)
+        if data.get("truncated"):
+            layout.addWidget(label(text("desktop.files.truncated"), "sub"))
+        layout.addWidget(edit, 0, Qt.AlignmentFlag.AlignLeft)
+        refill(self.slots["files"], [frame])
 
     # ------------------------------------------------------------ memory
     def show_memory(self, data: dict) -> None:

@@ -207,3 +207,9 @@ GET /api/servers/{server_id}/mods/copy
 POST /api/servers/{server_id}/mods/copy/check
 POST /api/servers/{server_id}/mods/copy
 POST /api/servers/{server_id}/mods/install
+GET /api/servers/{server_id}/guides
+POST /api/servers/{server_id}/guides/{guide_id}/{button_id}
+GET /api/servers/{server_id}/config-files
+GET /api/servers/{server_id}/config-files/file
+POST /api/servers/{server_id}/config-files/show
+POST /api/servers/{server_id}/config-files/save

@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "viabackwards",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "ViaBackwards"
+    ],
+    "modrinth": "viabackwards",
+    "hangar": "ViaVersion/ViaBackwards"
+  },
+  "versions": ">=5.0.0 <6",
+  "title": "ViaBackwards",
+  "what": "Lets players with an older Minecraft version join. Needs ViaVersion.",
+  "steps": [
+    "Nothing to set up: it works together with ViaVersion.",
+    "Very old versions need ViaRewind as well."
+  ],
+  "source": "https://github.com/ViaVersion/ViaBackwards",
+  "checked": "2026-10-31",
+  "buttons": []
+}

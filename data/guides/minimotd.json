@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "minimotd",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "MiniMOTD"
+    ],
+    "modrinth": "minimotd",
+    "hangar": "jmp/MiniMOTD"
+  },
+  "versions": ">=2.0.0 <3",
+  "title": "MiniMOTD",
+  "what": "Makes the server's line in the server list colorful, and can pick an icon.",
+  "steps": [
+    "Edit plugins/MiniMOTD/main.conf: each motd has line1 and line2.",
+    "Colors are written like <red>text or <gradient:blue:red>text.",
+    "The new text shows after a restart."
+  ],
+  "source": "https://github.com/jpenilla/MiniMOTD/wiki",
+  "checked": "2026-10-31",
+  "buttons": []
+}

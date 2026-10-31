@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "id": "luckperms",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "LuckPerms"
+    ],
+    "modrinth": "luckperms",
+    "hangar": "LuckPerms/LuckPerms"
+  },
+  "versions": ">=5.0.0 <6",
+  "title": "LuckPerms",
+  "what": "Decides who may use which command: players go into groups, and groups get permissions.",
+  "steps": [
+    "Make a group (for example builder or helper), then add players to it.",
+    "Open the web editor to give a group its permissions: the console prints a link, open it in a browser, change things, then press Save there and run the command it shows in the console.",
+    "Everyone is in the group called default until you add them to another."
+  ],
+  "source": "https://luckperms.net/wiki/Command-Usage",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "editor",
+      "label": "Open the web editor",
+      "command": "lp editor",
+      "help": "The console answers with a link."
+    },
+    {
+      "id": "groups",
+      "label": "List the groups",
+      "command": "lp listgroups"
+    },
+    {
+      "id": "creategroup",
+      "label": "Make a group",
+      "command": "lp creategroup {group}",
+      "fields": [
+        {
+          "id": "group",
+          "kind": "name",
+          "label": "Group name"
+        }
+      ]
+    },
+    {
+      "id": "addtogroup",
+      "label": "Add a player to a group",
+      "command": "lp user {player} parent add {group}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        },
+        {
+          "id": "group",
+          "kind": "name",
+          "label": "Group"
+        }
+      ],
+      "changes_world": true,
+      "permission": "players.op",
+      "warning": "The player gets everything that group may do."
+    },
+    {
+      "id": "removefromgroup",
+      "label": "Take a player out of a group",
+      "command": "lp user {player} parent remove {group}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        },
+        {
+          "id": "group",
+          "kind": "name",
+          "label": "Group"
+        }
+      ],
+      "permission": "players.op"
+    },
+    {
+      "id": "userinfo",
+      "label": "What can a player do?",
+      "command": "lp user {player} info",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    }
+  ]
+}

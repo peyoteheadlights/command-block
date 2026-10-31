@@ -5,7 +5,8 @@ Modrinth search (and Hangar's on plugin servers, CurseForge's on mod
 servers), a modpack import (from a file or found on CurseForge), .jar and
 datapack files from this PC and GitHub release links, the suggestions
 ("For your players" in both modes; "Good to have" and "Often used with
-your mods" in Technical), the live map's link and Copy to another server.
+your mods" in Technical), the live map's link, Copy to another server, each
+add-on's guide and Edit settings (desktop/editor.py).
 A Bedrock server's add-ons (behavior and resource packs) are on
 their own page, AddonsPage. Changes wait until the server is stopped, as on
 the agent; nothing here stops it without a click."""
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from .agent import AgentError
+from .editor import GuideWindow, pick_file
 from .fixes import install
 from .overview import card, title_of
 from .ui import Page, clock, label, push, refill, size
@@ -111,6 +113,7 @@ class ModsPage(Page):
     def __init__(self, window: MainWindow) -> None:
         super().__init__(window)
         self.data: dict = {}
+        self.guides: dict[str, dict] = {}  # by the add-on's file name
         self.query = ""
         self.offset = 0
         self.searches = 0  # the newest search, so an older answer is dropped
@@ -325,10 +328,17 @@ class ModsPage(Page):
             lambda _e: None,
             slow=True,
         )
+        self.guides = {}
+        self.ask("GET", "/guides", self.show_guides, lambda _e: None)
         self.targets: list[dict] = []
         self.copy.hide()
         if manage:
             self.ask("GET", "/mods/copy", self.show_targets, lambda _e: None)
+
+    def show_guides(self, found: dict) -> None:
+        self.guides = {g["filename"]: g for g in found.get("guides") or []}
+        if self.data:
+            self.show_list(self.data)
 
     def changed(self) -> None:
         # The feed says something changed: the list, not Modrinth's names.
@@ -441,6 +451,12 @@ class ModsPage(Page):
                 update.setEnabled(self.can_change)
                 update.clicked.connect(lambda: self.update_mod(mod))
                 h.addWidget(update)
+        guide = self.guides.get(mod["filename"])
+        if guide:
+            read = push(text("desktop.guide.open"), "plain")
+            read.setAccessibleName(f"{read.text()}: {name}")
+            read.clicked.connect(lambda: GuideWindow(self, guide).open())
+            h.addWidget(read)
         more = QToolButton()
         more.setText("⋯")
         more.setAccessibleName(f"{text('desktop.more')}: {name}")
@@ -449,6 +465,10 @@ class ModsPage(Page):
         actions: list[tuple[str, Callable[[], None]]] = []
         if mod.get("mod_id"):
             actions.append(("mobile.content.versions", lambda: self.versions(mod)))
+        if self.may("mods.manage"):
+            actions.append(
+                ("desktop.files.edit_settings", lambda: pick_file(self, mod["filename"], name))
+            )
         if self.may("mods.manage") and self.can_change:
             actions.append(("mods.remove", lambda: self.remove(mod)))
         for key, do in actions:

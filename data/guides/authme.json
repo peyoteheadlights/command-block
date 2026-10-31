@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "id": "authme",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "AuthMe"
+    ],
+    "modrinth": "authmereloaded"
+  },
+  "versions": ">=5.6.0 <7",
+  "title": "AuthMe Reloaded",
+  "what": "Players need a password to play. Needed when the server lets in players without a real Minecraft account.",
+  "steps": [
+    "New players type /register <password> <password> the first time and /login <password> after.",
+    "If someone forgets their password, unregister them: they register again next time they join.",
+    "On a server with real accounts only (online mode), this isn't needed."
+  ],
+  "source": "https://github.com/AuthMe/AuthMeReloaded/blob/master/docs/commands.md",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "lastlogin",
+      "label": "When did a player last log in?",
+      "command": "authme lastlogin {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "accounts",
+      "label": "Other accounts of a player",
+      "command": "authme accounts {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "unregister",
+      "label": "Forget a player's password",
+      "command": "authme unregister {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "changes_world": true,
+      "permission": "players.manage",
+      "warning": "The player has to register again, and anyone joining with that name first gets it."
+    },
+    {
+      "id": "recent",
+      "label": "Who logged in lately",
+      "command": "authme recent"
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "authme reload"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "fastasyncworldedit",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "FastAsyncWorldEdit"
+    ],
+    "modrinth": "fastasyncworldedit",
+    "hangar": "IntellectualSites/FastAsyncWorldEdit"
+  },
+  "versions": ">=2.0.0 <3",
+  "title": "FastAsyncWorldEdit",
+  "what": "A faster WorldEdit that uses less memory. It takes WorldEdit's place, so don't install both.",
+  "steps": [
+    "It uses WorldEdit's commands: //wand for the wooden axe, //set, //copy, //paste and //undo.",
+    "Edits run in the background, so a big edit is less likely to freeze the server.",
+    "Plugins that need WorldEdit (such as WorldGuard) work with it too."
+  ],
+  "source": "https://modrinth.com/plugin/fastasyncworldedit",
+  "checked": "2026-10-31",
+  "buttons": []
+}

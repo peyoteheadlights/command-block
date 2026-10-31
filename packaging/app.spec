@@ -17,6 +17,8 @@ datas = [
     # The notes file as it was at release: its add-on suggestions are used
     # until a signed one is fetched (agent/notes.py load_shipped).
     (str(ROOT / "data" / "catalog.json"), "data"),
+    # The add-on guides, one file each (agent/guides.py).
+    (str(ROOT / "data" / "guides"), "data/guides"),
     (str(ROOT / "installer" / "firewall.ps1"), "installer"),
     (str(ROOT / "config" / "config.example.yaml"), "config"),
     (str(ROOT / "LICENSE"), "."),

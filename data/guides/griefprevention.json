@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "id": "griefprevention",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "GriefPrevention"
+    ],
+    "modrinth": "griefprevention"
+  },
+  "versions": ">=16.0.0 <17",
+  "title": "GriefPrevention",
+  "what": "Players protect their own land with a golden shovel. No operator needed.",
+  "steps": [
+    "Players right-click two corners with a golden shovel to claim the land between them.",
+    "Inside their claim they type /trust <name> to let a friend build, /untrust <name> to stop it.",
+    "Players get claim blocks over time; you can give a player extra."
+  ],
+  "source": "https://github.com/GriefPrevention/GriefPrevention/wiki/Commands",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "claims",
+      "label": "Show a player's claims",
+      "command": "claimslist {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "bonus",
+      "label": "Give a player extra claim blocks",
+      "command": "adjustbonusclaimblocks {player} {amount}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        },
+        {
+          "id": "amount",
+          "kind": "number",
+          "label": "Blocks (minus takes away)",
+          "min": -100000,
+          "max": 100000,
+          "default": 500
+        }
+      ],
+      "permission": "players.manage"
+    },
+    {
+      "id": "book",
+      "label": "Give a player the claiming guide",
+      "command": "claimbook {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "deleteall",
+      "label": "Delete all of a player's claims",
+      "command": "deleteallclaims {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "changes_world": true,
+      "permission": "players.manage",
+      "warning": "Their land isn't protected any more. The claims can't be brought back."
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "gpreload"
+    }
+  ]
+}

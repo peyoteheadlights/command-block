@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "id": "squaremap",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "squaremap"
+    ],
+    "modrinth": "squaremap",
+    "hangar": "jmp/squaremap"
+  },
+  "versions": ">=1.2.0 <2",
+  "title": "squaremap",
+  "what": "A light, flat map of the world in a web browser. Good for small PCs.",
+  "steps": [
+    "Open the map with the button on the Mods page.",
+    "Draw a world once; after that it keeps up by itself."
+  ],
+  "source": "https://github.com/jpenilla/squaremap/wiki/Commands-and-Permissions",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "fullrender",
+      "label": "Draw a whole world",
+      "command": "squaremap fullrender {dimension}",
+      "fields": [
+        {
+          "id": "dimension",
+          "kind": "choice",
+          "label": "World",
+          "options": [
+            {
+              "value": "overworld",
+              "label": "Overworld"
+            },
+            {
+              "value": "the_nether",
+              "label": "Nether"
+            },
+            {
+              "value": "the_end",
+              "label": "The End"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cancel",
+      "label": "Stop drawing",
+      "command": "squaremap cancelrender {dimension}",
+      "fields": [
+        {
+          "id": "dimension",
+          "kind": "choice",
+          "label": "World",
+          "options": [
+            {
+              "value": "overworld",
+              "label": "Overworld"
+            },
+            {
+              "value": "the_nether",
+              "label": "Nether"
+            },
+            {
+              "value": "the_end",
+              "label": "The End"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "progress",
+      "label": "Show progress in the console",
+      "command": "squaremap progresslogging"
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "squaremap reload"
+    }
+  ]
+}

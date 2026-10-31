@@ -23,10 +23,12 @@ from ..backups.manager import BackupError
 from ..bringin import BringInError
 from ..changes import ChangeError
 from ..config import ConfigError
+from ..configfiles import ConfigFileError, FileChanged
 from ..core import UnknownServer
 from ..crossplay import CrossplayError
 from ..downloads import DownloadError
 from ..duplicate import DuplicateError
+from ..guides import GuideError
 from ..jobs import JobConflict, JobNotFound
 from ..memory import MemoryLimitError
 from ..minecraft.chat import ChatError
@@ -87,6 +89,9 @@ ERROR_STATUS: dict[type[Exception], int] = {
     HoldError: 409,  # the running server didn't get its files ready to copy
     WhitelistError: 400,
     BringInError: 400,
+    GuideError: 400,
+    ConfigFileError: 400,
+    FileChanged: 409,  # the file changed on the PC since it was opened
 }
 DOMAIN_ERRORS: tuple[type[Exception], ...] = tuple(ERROR_STATUS)
 
@@ -133,9 +138,21 @@ async def _form_handler(request: Request, exc: Exception) -> JSONResponse:
     return error_response(request, 400, {"detail": str(exc), "problems": exc.problems})
 
 
+def _file_handler(status: int):
+    """A settings file that was refused: the line it is about, when known."""
+
+    async def handler(request: Request, exc: Exception) -> JSONResponse:
+        assert isinstance(exc, ConfigFileError)
+        return error_response(request, status, {"detail": str(exc), "line": exc.line})
+
+    return handler
+
+
 def register_error_handlers(app: FastAPI) -> None:
     for exc_type, status in ERROR_STATUS.items():
         app.add_exception_handler(exc_type, _status_handler(status))
+    for exc_type in (ConfigFileError, FileChanged):
+        app.add_exception_handler(exc_type, _file_handler(ERROR_STATUS[exc_type]))
     app.add_exception_handler(StarletteHTTPException, _http_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.add_exception_handler(FormError, _form_handler)

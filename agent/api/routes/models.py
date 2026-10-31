@@ -549,3 +549,20 @@ class NewPoll(BaseModel):
     question: str = Field(max_length=300)
     answers: list[str] = Field(max_length=5)
     closes_at: float
+
+
+class GuideButtonRequest(BaseModel):
+    """One guide button's typed values, by field id."""
+
+    values: dict[str, int | bool | str] = Field(default_factory=dict, max_length=10)
+    confirm: bool = False
+
+
+class ConfigFileRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=400)
+
+
+class ConfigFileSaveRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=400)
+    text: str = Field(max_length=512 * 1024)
+    version: str = Field(min_length=64, max_length=64)
