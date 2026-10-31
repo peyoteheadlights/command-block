@@ -33,8 +33,11 @@ FABRIC_META = "https://meta.fabricmc.net/v2"
 QUILT_META = "https://meta.quiltmc.org/v3"
 FORGE_MAVEN = "https://maven.minecraftforge.net/net/minecraftforge/forge"
 NEOFORGE_MAVEN = "https://maven.neoforged.net/releases/net/neoforged/neoforge"
-PAPER_API = "https://fill.papermc.io/v3/projects/paper"
+FILL_API = "https://fill.papermc.io/v3/projects"
+PAPER_API = f"{FILL_API}/paper"
 PURPUR_API = "https://api.purpurmc.org/v2/purpur"
+# Leaf's API has the shape of PaperMC's older v2 API.
+LEAF_API = "https://api.leafmc.one/v2/projects/leaf"
 
 VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+\-]{0,63}$")
 # Words in a version name that mark it as not finished yet.
@@ -484,10 +487,14 @@ async def forge_plan(server_type: ServerType, minecraft: str, loader: str | None
 
 
 # ----------------------------------------------------------------------
-# Paper and Purpur
+# Paper (and types from the notes file on PaperMC's Fill API), Purpur, Leaf
 # ----------------------------------------------------------------------
-async def paper_versions() -> list[Version]:
-    data = await savedlists.fetch_json(PAPER_API, lambda d: isinstance(d, dict) and d)
+def _fill(project: str) -> str:
+    return f"{FILL_API}/{check_version(project, 'project')}"
+
+
+async def paper_versions(project: str = "paper") -> list[Version]:
+    data = await savedlists.fetch_json(_fill(project), lambda d: isinstance(d, dict) and d)
     versions = (data.get("versions") or {}) if isinstance(data, dict) else {}
     found: list[str] = []
     if isinstance(versions, dict):
@@ -503,9 +510,9 @@ async def paper_versions() -> list[Version]:
     return [Version(minecraft=v, stable=not UNSTABLE_RE.search(v)) for v in found]
 
 
-async def paper_plan(minecraft: str) -> Plan:
+async def paper_plan(minecraft: str, project: str = "paper") -> Plan:
     builds = await savedlists.fetch_json(
-        f"{PAPER_API}/versions/{minecraft}/builds", lambda d: isinstance(d, (list, dict))
+        f"{_fill(project)}/versions/{minecraft}/builds", lambda d: isinstance(d, (list, dict))
     )
     rows = builds if isinstance(builds, list) else (builds.get("builds") or [])
     if not rows:
@@ -526,17 +533,17 @@ async def paper_plan(minecraft: str) -> Plan:
     checksums = application.get("checksums") or {}
     spec = FileSpec(
         url=downloads.check_url(url),
-        name="paper.jar",
+        name=f"{project}.jar",
         sha256=checksums.get("sha256") or application.get("sha256"),
         size=int(application["size"]) if str(application.get("size", "")).isdigit() else None,
         allow_unverified=False,
     )
     return Plan(
-        type_id="paper",
+        type_id=project,
         minecraft=minecraft,
         loader=str(newest.get("id") or newest.get("build") or ""),
         downloads=[Download(spec)],
-        jar="paper.jar",
+        jar=f"{project}.jar",
         source="fill.papermc.io",
         stable=str(newest.get("channel", "")).upper() in ("DEFAULT", "STABLE"),
     )
@@ -575,6 +582,49 @@ async def purpur_plan(minecraft: str) -> Plan:
     )
 
 
+async def leaf_versions() -> list[Version]:
+    data = await savedlists.fetch_json(LEAF_API, lambda d: isinstance(d, dict) and d)
+    found = [str(v) for v in (data.get("versions") or [])] if isinstance(data, dict) else []
+    if not found:
+        raise VersionError("Leaf's version list couldn't be read.")
+    found = sorted({v for v in found if VERSION_RE.match(v)}, key=version_key, reverse=True)
+    return [Version(minecraft=v, stable=not UNSTABLE_RE.search(v)) for v in found]
+
+
+async def leaf_plan(minecraft: str) -> Plan:
+    """The newest build, preferring one marked stable ("default"). Leaf's
+    list is oldest first, as PaperMC's v2 API was."""
+    data = await savedlists.fetch_json(f"{LEAF_API}/versions/{minecraft}/builds", _is_dict)
+    rows = [r for r in (data.get("builds") or []) if isinstance(r, dict)]
+    rows = [r for r in rows if str(r.get("build", "")).isdigit()]
+    if not rows:
+        raise VersionError(f"Leaf has no build for Minecraft {minecraft} yet.")
+    rows.sort(key=lambda r: int(r["build"]), reverse=True)
+    stable = [r for r in rows if str(r.get("channel", "")).lower() == "default"]
+    newest = (stable or rows)[0]
+    files = newest.get("downloads") or {}
+    application = files.get("primary") or files.get("application") or {}
+    name = str(application.get("name") or "")
+    if not re.fullmatch(r"[A-Za-z0-9._+\-]{1,100}\.jar", name):
+        raise VersionError(f"Leaf didn't say which file to download for Minecraft {minecraft}.")
+    build = str(newest["build"])
+    spec = FileSpec(
+        url=downloads.check_url(f"{LEAF_API}/versions/{minecraft}/builds/{build}/downloads/{name}"),
+        name="leaf.jar",
+        sha256=application.get("sha256"),
+        allow_unverified=False,
+    )
+    return Plan(
+        type_id="leaf",
+        minecraft=minecraft,
+        loader=build,
+        downloads=[Download(spec)],
+        jar="leaf.jar",
+        source="api.leafmc.one",
+        stable=bool(stable),
+    )
+
+
 # ----------------------------------------------------------------------
 # One way in
 # ----------------------------------------------------------------------
@@ -591,8 +641,10 @@ async def list_versions(type_id: str) -> list[Version]:
         return await meta_versions(server_type)
     if server_type.id in ("forge", "neoforge"):
         return await forge_versions(server_type)
-    if server_type.id == "paper":
-        return await paper_versions()
+    if server_type.id == "paper" or server_type.like == "paper":
+        return await paper_versions(server_type.id)
+    if server_type.id == "leaf":
+        return await leaf_versions()
     return await purpur_versions()
 
 
@@ -612,8 +664,10 @@ async def make_plan(type_id: str, minecraft: str, loader: str | None = None) -> 
         return await meta_plan(server_type, minecraft, loader)
     if server_type.id in ("forge", "neoforge"):
         return await forge_plan(server_type, minecraft, loader)
-    if server_type.id == "paper":
-        return await paper_plan(minecraft)
+    if server_type.id == "paper" or server_type.like == "paper":
+        return await paper_plan(minecraft, server_type.id)
+    if server_type.id == "leaf":
+        return await leaf_plan(minecraft)
     return await purpur_plan(minecraft)
 
 

@@ -1,7 +1,7 @@
 """The safe downloader: one module for every file and list the app fetches.
 
 Rules, the same for every source (Mojang, Fabric, Quilt, Forge, NeoForge,
-Paper, Purpur, Modrinth, Hangar, CurseForge's files and our CurseForge
+Paper, Purpur, Leaf, Modrinth, Hangar, CurseForge's files and our CurseForge
 relay, GeyserMC, Adoptium's Java, this app's own GitHub releases and the
 one release an owner added an add-on from):
 
@@ -67,6 +67,8 @@ ALLOWED_HOSTS = frozenset(
         "api.papermc.io",
         # Purpur
         "api.purpurmc.org",
+        # Leaf (a Paper fork)
+        "api.leafmc.one",
         # Modrinth
         "api.modrinth.com",
         "cdn.modrinth.com",

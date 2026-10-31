@@ -11,30 +11,37 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ... import bringin as bringin_module
 from ... import crossplay as crossplay_module
-from ... import servertypes
+from ... import gamesettings, servertypes
 from ...security.auth import Principal
 from ...security.permissions import (
     SERVER_VIEW,
     SERVERS_MANAGE,
+    SETTINGS_GAME,
     SETTINGS_SERVER,
     require,
 )
 from ...servertypes import bedrock as bedrock_module
 from ...servertypes import create as create_module
+from ...servertypes import custom as custom_module
 from ...servertypes import install as install_module
 from ...servertypes import versions as versions_module
 from ..deps import audit, get_core, get_server
 from ..responses import (
     BedrockTerms,
     BedrockVersions,
+    BringInFound,
     Crossplay,
     CrossplaySaved,
+    DuplicateStarted,
     EulaAccepted,
+    GameSettingsSaved,
     NewServerOptions,
     ServerCreated,
     ServerTypes,
     ServerVersion,
+    TypeAdvice,
     TypeVersions,
     VersionChanged,
     VersionPreflight,
@@ -42,8 +49,12 @@ from ..responses import (
 )
 from .models import (
     BedrockTermsRequest,
+    BringInReadRequest,
+    BringInRequest,
     CreateServerRequest,
     CrossplayRequest,
+    CustomServerRequest,
+    ReplaceJarRequest,
     VersionChangeRequest,
 )
 
@@ -63,6 +74,23 @@ async def list_types(principal: Principal = Depends(require(SERVER_VIEW))):
         "recommended": servertypes.RECOMMENDED,
         "default": servertypes.DEFAULT_TYPE,
     }
+
+
+@global_router.get("/server-types/recommend", response_model=TypeAdvice)
+async def recommend_types(
+    goal: str,
+    loaders: str = "",
+    technical: bool = False,
+    principal: Principal = Depends(require(SERVER_VIEW)),
+):
+    """Which types fit what someone wants (vanilla, plugins or mods), for
+    the New server picker. ``loaders``: the loaders every picked mod
+    supports, comma separated (Modrinth's names)."""
+    picked = [name.strip() for name in loaders.split(",") if name.strip()][:10]
+    try:
+        return servertypes.recommend(goal, picked, technical)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @global_router.get("/server-types/{type_id}/versions", response_model=TypeVersions)
@@ -98,9 +126,67 @@ async def create_server(
         memory_mb=payload.memory_mb,
         color=payload.color,
         eula_accepted=payload.eula_accepted,
+        vanilla_spawns=payload.vanilla_spawns,
         user=principal.user,
     )
     return {"ok": True, **result}
+
+
+@global_router.post("/new-server/custom-jar", response_model=ServerCreated)
+async def create_custom_server(
+    payload: CustomServerRequest,
+    principal: Principal = Depends(require(SERVERS_MANAGE)),
+    core=Depends(get_core),
+):
+    """A new server that runs the owner's own jar (owner only: no moderator
+    can hold SERVERS_MANAGE). The app never checks or updates it."""
+    result = await custom_module.create_custom(
+        core,
+        name=payload.name,
+        directory=payload.directory,
+        jar=payload.jar,
+        based_on=payload.based_on,
+        memory_mb=payload.memory_mb,
+        color=payload.color,
+        eula_accepted=payload.eula_accepted,
+        trusted=payload.trusted,
+        user=principal.user,
+    )
+    return {"ok": True, **result}
+
+
+# ---------------------------------------------------------------- bringing a server in
+@global_router.post("/bring-in/read", response_model=BringInFound)
+async def read_server_to_bring_in(
+    payload: BringInReadRequest,
+    principal: Principal = Depends(require(SERVERS_MANAGE)),
+    core=Depends(get_core),
+):
+    """What a server folder or zip on this PC holds. Nothing is copied or
+    changed, and nothing in it is run."""
+    found = await asyncio.to_thread(bringin_module.inspect, core, payload.path)
+    return found.to_dict()
+
+
+@global_router.post("/bring-in", response_model=DuplicateStarted)
+async def bring_server_in(
+    payload: BringInRequest,
+    principal: Principal = Depends(require(SERVERS_MANAGE)),
+    core=Depends(get_core),
+):
+    """Copy a server folder or zip into a new folder and add it, as a job.
+    The original is never changed."""
+    job = await bringin_module.bring_in(
+        core,
+        path=payload.path,
+        name=payload.name,
+        directory=payload.directory,
+        based_on=payload.based_on,
+        jar=payload.jar,
+        trusted=payload.trusted,
+        user=principal.user,
+    )
+    return {"ok": True, "job": job.to_dict()}
 
 
 # ---------------------------------------------------------------- Bedrock
@@ -158,6 +244,8 @@ async def current_version(
     return {
         "type": server_type.id,
         "capabilities": server_type.to_dict(),
+        # The owner's own jar: never checked, updated or changed by the app.
+        "custom_jar": ctx.config.server.custom_jar,
         # Only what the console reported. null means Unknown.
         "minecraft_version": status["minecraft_version"],
         "minecraft_version_source": status["minecraft_version_source"],
@@ -248,6 +336,33 @@ async def accept_eula(
     ctx.server.eula_required = False
     audit(ctx, request, "eula_accepted")
     return {"ok": True, "file": str(path), "url": create_module.EULA_URL}
+
+
+@router.post("/custom-jar", response_model=VersionChanged)
+async def replace_custom_jar(
+    payload: ReplaceJarRequest,
+    request: Request,
+    principal: Principal = Depends(require(SERVERS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Put a new version of the owner's own jar in place, with a backup and
+    one Undo. Owner only."""
+    result = await custom_module.replace_jar(ctx, payload.jar, user=principal.user)
+    audit(ctx, request, "custom_jar_replace")
+    return {"ok": True, **result}
+
+
+@router.post("/game-settings/vanilla-spawns", response_model=GameSettingsSaved)
+async def use_vanilla_spawns(
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_GAME)),
+    ctx=Depends(get_server),
+):
+    """Paper and its forks: the fixed spawn settings that keep vanilla farms
+    working, as a safe change with one Undo."""
+    result = await gamesettings.use_vanilla_spawns(ctx, user=principal.user)
+    audit(ctx, request, "vanilla_spawns")
+    return {"ok": True, **result}
 
 
 # ---------------------------------------------------------------- crossplay

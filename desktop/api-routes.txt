@@ -196,3 +196,9 @@ POST /api/servers/{server_id}/whitelist/forms/{form_id}
 POST /api/servers/{server_id}/whitelist/addresses/{address_id}
 DELETE /api/servers/{server_id}/whitelist/addresses/{address_id}
 PUT /api/discord/guilds/{guild_id}/options
+GET /api/server-types/recommend
+POST /api/new-server/custom-jar
+POST /api/bring-in/read
+POST /api/bring-in
+POST /api/servers/{server_id}/custom-jar
+POST /api/servers/{server_id}/game-settings/vanilla-spawns

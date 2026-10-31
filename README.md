@@ -30,9 +30,12 @@ As a kid I remember how rough it was not being able to figure out how to play Mi
 - NeoForge
 - Paper
 - Purpur
+- Leaf (Technical mode)
 - Bedrock
 
-You can use a server you already have, or let the setup make a new one.
+In Technical mode you can also run your own server jar.
+
+You can bring in a server you already have (from a folder or a zip, including CurseForge server packs), or let the app make a new one.
 
 ## How do I get it?
 
@@ -63,10 +66,10 @@ This app is in no way done and will be supported for a good long while. Here's e
 
 - Safety notes and saved version lists that stay up to date without a new release.
 - Manage servers on several PCs under one owner account.
-- Help picking a server type, support for Spigot, Leaf and custom jars, and switching a server's type (for example Vanilla to Paper).
+- Switching a server's type (for example Vanilla to Paper).
 - Add mods from a link or file, including CurseForge (if they let me have the api key), plus recommended add-ons, performance and QoL suggestions, and guides for popular add-ons.
 - Editing add-on config files inside the app.
-- Bring a server in from a folder or zip, or bring servers back from a backup folder on a new PC.
+- Bring servers back from a backup folder on a new PC.
 - Test servers, and "New season" (keep the old world, start a fresh one with the same settings).
 - A server store through Tebex, cosmetics only by default.
 - Attack protection, a changeable port, and sign-in for offline-mode servers.

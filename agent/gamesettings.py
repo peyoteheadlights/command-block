@@ -19,7 +19,11 @@ effect after a restart, and offers one.
 from __future__ import annotations
 
 import asyncio
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import yaml
 
 from .events import Event
 from .minecraft import properties
@@ -218,3 +222,116 @@ def _follow(ctx: ServerContext, values: dict[str, str]) -> None:
         ctx.config.save()
     except OSError:  # pragma: no cover - the file is still right; only the copy lags
         pass
+
+
+# ---------------------------------------------------------------- vanilla spawns
+# "Use vanilla spawn settings" (Technical, Paper and its forks): Spigot's
+# entity activation range freezes mobs away from players and nerfs spawner
+# mobs, which breaks many vanilla farms. A range of 0 keeps that kind of mob
+# always active, as in vanilla. A fixed list: nothing else in the file
+# changes, and Paper fills in every other setting itself when it starts.
+SPIGOT_FILE = "spigot.yml"
+_RANGES = "world-settings.default.entity-activation-range"
+VANILLA_SPAWNS: tuple[tuple[str, Any], ...] = (
+    *(
+        (f"{_RANGES}.{kind}", 0)
+        for kind in (
+            "animals",
+            "monsters",
+            "raiders",
+            "misc",
+            "water",
+            "villagers",
+            "flying-monsters",
+        )
+    ),
+    ("world-settings.default.nerf-spawner-mobs", False),
+)
+
+
+def write_vanilla_spawns(directory: Path) -> None:
+    """Set the fixed values in spigot.yml, keeping its other settings."""
+    path = directory / SPIGOT_FILE
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if not isinstance(data, dict):
+        raise properties.FormError(
+            {SPIGOT_FILE: "spigot.yml couldn't be read, so it wasn't changed."}
+        )
+    for dotted, value in VANILLA_SPAWNS:
+        node = data
+        *parents, last = dotted.split(".")
+        for part in parents:
+            if not isinstance(node.get(part), dict):
+                node[part] = {}
+            node = node[part]
+        node[last] = value
+    temp = path.with_name(f".{SPIGOT_FILE}.part")
+    temp.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    os.replace(temp, path)
+
+
+def read_vanilla_spawns(directory: Path) -> bool:
+    """Whether spigot.yml holds every value of the fixed list now."""
+    path = directory / SPIGOT_FILE
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return False
+    for dotted, value in VANILLA_SPAWNS:
+        node = data
+        for part in dotted.split("."):
+            node = node.get(part) if isinstance(node, dict) else None
+        if node != value:
+            return False
+    return True
+
+
+async def use_vanilla_spawns(ctx: ServerContext, user: str = "system") -> dict[str, Any]:
+    """Apply the fixed list as a safe change with one Undo. It takes effect
+    the next time the server starts."""
+    if not ctx.config.server_type.changes_farms:
+        raise properties.FormError(
+            {SPIGOT_FILE: f"{ctx.config.server_type.name} already spawns mobs like vanilla."}
+        )
+    directory = ctx.config.server_dir
+    path = directory / SPIGOT_FILE
+
+    async def change(job: JobHandle | None) -> dict[str, Any]:
+        await asyncio.to_thread(write_vanilla_spawns, directory)
+        return {"file": SPIGOT_FILE}
+
+    async def check(result: dict[str, Any]) -> tuple[bool, str]:
+        ok = await asyncio.to_thread(read_vanilla_spawns, directory)
+        return ok, "spigot.yml reads back as saved" if ok else "spigot.yml didn't read back"
+
+    plan = SafeChange(
+        title="Using vanilla spawn settings",
+        change=change,
+        check=check,
+        stop_server=False,
+        take_backup=path.is_file(),
+        backup_name="pre-spawn-settings",
+        backup_note="Before using vanilla spawn settings",
+        backup_includes=[SPIGOT_FILE],
+        undo_scope=[SPIGOT_FILE],
+    )
+
+    async def run(job: JobHandle | None) -> dict[str, Any]:
+        return await run_safe_change(ctx.server, ctx.backups, plan, job=job, user=user)
+
+    _, outcome = await ctx.core.jobs.run(
+        "game_settings",
+        f"Using vanilla spawn settings on {ctx.name}",
+        run,
+        server_id=ctx.server_id,
+        risky=True,
+        user=user,
+    )
+    ctx.core.db.audit("vanilla_spawns", user=user, target=ctx.server_id, server_id=ctx.server_id)
+    return {
+        "changed": {SPIGOT_FILE: "vanilla spawns"},
+        "keys": [dotted for dotted, _ in VANILLA_SPAWNS],
+        "undo": outcome.get("undo"),
+        "safety_backup": (outcome.get("safety_backup") or {}).get("name"),
+        **_after(ctx),
+    }

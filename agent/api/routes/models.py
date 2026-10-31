@@ -173,9 +173,45 @@ class CreateServerRequest(BaseModel):
     memory_mb: int | None = Field(default=None, ge=512, le=65536)
     # A palette id or "#RRGGBB". Empty: the next color no server uses.
     color: str | None = Field(default=None, max_length=16)
+    # Technical, Paper and its forks: write the vanilla spawn settings.
+    vanilla_spawns: bool = False
     # True only when the person ticked the box themselves. The agent never
     # accepts Minecraft's rules on their behalf.
     eula_accepted: bool = False
+
+
+class CustomServerRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    directory: str = Field(min_length=1, max_length=400)
+    # The owner's server jar on this PC.
+    jar: str = Field(min_length=1, max_length=400)
+    based_on: str = Field(max_length=32)
+    memory_mb: int | None = Field(default=None, ge=1024, le=65536)
+    color: str | None = Field(default=None, max_length=16)
+    eula_accepted: bool = False
+    # True only when the owner ticked "I trust this jar" themselves.
+    trusted: bool = False
+
+
+class ReplaceJarRequest(BaseModel):
+    jar: str = Field(min_length=1, max_length=400)
+
+
+class BringInReadRequest(BaseModel):
+    # A server folder or .zip on this PC. Read only, never changed.
+    path: str = Field(min_length=1, max_length=400)
+
+
+class BringInRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=400)
+    name: str = Field(min_length=1, max_length=60)
+    # The new, empty folder it is copied into.
+    directory: str = Field(min_length=1, max_length=400)
+    # Only for a kind the app can't tell: what it's based on, which jar in
+    # it is the server, and the owner's own "I trust this jar" tick.
+    based_on: str | None = Field(default=None, max_length=32)
+    jar: str | None = Field(default=None, max_length=180)
+    trusted: bool = False
 
 
 class AddonToggleRequest(BaseModel):

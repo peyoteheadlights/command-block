@@ -229,6 +229,7 @@ async def create_server(
     memory_mb: int | None = None,
     color: str | None = None,
     eula_accepted: bool = False,
+    vanilla_spawns: bool = False,
     user: str = "system",
     after_install: Callable[[Any, Path, Any], Awaitable[dict[str, Any]]] | None = None,
     title: str | None = None,
@@ -312,6 +313,8 @@ async def create_server(
                 "name": name,
                 "directory": str(folder),
                 "type": server_type.id,
+                # A notes-file type names its base, so it loads before the notes do.
+                **({"like": server_type.like} if server_type.like else {}),
                 "jar": plan.jar or server_type.jar,
                 "args_file": "",
                 "java": core.config.server.java,
@@ -342,6 +345,10 @@ async def create_server(
             if server_type.content_folder:
                 ctx.config.set("mods.directory", server_type.content_folder)
             ctx.config.save()
+            if vanilla_spawns and server_type.changes_farms:
+                from ..gamesettings import write_vanilla_spawns
+
+                write_vanilla_spawns(folder)
             core.db.set_server_software(server_id, server_type.id, result["loader_version"])
             if color:
                 core.db.set_server_color(server_id, colors.normalise(color))

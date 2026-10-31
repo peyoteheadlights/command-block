@@ -359,6 +359,27 @@ exception). The rules:
 - `tests/test_command_isolation.py` checks the command's shape and that a
   name other than Mojang's, or a path outside the folder, is refused.
 
+### The owner's own server jar, and servers brought in
+
+In Technical mode the owner can pick their own server jar (a fork they
+trust) and say which type it's based on (`agent/servertypes/custom.py`).
+It is copied into the server's folder and launched the same way as any
+server jar (`java -jar <jar>`), only after the owner's own click on Start.
+Only the owner can set or replace one: those routes need `servers.manage`,
+which no moderator can be given. The app never downloads, checks or
+updates it: the record says `custom_jar: true`, the version check and the
+newer-version notice skip it, a version change is refused, and it is never
+shown as checked. A jar on the safety notes' bad-file list is refused.
+
+"Bring a server in" (`agent/bringin.py`) copies a server folder or zip into
+a new folder; the original is never changed. Its start scripts are read as
+text to find the loader and are never run; a zip passes the zip-slip check,
+may hold no links and must fit on the disk. A Forge or NeoForge pack that
+ships only its installer gets the official installer from the loader's
+Maven (the loader installer exception above), never the one in the zip. An
+unknown kind comes in only as the owner's own jar, with the same warning
+and tick.
+
 #### The signing key
 
 The private half of the update key never goes in this repo. It is a GitHub
@@ -575,7 +596,8 @@ says "Couldn't check for safety notes".
 
 Nothing downloaded is executed by the agent, with the documented exceptions
 under Command injection: the loader installer, Mojang's Bedrock server
-program, and an update of this app, which runs only after its signature and
+program, the owner's own server jar (picked by the owner, never
+downloaded), and an update of this app, which runs only after its signature and
 checksum check out.
 
 Bedrock add-ons (`.mcpack`, `.mcaddon`, `.mctemplate`) are only unpacked,

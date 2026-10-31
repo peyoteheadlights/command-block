@@ -285,6 +285,7 @@ def test_every_type_declares_what_it_supports():
         "neoforge",
         "paper",
         "purpur",
+        "leaf",
         "bedrock",
     }
     assert catalog["bedrock"]["edition"] == "bedrock"
@@ -301,6 +302,7 @@ def test_every_type_declares_what_it_supports():
         "neoforge",
         "paper",
         "purpur",
+        "leaf",
     }
 
 

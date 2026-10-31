@@ -1603,12 +1603,55 @@ class ServerType(Open):
     modrinth: bool = False
     metadata_files: list[str] = []
     version_source: str | None = None
+    goals: list[str] = Field([], description="vanilla, plugins and/or mods: what it suits")
+    technical_only: bool = Field(False, description="Offered for new servers only in Technical")
+    changes_farms: bool = Field(False, description="Some farms work differently than in vanilla")
+    never_recommended: bool = False
+    like: str | None = Field(None, description="The built-in type a notes-file type copies")
+    hint: str | None = Field(
+        None, description="A notes-file type's one line; built-in ones are in the strings table"
+    )
 
 
 class ServerTypes(Open):
     types: list[ServerType]
     recommended: str
     default: str
+
+
+class TypeAdvice(Open):
+    """The New server picker's recommendation for what someone wants."""
+
+    goal: str = Field(description="vanilla, plugins or mods")
+    types: list[str] = Field(description="The Java types that fit, in the table's order")
+    recommended: list[str]
+    warn: list[str] = Field(
+        description="Types that change how some farms work: picking one after saying vanilla shows the warning"
+    )
+
+
+class BringInFound(Open):
+    """A server folder or zip, read before anything is copied."""
+
+    source: str = Field(description="folder or zip")
+    path: str
+    type: str | None = Field(None, description="null: a kind the app can't tell (a custom jar)")
+    type_name: str | None = None
+    jar: str = ""
+    jars: list[str] = []
+    minecraft: str | None = Field(
+        None, description="What its files say; confirmed only once the console prints it"
+    )
+    loader: str | None = None
+    needs_install: bool = False
+    content: str | None = None
+    addons: int = 0
+    worlds: int = 0
+    size_bytes: int = 0
+    files: int = 0
+    problem: str | None = None
+    can_bring_in: bool
+    summary: str
 
 
 class OfferedVersion(Open):
@@ -1672,6 +1715,7 @@ class ServerVersion(Open):
 
     type: str
     capabilities: ServerType
+    custom_jar: bool = Field(False, description="The owner's own jar: never checked or updated")
     minecraft_version: str | None = None
     minecraft_version_source: str | None = None
     loader_version: str | None = None

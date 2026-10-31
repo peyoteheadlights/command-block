@@ -20,6 +20,7 @@ from .. import requestid
 from ..addons import AddonError
 from ..backups.hold import HoldError
 from ..backups.manager import BackupError
+from ..bringin import BringInError
 from ..changes import ChangeError
 from ..config import ConfigError
 from ..core import UnknownServer
@@ -85,6 +86,7 @@ ERROR_STATUS: dict[type[Exception], int] = {
     BedrockError: 400,
     HoldError: 409,  # the running server didn't get its files ready to copy
     WhitelistError: 400,
+    BringInError: 400,
 }
 DOMAIN_ERRORS: tuple[type[Exception], ...] = tuple(ERROR_STATUS)
 

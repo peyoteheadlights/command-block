@@ -269,6 +269,8 @@ class ServerContext:
             # add-ons the way this type names them (mods or plugins).
             "type": status["server_type"],
             "type_name": status["server_type_name"],
+            # The owner's own jar: never checked or updated by the app.
+            "custom_jar": self.config.server.custom_jar,
             "content": self.config.server_type.content,
             # Java or Bedrock, and what this type can and can't do, so the
             # pages show "not applicable" instead of a control that does

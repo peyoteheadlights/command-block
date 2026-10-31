@@ -149,12 +149,17 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
         )
         layout.addWidget(agree)
 
-    if editable:
+    if current.get("custom_jar"):
+        own_jar(page, layout, caps, said)
+    elif editable:
         layout.addWidget(label(text("version.change_opener"), "step"))
         edition = caps.get("edition") or "java"
         kinds = QComboBox()
         for kind in window.types:
-            if (kind.get("edition") or "java") == edition:
+            hidden = kind.get("technical_only") and not mode["technical"]
+            if (kind.get("edition") or "java") == edition and (
+                not hidden or kind["id"] == current["type"]
+            ):
                 kinds.addItem(kind["name"], kind["id"])
         kinds.setCurrentIndex(max(0, kinds.findData(current["type"])))
         versions, loaders = QComboBox(), QComboBox()
@@ -336,6 +341,21 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
             buttons.addWidget(back)
         buttons.addStretch()
         layout.addLayout(buttons)
+    if caps.get("changes_farms") and mode["technical"] and page.may("settings.game"):
+        spawns = push(text("new.vanilla_spawns"))
+        spawns.clicked.connect(
+            lambda: page.ask(
+                "POST",
+                "/game-settings/vanilla-spawns",
+                lambda _r: page.done(text("spawns.done")),
+                lambda e: said.setText(str(e)),
+            )
+        )
+        layout.addWidget(label(text("spawns.hint"), "sub"))
+        row = QHBoxLayout()
+        row.addWidget(spawns)
+        row.addStretch()
+        layout.addLayout(row)
     layout.addWidget(said)
     last = current.get("last_change") or {}
     if last.get("at"):
@@ -344,6 +364,35 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
             label(text("version.last_change", what=what, when=clock(last["at"])), "muted")
         )
     return frame
+
+
+def own_jar(page: SettingsPage, layout, caps: dict, said) -> None:
+    """The owner's own server jar: never checked or updated by the app, so
+    there is no version change, only Replace jar (owner only)."""
+    window = page.window_
+    layout.addWidget(label(text("custom.version_note", base=caps.get("name")), "notice"))
+    if not page.may("servers.manage") or window.agent.place != "this PC":
+        return
+
+    def pick() -> None:
+        path = window.pc.pick_file(text("custom.replace"), f"{text('custom.jar')} (*.jar)")
+        if path:
+            said.setText(text("custom.replacing"))
+            page.ask(
+                "POST",
+                "/custom-jar",
+                lambda _r: page.done(text("custom.replaced")),
+                lambda e: said.setText(str(e)),
+                body={"jar": path},
+                slow=True,
+            )
+
+    replace = push(text("custom.replace"))
+    replace.clicked.connect(pick)
+    row = QHBoxLayout()
+    row.addWidget(replace)
+    row.addStretch()
+    layout.addLayout(row)
 
 
 def crossplay_card(page: SettingsPage, status: dict) -> QFrame:

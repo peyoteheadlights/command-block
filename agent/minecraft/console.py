@@ -67,9 +67,10 @@ LOADER_PATTERNS = (
         r"(?P<name>Forge|NeoForge) mod loading, version (?P<loader>[\w.\-+]+), "
         r"for MC (?P<mc>[\w.\-]+)"
     ),
-    # Paper/Purpur: "This server is running Paper version 1.21.1-129-main@... (MC: 1.21.1)"
+    # Paper and its forks (Purpur, Leaf, a notes-file type such as Folia):
+    # "This server is running Paper version 1.21.1-129-main@... (MC: 1.21.1)"
     re.compile(
-        r"This server is running (?P<name>Paper|Purpur)[\w\s]*? version "
+        r"^This server is running (?P<name>[A-Z][A-Za-z]{1,30})[\w\s]*? version "
         r"(?P<loader>[^\s(]+).*?\(MC: (?P<mc>[\w.\-]+)\)"
     ),
     # Newer Paper leaves the "(MC: ...)" off: "This server is running Paper
@@ -77,7 +78,7 @@ LOADER_PATTERNS = (
     # version 1.21.4-R0.1-SNAPSHOT)". The Minecraft version then comes from
     # Minecraft's own "Starting minecraft server version" line.
     re.compile(
-        r"This server is running (?P<name>Paper|Purpur)[\w\s]*? version (?P<loader>[^\s(]+)"
+        r"^This server is running (?P<name>[A-Z][A-Za-z]{1,30})[\w\s]*? version (?P<loader>[^\s(]+)"
     ),
 )
 LOADER_NAMES = {
@@ -88,6 +89,7 @@ LOADER_NAMES = {
     "neoforge": "NeoForge",
     "paper": "Paper",
     "purpur": "Purpur",
+    "leaf": "Leaf",
 }
 # A player name, with Floodgate's prefix for a Bedrock player ("." by
 # default) allowed in front of it. The name is always shown as printed.

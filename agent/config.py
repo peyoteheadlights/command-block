@@ -128,7 +128,13 @@ class ServerSettings(Section):
     # quilt, forge, neoforge, paper or purpur. Servers from before server
     # types are Fabric.
     type: str = "fabric"
+    # For a type the notes file added (agent/notes.py): the built-in type it
+    # copies, so the server still loads before the notes do.
+    like: str = ""
     jar: str = "fabric-server-launch.jar"
+    # The owner's own server jar, run as the type above says it's based on.
+    # The app never checks or updates it (agent/servertypes/custom.py).
+    custom_jar: bool = False
     # Forge and NeoForge are launched from the argument file their
     # installer writes (java @libraries/.../win_args.txt) instead of -jar.
     # Set by the app when it installs them; empty means "-jar <jar>".
@@ -730,6 +736,8 @@ class Config:
         from .minecraft.cpu import shape_problems
 
         try:
+            if settings.like and settings.type not in servertypes.TYPES:
+                servertypes.register_variant(settings.type, settings.like)
             servertypes.check(settings.type)
         except servertypes.UnknownServerType as exc:
             raise ConfigError(f"{prefix}.type: {exc}") from None

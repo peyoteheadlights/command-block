@@ -40,6 +40,7 @@ SITE_NAMES = {
     "maven.neoforged.net": "NeoForge",
     "fill.papermc.io": "PaperMC",
     "api.purpurmc.org": "Purpur",
+    "api.leafmc.one": "Leaf",
     "api.modrinth.com": "Modrinth",
     "hangar.papermc.io": "Hangar",
     "api.github.com": "GitHub",

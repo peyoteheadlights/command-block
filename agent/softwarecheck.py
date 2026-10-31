@@ -46,16 +46,27 @@ WAIT_FOR_EMPTY = 5 * 60
 OFFERS_KEY = "software_offers"
 ALERTED_KEY = "software_alerted"
 RELEASE_RE = re.compile(r"^\d+(\.\d+)+$")
+# Types whose console prints "<minecraft>-<build>-..." and whose source lists
+# builds by number. Types from the notes file are Paper's.
+BUILD_NUMBERED = ("paper", "purpur", "leaf")
+
+
+def numbered(type_id: str) -> bool:
+    from . import servertypes
+
+    found = servertypes.TYPES.get(type_id)
+    return type_id in BUILD_NUMBERED or bool(found and found.like == "paper")
 
 
 def build_of(type_id: str, loader: str | None) -> str | None:
     """The build number in what the console printed, in the form the
-    source lists it: Paper "1.21.1-129-main@abc" is build "129"."""
+    source lists it: Paper "1.21.1-129-main@abc" is build "129". None when
+    the console didn't print a number there (a build made by hand)."""
     if not loader:
         return None
-    if type_id in ("paper", "purpur"):
+    if numbered(type_id):
         parts = loader.split("-")
-        return parts[1] if len(parts) > 1 else None
+        return parts[1] if len(parts) > 1 and parts[1].isdigit() else None
     return loader
 
 
@@ -84,10 +95,12 @@ class SoftwareCheck:
         status = ctx.server.status()
         minecraft = status.get("minecraft_version")
         installed = build_of(server_type.id, status.get("loader_version"))
+        if ctx.config.server.custom_jar:
+            return {}  # never offered an update: the app doesn't know where it came from
         offers = dict(ctx.db.get_setting(OFFERS_KEY) or {})
         if not minecraft:
             return offers  # nothing printed yet: no guess
-        if server_type.picks_loader or server_type.id in ("paper", "purpur"):
+        if server_type.picks_loader or numbered(server_type.id):
             try:
                 with savedlists.watch() as used:
                     plan = await make_plan(server_type.id, minecraft)

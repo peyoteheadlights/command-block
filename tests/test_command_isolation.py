@@ -558,3 +558,25 @@ def test_the_app_never_holds_a_curseforge_key_or_asks_curseforge_itself():
     assert "api.curseforge.com" not in downloads.ALLOWED_HOSTS
     relay = config.ModSettings().curseforge_relay
     assert relay.startswith("https://") and "cloudfunctions.net/curseforge" in relay
+
+
+def test_a_brought_in_servers_start_scripts_are_only_read_never_run():
+    """Bring a server in reads a pack's start scripts as text to find its
+    loader; nothing in the folder or zip is run, and the owner's own jar is
+    only copied (it runs like any server jar, after the owner's Start)."""
+    from agent import bringin
+    from agent.servertypes import custom
+
+    for module in (bringin, custom):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        for forbidden in (
+            "subprocess",
+            "os.system",
+            "os.startfile",
+            "send_command",
+            "run_installer",
+        ):
+            assert forbidden not in source, (module.__name__, forbidden)
+    # The only installer is the official one the plan downloads.
+    source = Path(bringin.__file__).read_text(encoding="utf-8")
+    assert "make_plan(" in source and "install_plan(" in source

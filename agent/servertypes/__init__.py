@@ -15,7 +15,7 @@ in the shared strings table under ``types.*``, keyed by the type id.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 DEFAULT_TYPE = "fabric"  # every server that existed before server types
@@ -128,6 +128,20 @@ class ServerType:
     # World import and download convert between the two.
     split_dimensions: bool = False
     ports: tuple[tuple[str, str], ...] = (("tcp", "game"),)
+    # What a beginner says they want that this type fits: "vanilla" (the
+    # game as Mojang made it), "plugins" or "mods". The picker recommends
+    # from these (see recommend()).
+    goals: tuple[str, ...] = ()
+    # Offered for new servers only in Technical mode. Servers of this type
+    # that already exist keep working and updating in either mode.
+    technical_only: bool = False
+    # Changes how some farms work (mob spawning, entity ticking, item
+    # merging), so someone who asked for plain vanilla is warned.
+    changes_farms: bool = False
+    # Never the recommended pick, even for its goal (Leaf, a fork).
+    never_recommended: bool = False
+    # The built-in type a notes-file type copies (provider, launch, sites).
+    like: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -181,6 +195,7 @@ TYPES: dict[str, ServerType] = {
             tps_commands=("tick query",),
             software_paths=("server.jar", "libraries", "versions"),
             ease="easy",
+            goals=("vanilla",),
         ),
         ServerType(
             id="fabric",
@@ -209,6 +224,8 @@ TYPES: dict[str, ServerType] = {
                 "versions",
             ),
             ease="easy",
+            # Plain vanilla too: Fabric with Lithium plays the same, faster.
+            goals=("vanilla", "mods"),
         ),
         ServerType(
             id="quilt",
@@ -247,6 +264,7 @@ TYPES: dict[str, ServerType] = {
                 "versions",
             ),
             ease="medium",
+            goals=("mods",),
         ),
         ServerType(
             id="forge",
@@ -279,6 +297,7 @@ TYPES: dict[str, ServerType] = {
                 "forge-server.jar",
             ),
             ease="advanced",
+            goals=("mods",),
         ),
         ServerType(
             id="neoforge",
@@ -303,6 +322,7 @@ TYPES: dict[str, ServerType] = {
             backup_extra=("mods", "config", "defaultconfigs"),
             software_paths=("libraries", "run.bat", "run.sh", "user_jvm_args.txt"),
             ease="advanced",
+            goals=("mods",),
         ),
         ServerType(
             id="paper",
@@ -324,6 +344,8 @@ TYPES: dict[str, ServerType] = {
             software_paths=("paper.jar", "cache", "libraries", "versions"),
             split_dimensions=True,
             ease="easy",
+            goals=("plugins",),
+            changes_farms=True,
         ),
         ServerType(
             id="purpur",
@@ -345,6 +367,34 @@ TYPES: dict[str, ServerType] = {
             software_paths=("purpur.jar", "cache", "libraries", "versions"),
             split_dimensions=True,
             ease="medium",
+            goals=("plugins",),
+            changes_farms=True,
+            technical_only=True,
+        ),
+        ServerType(
+            id="leaf",
+            name="Leaf",
+            content="plugins",
+            content_folder="plugins",
+            accepts=("paper", "bukkit"),
+            metadata_files=("paper-plugin.yml", "plugin.yml"),
+            modrinth_loaders=("paper", "spigot", "bukkit"),
+            hangar_platform="PAPER",
+            loader_name="Leaf",
+            jar="leaf.jar",
+            version_source="Leaf downloads API",
+            version_host="api.leafmc.one",
+            checksum="sha256",
+            tps_commands=("tps",),
+            geyser_platform="spigot",
+            backup_extra=("plugins", "config"),
+            software_paths=("leaf.jar", "cache", "libraries", "versions"),
+            split_dimensions=True,
+            ease="advanced",
+            goals=("plugins",),
+            changes_farms=True,
+            technical_only=True,
+            never_recommended=True,
         ),
         ServerType(
             id="bedrock",
@@ -383,6 +433,11 @@ TYPES: dict[str, ServerType] = {
     )
 }
 JAVA_TYPES = tuple(t for t in TYPES.values() if t.edition == "java")
+BUILT_IN = frozenset(TYPES)
+GOALS = ("vanilla", "plugins", "mods")
+# Built-in types whose version source also serves other projects, so the
+# notes file may add one as a new type (Folia from PaperMC's Fill API).
+VARIANT_BASES = ("paper",)
 
 # The comparison table's "Recommended for most people" row: the type this
 # app supports best (mods, Modrinth, crossplay, and every tool here).
@@ -408,7 +463,67 @@ def check(type_id: Any) -> str:
 def catalog() -> list[dict[str, Any]]:
     """Every type with its capabilities, for the apps' table. Each says
     its edition; the table shows one edition at a time."""
-    return [{**t.to_dict(), "recommended": t.id == RECOMMENDED} for t in TYPES.values()]
+    return [
+        # "hint" is set for a notes-file type; built-in ones have theirs in
+        # the strings table (types.<id>.hint).
+        {**t.to_dict(), "recommended": t.id == RECOMMENDED, "hint": t.extra.get("hint")}
+        for t in TYPES.values()
+    ]
+
+
+def recommend(goal: str, loaders: list[str] | tuple[str, ...] = (), technical: bool = False):
+    """The New server picker's answer for what someone wants: the Java types
+    that fit (in the table's order), the ones to recommend, and the ones to
+    warn about. Plain vanilla gets Vanilla and Fabric, plugins get Paper,
+    mods get the loaders the picked mods support (``loaders``, Modrinth's
+    loader names); with none picked, every mod loader with Fabric first."""
+    if goal not in GOALS:
+        raise ValueError(f"'{goal}' isn't one of: {', '.join(GOALS)}.")
+    java = [t for t in TYPES.values() if t.edition == "java"]
+    fits = [t for t in java if goal in t.goals and (technical or not t.technical_only)]
+    if goal == "mods" and loaders:
+        fits = [t for t in fits if t.accepts_any(list(loaders))]
+    picks = [t.id for t in fits if not t.never_recommended]
+    return {
+        "goal": goal,
+        "types": [t.id for t in fits],
+        "recommended": picks if goal == "vanilla" else picks[:1],
+        # Saying "vanilla" and then picking one of these shows the farms warning.
+        "warn": [t.id for t in java if goal == "vanilla" and t.changes_farms],
+    }
+
+
+def register_variant(
+    type_id: str,
+    like: str,
+    name: str | None = None,
+    goals: tuple[str, ...] | None = None,
+    technical_only: bool = True,
+) -> ServerType:
+    """Add a type that reuses a built-in type's provider, launch kind and
+    allowed site (a notes-file type, or one a server's config names). The
+    type's id is also its project name at that source."""
+    if like not in VARIANT_BASES:
+        raise UnknownServerType(f"'{like}' can't be the base of another server type.")
+    if type_id in BUILT_IN:
+        raise UnknownServerType(f"'{type_id}' is already a built-in server type.")
+    base = TYPES[like]
+    jar = f"{type_id}.jar"
+    found = replace(
+        base,
+        id=type_id,
+        name=name or type_id.capitalize(),
+        loader_name=name or type_id.capitalize(),
+        jar=jar,
+        software_paths=(jar, *base.software_paths[1:]),
+        goals=goals if goals is not None else base.goals,
+        technical_only=technical_only,
+        never_recommended=True,
+        like=like,
+        extra={},  # its own, never the base's
+    )
+    TYPES[type_id] = found
+    return found
 
 
 def detected_type(loader_name: str | None) -> str | None:

@@ -14,6 +14,10 @@ start and once a day. What it may hold:
     and one already on a server is flagged.
   * ``java``: extra Minecraft-to-Java rows, only newer than the built-in
     table's newest.
+  * ``server_types``: a new server type that reuses a built-in type's
+    provider, launch kind and allowed site (Folia through PaperMC's Fill
+    API, ``"like": "paper"``). Nothing new is downloaded from anywhere
+    else or run; it is offered in Technical only and never recommended.
 
 Data can only add warnings or blocks. It never runs anything and never
 removes a check. The file is refused as a whole, and the last good one
@@ -71,7 +75,7 @@ SERIAL_KEY = "notes:serial"
 FOLDER = "notes"
 NO_NOTES = "Couldn't check for safety notes."
 UPDATE_APP = "Update Command Block to get the newest notes."
-TYPES = ("vanilla", "fabric", "quilt", "forge", "neoforge", "paper", "purpur", "bedrock")
+TYPES = ("vanilla", "fabric", "quilt", "forge", "neoforge", "paper", "purpur", "leaf", "bedrock")
 
 # SHA-512 -> entry, from the last good notes file. Read by the mod and
 # plugin installer (agent/mods/manager.py) and modpack import.
@@ -79,6 +83,7 @@ BAD_FILES: dict[str, dict[str, Any]] = {}
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+_TYPE_ID = re.compile(r"^[a-z][a-z0-9]{1,31}$")
 _SHA512 = re.compile(r"^[0-9a-f]{128}$")
 _VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+\-]{0,63}$")
 _APP_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
@@ -99,6 +104,7 @@ class Notes:
     advisories: list[dict[str, Any]] = field(default_factory=list)
     known_bad_files: list[dict[str, Any]] = field(default_factory=list)
     java: list[dict[str, Any]] = field(default_factory=list)
+    server_types: list[dict[str, Any]] = field(default_factory=list)
     # Entries marked for a newer app than this one.
     skipped: int = 0
 
@@ -175,6 +181,28 @@ def _java_row(row: dict) -> dict[str, Any]:
     return {"minecraft": _match(row, "minecraft", _VERSION), "java": java}
 
 
+def _server_type(row: dict) -> dict[str, Any]:
+    """Ratchet: only a base the code already knows how to fetch from, and
+    never a built-in type's id."""
+    from . import servertypes
+
+    type_id = _match(row, "id", _TYPE_ID)
+    if type_id in servertypes.BUILT_IN:
+        raise NotesRefused("The notes file has a bad 'id'.")
+    if row.get("like") not in servertypes.VARIANT_BASES:
+        raise NotesRefused("The notes file has a bad 'like'.")
+    goals = row.get("goals", ["plugins"])
+    if not isinstance(goals, list) or not all(g in servertypes.GOALS for g in goals):
+        raise NotesRefused("The notes file has a bad 'goals'.")
+    return {
+        "id": type_id,
+        "name": _text(row, "name", 40),
+        "like": row["like"],
+        "hint": _text(row, "hint", 160),
+        "goals": list(goals),
+    }
+
+
 def _date(body: dict, key: str) -> dt.date:
     value = _match(body, key, _DATE)
     try:
@@ -206,6 +234,7 @@ def parse(document: bytes, highest_serial: int, now: float, app_version: str) ->
     advisories, a = _entries(body, "advisories", _advisory, app_version)
     bad, b = _entries(body, "known_bad_files", _bad_file, app_version)
     java, c = _entries(body, "java", _java_row, app_version)
+    kinds, d = _entries(body, "server_types", _server_type, app_version)
     today = dt.datetime.fromtimestamp(now, dt.UTC).date()
     return Notes(
         serial=serial,
@@ -215,7 +244,8 @@ def parse(document: bytes, highest_serial: int, now: float, app_version: str) ->
         advisories=advisories,
         known_bad_files=bad,
         java=java,
-        skipped=a + b + c,
+        server_types=kinds,
+        skipped=a + b + c + d,
     )
 
 
@@ -361,6 +391,15 @@ class SafetyNotes:
         rows = [(parse_minecraft(r["minecraft"]), r["java"]) for r in notes.java]
         # Data can only add rows newer than the built-in table's newest.
         java.NOTES_ROWS[:] = [(v, j) for v, j in rows if v and v > newest]
+        from . import servertypes
+
+        for row in notes.server_types:
+            # Kept for the rest of the run even if a later file drops it, so
+            # a server made from it keeps working (its config names the base).
+            added = servertypes.register_variant(
+                row["id"], row["like"], row["name"], tuple(row["goals"])
+            )
+            added.extra["hint"] = row["hint"]
 
     async def scan_installed(self) -> None:
         """Look for known bad files already on each server. Only hashes

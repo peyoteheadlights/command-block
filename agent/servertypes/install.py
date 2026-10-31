@@ -361,6 +361,7 @@ async def preflight(
     current = ctx.config.server_type
     target = servertypes.get(type_id)
     refuse_other_edition(current, target)
+    refuse_custom_jar(ctx)
     versions = await list_versions(target.id)
     entry = next((v for v in versions if v.minecraft == minecraft), None)
     if entry is None:
@@ -461,6 +462,16 @@ def refuse_other_edition(current: ServerType, target: ServerType) -> None:
         )
 
 
+def refuse_custom_jar(ctx: ServerContext) -> None:
+    """The owner's own jar is never swapped for a download (and a moderator
+    allowed to change versions can't replace it that way)."""
+    if ctx.config.server.custom_jar:
+        raise InstallError(
+            "This server runs your own server jar, so the app doesn't change its version. "
+            "Replace the jar instead (owner only)."
+        )
+
+
 def _declares(mod, minecraft: str) -> bool | None:
     from ..mods.jarinfo import range_satisfies
 
@@ -486,6 +497,7 @@ async def change_version(
     target = servertypes.get(type_id)
     current = ctx.config.server_type
     refuse_other_edition(current, target)
+    refuse_custom_jar(ctx)
     if target.download_terms:
         from . import bedrock
 

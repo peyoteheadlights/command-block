@@ -705,3 +705,28 @@ async def test_a_blocked_curseforge_mod_never_gets_a_made_up_link(mods, monkeypa
     (need,) = mods.needs_you()
     assert need["page"] is None, "not CurseForge's own page, so not shown"
     assert not any("forgecdn" in asked for asked in relay.asked)
+
+
+def test_a_custom_jar_is_never_shown_as_checked(multi_client, tmp_path):
+    """The owner's own jar: never verified, updated or given a version the
+    console didn't print."""
+    import zipfile
+
+    jar = tmp_path / "fork.jar"
+    with zipfile.ZipFile(jar, "w") as zf:
+        zf.writestr("fork.txt", "a pretend fork")
+    made = multi_client.post(
+        "/api/new-server/custom-jar",
+        json={
+            "name": "Fork",
+            "directory": str(tmp_path / "fork"),
+            "jar": str(jar),
+            "based_on": "fabric",
+            "eula_accepted": True,
+            "trusted": True,
+        },
+    ).json()
+    assert made["verified"] is False and made["server"]["custom_jar"] is True
+    version = multi_client.get("/api/servers/fork/version").json()
+    assert version["minecraft_version"] is None and version["pending_version"] is None
+    assert "checked" not in str(made).lower().replace("unchecked", "")

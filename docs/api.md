@@ -282,9 +282,13 @@ Agent-wide:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/server-types` | Every type with its capabilities. The apps' comparison table is generated from this |
+| GET | `/api/server-types/recommend?goal=&loaders=&technical=` | Which types fit `vanilla`, `plugins` or `mods` (only the loaders in `loaders`, the ones every picked mod supports), which to recommend, and which warn about farms. Leaf, Purpur and notes-file types only with `technical=true`; forks are never recommended |
 | GET | `/api/server-types/{type}/versions` | The Minecraft versions that type offers, from its own official source, with the loader or build versions for each |
 | GET | `/api/new-server/options` | What the New server panel needs: types, default memory and why, the PC's measured memory, a free port, a free color, the EULA link |
 | POST | `/api/new-server` | Create one. Refused without `eula_accepted: true` (for Bedrock this accepts Mojang's EULA and Privacy Policy, recorded before anything is downloaded). Downloads, installs and registers; starts nothing |
+| POST | `/api/new-server/custom-jar` | Owner only. A new server that runs the owner's own jar (`jar`, a path on this PC) as `based_on`. Needs `trusted: true` and `eula_accepted: true`. Never checked or updated by the app (`custom_jar: true`) |
+| POST | `/api/bring-in/read` | Owner only. What a server folder or `.zip` on this PC holds (type from its files, add-ons, worlds, size, the Minecraft version its files name). Nothing is copied or run |
+| POST | `/api/bring-in` | Owner only. Copy it into a new, empty folder as a job, fix a port clash, set up the official loader if only its installer is there, and make the first backup. An unknown kind needs `based_on`, `jar` and `trusted: true` |
 | GET\|POST | `/api/bedrock/terms` | Whether Mojang's EULA and Privacy Policy were accepted, by whom and when; `POST {"accepted": true}` records the person's own tick |
 | GET | `/api/bedrock/versions` | The Bedrock server zips this app downloaded and kept (Mojang only offers the newest) |
 
@@ -296,6 +300,8 @@ Per server:
 | POST | `/api/servers/{id}/version/preflight` | What a change would do, before anything happens: direction, Java verdict, which add-ons would be moved aside, which declare nothing |
 | POST | `/api/servers/{id}/version` | Make the change. Needs `confirm: true`. Stops the server, takes a verified backup, installs, checks |
 | POST | `/api/servers/{id}/version/roll-back` | Put the previous software back |
+| POST | `/api/servers/{id}/custom-jar` | Owner only. Replace the owner's own jar (`jar`): stops the server, backs the old one up, one Undo puts it back |
+| POST | `/api/servers/{id}/game-settings/vanilla-spawns` | Paper and its forks: set the fixed spawn settings in `spigot.yml` that keep vanilla farms working, with one Undo |
 | POST | `/api/servers/{id}/eula` | Record that the person accepted Minecraft's rules. The only thing that writes `eula=true` |
 | GET\|PUT | `/api/servers/{id}/crossplay` | Whether Bedrock players can join, the port, and the differences; `PUT {"enabled": true}` installs Geyser and Floodgate |
 
