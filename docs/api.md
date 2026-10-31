@@ -147,6 +147,10 @@ Per server, under `/api/servers/{id}/`:
 | POST | `/api/server/clear-crash-block` | Re-enable auto-restart after a crash loop |
 | POST | `/api/server/command` | `{command, confirm}`: one Minecraft command |
 | GET | `/api/server/command/check?command=` | Does it need confirmation? |
+| GET, PUT | `/api/command-buttons` | The Console page's named buttons (up to 12, each checked like a typed command). A press is a normal `/api/server/command` |
+| GET | `/api/players/hours` | Players online by hour of the day over 28 days (null: never measured) and the quietest hour |
+| POST | `/api/world/new-season` | `{seed, announce, confirm}`: a fresh world, the old one kept as a season backup |
+| POST | `/api/bring-back/read`, `/api/bring-back` | The servers in an off-PC backup folder, and rebuilding one from its newest copy (a job) |
 
 ## Console, logs, events
 

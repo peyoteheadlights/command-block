@@ -32,6 +32,15 @@ class CommandRequest(BaseModel):
     confirm: bool = False
 
 
+class CommandButton(BaseModel):
+    name: str = Field(min_length=1, max_length=24)
+    command: str = Field(min_length=1, max_length=512)
+
+
+class CommandButtonsRequest(BaseModel):
+    buttons: list[CommandButton] = Field(max_length=12)
+
+
 class StopRequest(BaseModel):
     timeout: float | None = Field(default=None, ge=1, le=1800)
     force: bool = False
@@ -207,6 +216,8 @@ class CreateServerRequest(BaseModel):
     # True only when the person ticked the box themselves. The agent never
     # accepts Minecraft's rules on their behalf.
     eula_accepted: bool = False
+    # A Test server (agent/testserver.py).
+    test: bool = False
 
 
 class CustomServerRequest(BaseModel):
@@ -273,10 +284,36 @@ class PlayerActionRequest(BaseModel):
     confirm: bool = False
 
 
+class NewSeasonRequest(BaseModel):
+    # Empty: Minecraft picks a random seed.
+    seed: str = Field(default="", max_length=32)
+    # Tell Discord (and the other alert channels).
+    announce: bool = True
+    confirm: bool = False
+
+
+class BackupFolderRequest(BaseModel):
+    folder: str = Field(min_length=1, max_length=400)
+
+
+class BringBackRequest(BaseModel):
+    folder: str = Field(min_length=1, max_length=400)
+    server: str = Field(min_length=1, max_length=64)  # its id there
+    name: str = Field(min_length=1, max_length=60)
+    directory: str = Field(min_length=1, max_length=400)
+    # Only when its copies don't say which version it ran.
+    minecraft_version: str | None = Field(default=None, max_length=64)
+    eula_accepted: bool = False
+
+
 class DuplicateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     directory: str = Field(min_length=1, max_length=400)
     world: Literal["copy", "fresh"]
+    # Make the copy a Test server.
+    test: bool = False
+    # Open an old season: the world comes from this season backup.
+    season_backup: int | None = None
 
 
 class ModpackNewRequest(BaseModel):

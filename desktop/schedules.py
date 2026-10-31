@@ -65,6 +65,16 @@ class SchedulesPage(Page):
             grid.setColumnStretch(col, 1)
         layout.addLayout(grid)
         layout.addWidget(label(text("schedules.when_hint"), "sub"))
+        # The quietest hour players were measured at (agent/playerhours.py).
+        quiet = QHBoxLayout()
+        self.quiet_line = label(kind="sub")
+        self.quiet_use = push(text("activity.use"), "plain")
+        self.quiet_use.clicked.connect(self.use_quiet)
+        quiet.addWidget(self.quiet_line)
+        quiet.addWidget(self.quiet_use)
+        quiet.addStretch()
+        layout.addLayout(quiet)
+        self.quiet_hour: int | None = None
         self.problem = label(kind="problem")
         self.problem.hide()
         layout.addWidget(self.problem)
@@ -87,6 +97,26 @@ class SchedulesPage(Page):
     def load(self) -> None:
         self.form.setVisible(self.may_manage())
         self.ask("GET", "/schedules", self.show_schedules)
+        self.quiet_line.hide()
+        self.quiet_use.hide()
+        if self.may_manage():
+            self.ask("GET", "/players/hours", self.show_quiet, lambda _e: None)
+
+    def show_quiet(self, data: dict) -> None:
+        self.quiet_hour = data.get("quietest_hour")
+        if self.quiet_hour is None:
+            return
+        self.quiet_line.setText(text("activity.quiet", hour=f"{self.quiet_hour:02d}:00"))
+        self.quiet_line.show()
+        self.quiet_use.show()
+
+    def use_quiet(self) -> None:
+        """Put the quietest hour in When, keeping a weekday already typed."""
+        if self.quiet_hour is None:
+            return
+        words = self.expr.text().split()
+        day = words[0] + " " if len(words) == 2 and ":" not in words[0] else ""
+        self.expr.setText(f"{day}{self.quiet_hour:02d}:00")
 
     def show_schedules(self, data: dict) -> None:
         self.window_.server_screen.panel.show_schedules(data.get("schedules") or [])

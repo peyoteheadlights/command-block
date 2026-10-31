@@ -11,6 +11,9 @@ alerts with buttons, starts servers, carries chat both ways, and runs
 stats, Levels, quests, events and polls, adds players to the whitelist,
 shows the console in a private channel and takes `/report`s.
 
+Test servers (Technical, for trying your own builds) are left out: the bot
+doesn't list them, take commands for them or post their alerts.
+
 ## Setting it up
 
 Everything is on the desktop app's gear → **Discord**.

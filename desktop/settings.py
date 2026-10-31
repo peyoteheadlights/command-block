@@ -253,6 +253,8 @@ class SettingsPage(Page):
             self.keep(data["backups"]),
             self.timing(server),
         ]
+        if server.get("test") and mode["technical"] and self.window_.role != "helper":
+            cards.insert(1, self.build_folder(server))
         if self.row.get("edition") == "bedrock" and self.window_.role != "helper":
             cards.insert(3, self.bedrock_updates(server))
         for frame in cards:
@@ -732,13 +734,50 @@ class SettingsPage(Page):
         layout.addLayout(
             grid([field(text(f"serverset.keep_{k}"), box) for k, box in boxes.items()], 3)
         )
-        self.save_button(
-            layout,
-            lambda: {
+        on_stop = QCheckBox(text("serverset.backup_on_stop"))
+        on_stop.setChecked(bool(b.get("on_stop")))
+        layout.addWidget(on_stop)
+        layout.addWidget(label(text("serverset.backup_on_stop_hint"), "sub"))
+
+        def collect() -> dict:
+            out: dict = {
                 f"backups.keep_{k}": box.value()
                 for k, box in boxes.items()
                 if box.value() != b[f"keep_{k}"]
-            },
+            }
+            if on_stop.isChecked() != bool(b.get("on_stop")):
+                out["backups.on_stop"] = on_stop.isChecked()
+            return out
+
+        self.save_button(layout, collect)
+        return frame
+
+    def build_folder(self, server: dict) -> QFrame:
+        """A Test server's build folder: its jars are copied in at each start."""
+        frame, layout = card(text("test.build_title"))
+        layout.addWidget(label(text("test.build_lead"), "sub"))
+        box = QLineEdit(server.get("build_folder") or "")
+        box.setMaxLength(400)
+        box.setPlaceholderText("C:\\dev\\myplugin\\build\\libs")
+        box.setAccessibleName(text("test.build_title"))
+        row = QHBoxLayout()
+        row.addWidget(box, 1)
+        if self.window_.agent.place == "this PC":
+            browse = push(text("desktop.browse"))
+            browse.clicked.connect(
+                lambda: box.setText(
+                    self.window_.pc.pick_folder(text("test.build_title")) or box.text()
+                )
+            )
+            row.addWidget(browse)
+        layout.addLayout(row)
+        self.save_button(
+            layout,
+            lambda: (
+                {"server.build_folder": box.text().strip()}
+                if box.text().strip() != (server.get("build_folder") or "")
+                else {}
+            ),
         )
         return frame
 
@@ -800,6 +839,9 @@ class SettingsPage(Page):
         copy.setChecked(True)
         layout.addWidget(copy)
         layout.addWidget(fresh)
+        test = QCheckBox(text("test.copy_as_test"))
+        test.setVisible(mode["technical"])
+        layout.addWidget(test)
         for shown, words in (
             (found.get("running"), "dup.running"),
             (found.get("crossplay"), "dup.crossplay"),
@@ -828,6 +870,7 @@ class SettingsPage(Page):
                     "name": name.text().strip(),
                     "directory": folder.text().strip(),
                     "world": "copy" if copy.isChecked() else "fresh",
+                    "test": test.isChecked(),
                 },
                 always=lambda: go.setEnabled(True),
             )

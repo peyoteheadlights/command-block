@@ -233,6 +233,7 @@ async def create_server(
     user: str = "system",
     after_install: Callable[[Any, Path, Any], Awaitable[dict[str, Any]]] | None = None,
     title: str | None = None,
+    test: bool = False,
 ) -> dict[str, Any]:
     """Create a new server. Returns the new server's summary and the job.
 
@@ -320,6 +321,7 @@ async def create_server(
                 "java": core.config.server.java,
                 "jvm_args": [] if is_bedrock else [f"-Xmx{memory}M"],
                 "port": port,
+                **({"test": True} if test else {}),
             }
             # A ServerContext is needed to install (the install log and the
             # data folder belong to the server), so register it first and

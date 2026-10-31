@@ -1892,6 +1892,52 @@ class TypeAdvice(Open):
     )
 
 
+class CommandButtonRow(Open):
+    name: str
+    command: str
+    danger_reason: str | None = Field(None, description="set: ask before sending it")
+
+
+class CommandButtons(Open):
+    buttons: list[CommandButtonRow]
+    max: int
+
+
+class PlayerHour(Open):
+    hour: int = Field(description="0 to 23, this PC's time")
+    average: float | None = Field(None, description="null: never measured (Unknown)")
+    busiest: int | None = None
+    measured_days: int
+
+
+class PlayerHours(Open):
+    days: int
+    hours: list[PlayerHour]
+    quietest_hour: int | None = Field(None, description="null: no hour measured yet")
+    measured_hours: int
+    total_hours: int
+
+
+class BackedUpServer(Open):
+    """A server in an off-PC backup folder, with its newest copy."""
+
+    id: str
+    name: str
+    type: str | None = None
+    type_name: str | None = None
+    minecraft: str | None = Field(None, description="null: its copies don't say")
+    backup_name: str
+    backup_at: float
+    size_bytes: int
+    copies: int
+    here: bool = Field(description="a server on this PC has the same name")
+    problem: str | None = Field(None, description="why it can't come back")
+
+
+class BackupFolderServers(Open):
+    servers: list[BackedUpServer]
+
+
 class BringInFound(Open):
     """A server folder or zip, read before anything is copied."""
 
@@ -2256,6 +2302,14 @@ class WorldImported(Open):
     ok: bool
     job_id: str
     world: WorldInfo
+    safety_backup: SafetyBackup | None = None
+    undo: Undo | None = None
+
+
+class NewSeason(Open):
+    ok: bool
+    job_id: str
+    seed: str | None = Field(None, description="null: Minecraft picks one on the next start")
     safety_backup: SafetyBackup | None = None
     undo: Undo | None = None
 

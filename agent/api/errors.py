@@ -43,6 +43,7 @@ from ..mods.sources import SourceError
 from ..protection import ProtectionError
 from ..safechange import SafeChangeError
 from ..scheduler.scheduler import ScheduleError
+from ..seasons import SeasonError
 from ..security.auth import AuthError
 from ..security.paths import PathSafetyError
 from ..servertypes import UnknownServerType
@@ -83,6 +84,7 @@ ERROR_STATUS: dict[type[Exception], int] = {
     WorldUndoError: 409,  # the server has to be off first
     ChangeError: 409,  # nothing to undo or redo now
     WorldImportError: 400,
+    SeasonError: 400,
     MemoryLimitError: 400,
     TransferError: 400,
     AddonError: 400,

@@ -46,7 +46,7 @@ from .security.paths import (
     zip_member_is_symlink,
 )
 from .servertypes import custom
-from .servertypes.create import default_memory_mb, new_server_id
+from .servertypes.create import default_memory_mb, new_server_id, write_eula
 from .servertypes.install import find_args_file, install_plan
 from .servertypes.versions import _neoforge_minecraft, make_plan
 
@@ -415,12 +415,20 @@ async def bring_in(
     jar: str | None = None,
     trusted: bool = False,
     user: str = "system",
+    software: dict[str, Any] | None = None,
 ) -> Job:
-    """Check the request, then copy and set up the server as one job."""
+    """Check the request, then copy and set up the server as one job.
+    ``software`` (bringing a server back from a backup, which holds no
+    server software): its type and versions, set up like a new server's."""
     name = (name or "").strip()
     if not name:
         raise BringInError("Give the server a name.")
     found = await asyncio.to_thread(inspect, core, path)
+    if software:
+        kind = servertypes.get(software["type"])
+        found.type, found.type_name = kind.id, kind.name
+        found.minecraft, found.loader = software["minecraft"], software.get("loader")
+        found.needs_install, found.problem = True, None
     if found.problem:
         raise BringInError(found.problem)
     chosen_jar = found.jar
@@ -470,6 +478,8 @@ async def bring_in(
             if not ok:
                 raise BringInError(f"The copy didn't work: {detail}")
             job.step("Setting up the server")
+            if software and server_type.dialect != "bedrock":
+                await asyncio.to_thread(write_eula, folder, True)  # ticked in the request
             port, note = await asyncio.to_thread(_fix_port, core, folder, server_type)
             memory = 0 if server_type.dialect == "bedrock" else default_memory_mb()[0]
             entry = custom.entry(
@@ -536,6 +546,85 @@ async def bring_in(
         }
 
     return core.jobs.start("bring_in", title, run, server_id=None, risky=False, user=user)
+
+
+def backup_folder(core: AgentCore, value: str) -> list[dict[str, Any]]:
+    """The servers in an off-PC backup folder, for "Bring servers back".
+    Each says whether it can come back, and why not. Nothing is changed."""
+    from .backups import offsite
+
+    raw = (value or "").strip()
+    path = Path(raw).expanduser() if raw and "\0" not in raw else None
+    if path is None or not path.is_absolute() or not path.is_dir():
+        raise BringInError(
+            "Pick the folder your backups were copied to, on a drive that's plugged in."
+        )
+    try:
+        assert_not_symlink(path)
+    except PathSafetyError as exc:
+        raise BringInError(str(exc)) from exc
+    found = offsite.servers_in(path.resolve())
+    if not found:
+        raise BringInError(f"There are no Command Block backup copies in {path}.")
+    here = {ctx.name.lower() for ctx in core.servers.values()}
+    for row in found:
+        kind = row.get("type")
+        row.setdefault("name", row["id"])
+        if not kind:
+            row["problem"] = (
+                "Its copies were made by an older version that didn't note its type. Use "
+                "Bring a server in with the server's own folder instead."
+            )
+        elif kind == "custom":
+            row["problem"] = "It ran your own server jar, which isn't in a backup."
+        else:
+            try:
+                row["type_name"] = servertypes.get(kind).name
+            except servertypes.UnknownServerType:
+                row["problem"] = f"This app doesn't know the server type {kind}."
+        row["here"] = row["name"].lower() in here
+    return found
+
+
+async def bring_back(
+    core: AgentCore,
+    *,
+    folder: str,
+    server: str,
+    name: str,
+    directory: str,
+    minecraft: str | None = None,
+    eula_accepted: bool = False,
+    user: str = "system",
+) -> Job:
+    """Rebuild one server from its newest off-PC copy as a new server: the
+    copy is unzipped into a new folder (the backup folder is only read),
+    the software is set up like a new server's, then it's backed up."""
+    if not eula_accepted:
+        raise BringInError(
+            "Minecraft's rules (the EULA) have to be accepted before the server software can "
+            "be downloaded. Tick the box to accept them."
+        )
+    row = next((r for r in backup_folder(core, folder) if r["id"] == server), None)
+    if row is None:
+        raise BringInError("That server isn't in the backup folder any more.")
+    if row.get("problem"):
+        raise BringInError(row["problem"])
+    version = (minecraft or row.get("minecraft") or "").strip()
+    if not version:
+        raise BringInError("Pick the Minecraft version it ran: its copies don't say.")
+    if row["type"] == "bedrock":
+        from .servertypes import bedrock
+
+        bedrock.accept_terms(core.db, user)
+    return await bring_in(
+        core,
+        path=row["backup"],
+        name=name,
+        directory=directory,
+        user=user,
+        software={"type": row["type"], "minecraft": version, "loader": row.get("loader")},
+    )
 
 
 def summary_words(found: Found) -> str:

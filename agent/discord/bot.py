@@ -352,7 +352,9 @@ class Bot:
             tied = sorted({r for gid in self.guilds for r in self.server_names(gid, True)})
             line = live.presence(
                 [
-                    live.seen(self.core.servers[r]) if r in self.core.servers else remote[r]
+                    live.seen(self.core.discord_servers[r])
+                    if r in self.core.discord_servers
+                    else remote[r]
                     for r in tied
                 ]
             )
@@ -363,7 +365,7 @@ class Bot:
         changed = False
         for gid in list(self.guilds):
             for row in layout.channels(self.core.db, gid):
-                ctx = self.core.servers.get(row["server_id"])
+                ctx = self.core.discord_servers.get(row["server_id"])
                 if row["kind"] != "status" or ctx is None:
                     continue
                 words = live.status_message(ctx, shared.get(ctx.server_id))
@@ -520,7 +522,7 @@ class Bot:
             names = self.server_names(gid, True)
             if not names:
                 continue
-            ids = sorted(r for r in names if r in self.core.servers)
+            ids = sorted(r for r in names if r in self.core.discord_servers)
             played = levels.weekly_playtime(db, ids, now.timestamp())
             members = levels.members_on(db, ids)
             off = []
@@ -677,7 +679,7 @@ class Bot:
             found = self.core.game_events
             now = time.time()
             # recent() and polls() only list servers that are still there.
-            servers = self.core.servers
+            servers = self.core.discord_servers
             for event in found.recent():
                 view = found.view(event)
                 if view["state"] == "coming" and not event["reminded_at"]:
@@ -761,7 +763,7 @@ class Bot:
                 continue
             pinged = going
             if layout.guild_options(db, gid)["reminders"] == "private":
-                server = self.core.servers[event["server_id"]].name
+                server = self.core.discord_servers[event["server_id"]].name
                 words = progress.private_reminder(event, server, self.guilds[gid]["name"])
                 pinged = []
                 for member in going:
@@ -827,7 +829,7 @@ class Bot:
         server's own alerts, never the ones about the PC (owner only)."""
         return (
             self.connected
-            and event.server_id in self.core.servers
+            and event.server_id in self.core.discord_servers
             and event.type not in OWNER_ONLY_EVENTS
             and bool(layout.alert_channels(self.core.db, event.server_id, self.guilds))
         )
@@ -839,7 +841,7 @@ class Bot:
         )
         body = {
             "embeds": [embed],
-            "components": alert_buttons(event, self.core.servers[event.server_id]),
+            "components": alert_buttons(event, self.core.discord_servers[event.server_id]),
             "allowed_mentions": {"parse": []},
         }
         sent = 0
@@ -857,7 +859,7 @@ class Bot:
         its alerts lose their buttons and say how."""
         reply = request.reply or {}
         if reply.get("channel_id") and reply.get("member_id"):
-            ctx = self.core.servers.get(request.server_id)
+            ctx = self.core.discord_servers.get(request.server_id)
             told = TOLD[how].format(server=ctx.name if ctx else request.server_id)
             self.spawn(self.tell(reply["channel_id"], reply["member_id"], told))
         words = {
@@ -888,7 +890,7 @@ class Bot:
         """A bus event: chat and player lines go to the server's chat
         channels, gathered for a moment so a busy chat is one post; console
         lines to its console channels."""
-        if not self.connected or event.server_id not in self.core.servers:
+        if not self.connected or event.server_id not in self.core.discord_servers:
             return
         if event.type == "console":
             self._to_console(event)
@@ -966,7 +968,7 @@ class Bot:
                 self.spawn(self.core.botpc.call(pc, "member_left", {"data": data}))
         servers = set(layout.servers_of(db, gid))
         for row in self.core.links.of_member(member):
-            ctx = self.core.servers.get(row["server_id"])
+            ctx = self.core.discord_servers.get(row["server_id"])
             if ctx is None or row["server_id"] not in servers:
                 continue
             try:
@@ -1016,7 +1018,7 @@ class Bot:
             if found is None:
                 log.info("a Discord message didn't reach a server on a PC that's off")
             return
-        ctx = self.core.servers.get(server_id or "")
+        ctx = self.core.discord_servers.get(server_id or "")
         if ctx is None or ctx.server.state.value != "ONLINE":
             return
         roles = [str(r) for r in (message.get("member") or {}).get("roles") or []]
@@ -1071,7 +1073,7 @@ class Bot:
         await self.check(guild_id)
 
     async def check(self, guild_id: str | None = None) -> None:
-        names = {sid: ctx.name for sid, ctx in self.core.servers.items()}
+        names = {sid: ctx.name for sid, ctx in self.core.discord_servers.items()}
         names.update({r: s["name"] for r, s in self.core.botpc.remote().items()})
         for gid in [guild_id] if guild_id else list(self.guilds):
             try:
@@ -1086,9 +1088,11 @@ class Bot:
         ("survival@<pc>")."""
         remote = self.core.botpc.remote() if everywhere and not self.rest_only else {}
         return {
-            sid: self.core.servers[sid].name if sid in self.core.servers else remote[sid]["name"]
+            sid: self.core.discord_servers[sid].name
+            if sid in self.core.discord_servers
+            else remote[sid]["name"]
             for sid in layout.servers_of(self.core.db, guild_id)
-            if sid in self.core.servers or sid in remote
+            if sid in self.core.discord_servers or sid in remote
         }
 
     def choices(self, guild_id: str) -> dict[str, str]:
@@ -1137,7 +1141,8 @@ class Bot:
             "state": "elsewhere" if self.rest_only else self.gateway.state,
             "bot_pc": self.core.botpc.status(),
             "servers": [
-                {"id": sid, "name": ctx.name} for sid, ctx in sorted(self.core.servers.items())
+                {"id": sid, "name": ctx.name}
+                for sid, ctx in sorted(self.core.discord_servers.items())
             ]
             + [
                 {"id": r, "name": f"{s['name']} ({s['pc_name']})"}
@@ -1152,7 +1157,7 @@ class Bot:
             "features_off": off,
             "no_game_chat": sorted(
                 sid
-                for sid, ctx in self.core.servers.items()
+                for sid, ctx in self.core.discord_servers.items()
                 if not ctx.config.server_type.reads_chat
             ),
             "addresses": layout.addresses(self.core.db),
@@ -1293,12 +1298,12 @@ class Bot:
         try:
             self.rate.check(f"discord:{call.member_id}")
             server_id = self.pick_server(call) if needs_server else None
-            if server_id and server_id not in self.core.servers:  # on another PC
+            if server_id and server_id not in self.core.discord_servers:  # on another PC
                 await self.pass_on(data, server_id, name)
                 return
             P.check(call.principal, permission, server_id)
             if server_id:
-                call.ctx = self.core.servers[server_id]
+                call.ctx = self.core.discord_servers[server_id]
             if asking and call.ctx is not None:
                 question = str(asking.sure).format(name=call.arg, server=call.ctx.name)
                 await self.respond(data, question, components=sure_buttons(asking, call))
@@ -1354,7 +1359,7 @@ class Bot:
         the only one; with several, ask which. One on another PC is
         "survival@<pc>" (on the Bot PC)."""
         names = self.server_names(call.guild_id, True)
-        known = set(self.core.servers) | (set() if self.rest_only else set(names))
+        known = set(self.core.discord_servers) | (set() if self.rest_only else set(names))
         wanted = call.options.get("server")
         if wanted:
             wanted = self.core.botpc.local(str(wanted))
@@ -1804,7 +1809,7 @@ async def my_links(bot: Bot, call: Call) -> str:
     ] + bot.core.botpc.remote_links(call.member_id)
     if not rows:
         return "You have no linked Minecraft accounts. Use /link to add one."
-    names = {sid: ctx.name for sid, ctx in bot.core.servers.items()}
+    names = {sid: ctx.name for sid, ctx in bot.core.discord_servers.items()}
     names.update({r: s["name"] for r, s in bot.core.botpc.remote().items()})
     lines = [f"{r['name']} (linked on {names.get(r['server'], r['server'])})" for r in rows]
     return "Your linked Minecraft accounts:\n" + "\n".join(lines)

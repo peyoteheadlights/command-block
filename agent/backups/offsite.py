@@ -12,12 +12,15 @@ sync (OneDrive, Google Drive, Dropbox), chosen with the folder picker. Rules:
   * each copy's status is recorded and shown as it is: "Copied and checked",
     or the reason it failed ("drive not connected")
 
-Copies go to ``<folder>/Command Block/<server id>/<backup name>``.
+Copies go to ``<folder>/Command Block/<server id>/<backup name>``, with a
+small ``server.json`` beside them (name, type, Minecraft version) so a new
+PC can bring the server back from them (agent/bringin.py, bring_back).
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -38,6 +41,8 @@ OLD_SUBFOLDER = "Minecraft Server Control"
 OK = "ok"
 FAILED = "failed"
 CHUNK = 4 * 1024 * 1024
+ABOUT = "server.json"
+MAX_ABOUT = 16 * 1024
 
 
 class OffsiteError(RuntimeError):
@@ -212,3 +217,71 @@ def record(db, backup_id: int, status: str, path: str | None, detail: str | None
         "WHERE id = ?",
         (status, path, (detail or "")[:400] or None, time.time(), backup_id),
     )
+
+
+def write_about(root: Path, server_id: str, about: dict[str, Any]) -> None:
+    """What a new PC needs to bring the server back, next to its copies.
+    A value not known now (the version before the server first ran) keeps
+    the one written before. Never raises: the copies matter more."""
+    path = target_folder(root, server_id) / ABOUT
+    try:
+        old = read_about(path.parent)
+        merged = {**old, **{k: v for k, v in about.items() if v}}
+        part = path.with_name(ABOUT + ".part")
+        part.write_text(json.dumps(merged, indent=1), encoding="utf-8")
+        os.replace(part, path)
+    except OSError:
+        log.warning("could not write %s", path, exc_info=True)
+
+
+def read_about(folder: Path) -> dict[str, Any]:
+    """A server folder's server.json, or {} when it has none or it can't be
+    read. Only short text values are taken."""
+    path = Path(folder) / ABOUT
+    try:
+        if path.is_symlink() or path.stat().st_size > MAX_ABOUT:
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        k: str(v)[:80]
+        for k, v in data.items()
+        if k in ("name", "type", "minecraft", "loader") and isinstance(v, str)
+    }
+
+
+def servers_in(root: Path) -> list[dict[str, Any]]:
+    """The servers whose copies are in an off-PC folder (the folder picked
+    for copies, or its Command Block folder), each with its newest copy.
+    Only read."""
+    root = Path(root)
+    base = root if root.name in (SUBFOLDER, OLD_SUBFOLDER) else root / SUBFOLDER
+    if not base.is_dir() and (root / OLD_SUBFOLDER).is_dir():
+        base = root / OLD_SUBFOLDER
+    found = []
+    for folder in sorted(base.iterdir()) if base.is_dir() else []:
+        if not folder.is_dir() or folder.is_symlink():
+            continue
+        zips = [
+            z
+            for z in folder.iterdir()
+            if z.suffix.lower() == ".zip" and z.is_file() and not z.is_symlink()
+        ]
+        if not zips:
+            continue
+        newest = max(zips, key=lambda z: z.stat().st_mtime)
+        found.append(
+            {
+                "id": folder.name,
+                **read_about(folder),
+                "backup": str(newest),
+                "backup_name": newest.name,
+                "backup_at": newest.stat().st_mtime,
+                "size_bytes": newest.stat().st_size,
+                "copies": len(zips),
+            }
+        )
+    return found

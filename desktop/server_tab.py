@@ -85,6 +85,8 @@ def state_words(row: dict) -> str:
 def chips(row: dict) -> list[str]:
     """What the header says about the server, known values only."""
     out = [state_words(row)]
+    if row.get("test"):
+        out.append(text("test.badge"))
     version = " ".join(x for x in (row.get("type_name"), row.get("minecraft_version")) if x)
     if version:
         out.append(version)

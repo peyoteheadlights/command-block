@@ -181,6 +181,11 @@ class ServerSettings(Section):
     launch_players: int = 0
     # Start a server auto-sleep stopped when someone tries to join.
     start_on_join: bool = False
+    # A Test server (Technical): no default schedules, hidden from the
+    # Discord bot. Its build folder's jars are copied in at each start
+    # (agent/testserver.py).
+    test: bool = False
+    build_folder: str = ""
 
 
 @dataclass(frozen=True)
@@ -267,6 +272,13 @@ class BackupSettings(Section):
             "server.properties",
             "config",
             "mods",
+            # The player lists, so a world brought back keeps its whitelist.
+            "whitelist.json",
+            "ops.json",
+            "banned-players.json",
+            "banned-ips.json",
+            "allowlist.json",
+            "permissions.json",
         ]
     )
     keep_daily: int = 7
@@ -278,6 +290,9 @@ class BackupSettings(Section):
     # cloud folder (OneDrive, Google Drive, Dropbox). Empty: no second copy.
     # See agent/backups/offsite.py.
     offsite_directory: str = ""
+    # Back up after a planned stop if someone played since the last backup
+    # (off by default: weak mini PCs stop quicker without it).
+    on_stop: bool = False
 
 
 @dataclass(frozen=True)

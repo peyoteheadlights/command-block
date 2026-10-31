@@ -707,6 +707,27 @@ MIGRATIONS: list[tuple[int, str]] = [
         UPDATE accounts SET id = lower(hex(randomblob(8)));
         """,
     ),
+    (
+        23,
+        # Command buttons on the Console page (agent/api/routes/console.py),
+        # and the busiest player count of each hour the agent watched a
+        # server (agent/playerhours.py); an hour with no row is Unknown.
+        """
+        CREATE TABLE command_buttons (
+            server_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            command TEXT NOT NULL,
+            PRIMARY KEY (server_id, position)
+        );
+        CREATE TABLE player_hours (
+            server_id TEXT NOT NULL,
+            hour INTEGER NOT NULL,
+            players INTEGER NOT NULL,
+            PRIMARY KEY (server_id, hour)
+        );
+        """,
+    ),
 ]
 
 
@@ -844,6 +865,17 @@ class Database:
             )
             self._conn.commit()
 
+    def set_command_buttons(self, server_id: str, buttons: list[tuple[str, str]]) -> None:
+        """Replace a server's command buttons (name, command), in one transaction."""
+        with self._lock:
+            self._conn.execute("DELETE FROM command_buttons WHERE server_id = ?", (server_id,))
+            self._conn.executemany(
+                "INSERT INTO command_buttons (server_id, position, name, command) "
+                "VALUES (?, ?, ?, ?)",
+                [(server_id, i, name, command) for i, (name, command) in enumerate(buttons)],
+            )
+            self._conn.commit()
+
     def recent_events(self, server_id: str, limit: int = 100) -> list[dict]:
         """One server's events, plus the agent-wide ones (sign-ins, the
         agent starting), which belong on every server's history."""
@@ -901,6 +933,9 @@ class Database:
     def prune(self, metrics_days: int = 14, events_keep: int = 5000) -> None:
         cutoff = time.time() - metrics_days * 86400
         self.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
+        self.execute(
+            "DELETE FROM player_hours WHERE hour < ?", (int(time.time() // 3600) - 28 * 24,)
+        )
         self.execute(
             "DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT ?)",
             (events_keep,),

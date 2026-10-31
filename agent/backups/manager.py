@@ -73,6 +73,8 @@ def label(row: dict[str, Any]) -> str | None:
     """How the Backups list names a backup made before a change: by what it
     came before ("Before changing game settings"). Older backups' notes said
     "Automatic safety copy before: ..." and read the same way."""
+    if row.get("kind") == "season":
+        return f"Old season, kept forever ({row.get('note') or 'season'})"
     if row.get("kind") != "safety":
         return None
     note = (row.get("note") or "").strip()
@@ -459,6 +461,15 @@ class BackupManager:
                 reason = f"unexpected error: {exc}"
         if reason is None:
             offsite.record(self.db, row_id, offsite.OK, str(destination), None)
+            row = self.db.server_row(self.server.server_id) or {}
+            about = {
+                "name": self.config.server.name,
+                # The owner's own jar isn't in a backup, so it can't come back.
+                "type": "custom" if self.config.server.custom_jar else self.config.server.type,
+                "minecraft": self.server.mc_version,
+                "loader": row.get("loader"),
+            }
+            await asyncio.to_thread(offsite.write_about, root, self.server.server_id, about)
             return {"state": "ok", "path": str(destination)}
         offsite.record(self.db, row_id, offsite.FAILED, None, reason)
         await self.bus.publish(
@@ -782,7 +793,8 @@ class BackupManager:
     # ------------------------------------------------------------------
     async def apply_retention(self) -> dict[str, Any]:
         """Keep N daily, weekly and monthly backups. Safety backups are kept
-        for 14 days regardless; manual backups are never auto-deleted."""
+        for 14 days regardless; manual and season backups are never
+        auto-deleted."""
         keep_daily = self.config.backups.keep_daily
         keep_weekly = self.config.backups.keep_weekly
         keep_monthly = self.config.backups.keep_monthly
@@ -791,7 +803,7 @@ class BackupManager:
         keep: set[int] = set()
         buckets: dict[str, dict[str, dict]] = {"daily": {}, "weekly": {}, "monthly": {}}
         for row in sorted(rows, key=lambda r: r["created_at"], reverse=True):
-            if row["kind"] == "manual":
+            if row["kind"] in ("manual", "season"):
                 keep.add(row["id"])
                 continue
             if row["kind"] == "safety":

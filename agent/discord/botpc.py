@@ -210,7 +210,7 @@ class BotPC:
         body = {
             "servers": [
                 {"id": sid, "name": ctx.name, "state": ctx.server.state.value}
-                for sid, ctx in sorted(self.core.servers.items())
+                for sid, ctx in sorted(self.core.discord_servers.items())
             ],
             "xp": levels.all_xp(self.core.db),
             "links": [
@@ -465,7 +465,7 @@ class BotPC:
             ]
             return {"ok": True, "done": bool(found) and self.core.links.unlink(found[0]["uuid"])}
         elif what == "leaderboard":
-            ids = [s for s in body.get("servers") or [] if s in self.core.servers]
+            ids = [s for s in body.get("servers") or [] if s in self.core.discord_servers]
             until = float(body.get("until") or 0) or None
             return {
                 "ok": True,

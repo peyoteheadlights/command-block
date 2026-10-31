@@ -38,6 +38,8 @@ async def duplicate_server(
         directory=payload.directory,
         world=payload.world,
         user=principal.user,
+        test=payload.test,
+        season_backup=payload.season_backup,
     )
     audit(ctx, request, "server_duplicate", target=payload.name, detail=payload.world)
     return {"ok": True, "job": job.to_dict()}

@@ -8,7 +8,7 @@ import asyncio
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from ... import checklist, worldimport, worldundo
+from ... import checklist, seasons, worldimport, worldundo
 from ...security.auth import Principal
 from ...security.permissions import (
     BACKUPS_DOWNLOAD,
@@ -22,6 +22,7 @@ from ..deps import audit, get_server
 from ..errors import audit_failure
 from ..responses import (
     Checklist,
+    NewSeason,
     Ok,
     Restored,
     SavedWorlds,
@@ -30,7 +31,7 @@ from ..responses import (
     WorldRead,
     WorldTimeline,
 )
-from .models import WorldFolderRequest, WorldImportRequest, WorldUndoRequest
+from .models import NewSeasonRequest, WorldFolderRequest, WorldImportRequest, WorldUndoRequest
 
 CHUNK = 1024 * 1024
 
@@ -151,6 +152,25 @@ async def import_world(
     with audit_failure(ctx, request, "world_import"):
         result = await worldimport.import_world(ctx, payload.token, user=principal.user)
     request.state.audited = True  # import_world writes its own audit row
+    return {"ok": True, **result}
+
+
+@router.post("/world/new-season", response_model=NewSeason)
+async def new_season(
+    payload: NewSeasonRequest,
+    request: Request,
+    principal: Principal = Depends(require(WORLD_REPLACE)),
+    ctx=Depends(get_server),
+):
+    """A fresh world with the same settings, add-ons and whitelist. The old
+    world is kept as a season backup the clean-up never deletes."""
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Confirm this first: it starts a fresh world.")
+    with audit_failure(ctx, request, "new_season"):
+        result = await seasons.new_season(
+            ctx, seed=payload.seed, announce=payload.announce, user=principal.user
+        )
+    request.state.audited = True  # new_season writes its own audit row
     return {"ok": True, **result}
 
 

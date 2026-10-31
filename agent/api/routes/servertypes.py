@@ -32,6 +32,7 @@ from ...servertypes import install as install_module
 from ...servertypes import versions as versions_module
 from ..deps import audit, get_core, get_server
 from ..responses import (
+    BackupFolderServers,
     BedrockTerms,
     BedrockVersions,
     BringInFound,
@@ -53,7 +54,9 @@ from ..responses import (
     VersionRolledBack,
 )
 from .models import (
+    BackupFolderRequest,
     BedrockTermsRequest,
+    BringBackRequest,
     BringInReadRequest,
     BringInRequest,
     ConvertRequest,
@@ -135,6 +138,7 @@ async def create_server(
         eula_accepted=payload.eula_accepted,
         vanilla_spawns=payload.vanilla_spawns,
         user=principal.user,
+        test=payload.test,
     )
     return {"ok": True, **result}
 
@@ -191,6 +195,38 @@ async def bring_server_in(
         based_on=payload.based_on,
         jar=payload.jar,
         trusted=payload.trusted,
+        user=principal.user,
+    )
+    return {"ok": True, "job": job.to_dict()}
+
+
+@global_router.post("/bring-back/read", response_model=BackupFolderServers)
+async def read_backup_folder(
+    payload: BackupFolderRequest,
+    principal: Principal = Depends(require(SERVERS_MANAGE)),
+    core=Depends(get_core),
+):
+    """The servers whose off-PC copies are in a folder. Only read."""
+    found = await asyncio.to_thread(bringin_module.backup_folder, core, payload.folder)
+    return {"servers": found}
+
+
+@global_router.post("/bring-back", response_model=DuplicateStarted)
+async def bring_server_back(
+    payload: BringBackRequest,
+    principal: Principal = Depends(require(SERVERS_MANAGE)),
+    core=Depends(get_core),
+):
+    """Rebuild one server from its newest off-PC copy, as a job. The backup
+    folder is never changed."""
+    job = await bringin_module.bring_back(
+        core,
+        folder=payload.folder,
+        server=payload.server,
+        name=payload.name,
+        directory=payload.directory,
+        minecraft=payload.minecraft_version,
+        eula_accepted=payload.eula_accepted,
         user=principal.user,
     )
     return {"ok": True, "job": job.to_dict()}

@@ -109,8 +109,32 @@ class ServerContext:
             *([] if core.guard.holds(self) else core.ports.start_warnings(self)),
             *memory.start_warnings(self),
         ]
-        self.server.before_launch = lambda: core.guard.before_launch(self)
+        self.server.before_launch = self._before_launch
         self._update_task: asyncio.Task | None = None
+        self._stop_backup: asyncio.Task | None = None
+
+    async def _before_launch(self) -> list[str]:
+        """As the server starts: a Test server's builds are copied in (a
+        failed copy is said in the console, and the start goes on), then
+        Join protection picks the start arguments."""
+        from . import testserver
+
+        try:
+            copied = await asyncio.to_thread(testserver.copy_builds, self)
+            if copied:
+                self.server._emit_console(
+                    f"[agent] copied from the build folder: {', '.join(copied)}"
+                )
+        except Exception as exc:
+            self.server._emit_console(f"[agent] build folder not copied: {exc}")
+            await self.bus.publish(
+                Event(
+                    type="build_copy_failed",
+                    level="warn",
+                    message=f"Build folder not copied: {exc}",
+                )
+            )
+        return await self.core.guard.before_launch(self)
 
     def _whitelist_addon(self, kind: str):
         addon = whitelist_addon(self)
@@ -182,10 +206,45 @@ class ServerContext:
             elif event.type in ("server_stopped", "server_crashed"):
                 watchers.remember(self)
                 await protection.router_close(self)
+                if event.type == "server_stopped" and self.backup_on_stop(event):
+                    self._stop_backup = asyncio.create_task(self._backup_after_stop())
             elif event.type == "backup_restored":
                 watchers.remember(self)
         except Exception:  # pragma: no cover - reported, never stops the server's events
             log.exception("the Protection card's start/stop work failed")
+
+    def backup_on_stop(self, event: Event) -> bool:
+        """Back up now? Only when it's on, after a planned stop that isn't
+        a restart, a restore or a stop for a backup (the server is held or
+        a job runs on it then), and only if someone joined since the last
+        backup."""
+        if not self.config.backups.on_stop:
+            return False
+        if event.data.get("reason") not in ("user_stop", "scheduled_stop"):
+            return False
+        if event.data.get("restart") or self.server.held_by:
+            return False
+        if self.core.jobs.risky_job(self.server_id):
+            return False
+        last = self.core.db.query_one(
+            "SELECT MAX(created_at) AS at FROM backups WHERE server_id = ? AND status = 'ok'",
+            (self.server_id,),
+        )
+        since = (last or {}).get("at") or 0
+        return bool(
+            self.core.db.query_one(
+                "SELECT 1 FROM player_sessions WHERE server_id = ? AND joined_at > ? LIMIT 1",
+                (self.server_id, since),
+            )
+        )
+
+    async def _backup_after_stop(self) -> None:
+        try:
+            await self.backups.create(
+                name="after-stop", kind="scheduled", note="When the server stopped"
+            )
+        except Exception as exc:  # the backup's own failure alert has gone out
+            log.warning("backup after stop failed: %s", exc)
 
     async def start(self) -> None:
         # Establish facts before the apps can ask for them, so the first
@@ -196,7 +255,9 @@ class ServerContext:
         if self.server.state.value == "OFFLINE":
             # Nothing is running, so "nobody is online" is a verified fact.
             await self.players.clear_online()
-        self.metrics.start(player_source=self.players.online)
+        self.metrics.start(
+            player_source=lambda: self.players.online() if self.players.verified else None
+        )
         self.tps.start()
         self.scheduler.seed_defaults()
         self.scheduler.start()
@@ -291,6 +352,8 @@ class ServerContext:
             "type_name": status["server_type_name"],
             # The owner's own jar: never checked or updated by the app.
             "custom_jar": self.config.server.custom_jar,
+            # A Test server: the apps show a Test badge, Simple mode hides it.
+            "test": self.config.server.test,
             "content": self.config.server_type.content,
             # Java or Bedrock, and what this type can and can't do, so the
             # pages show "not applicable" instead of a control that does
@@ -399,6 +462,11 @@ class AgentCore:
     @property
     def default(self) -> ServerContext:
         return self.servers[self.config.default_server_id]
+
+    @property
+    def discord_servers(self) -> dict[str, ServerContext]:
+        """The servers the Discord bot knows: every one but Test servers."""
+        return {sid: ctx for sid, ctx in self.servers.items() if not ctx.config.server.test}
 
     def get_server(self, server_id: str) -> ServerContext:
         ctx = self.servers.get(server_id)

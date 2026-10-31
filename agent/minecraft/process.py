@@ -836,7 +836,12 @@ class MinecraftServer:
                 Event(
                     type="server_stopped",
                     message="Server stopped",
-                    data={"exit_code": code, "reason": reason.value, "uptime": uptime},
+                    data={
+                        "exit_code": code,
+                        "reason": reason.value,
+                        "uptime": uptime,
+                        "restart": restart_wanted,
+                    },
                 )
             )
             self._exited_event.set()

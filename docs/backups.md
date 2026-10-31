@@ -13,7 +13,16 @@ backups:
     - server.properties
     - config
     - mods
+    - whitelist.json
+    - ops.json
+    - banned-players.json
+    - banned-ips.json
+    - allowlist.json
+    - permissions.json
 ```
+
+The player lists are there so a world brought back keeps its whitelist.
+Files a server doesn't have are skipped.
 
 The world is always included as `server.properties` names it: with
 `level-name=survival`, the folders `survival`, `survival_nether` and
@@ -109,12 +118,34 @@ keep_monthly: 3
 Retention runs after each new backup. It keeps the newest backup of each day,
 week and month up to those limits.
 
-- **Manual backups are never auto-deleted.**
+- **Manual and season backups are never auto-deleted.**
 - Safety backups are kept for 14 days.
 - Retention only ever deletes files inside the backup folder. It cannot touch a
   live world.
 
+## Backup when the server stops
+
+`backups.on_stop: true` (Settings, off by default) makes a backup after a
+planned stop if someone joined since the last backup. Not after a crash, a
+restart, a restore or any stop a job holds the server for. It counts as a
+scheduled backup, so the keep rules above apply.
+
+## New season
+
+Backups > New season makes a full backup, marks it `season` (never deleted by
+retention), clears the world folders and sets `level-seed` (empty: random).
+Settings, add-ons and the player lists stay. One Undo puts the old world and
+seed back. "Open this season as a server" on that backup duplicates the
+server with the season backup's files in place of the copy's.
+
 ## Disaster recovery
+
+With an off-PC folder set, each copy folder also holds a small `server.json`
+(name, type, Minecraft version). On a new PC, New server > I have one >
+Bring servers back reads that folder (only reads it), lists the servers, and
+rebuilds each picked one from its newest copy: unzipped into a new folder,
+the server software downloaded like for a new server, a free port picked if
+its own is taken, then a first backup.
 
 If the PC dies completely: copy a `.zip` from the data folder's `backups/` onto the new
 machine, install your Fabric server, and unzip the archive into the server

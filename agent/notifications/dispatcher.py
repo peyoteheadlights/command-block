@@ -90,6 +90,7 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "server_added": ("servers_changed", 0x5865F2, "Server added: {server}"),
     "server_removed": ("servers_changed", 0x9AA0A6, "Server removed: {server}"),
     "server_duplicated": ("servers_changed", 0x5865F2, "Server copied: {server}"),
+    "new_season": ("servers_changed", 0x5865F2, "{server}: a new season started"),
     "game_settings_changed": (
         "game_settings_changed",
         0x5865F2,
@@ -665,6 +666,8 @@ class Notifier:
         """Event bus subscriber. Queues the alert and returns at once; never raises."""
         try:
             if event.type not in EVENT_MAP or not self.anyone_wants(event.type):
+                return
+            if event.data.get("quiet"):  # in the app's feed only
                 return
             min_interval = self.config.notifications.min_interval_seconds
             key = (event.server_id, event.type)

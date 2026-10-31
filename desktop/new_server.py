@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 
 from .mods import pack_lines
 from .overview import card
-from .ui import field, label, push, refill, swatches
+from .ui import clock, field, label, push, refill, size, swatches
 from .words import has, mode, text
 
 if TYPE_CHECKING:
@@ -143,7 +143,9 @@ class NewServerScreen(QScrollArea):
         refill(self.pack_column, [self.pack_card()])
         refill(
             self.have_column,
-            [self.bring_card()] + ([self.have_card()] if mode["technical"] else []),
+            [self.bring_card()]
+            + ([self.have_card()] if mode["technical"] else [])
+            + ([self.back_card()] if self.window_.agent.place == "this PC" else []),
         )
 
     # ------------------------------------------------------------ helpers
@@ -460,6 +462,12 @@ class NewServerScreen(QScrollArea):
                 field(text("new.memory"), self.memory, self.options.get("memory_reason") or "")
             )
             layout.addWidget(label(text("new.port_hint", port=self.options.get("port")), "muted"))
+        # Technical: a throwaway server for trying builds (agent/testserver.py).
+        self.test = QCheckBox(text("test.make"))
+        self.test.setVisible(mode["technical"])
+        layout.addWidget(self.test)
+        if mode["technical"]:
+            layout.addWidget(label(text("test.make_hint"), "sub"))
         return frame
 
     def rules_card(self, kind: dict) -> QFrame:
@@ -517,6 +525,7 @@ class NewServerScreen(QScrollArea):
                     "color": self.choice["color"],
                     "vanilla_spawns": bool(self.spawns and self.spawns.isChecked()),
                     "eula_accepted": True,
+                    "test": self.test.isChecked(),
                 }
                 window = self.window_
                 window.run(
@@ -727,6 +736,115 @@ class NewServerScreen(QScrollArea):
 
         go.clicked.connect(start)
         refill(self.bring_slot, [*shown, form])
+
+    # ------------------------------------------------------------ from backup copies
+    def back_card(self) -> QFrame:
+        """On a new PC: the servers in the off-PC backup folder, each rebuilt
+        from its newest copy. The folder is only read."""
+        frame, layout = card(text("back.title"))
+        layout.addWidget(label(text("back.intro"), "sub"))
+        folder, box = self.folder_field(text("back.folder"), "", "E:\\Backups")
+        layout.addWidget(folder)
+        read = push(text("bring.read"), "primary")
+        row = QHBoxLayout()
+        row.addWidget(read)
+        row.addStretch()
+        layout.addLayout(row)
+        self.back_slot = QVBoxLayout()
+        layout.addLayout(self.back_slot)
+
+        def read_it() -> None:
+            if not box.text().strip():
+                return
+            refill(self.back_slot, [label(text("bring.reading"), "sub")])
+            window = self.window_
+            window.run(
+                lambda: window.agent.call(
+                    "POST", "/bring-back/read", {"folder": box.text().strip()}
+                ),
+                lambda found: self.show_backed_up(box.text().strip(), found["servers"]),
+                lambda exc: refill(self.back_slot, [label(str(exc), "problem")]),
+            )
+
+        read.clicked.connect(read_it)
+        return frame
+
+    def show_backed_up(self, source: str, servers: list[dict]) -> None:
+        shown: list[QWidget] = []
+        picks: list[tuple[dict, QCheckBox, QLineEdit | None]] = []
+        for s in servers:
+            tick = QCheckBox(s["name"])
+            parts = [
+                " ".join(x for x in (s.get("type_name"), s.get("minecraft")) if x),
+                text("back.newest", when=clock(s["backup_at"]), size=size(s["size_bytes"])),
+            ]
+            shown.append(tick)
+            words = s.get("problem") or "  ·  ".join(p for p in parts if p)
+            if s.get("here") and not s.get("problem"):
+                words += "  ·  " + text("back.here")
+            shown.append(label(words, "problem" if s.get("problem") else "sub"))
+            version: QLineEdit | None = None
+            if s.get("problem"):
+                tick.setEnabled(False)
+            else:
+                tick.setChecked(not s.get("here"))
+                if not s.get("minecraft"):
+                    version = QLineEdit()
+                    version.setMaxLength(64)
+                    version.setPlaceholderText(text("back.version"))
+                    version.setAccessibleName(text("back.version"))
+                    shown.append(version)
+            picks.append((s, tick, version))
+        place, place_box = self.folder_field(
+            text("back.where"), text("back.where_hint"), "C:\\Minecraft"
+        )
+        shown.append(place)
+        eula = QCheckBox(text("new.eula_tick"))
+        link = push(text("new.eula_link"), "plain")
+        link.clicked.connect(lambda: self.window_.pc.open_link(self.options.get("eula_url") or ""))
+        shown += [link, eula]
+        go = push(text("back.button"), "primary")
+        said = label(kind="sub")
+        buttons = QWidget()
+        h = QHBoxLayout(buttons)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(go)
+        h.addWidget(said, 1)
+        shown.append(buttons)
+
+        def start() -> None:
+            chosen = [(s, v) for s, tick, v in picks if tick.isChecked()]
+            parent = place_box.text().strip()
+            if not chosen or not parent:
+                said.setText(text("back.need_pick"))
+                return
+            if not eula.isChecked():
+                said.setText(text("new.need_eula"))
+                return
+            go.setEnabled(False)
+            for s, version in chosen:
+                bring(
+                    {
+                        "folder": source,
+                        "server": s["id"],
+                        "name": s["name"],
+                        "directory": str(Path(parent) / s["name"]),
+                        "minecraft_version": version.text().strip() if version else None,
+                        "eula_accepted": True,
+                    }
+                )
+
+        def bring(body: dict) -> None:
+            window = self.window_
+            window.run(
+                lambda: window.agent.call("POST", "/bring-back", body),
+                lambda _r: said.setText(text("bring.started", name=body["name"])),
+                lambda exc: said.setText(str(exc)),
+                lambda: go.setEnabled(True),
+            )
+
+        go.clicked.connect(start)
+        refill(self.back_slot, shown)
 
     # ------------------------------------------------------------ from a modpack
     def pack_card(self) -> QFrame:

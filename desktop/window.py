@@ -185,6 +185,8 @@ class ServerRow(QFrame):
         name = label(row["name"])
         name.setObjectName("title")
         layout.addWidget(name, 1)
+        if row.get("test"):
+            layout.addWidget(label(text("test.badge"), "chip"))
         state = row.get("state", "UNKNOWN")
         layout.addWidget(label(state_words(row), "sub"))
         if state == "ONLINE":
@@ -340,6 +342,7 @@ class MainWindow(QMainWindow):
         self.dark = dark if dark is not None else self.dark_look(pc.setting("look"))
         self.scale = pc.text_scale()
         self.servers: list[dict] = []
+        self.all_servers: list[dict] = []  # with Test servers, which Simple mode hides
         # Other PCs' servers (Your PCs), by PC id: rows, or why there are none.
         self.elsewhere: dict[str, list[dict] | str] = {}
         self._elsewhere_at = 0.0
@@ -733,6 +736,8 @@ class MainWindow(QMainWindow):
         )
 
     def servers_loaded(self, servers: list[dict]) -> None:
+        self.all_servers = servers
+        servers = [r for r in servers if mode["technical"] or not r.get("test")]
         self.servers = servers
         self.update_tray()
         self.screens["All servers"].fill(servers)  # type: ignore[attr-defined]
@@ -1357,7 +1362,7 @@ class MainWindow(QMainWindow):
         if self.pc.setting("help_wake"):
             self.sync_helper()
         self.update_tray()
-        self.servers_loaded(self.servers)  # hides what this account can't do
+        self.servers_loaded(self.all_servers)  # hides what this account can't do
         if self.screen_name == "Server" and self.server_screen.row:
             # a page opened before this answered showed the owner's buttons
             self.server_screen.show_page(self.server_screen.current_page)
@@ -1440,7 +1445,10 @@ class MainWindow(QMainWindow):
             self.server_screen.build_tabs()
             self.server_screen.show_row(self.server_screen.row)
             self.load_server_parts()
+        # Simple mode hides Test servers.
+        self.servers = [r for r in self.all_servers if mode["technical"] or not r.get("test")]
         self.screens["All servers"].fill(self.servers)  # type: ignore[attr-defined]
+        self.fill_binder()
 
     # ------------------------------------------------------------ actions
     def server_action(self, server_id: str, action: str) -> None:

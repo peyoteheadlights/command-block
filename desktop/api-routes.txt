@@ -222,3 +222,9 @@ POST /api/pcs/join
 POST /api/pcs/joins/{join_id}/{answer}
 POST /api/pcs/resets/{pc}/confirm
 DELETE /api/pcs/{pc}
+GET /api/servers/{server_id}/command-buttons
+PUT /api/servers/{server_id}/command-buttons
+GET /api/servers/{server_id}/players/hours
+POST /api/servers/{server_id}/world/new-season
+POST /api/bring-back/read
+POST /api/bring-back

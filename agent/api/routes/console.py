@@ -9,12 +9,16 @@ from fastapi.responses import PlainTextResponse
 
 from ...events import OWNER_ONLY_EVENTS
 from ...minecraft.analyzer import fix_for
+from ...minecraft.commands import CommandError, describe_danger, validate
 from ...security.auth import Principal
 from ...security.permissions import CONSOLE_READ, CONSOLE_SEND, require
 from ..deps import audit, get_server
-from ..responses import ConsoleLog, CrashDetail, CrashList, EventList, Ok
+from ..responses import CommandButtons, ConsoleLog, CrashDetail, CrashList, EventList, Ok
+from .models import CommandButtonsRequest
 
 router = APIRouter()
+
+MAX_BUTTONS = 12
 
 
 @router.get("/logs", response_model=ConsoleLog)
@@ -95,3 +99,50 @@ async def crash_detail(
     if not row:
         raise HTTPException(status_code=404, detail="That crash isn't on the list any more.")
     return row
+
+
+# ---------------------------------------------------------------- command buttons
+def _buttons(ctx) -> dict:
+    rows = ctx.core.db.query(
+        "SELECT name, command FROM command_buttons WHERE server_id = ? ORDER BY position",
+        (ctx.server_id,),
+    )
+    for row in rows:
+        # The apps ask before a dangerous one, as when it's typed.
+        row["danger_reason"] = describe_danger(row["command"])
+    return {"buttons": rows, "max": MAX_BUTTONS}
+
+
+@router.get("/command-buttons", response_model=CommandButtons)
+async def command_buttons(
+    principal: Principal = Depends(require(CONSOLE_READ)), ctx=Depends(get_server)
+):
+    """The Console page's named buttons. A press sends the command through
+    POST /server/command, with the same checks as a typed one."""
+    return _buttons(ctx)
+
+
+@router.put("/command-buttons", response_model=CommandButtons)
+async def save_command_buttons(
+    payload: CommandButtonsRequest,
+    request: Request,
+    principal: Principal = Depends(require(CONSOLE_SEND)),
+    ctx=Depends(get_server),
+):
+    """Replace this server's buttons (up to 12), each checked like a typed
+    command before it is saved."""
+    if len(payload.buttons) > MAX_BUTTONS:
+        raise HTTPException(status_code=400, detail=f"A server can have {MAX_BUTTONS} buttons.")
+    rows = []
+    for button in payload.buttons:
+        name = button.name.strip()
+        if not name or not name.isprintable():
+            raise HTTPException(status_code=400, detail="Give each button a name.")
+        try:
+            command = validate(button.command, confirm=True).raw
+        except CommandError as exc:
+            raise HTTPException(status_code=400, detail=f"{name}: {exc}") from exc
+        rows.append((name, command))
+    ctx.core.db.set_command_buttons(ctx.server_id, rows)
+    audit(ctx, request, "command_buttons", detail=f"{len(rows)} buttons")
+    return _buttons(ctx)

@@ -191,6 +191,8 @@ class Scheduler:
         self.db.execute("DELETE FROM schedules WHERE id = ?", (schedule_id,))
 
     def seed_defaults(self) -> None:
+        if self.config.server.test:  # a Test server gets no schedules by default
+            return
         if self.db.query_one(
             "SELECT id FROM schedules WHERE server_id = ?", (self.server.server_id,)
         ):
