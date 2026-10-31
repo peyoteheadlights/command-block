@@ -112,6 +112,7 @@
 "state.stopping": ["Stopping…", "Stopping…"],
 "state.restarting": ["Restarting…", "Restarting…"],
 "state.crashed": ["Crashed", "Crashed"],
+"state.not_answering": ["Not answering", "Running, not answering"],
 "state.failed_to_start": ["Failed to start", "Failed to start"],
 "state.unknown": ["Unknown", "Unknown"],
 "head.app": ["Settings", "Settings"],

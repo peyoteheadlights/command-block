@@ -48,6 +48,9 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "server_restarted": ("server_restarted", 0x5865F2, "{server} restarted"),
     "server_recovered": ("server_recovered", 0x3BA55D, "{server} recovered"),
     "crash_loop": ("server_crashed", 0xED4245, "{server}: automatic restart disabled"),
+    # Same switch as crashes: a stuck server is as down as a crashed one.
+    "server_not_answering": ("server_crashed", 0xED4245, "{server} isn't answering"),
+    "server_answering_again": ("server_recovered", 0x3BA55D, "{server} answers again"),
     "restart_scheduled": (
         "server_restarted",
         0xFAA61A,

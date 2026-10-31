@@ -82,6 +82,8 @@ PAGE_CLASSES: dict[str, type[Page]] = {
 
 
 def state_words(row: dict) -> str:
+    if row.get("state") == "ONLINE" and (row.get("answering") or {}).get("ok") is False:
+        return text("state.not_answering")
     return text(STATE_WORDS.get(row.get("state", ""), "state.unknown"))
 
 

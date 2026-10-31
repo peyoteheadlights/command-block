@@ -108,6 +108,12 @@ def test_every_recommendation_has_evidence_and_a_way_to_the_fix():
         crashes=[oom(1)],
         tailscale_down=True,
         discord={"id": "role_too_low", "guild": "Friends", "role": "Legend"},
+        not_answering={
+            "what": "Stuck.",
+            "why": ["Out of memory."],
+            "fix": "Restarted.",
+            "since": NOW,
+        },
         type_id="paper",
         type_name="Paper",
         minecraft_version="1.21",

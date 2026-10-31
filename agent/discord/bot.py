@@ -1621,6 +1621,7 @@ def alert_buttons(event: Event, ctx: ServerContext) -> list[dict]:
         "player_left": ("ban",),
         "server_crashed": ("restart",),
         "crash_loop": ("restart",),
+        "server_not_answering": ("restart",),
         "low_tps": ("restart",),
         "high_mspt": ("restart",),
         "backup_failed": ("backup",),

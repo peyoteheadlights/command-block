@@ -47,7 +47,9 @@ def run_fix(window: MainWindow, sid: str, fix: dict, say: Say) -> None:
         )
 
     kind = fix["kind"]
-    if kind in ("memory_up", "memory_down"):
+    if kind == "restart":
+        window.server_action(sid, "restart")
+    elif kind in ("memory_up", "memory_down"):
         call("GET", "/memory", lambda memory: change_memory(window, sid, memory, kind, say))
     elif kind == "eula":
         if window.confirm(

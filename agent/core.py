@@ -36,6 +36,7 @@ from .minecraft.crash import CrashReporter
 from .minecraft.playeractions import PlayerActions
 from .minecraft.process import MinecraftServer, ServerError
 from .mods.manager import ModManager
+from .monitoring.answering import AnswerWatch
 from .monitoring.metrics import MetricsMonitor
 from .monitoring.players import PlayerTracker
 from .monitoring.tps import TpsMonitor
@@ -99,6 +100,8 @@ class ServerContext:
         self.chat = ChatLog()
         self.autosleep = AutoSleep(self)
         self.spam = watchers.ChatSpam(self)
+        # Online and really answering, or online and stuck.
+        self.answering = AnswerWatch(self)
 
         self.server.signal_hook = self._console_signals
         self.server.crash_hook = self.crashes.collect
@@ -265,6 +268,7 @@ class ServerContext:
             self._update_check_loop(), name=f"mod-updates-{self.server_id}"
         )
         self.autosleep.start()
+        self.answering.start()
 
     async def autostart(self) -> None:
         if not self.config.server.autostart_minecraft:
@@ -307,6 +311,7 @@ class ServerContext:
         if self._update_task:
             self._update_task.cancel()
         await self.autosleep.stop()
+        await self.answering.stop()
         await self.metrics.stop()
         await self.tps.stop()
         await self.scheduler.stop()
@@ -330,6 +335,7 @@ class ServerContext:
         status["job"] = running.to_dict() if running else None
         status["agent"] = self.core.agent_status(self)
         status["sleep"] = self.autosleep.status()
+        status["answering"] = self.answering.status()
         return status
 
     def summary(self) -> dict[str, Any]:
@@ -378,6 +384,7 @@ class ServerContext:
             "directory": status["directory"],
             "default": self.server_id == self.core.config.default_server_id,
             "recent_crashes": status["recent_crashes"],
+            "answering": self.answering.status(),
         }
 
 
