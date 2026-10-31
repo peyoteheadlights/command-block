@@ -7,7 +7,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ... import recommendations
+from ... import recommendations, suggestions
 from ...security.auth import Principal
 from ...security.permissions import SERVER_VIEW, SETTINGS_SERVER, require
 from ..deps import audit, get_server
@@ -19,7 +19,7 @@ router = APIRouter()
 
 async def _found(ctx) -> list[recommendations.Recommendation]:
     # Reads the mods folder, the database and the disk, so off the event loop.
-    facts = await asyncio.to_thread(recommendations.gather, ctx)
+    facts = await asyncio.to_thread(recommendations.gather, ctx, suggestions.kept(ctx))
     return recommendations.evaluate(facts)
 
 

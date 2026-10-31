@@ -549,3 +549,85 @@ def test_curseforge_results_needs_you_and_the_sha1_label(qapp, agent_http, monke
     row_button(page, "Remove from the list", "Secret Mod").click()
     wait_for(qapp, lambda: not page.needs_you_card.isVisibleTo(page), 20)
     assert mods.needs_you() == []
+
+
+FOUND = {
+    "type": "fabric",
+    "minecraft_version": "1.21.1",
+    "problem": None,
+    "read_at": 1793422800.0,
+    "stale": None,
+    "good_to_have": [
+        {
+            "name": "Chunky",
+            "project": "chunky",
+            "description": "Pre-generates chunks.",
+            "kind": "good_to_have",
+            "group": "starter",
+            "changes_gameplay": False,
+            "technical_only": False,
+            "place": "server",
+            "release_type": "release",
+            "downloads": {"count": 1234, "source": "Modrinth", "read_at": 1793422800.0},
+        }
+    ],
+    "often_used_with": [],
+    "performance": [
+        {"kind": "settings", "name": "Lower view and simulation distance", "values": {}},
+        {"kind": "performance", "name": "Lithium", "project": "lithium"},
+    ],
+    "performance_reason": {"why": "lag", "evidence": "TPS was under 18 in 40 of 60 readings."},
+    "for_your_players": [
+        {"name": "Sodium", "page": "https://modrinth.com/mod/sodium", "also_on_server": False}
+    ],
+    "maps": [
+        {
+            "id": "bluemap",
+            "name": "BlueMap",
+            "port": 8100,
+            "source": "config/bluemap/webserver.conf",
+            "link": "http://100.64.0.9:8100/",
+        }
+    ],
+}
+
+
+def test_suggestions_map_link_and_speed_ups_are_shown(qapp, agent_http, monkeypatch):
+    from agent import suggestions
+
+    async def lists(ctx, technical):
+        return FOUND
+
+    monkeypatch.setattr(suggestions, "lists", lists)
+    with_mods(agent_http)
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc)
+    wait_for(qapp, lambda: page.players_card.isVisibleTo(page))
+    assert "Sodium" in shown_text(page.players_card)
+    assert not page.ideas_card.isVisibleTo(page)  # the lists are Technical only
+    buttons_named(page, "Open the BlueMap map")[0].click()
+    assert pc.opened == ["http://100.64.0.9:8100/"]
+
+    button(window, "Technical").click()
+    page = open_page(qapp, window, "Mods")
+    wait_for(qapp, lambda: page.ideas_card.isVisibleTo(page))
+    assert "Chunky" in shown_text(page.ideas_card)
+    assert "1,234 downloads (Modrinth" in shown_text(page.ideas_card)
+
+    page = open_page(qapp, window, "Performance")
+    wait_for(qapp, lambda: "TPS was under 18" in shown_text(page))
+    assert buttons_named(page, "Apply") and buttons_named(page, "Add")
+
+
+def test_speed_ups_need_a_measured_reason(qapp, agent_http, monkeypatch):
+    from agent import suggestions
+
+    async def lists(ctx, technical):
+        return {**FOUND, "performance": [], "performance_reason": None}
+
+    monkeypatch.setattr(suggestions, "lists", lists)
+    window = signed_in_on(qapp, agent_http)
+    button(window, "Technical").click()
+    page = open_page(qapp, window, "Performance")
+    wait_for(qapp, lambda: "No measured lag" in shown_text(page))
+    assert not buttons_named(page, "Add")

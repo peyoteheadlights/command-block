@@ -21,6 +21,10 @@ start and once a day. What it may hold:
   * ``look_alikes``: for an add-on (its source and project) and a server
     type, hand-checked add-ons that do the same job on that type. Offered
     with Add buttons after Change server type, never added by themselves.
+  * ``recommended_addons``: the hand-checked add-ons the apps suggest
+    (agent/suggestions.py), with the facts the research found: whether it
+    changes gameplay and whether players need it too. Each is only
+    offered, checked against the server first, and never added by itself.
 
 Data can only add warnings or blocks. It never runs anything and never
 removes a check. The file is refused as a whole, and the last good one
@@ -85,6 +89,18 @@ LOOK_ALIKE_SOURCES = ("modrinth", "hangar", "curseforge")
 # (source, project, type) -> [{"project", "name"}], from the last good notes file.
 LOOK_ALIKES: dict[tuple[str, str, str], list[dict[str, str]]] = {}
 
+# The recommended add-ons, from the last good notes file (or the copy
+# shipped with the app until one arrives). Read by agent/suggestions.py.
+RECOMMENDED: list[dict[str, Any]] = []
+SHIPPED = Path(__file__).resolve().parent.parent / "data" / "catalog.json"
+KINDS = ("performance", "good_to_have", "often_used_with")
+# The groups plugin servers get: Starter, Protect the world, Bedrock
+# friends, Maps, Voice.
+GROUPS = ("starter", "protect", "bedrock", "maps", "voice")
+PLAYERS_NEED = ("server", "optional", "both")
+# Who a server is for (first run's "Who's this server for?").
+PLAYED_BY = ("friends", "kids", "community")
+
 # SHA-512 -> entry, from the last good notes file. Read by the mod and
 # plugin installer (agent/mods/manager.py) and modpack import.
 BAD_FILES: dict[str, dict[str, Any]] = {}
@@ -117,6 +133,7 @@ class Notes:
     java: list[dict[str, Any]] = field(default_factory=list)
     server_types: list[dict[str, Any]] = field(default_factory=list)
     look_alikes: list[dict[str, Any]] = field(default_factory=list)
+    recommended_addons: list[dict[str, Any]] = field(default_factory=list)
     # Entries marked for a newer app than this one.
     skipped: int = 0
 
@@ -240,6 +257,62 @@ def _look_alike(row: dict) -> dict[str, Any]:
     return {"source": source, "project": project, "type": row["type"], "look_alikes": alikes}
 
 
+def _flag(row: dict, key: str) -> bool:
+    value = row.get(key, False)
+    if not isinstance(value, bool):
+        raise NotesRefused(f"The notes file has a bad '{key}'.")
+    return value
+
+
+def _choices(row: dict, key: str, allowed: tuple[str, ...], most: int) -> list[str]:
+    value = row.get(key, [])
+    if not isinstance(value, list) or len(value) > most or not all(v in allowed for v in value):
+        raise NotesRefused(f"The notes file has a bad '{key}'.")
+    return list(value)
+
+
+def _recommended(row: dict) -> dict[str, Any]:
+    """Ratchet: only ids of the sites the app already installs from, and
+    only facts about an add-on. Data only: each is offered, never added."""
+    source, project = _project(row)
+    types = _choices(row, "types", tuple(t for t in TYPES if t != "bedrock"), len(TYPES))
+    if not types or row.get("kind") not in KINDS:
+        raise NotesRefused("The notes file has a bad 'types' or 'kind'.")
+    if row.get("group", "") not in ("", *GROUPS) or row.get("players_need") not in PLAYERS_NEED:
+        raise NotesRefused("The notes file has a bad 'group' or 'players_need'.")
+    used_with = row.get("with", [])
+    if not isinstance(used_with, list) or len(used_with) > 10:
+        raise NotesRefused("The notes file has a bad 'with'.")
+    used_with = [_project({"project": p})[1] for p in used_with]
+    if (row["kind"] == "often_used_with") != bool(used_with):
+        raise NotesRefused("The notes file has a bad 'with'.")
+    return {
+        "source": source,
+        "project": project,
+        "name": _text(row, "name", 60),
+        "types": types,
+        "kind": row["kind"],
+        "group": row.get("group", ""),
+        "changes_gameplay": _flag(row, "changes_gameplay"),
+        "players_need": row["players_need"],
+        "technical_only": _flag(row, "technical_only"),
+        "with": used_with,
+        "played_by": _choices(row, "played_by", PLAYED_BY, len(PLAYED_BY)),
+    }
+
+
+def load_shipped() -> None:
+    """The recommended add-ons from the notes file shipped with the app,
+    used until a signed one arrives. Only that list: the shipped file is
+    as old as the app, so its warnings could read as current."""
+    try:
+        found = parse(SHIPPED.read_bytes(), 0, time.time(), __version__)
+    except (OSError, NotesRefused):
+        log.warning("the shipped notes file couldn't be read", exc_info=True)
+        return
+    RECOMMENDED[:] = found.recommended_addons
+
+
 def look_alikes(source: str | None, project: str | None, type_id: str) -> list[dict[str, str]]:
     """The hand-checked look-alikes for an add-on on this type, or none."""
     return LOOK_ALIKES.get((source or "", project or "", type_id), [])
@@ -278,6 +351,7 @@ def parse(document: bytes, highest_serial: int, now: float, app_version: str) ->
     java, c = _entries(body, "java", _java_row, app_version)
     kinds, d = _entries(body, "server_types", _server_type, app_version)
     alikes, e = _entries(body, "look_alikes", _look_alike, app_version)
+    recommended, f = _entries(body, "recommended_addons", _recommended, app_version)
     today = dt.datetime.fromtimestamp(now, dt.UTC).date()
     return Notes(
         serial=serial,
@@ -289,7 +363,8 @@ def parse(document: bytes, highest_serial: int, now: float, app_version: str) ->
         java=java,
         server_types=kinds,
         look_alikes=alikes,
-        skipped=a + b + c + d + e,
+        recommended_addons=recommended,
+        skipped=a + b + c + d + e + f,
     )
 
 
@@ -349,6 +424,8 @@ class SafetyNotes:
         self.bad_installed: dict[str, list[dict[str, Any]]] = {}
         self._task: asyncio.Task | None = None
         self._load_saved()
+        if self.notes is None:
+            load_shipped()
 
     # ------------------------------------------------------------ saved copy
     def _keys(self) -> list[str]:
@@ -435,6 +512,8 @@ class SafetyNotes:
         for row in notes.look_alikes:
             key = (row["source"], row["project"], row["type"])
             LOOK_ALIKES[key] = LOOK_ALIKES.get(key, []) + row["look_alikes"]
+        if notes.recommended_addons:  # a file without any keeps the shipped list
+            RECOMMENDED[:] = notes.recommended_addons
         newest = max(threshold for threshold, _ in MINECRAFT_JAVA_REQUIREMENTS)
         rows = [(parse_minecraft(r["minecraft"]), r["java"]) for r in notes.java]
         # Data can only add rows newer than the built-in table's newest.

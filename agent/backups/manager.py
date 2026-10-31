@@ -160,10 +160,13 @@ class BackupManager:
         return files
 
     def _zip_sync(
-        self, target: Path, files: list[Path], base: Path, progress=None, extra=None
+        self, target: Path, files: list[Path], base: Path, progress=None, extra=None, empty=()
     ) -> tuple[int, int]:
         """Write the archive. ``extra`` is (file, name in the archive) pairs
-        held outside ``base``: a Bedrock world copied while the server ran."""
+        held outside ``base``: a Bedrock world copied while the server ran.
+        ``empty`` are included folders with no files: each gets a folder
+        entry, so a restore puts it back empty (Undo of adding the first
+        mods to an empty mods folder takes them away again)."""
         compression = (
             zipfile.ZIP_DEFLATED
             if self.config.backups.compression != "store"
@@ -171,6 +174,8 @@ class BackupManager:
         )
         written = 0
         with zipfile.ZipFile(target, "w", compression=compression, allowZip64=True) as zf:
+            for folder in empty:
+                zf.writestr(f"{folder.relative_to(base).as_posix()}/", b"")
             for full in files:
                 try:
                     zf.write(full, full.relative_to(base))
@@ -295,6 +300,8 @@ class BackupManager:
                     log.warning("could not flush the world before backup", exc_info=True)
 
             members = await asyncio.to_thread(self._collect, sources)
+            used = {m.relative_to(self.config.server_dir).parts[0] for m in members}
+            empty = [s for s in sources if s.is_dir() and s.name not in used]
             if job:
                 job.step("Writing the backup", total=len(members) + len(extra), unit="files")
             files, size = await asyncio.to_thread(
@@ -304,6 +311,7 @@ class BackupManager:
                 self.config.server_dir,
                 job.advance if job else None,
                 extra,
+                empty,
             )
             if job:
                 job.step("Checking the backup")
@@ -482,7 +490,7 @@ class BackupManager:
         try:
             with zipfile.ZipFile(path) as zf:
                 names = zf.namelist()
-                if not names:
+                if all(name.endswith("/") for name in names):
                     return {"ok": False, "reason": "the archive contains no files"}
                 damaged = zf.testzip()
             if damaged:

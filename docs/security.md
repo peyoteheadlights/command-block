@@ -285,7 +285,9 @@ command isolation test covering it):
   Restart button, with the same permission.
 - Opens links in the browser, only `https://` ones: a link can come from
   the agent, maybe on someone else's PC, and on Windows a path there would
-  run a program.
+  run a program. The one exception is a live map add-on's page, which is
+  plain `http://` and is opened only at a Tailscale address
+  (100.64.0.0/10). The app never opens a router port for a map.
 - When the agent isn't running, turns its startup task back on and runs it
   (`schtasks /Change ... /ENABLE` and `/Run`, fixed argument lists).
 - In the Tailscale step, after a click: downloads, checks and installs

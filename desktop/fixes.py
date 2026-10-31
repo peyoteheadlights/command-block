@@ -122,6 +122,51 @@ def run_fix(window: MainWindow, sid: str, fix: dict, say: Say) -> None:
                 {**body, "confirm": True},
                 slow=True,
             )
+    elif kind == "add_on":
+        # A suggested add-on: the normal install, with what it needs; Undo removes it.
+        if window.confirm(
+            text("desktop.fix.addon_title", name=fix["name"]),
+            text("desktop.fix.addon_body"),
+            text("desktop.fix.addon_add"),
+        ):
+            call(
+                "POST",
+                "/mods/install",
+                lambda result: say(
+                    text("desktop.fix.addon_done", name=fix["name"]),
+                    lambda: call(
+                        "POST",
+                        "/mods/remove",
+                        lambda _r: say(text("desktop.fix.undone")),
+                        {"filename": result["installed"]["filename"]},
+                    ),
+                ),
+                {"project": fix["project"], "install_dependencies": True},
+                slow=True,
+            )
+    elif kind == "game_settings":
+        # Paper's own speed-up: saved as a game settings change, so it has an Undo.
+        values = fix["values"]
+        if window.confirm(
+            text("desktop.fix.distance_title"),
+            text(
+                "desktop.fix.distance_body",
+                view=values.get("view-distance", "-"),
+                simulation=values.get("simulation-distance", "-"),
+            ),
+            text("desktop.fix.distance_lower"),
+        ):
+            call(
+                "PUT",
+                "/game-settings",
+                lambda _r: say(
+                    text("desktop.fix.distance_done"),
+                    lambda: call(
+                        "POST", "/changes/undo", lambda _r: say(text("desktop.fix.undone")), {}
+                    ),
+                ),
+                {"values": values},
+            )
     elif kind == "java":
         if window.agent.place != "this PC":
             say(text("desktop.fix.java_elsewhere"))

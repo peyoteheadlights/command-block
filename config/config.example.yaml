@@ -53,6 +53,7 @@ server:
   # and does not start the server again by itself.
   autosleep: false
   autosleep_minutes: 30      # 1 to 1440 (24 hours)
+  played_by: ""              # friends, kids or community: picks Simple mode's add-on suggestion
 
 monitor:
   auto_restart: true

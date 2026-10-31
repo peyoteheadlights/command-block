@@ -1510,9 +1510,16 @@ def test_only_web_links_are_opened(monkeypatch):
 
     opened: list[str] = []
     monkeypatch.setattr(webbrowser, "open", opened.append)
-    for link in ("https://adoptium.net/", "C:\\Windows\\System32\\calc.exe", "file:///C:/x.exe"):
+    links = (
+        "https://adoptium.net/",
+        "C:\\Windows\\System32\\calc.exe",
+        "file:///C:/x.exe",
+        "http://100.64.0.9:8100/",  # a live map over Tailscale
+        "http://203.0.113.5:8100/",  # plain http to the internet: no
+    )
+    for link in links:
         WindowsPC().open_link(link)
-    assert opened == ["https://adoptium.net/"]
+    assert opened == ["https://adoptium.net/", "http://100.64.0.9:8100/"]
 
 
 def test_an_answer_about_a_server_no_longer_open_is_dropped(qapp, agent_http):

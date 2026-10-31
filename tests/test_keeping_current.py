@@ -363,7 +363,7 @@ def test_a_link_that_isnt_https_is_refused(key):
 
 def test_unknown_keys_are_ignored(key):
     advisory = {**notes_body()["advisories"][0], "severity": "high"}
-    found = load(notes_body(advisories=[advisory], recommended_addons=[{"x": 1}]), key)
+    found = load(notes_body(advisories=[advisory], waiting_room=[{"x": 1}]), key)
     assert found.advisories[0]["id"] == "log4shell"
 
 

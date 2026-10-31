@@ -287,6 +287,16 @@ def isolated_saved_lists(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_shipped_suggestions(monkeypatch, tmp_path_factory):
+    """No add-on suggestions unless a test sets some, so no route asks
+    Modrinth about them in the background."""
+    from agent import notes
+
+    monkeypatch.setattr(notes, "SHIPPED", tmp_path_factory.mktemp("notes") / "none.json")
+    monkeypatch.setattr(notes, "RECOMMENDED", [])
+
+
+@pytest.fixture(autouse=True)
 def fresh_curseforge_sign_in(monkeypatch):
     """Each test signs in to the CurseForge relay afresh, with its own pace."""
     from agent.mods import curseforge

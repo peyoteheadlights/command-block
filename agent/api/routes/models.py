@@ -89,6 +89,13 @@ class UpdateAllRequest(BaseModel):
     mods: list[ModUpdateRequest] = Field(min_length=1, max_length=200)
 
 
+class CopyAddonsRequest(BaseModel):
+    """The ticked add-ons on this server, and the server to copy them to."""
+
+    target: str = Field(max_length=64)
+    filenames: list[str] = Field(min_length=1, max_length=200)
+
+
 class ModRollbackRequest(BaseModel):
     mod_id: str = Field(max_length=80)
     archive_path: str = Field(max_length=500)

@@ -9,6 +9,7 @@ the only things the app does on the PC, each after a click.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import os
 import platform
@@ -22,6 +23,7 @@ import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from PySide6.QtCore import QObject, QSettings, QStandardPaths, Signal
 from PySide6.QtGui import QIcon
@@ -45,6 +47,7 @@ APP_ID_KEY = rf"Software\Classes\AppUserModelId\{APP_ID}"
 TAILSCALE_SIGNER = "Tailscale Inc."
 CANCELLED = 1223  # ERROR_CANCELLED: the UAC prompt was answered No
 DETACHED = 0x00000008 | 0x00000200 | NO_WINDOW  # on its own, in a new process group
+TAILSCALE_RANGE = ipaddress.ip_network("100.64.0.0/10")
 SIGN_IN_PAGE = re.compile(r"https://login\.tailscale\.com/\S+")
 # File paths reach PowerShell in an environment variable, never in its code.
 POWERSHELL = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"]
@@ -104,6 +107,15 @@ class _Clicks(QObject):
     clicked = Signal(str, str)
 
 
+def _tailscale_http(url: str) -> bool:
+    parts = urlsplit(url)
+    try:
+        address = ipaddress.ip_address(parts.hostname or "")
+    except ValueError:
+        return False
+    return parts.scheme == "http" and address in TAILSCALE_RANGE
+
+
 def _target(place: str) -> str:
     return f"Command Block sign-in ({place})"
 
@@ -123,7 +135,9 @@ class WindowsPC:
     def open_link(self, url: str) -> None:
         # Links can come from the agent (a suggestion's "Get Java"), maybe on
         # someone else's PC; on Windows a path here would run a program.
-        if url.startswith("https://"):
+        # A live map is plain http, so that's allowed only to a Tailscale
+        # address (100.64.0.0/10), never to the internet.
+        if url.startswith("https://") or _tailscale_http(url):
             webbrowser.open(url)
 
     def save_path(self, name: str) -> str | None:

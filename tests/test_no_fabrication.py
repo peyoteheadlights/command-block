@@ -20,6 +20,7 @@ from agent.monitoring.metrics import MetricsMonitor
 from agent.monitoring.players import PlayerTracker
 
 from .test_mods import make_jar
+from .test_suggestions import listed, make  # noqa: F401 (fixtures)
 
 
 @pytest.fixture
@@ -730,3 +731,25 @@ def test_a_custom_jar_is_never_shown_as_checked(multi_client, tmp_path):
     version = multi_client.get("/api/servers/fork/version").json()
     assert version["minecraft_version"] is None and version["pending_version"] is None
     assert "checked" not in str(made).lower().replace("unchecked", "")
+
+
+def test_speed_ups_need_a_measured_reason():
+    from agent.suggestions import measured
+
+    assert measured([], 18.0, 90.0) is None
+    unknown = [{"ts": 1.0, "tps": None, "ram_percent": None}] * 30
+    assert measured(unknown, 18.0, 90.0) is None
+
+
+def test_a_download_count_always_says_where_and_when(make, monkeypatch):  # noqa: F811
+    from .test_suggestions import FakeModrinth, get
+
+    real = FakeModrinth._info
+    monkeypatch.setattr(
+        FakeModrinth,
+        "_info",
+        lambda self, slug: {**real(self, slug), "downloads": None if slug == "chunky" else 5},
+    )
+    counts = {s["project"]: s["downloads"] for s in get(make())["good_to_have"]}
+    assert counts["chunky"] is None  # the site gave none: none is shown
+    assert all(c is None or (c["source"] == "Modrinth" and c["read_at"]) for c in counts.values())

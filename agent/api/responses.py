@@ -1399,6 +1399,117 @@ class UpdateAllResult(Open):
     undo: Undo | None = None
 
 
+# ------------------------------------------------------------ suggestions
+class Downloads(Open):
+    count: int
+    source: str = Field(description="The site the count comes from")
+    read_at: float = Field(description="When it was read (a saved copy keeps its own date)")
+
+
+class Suggestion(Open):
+    project: str = Field(description="The id to send to /mods/install")
+    name: str
+    description: str | None = None
+    kind: str = Field(description="performance, good_to_have or often_used_with")
+    group: str = Field(description="Plugin servers: starter, protect, bedrock, maps, voice; or ''")
+    changes_gameplay: bool
+    technical_only: bool = Field(description="Alpha or beta build, or marked so: Technical only")
+    release_type: str | None = None
+    version: str | None = Field(None, description="The build that fits this server")
+    place: str = Field(description="server, both (players need it too) or players")
+    page: str | None = None
+    downloads: Downloads | None = Field(None, description="null: the site gave no count")
+    with_: list[str] = Field([], alias="with", description="often_used_with: what triggers it")
+
+
+class SpeedUp(Open):
+    """A performance suggestion: an add-on (as Suggestion), Paper's own
+    settings ("settings", with "values" to save) or "change_type"."""
+
+    kind: str
+    name: str
+
+
+class ForPlayers(Open):
+    name: str
+    page: str | None = None
+    also_on_server: bool = Field(
+        description="Installed here, and players need it in their game too"
+    )
+
+
+class MapLink(Open):
+    id: str
+    name: str
+    port: int | None = None
+    source: str = Field(description="Where the port number came from")
+    link: str | None = Field(
+        None, description="Over this PC's Tailscale address; null: see problem"
+    )
+    problem: str | None = None
+
+
+class Suggestions(Open):
+    """The add-ons and performance pages' suggestions, checked against this
+    server. Nothing here is installed by itself."""
+
+    type: str
+    minecraft_version: str | None = None
+    problem: str | None = Field(None, description="Why nothing could be checked")
+    read_at: float | None = None
+    stale: str | None = Field(None, description="A saved copy was used: how old, which site")
+    good_to_have: list[Suggestion]
+    often_used_with: list[Suggestion]
+    performance: list[SpeedUp]
+    performance_reason: dict[str, Any] | None = Field(
+        None, description="{why: lag or memory, evidence}; null: nothing measured, no speed-ups"
+    )
+    for_your_players: list[ForPlayers]
+    maps: list[MapLink]
+
+
+class CopyTarget(Open):
+    id: str
+    name: str
+    type: str
+
+
+class CopyTargets(Open):
+    targets: list[CopyTarget] = Field(description="Other servers with add-ons you may change")
+
+
+class CopyItem(Open):
+    filename: str
+    name: str
+    project: str | None = None
+    version: str | None = None
+    settings: list[str] = []
+
+
+class CantCome(Open):
+    filename: str
+    name: str
+    why: str
+
+
+class CopyCheck(Open):
+    target: str
+    minecraft_version: str
+    coming: list[CopyItem]
+    cant_come: list[CantCome]
+    settings_note: str | None = None
+
+
+class CopyDone(Open):
+    ok: bool
+    job_id: str
+    copied: list[CopyItem]
+    cant_come: list[CantCome]
+    settings_note: str | None = None
+    safety_backup: SafetyBackup | None = Field(None, description="The one backup made first")
+    undo: Undo | None = None
+
+
 # ------------------------------------------------------------ modpacks
 class ModpackFile(Open):
     name: str

@@ -165,6 +165,10 @@ class ServerSettings(Section):
     # Bedrock only: put a newer Bedrock server in by itself once nobody is
     # online (off by default; agent/softwarecheck.py).
     bedrock_auto_update: bool = False
+    # Who the server is for: "friends", "kids" or "community" (first run's
+    # "Who's this server for?"), "" when not answered. Picks Simple mode's
+    # one add-on suggestion (agent/suggestions.py).
+    played_by: str = ""
 
 
 @dataclass(frozen=True)
@@ -743,6 +747,8 @@ class Config:
             raise ConfigError(f"{prefix}.type: {exc}") from None
         if settings.bedrock_port and not 0 < settings.bedrock_port < 65536:
             raise ConfigError(f"{prefix}.bedrock_port has to be a port number from 1 to 65535.")
+        if settings.played_by not in ("", "friends", "kids", "community"):
+            raise ConfigError(f"{prefix}.played_by has to be friends, kids or community.")
 
         problems = shape_problems(settings.cpu_cores, f"{prefix}.cpu_cores")
         if problems:

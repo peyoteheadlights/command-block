@@ -55,6 +55,7 @@ LABELS = {
     "white-list": ("game.whitelist", "game.whitelist_hint"),
     "pvp": ("game.pvp", "game.pvp_hint"),
     "view-distance": ("game.view_distance", "game.view_distance_hint"),
+    "simulation-distance": ("game.simulation_distance", "game.simulation_distance_hint"),
     "motd": ("game.motd", "game.motd_hint"),
     "server-port": ("game.port", "game.port_hint"),
     "allow-list": ("game.whitelist", "game.allowlist_hint"),
@@ -64,7 +65,7 @@ LABELS = {
 GROUPS = [
     ("game.group_play", ["gamemode", "difficulty", "pvp", "allow-cheats"]),
     ("game.group_who", ["motd", "server-name", "max-players", "white-list", "allow-list"]),
-    ("game.group_world", ["level-seed", "view-distance", "server-port"]),
+    ("game.group_world", ["level-seed", "view-distance", "simulation-distance", "server-port"]),
 ]
 CHOICES = {"peaceful", "easy", "normal", "hard", "survival", "creative", "adventure", "spectator"}
 

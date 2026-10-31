@@ -14,6 +14,9 @@ ICON = str(ROOT / "desktop" / "images" / "app.ico")
 datas = [
     (str(ROOT / "desktop" / "images"), "desktop/images"),
     (str(ROOT / "shared"), "shared"),
+    # The notes file as it was at release: its add-on suggestions are used
+    # until a signed one is fetched (agent/notes.py load_shipped).
+    (str(ROOT / "data" / "catalog.json"), "data"),
     (str(ROOT / "installer" / "firewall.ps1"), "installer"),
     (str(ROOT / "config" / "config.example.yaml"), "config"),
     (str(ROOT / "LICENSE"), "."),

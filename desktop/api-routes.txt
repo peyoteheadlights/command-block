@@ -202,3 +202,8 @@ POST /api/bring-in/read
 POST /api/bring-in
 POST /api/servers/{server_id}/custom-jar
 POST /api/servers/{server_id}/game-settings/vanilla-spawns
+GET /api/servers/{server_id}/suggestions
+GET /api/servers/{server_id}/mods/copy
+POST /api/servers/{server_id}/mods/copy/check
+POST /api/servers/{server_id}/mods/copy
+POST /api/servers/{server_id}/mods/install

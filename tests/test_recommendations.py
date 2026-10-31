@@ -47,6 +47,25 @@ def facts(**overrides) -> rec.Facts:
     return rec.Facts(**base)
 
 
+# A checked add-on suggestion, as agent/suggestions.py keeps it.
+ADDON = {
+    "project": "chunky",
+    "name": "Chunky",
+    "description": "Loads the world ahead of time.",
+    "kind": "good_to_have",
+    "group": "starter",
+    "changes_gameplay": False,
+    "technical_only": False,
+    "release_type": "release",
+    "version": "1.5.3",
+    "place": "server",
+    "page": "https://modrinth.com/plugin/chunky",
+    "downloads": {"count": 20654746, "source": "Modrinth", "read_at": NOW},
+    "played_by": ["friends"],
+    "with": [],
+}
+
+
 def ids(f: rec.Facts) -> list[str]:
     return [r.id for r in rec.evaluate(f)]
 
@@ -109,6 +128,7 @@ def test_every_recommendation_has_evidence_and_a_way_to_the_fix():
             "build": {"minecraft": "1.21", "installed": "100", "build": "130", "loader": "130"},
             "minecraft": {"from": "1.21", "minecraft": "1.21.1"},
         },
+        addons={"items": [ADDON]},
     )
     found = rec.evaluate(f)
     assert len(found) == len(rec.RULES)

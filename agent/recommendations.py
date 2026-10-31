@@ -16,6 +16,7 @@ problem goes away and comes back).
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -80,6 +81,11 @@ class Facts:
     notes_age: str | None = None
     # Newer server software (agent/softwarecheck.py), as last checked.
     software: dict[str, Any] = field(default_factory=dict)
+    # Add-on suggestions (agent/suggestions.py): the last check, the
+    # speed-ups with their measured reason, and who the server is for.
+    addons: dict[str, Any] | None = None
+    speed_ups: dict[str, Any] = field(default_factory=dict)
+    played_by: str = ""
 
 
 @dataclass
@@ -558,6 +564,77 @@ def newer_minecraft(f: Facts) -> Recommendation | None:
     )
 
 
+SUGGEST = "suggest_"
+
+
+def _suggestion(f: Facts, item: dict[str, Any], measured: str | None) -> Recommendation:
+    """One add-on suggestion, or one of the speed-ups that aren't add-ons."""
+    if item["kind"] == "settings":
+        return Recommendation(
+            id=f"{SUGGEST}paper_settings",
+            title=item["name"],
+            reason="Fewer chunks around each player means less work for the server.",
+            evidence=f"{measured} View distance is {item['now']['view-distance']} and "
+            f"simulation distance {item['now']['simulation-distance']} in server.properties.",
+            action={"label": "Lower them", "page": "game-settings"},
+            fingerprint="paper:" + ",".join(f"{k}={v}" for k, v in sorted(item["values"].items())),
+            details={
+                "fix": {"kind": "game_settings", "values": item["values"]},
+                "source": "TPS or memory readings, and server.properties",
+            },
+        )
+    if item["kind"] == "change_type":
+        return Recommendation(
+            id=f"{SUGGEST}fabric",
+            title=item["name"],
+            reason="Lithium makes the game logic faster without changing how the game plays. "
+            "Your world and Minecraft version stay.",
+            evidence=f"{measured} Lithium has a Fabric build for Minecraft {f.minecraft_version}.",
+            action={"label": "Change server type", "page": "settings"},
+            fingerprint=f"fabric:{f.minecraft_version}",
+            details={"source": "TPS or memory readings, and Lithium's Modrinth versions"},
+        )
+    evidence = measured or (
+        f"On the hand-checked list for {f.type_name} servers, with a build for Minecraft "
+        f"{f.minecraft_version}."
+    )
+    return Recommendation(
+        id=SUGGEST + re.sub(r"[^a-z0-9]+", "_", item["project"].lower()),
+        title=f"Add {item['name']}",
+        reason=item.get("description") or "",
+        evidence=evidence,
+        action={"label": "Add", "page": "mods"},
+        fingerprint=f"addon:{item['project']}:{item['version']}",
+        details={
+            "fix": {"kind": "add_on", "project": item["project"], "name": item["name"]},
+            "place": item["place"],
+            "downloads": item["downloads"],
+            "source": "hand-checked list in the safety notes, checked against the add-on's site",
+        },
+    )
+
+
+def addon_suggestions(f: Facts) -> list[Recommendation]:
+    """Add-ons worth having, best first: a speed-up when this server was
+    measured to be slow, then "Good to have" picked by who the server is
+    for, then companions of what's here. Only ones that are safe to add
+    with one click: a stable build that doesn't change gameplay and goes on
+    the server. visible() shows the first one not dismissed or snoozed."""
+    if not f.addons:
+        return []
+    reason = (f.speed_ups.get("reason") or {}).get("evidence")
+    safe = [
+        i
+        for i in f.addons["items"]
+        if not i["technical_only"] and not i["changes_gameplay"] and i["place"] != "players"
+    ]
+    picks = [i for i in safe if i["kind"] != "performance"]
+    # Ones marked for who this server is for first; otherwise the notes' order.
+    picks.sort(key=lambda i: (f.played_by not in i["played_by"], i["kind"] != "good_to_have"))
+    faster = [i for i in f.speed_ups.get("items", []) if i["kind"] != "performance" or i in safe]
+    return [_suggestion(f, i, reason) for i in faster] + [_suggestion(f, i, None) for i in picks]
+
+
 RULES: tuple[Rule, ...] = (
     security_advisories,
     known_bad_files,
@@ -577,6 +654,7 @@ RULES: tuple[Rule, ...] = (
     mod_updates,
     newer_build,
     newer_minecraft,
+    addon_suggestions,
 )
 
 
@@ -591,8 +669,11 @@ def evaluate(facts: Facts) -> list[Recommendation]:
     return found
 
 
-def gather(ctx) -> Facts:
-    """Read one server's measured facts for the rules."""
+def gather(ctx, addons: dict[str, Any] | None = None) -> Facts:
+    """Read one server's measured facts for the rules. ``addons`` is the
+    last add-on suggestions check (agent/suggestions.py kept())."""
+    from . import suggestions
+
     status = ctx.server.status()
     # The sampler's latest reading. Taking a fresh one here would restart
     # the sampler's network and process CPU windows.
@@ -656,6 +737,9 @@ def gather(ctx) -> Facts:
         ],
         notes_age=ctx.core.notes.age_label(),
         software=ctx.db.get_setting("software_offers") or {},
+        addons=addons,
+        speed_ups=suggestions.speed_ups(ctx, addons, technical=False) if addons else {},
+        played_by=ctx.config.server.played_by,
     )
 
 
@@ -691,6 +775,9 @@ def visible(db, found: list[Recommendation]) -> dict[str, Any]:
     if still != snoozed:
         db.set_setting(STATE_KEY, {"dismissed": sorted(dismissed), "snoozed": still})
     shown = [r for r in found if r.id not in dismissed and r.id not in still]
+    # At most one add-on suggestion at a time; the next shows once it's handled.
+    first = next((r for r in shown if r.id.startswith(SUGGEST)), None)
+    shown = [r for r in shown if not r.id.startswith(SUGGEST) or r is first]
     hidden = [r for r in found if r.id in dismissed or r.id in still]
     return {
         "recommendations": [r.to_dict() for r in shown],

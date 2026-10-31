@@ -10,16 +10,21 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
+from ... import suggestions
 from ...jobs import JobConflict
+from ...mods import copy as copy_module
 from ...mods.addfrom import add_file, add_from_link, read_link
 from ...mods.dependencies import DependencyError
 from ...mods.sources import SourceError, split
 from ...mods.updateall import update_all
-from ...security.auth import Principal
-from ...security.permissions import MODS_MANAGE, SERVER_VIEW, require
-from ..deps import audit, get_server
+from ...security.auth import AuthError, Principal
+from ...security.permissions import MODS_MANAGE, SERVER_VIEW, check, check_server, require
+from ..deps import audit, get_core, get_server
 from ..errors import DOMAIN_ERRORS, audit_failure, respond_as
 from ..responses import (
+    CopyCheck,
+    CopyDone,
+    CopyTargets,
     DependencyInstall,
     DependencyPlan,
     DependencyReport,
@@ -38,10 +43,12 @@ from ..responses import (
     ModUploaded,
     ModVersions,
     Ok,
+    Suggestions,
     UpdateAllPlan,
     UpdateAllResult,
 )
 from .models import (
+    CopyAddonsRequest,
     DependencyInstallRequest,
     ModFileRequest,
     ModInstallRequest,
@@ -340,6 +347,92 @@ async def update_all_mods(
             ctx, [item.model_dump() for item in payload.mods], user=principal.user
         )
     audit(ctx, request, "mod_update_all", detail=", ".join(u["name"] for u in result["updated"]))
+    return {"ok": True, **result}
+
+
+@router.get("/suggestions", response_model=Suggestions)
+async def addon_suggestions(
+    technical: bool = False,
+    principal: Principal = Depends(require(SERVER_VIEW)),
+    ctx=Depends(get_server),
+):
+    """Good to have, often used with your mods, speed-ups (only with a
+    measured reason), For your players and the live map link. Checked
+    against this server; nothing is installed here."""
+    return await suggestions.lists(ctx, technical)
+
+
+def _may_change_mods(principal: Principal, server_id: str) -> bool:
+    try:
+        check_server(principal, server_id)
+        check(principal, MODS_MANAGE, server_id)
+    except AuthError:
+        return False
+    return True
+
+
+def _target(core, principal: Principal, ctx, server_id: str):
+    target = core.servers.get(server_id)
+    if target is None or target is ctx:
+        raise HTTPException(status_code=404, detail="Pick another server to copy to.")
+    if not _may_change_mods(principal, server_id):
+        raise HTTPException(
+            status_code=403, detail=f"Your account can't change add-ons on {target.name}."
+        )
+    return target
+
+
+@router.get("/mods/copy", response_model=CopyTargets)
+async def copy_targets(
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+    core=Depends(get_core),
+):
+    """The servers this account may copy add-ons to: others with add-ons
+    where it can change them too."""
+    return {
+        "targets": [
+            {"id": other.server_id, "name": other.name, "type": other.config.server_type.id}
+            for other in core.servers.values()
+            if other is not ctx
+            and other.config.server_type.has_content
+            and _may_change_mods(principal, other.server_id)
+        ]
+    }
+
+
+@router.post("/mods/copy/check", response_model=CopyCheck)
+async def check_copy(
+    payload: CopyAddonsRequest,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+    core=Depends(get_core),
+):
+    """What would come and what can't, and why. Changes nothing."""
+    target = _target(core, principal, ctx, payload.target)
+    with respond_as(400):
+        return await copy_module.check(ctx, target, payload.filenames)
+
+
+@router.post("/mods/copy", response_model=CopyDone)
+async def copy_addons(
+    payload: CopyAddonsRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+    core=Depends(get_core),
+):
+    """Copy the ticked add-ons and their settings to the other server, as
+    one change there: one backup first, one Undo."""
+    target = _target(core, principal, ctx, payload.target)
+    with respond_as(400), audit_failure(target, request, "mod_copy"):
+        result = await copy_module.copy(ctx, target, payload.filenames, user=principal.user)
+    audit(
+        target,
+        request,
+        "mod_copy",
+        detail=f"from {ctx.name}: " + ", ".join(c["name"] for c in result["copied"]),
+    )
     return {"ok": True, **result}
 
 

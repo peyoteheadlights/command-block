@@ -161,7 +161,30 @@ class ModrinthClient:
         }
 
     async def project(self, id_or_slug: str) -> dict[str, Any]:
-        data = await self._get(f"/project/{id_or_slug}")
+        return self._project(await self._get(f"/project/{id_or_slug}"))
+
+    async def projects(self, ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Several projects in one call, by id and by slug. The last good
+        answer is kept, so a saved copy (its age noted) answers when
+        Modrinth can't be reached."""
+        params = {"ids": json.dumps(sorted(set(ids)))}
+        key = f"{self.base}/projects?{params['ids']}"
+        try:
+            data = await self._get("/projects", params)
+            if not isinstance(data, list):
+                raise ModrinthError("Modrinth sent an answer that couldn't be read.")
+        except ModrinthError as exc:
+            data = savedlists.fall_back(key, "api.modrinth.com", exc)
+        else:
+            savedlists.save(key, data)
+        found = {}
+        for item in data:
+            if isinstance(item, dict):
+                project = self._project(item)
+                found[str(item.get("id"))] = found[str(item.get("slug"))] = project
+        return found
+
+    def _project(self, data: dict[str, Any]) -> dict[str, Any]:
         return {
             "project_id": data.get("id"),
             "slug": data.get("slug"),
