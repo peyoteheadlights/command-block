@@ -1,14 +1,14 @@
 """Add-on sources: the sites mods and plugins come from.
 
 The mod manager talks to every site through the same few calls, so Modrinth
-(agent/mods/modrinth.py), Hangar (hangar.py) and GitHub releases
-(github.py) look the same to it. A version is a dict in Modrinth's shape
+(agent/mods/modrinth.py), Hangar (hangar.py), CurseForge (curseforge.py)
+and GitHub releases (github.py) look the same to it. A version is a dict in Modrinth's shape
 (``version_id``, ``version_number``, ``release_type``, ``game_versions``,
 ``loaders``, ``dependencies``, ``file``), whichever site it came from.
 
-Ids from a site other than Modrinth carry its name in front
-("hangar:31"), so the apps send them back unchanged and the agent knows
-where to ask. Modrinth's own ids and slugs never hold a ":".
+Ids from a site other than Modrinth carry its name in front ("hangar:31",
+"curseforge:238222"), so the apps send them back unchanged and the agent
+knows where to ask. Modrinth's own ids and slugs never hold a ":".
 """
 
 from __future__ import annotations
@@ -17,7 +17,13 @@ from typing import Any, Protocol
 
 # The names people know each source by. "file" is an add-on dropped in or
 # picked from the PC, which no site has checked.
-LABELS = {"modrinth": "Modrinth", "hangar": "Hangar", "github": "GitHub", "file": "a file"}
+LABELS = {
+    "modrinth": "Modrinth",
+    "hangar": "Hangar",
+    "curseforge": "CurseForge",
+    "github": "GitHub",
+    "file": "a file",
+}
 
 
 class SourceError(RuntimeError):

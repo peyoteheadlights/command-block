@@ -258,6 +258,11 @@ class ModSettings(Section):
     backup_directory: str = "mod-backups"
     trash_directory: str = "mod-trash"
     modrinth_api: str = "https://api.modrinth.com/v2"
+    # CurseForge through our relay (agent/mods/curseforge.py). The web key
+    # only names the Firebase project for its anonymous sign-in; it isn't a
+    # secret and it isn't CurseForge's key, which the app never has.
+    curseforge_relay: str = "https://europe-west1-command-block-d4526.cloudfunctions.net/curseforge"
+    firebase_web_key: str = "AIzaSyDUobgN-1BPbhI4jsLAASFU2Mf6rp3So_g"
     user_agent: str = "command-block (self-hosted)"
     backup_before_install: bool = True
     auto_stop_for_install: bool = False
@@ -414,6 +419,8 @@ SECRET_ENV_KEYS = (
     "MCSC_DISCORD_BOT_TOKEN",
     # The key the stored IP addresses are encrypted with (agent/whitelist.py).
     "MCSC_ADDRESS_KEY",
+    # The anonymous sign-in to our CurseForge relay (agent/mods/curseforge.py).
+    "MCSC_CURSEFORGE_REFRESH_TOKEN",
     "MCSC_SMTP_USERNAME",
     "MCSC_SMTP_PASSWORD",
     # The browser alerts' keys: gone with the web pages, but older installs

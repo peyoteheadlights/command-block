@@ -71,6 +71,10 @@ class ModUpdateRequest(ModFileRequest):
     version_id: str | None = Field(default=None, max_length=200)
 
 
+class ModProjectRequest(BaseModel):
+    project: str = Field(max_length=100)
+
+
 class ModLinkRequest(BaseModel):
     url: str = Field(max_length=500)
 
@@ -217,6 +221,11 @@ class ModpackNewRequest(BaseModel):
     color: str | None = Field(default=None, max_length=16)
     # True only when the person ticked the box themselves.
     eula_accepted: bool = False
+
+
+class CurseForgeModpackRequest(BaseModel):
+    project: str = Field(max_length=40, description='"curseforge:<id>"')
+    server_id: str = Field(default="", max_length=64)
 
 
 class ModpackIntoRequest(BaseModel):

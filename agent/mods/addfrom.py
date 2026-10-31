@@ -4,8 +4,9 @@ GitHub release page.
 A file is read before anything is written (ModManager.install_local_file):
 a mod, a plugin or a datapack, checked against the server's type and the
 safety notes' list of known bad files. A jar is looked up by its hash on
-Modrinth and Hangar first; one either site lists is treated as theirs, its
-updates included. Anything else stays "file" (or "github" with its repo and
+Modrinth and Hangar first, and on CurseForge by its fingerprint (a jar
+dropped for a mod under "Needs you" is matched that way, never by its
+name); one a site lists is treated as theirs, its updates included. Anything else stays "file" (or "github" with its repo and
 tag): shown as "Not checked by Modrinth", and only a GitHub one gets updates.
 
 Links are read only for GitHub releases. Every other link (Planet Minecraft,
@@ -24,7 +25,8 @@ from typing import TYPE_CHECKING, Any
 
 from ..safechange import SafeChange, run_safe_change
 from . import github
-from .manager import is_datapack
+from .curseforge import MALWARE, fingerprint
+from .manager import ModError, is_datapack
 from .sources import SourceError
 from .updateall import folder_in_server
 
@@ -37,7 +39,8 @@ BROWSER = "Download it in your browser and drop the file here."
 
 
 async def known_source(mods: ModManager, data: bytes) -> tuple[str, dict[str, Any]] | None:
-    """("modrinth" or "hangar", its project) when a site lists this very file."""
+    """(the site, its project) when Modrinth, Hangar or CurseForge lists this
+    very file."""
     try:
         project = await mods.modrinth.by_hash(hashlib.sha512(data).hexdigest())
     except SourceError:
@@ -51,6 +54,17 @@ async def known_source(mods: ModManager, data: bytes) -> tuple[str, dict[str, An
             project = None
         if project:
             return "hangar", {"project_id": f"hangar:{project}"}
+    if mods.curseforge.loaders:
+        try:
+            found = await mods.curseforge.by_fingerprint([fingerprint(data)])
+        except SourceError:
+            found = {}  # still added, as a file nobody checked
+        version = next(iter(found.values()), None)
+        # The fingerprint is short, so the sha1 has to match too.
+        if version and version["file"]["sha1"] == hashlib.sha1(data).hexdigest():
+            if version["status"] == MALWARE:
+                raise ModError("CurseForge found malware in this file, so it wasn't added.")
+            return "curseforge", version
     return None
 
 

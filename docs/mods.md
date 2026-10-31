@@ -119,6 +119,40 @@ Each add is one change with a backup of the folder it writes to and one
 Undo, except into an empty folder, which has nothing to put back (Remove
 takes it out).
 
+## CurseForge
+
+On Fabric, Quilt, Forge and NeoForge servers the search also asks
+**CurseForge** (`agent/mods/curseforge.py`). CurseForge's API needs a key;
+the app never holds one and never asks you for one. It goes through our own
+relay instead, a small Firebase function that holds the key and allows only
+five read-only calls (search, a mod, a mod's files, a file's download link,
+fingerprints). The agent signs in to it anonymously once; the refresh token
+is kept in `.env` with the other secrets.
+
+- results are sorted by popularity, then the name you typed is put first
+  ("lithium" finds Lithium, not a look-alike), and only mods with a file for
+  this server's loader and Minecraft version are shown
+- only files CurseForge marks approved or released are offered
+- files come only from `edge.forgecdn.net` / `mediafilez.forgecdn.net` and
+  are checked against the **sha1** CurseForge publishes (it publishes no
+  SHA-512). That is a weaker check than Modrinth's, so the apps say
+  "Checked (sha1)"
+- required mods are added too
+- an author can keep other apps from downloading a mod. Such a mod gets
+  **Open on CurseForge** and is listed under **Needs you** on the Mods page;
+  the rest of an install goes ahead. Drop the file you downloaded on the
+  window: it's matched by its CurseForge fingerprint (MurmurHash2 of the
+  file without whitespace bytes), never by its name
+- jars already in the folder that the app didn't add are looked up by
+  fingerprint once, all in one call, when you press Check or open Update
+  all; a match counts only when its sha1 matches too
+- the 12-hour update check leaves CurseForge out; it's asked only when you
+  search, add, press Check or open Update all
+- nothing CurseForge answers is saved. An installed mod's record keeps only
+  its project and file id
+- when the relay is down, over its limit or turned off, the page says
+  "CurseForge isn't available right now" and Modrinth keeps working
+
 ## Why the server must be stopped
 
 Installing, removing, enabling, disabling and updating all require the server
@@ -183,9 +217,18 @@ The page says this too, because it matters:
 
 ## Modpacks
 
-A Modrinth modpack (`.mrpack`) can become a new server (the **+** tab,
+A Modrinth modpack (`.mrpack`) or a CurseForge modpack (its `.zip`, or one
+found with **Find on CurseForge**) can become a new server (the **+** tab,
 **From a modpack**) or be imported into the open server (Mods page,
 **Import a modpack**).
+
+A CurseForge pack lists only each mod's project and file in its
+`manifest.json`. When it's read, each one is asked of CurseForge through the
+relay (one call or a few per mod, at most 60 a minute, so a big pack takes a
+few minutes) and kept in memory until it's imported. Mods CurseForge tags
+for the game only are left out and listed for your players; mods their
+authors keep from other apps go under **Needs you** after the import; a
+loader this app can't set up is refused before anything is asked or changed.
 
 Choosing the file reads it and changes nothing. The panel shows the Minecraft
 version, the loader and its version, and every file, marked as downloaded,

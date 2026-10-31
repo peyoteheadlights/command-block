@@ -1,7 +1,9 @@
 """The Mods page, called Plugins or Add-ons by the server's type: the
-installed list with Turn off, Update, Versions and Remove, the mods other
-mods need, Update all, Modrinth search (and Hangar's on plugin servers), a
-modpack import, .jar and datapack files from this PC and GitHub release links. A Bedrock server's add-ons (behavior and resource packs) are on
+installed list with Turn off, Update, Versions and Remove, "Needs you" (the
+CurseForge mods to download by hand), the mods other mods need, Update all,
+Modrinth search (and Hangar's on plugin servers, CurseForge's on mod
+servers), a modpack import (from a file or found on CurseForge), .jar and
+datapack files from this PC and GitHub release links. A Bedrock server's add-ons (behavior and resource packs) are on
 their own page, AddonsPage. Changes wait until the server is stopped, as on
 the agent; nothing here stops it without a click."""
 
@@ -81,6 +83,8 @@ def pack_lines(pack: dict) -> list[str]:
     ]
     if pack.get("client_only"):
         lines.append(text("pack.client_only", names=", ".join(pack["client_only"])))
+    if pack.get("needs_you"):
+        lines.append(text("desktop.pack.needs_you", names=names(pack["needs_you"], "name")))
     if pack.get("skipped_overrides"):
         lines.append(text("pack.skipped_extras", names=", ".join(pack["skipped_overrides"])))
     if not pack.get("can_import"):
@@ -111,6 +115,15 @@ class ModsPage(Page):
         self.column.addWidget(self.stop_row)
         self.problems = label(kind="problem")
         self.column.addWidget(self.problems)
+
+        # CurseForge mods whose authors keep them from other apps: their
+        # page, and the window takes the file when it's dropped.
+        self.needs_you_card, layout = card("")
+        self.needs_you_words = label(kind="sub")
+        self.needs_you_rows = QVBoxLayout()
+        layout.addWidget(self.needs_you_words)
+        layout.addLayout(self.needs_you_rows)
+        self.column.addWidget(self.needs_you_card)
 
         self.missing_card, layout = card("")
         self.missing_words = label(kind="sub")
@@ -181,6 +194,15 @@ class ModsPage(Page):
         choose = push("")
         choose.clicked.connect(self.pick_pack)
         layout.addWidget(choose)
+        line = QHBoxLayout()
+        self.pack_box = QLineEdit()
+        self.pack_box.setMaxLength(100)
+        self.pack_box.returnPressed.connect(self.find_pack)
+        find = push("")
+        find.clicked.connect(self.find_pack)
+        line.addWidget(self.pack_box, 1)
+        line.addWidget(find)
+        layout.addLayout(line)
         self.column.addWidget(self.pack_card)
 
         self.checks_card, layout = card(text("mods.about_checks"))
@@ -193,7 +215,13 @@ class ModsPage(Page):
         layout.addLayout(self.history)
         self.column.addWidget(self.history_card)
         self.column.addStretch()
-        for hidden in (self.stop_row, self.problems, self.missing_card, self.more):
+        for hidden in (
+            self.stop_row,
+            self.problems,
+            self.needs_you_card,
+            self.missing_card,
+            self.more,
+        ):
             hidden.hide()
         # Words that differ between Simple and Technical, set again on each load.
         self.wording: list[tuple[Callable[[str], None], str]] = [
@@ -211,6 +239,11 @@ class ModsPage(Page):
             (title_of(self.pack_card).setText, "pack.into_title"),
             (pack_intro.setText, "pack.into_intro"),
             (choose.setText, "mobile.content.modpack_choose"),
+            (self.pack_box.setPlaceholderText, "desktop.mods.pack_find_placeholder"),
+            (self.pack_box.setAccessibleName, "desktop.mods.pack_find_placeholder"),
+            (find.setText, "desktop.mods.pack_find"),
+            (title_of(self.needs_you_card).setText, "desktop.mods.needs_you"),
+            (self.needs_you_words.setText, "desktop.mods.needs_you_intro"),
             (title_of(self.history_card).setText, "mods.change_history"),
         ]
 
@@ -236,8 +269,11 @@ class ModsPage(Page):
         manage = self.may("mods.manage")
         for widget in (self.search_card, self.add_file, self.update_all, self.link_row):
             widget.setVisible(manage)
-        if (self.row.get("capabilities") or {}).get("hangar"):
+        caps = self.row.get("capabilities") or {}
+        if caps.get("hangar"):
             title_of(self.search_card).setText(text("desktop.mods.search_both"))
+        if caps.get("curseforge"):
+            title_of(self.search_card).setText(text("desktop.mods.search_curseforge"))
         self.link_box.clear()
         self.pack_card.setVisible(manage and self.may("settings.server"))
         self.checks_card.setVisible(mode["technical"])
@@ -297,6 +333,9 @@ class ModsPage(Page):
         ]:
             button.setEnabled(self.can_change)
         self.update_all_ready()
+        needs = data.get("needs_you") or []
+        self.needs_you_card.setVisible(bool(needs))
+        refill(self.needs_you_rows, [self.need_row(n) for n in needs])
         refill(
             self.rows,
             [self.mod_row(m) for m in mods]
@@ -330,6 +369,8 @@ class ModsPage(Page):
         words.addWidget(label("  ·  ".join(p for p in parts if p), "sub"))
         if mod.get("source") in ("file", "github"):
             words.addWidget(label(text("desktop.mods.not_checked"), "muted"))
+        elif mod.get("checked_with") == "sha1":
+            words.addWidget(label(text("desktop.mods.checked_sha1"), "muted"))
         for issue in (mod.get("issues") or [])[:2]:
             words.addWidget(
                 label(issue["detail"], "problem" if issue.get("severity") == "error" else "sub")
@@ -366,6 +407,38 @@ class ModsPage(Page):
         more.setMenu(menu)
         more.setVisible(bool(actions))
         h.addWidget(more)
+        return row
+
+    def need_row(self, need: dict) -> QWidget:
+        row = QWidget()
+        row.setProperty("kind", "row")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(12, 8, 8, 8)
+        words = QVBoxLayout()
+        name = need.get("name") or need.get("filename") or ""
+        words.addWidget(label(name, "step"))
+        words.addWidget(
+            label(text("desktop.mods.needs_you_file", file=need.get("filename")), "sub")
+        )
+        h.addLayout(words, 1)
+        if need.get("page"):
+            open_it = push(text("desktop.mods.open_curseforge"), "primary")
+            open_it.setAccessibleName(f"{open_it.text()}: {name}")
+            open_it.clicked.connect(lambda: self.window_.pc.open_link(need["page"]))
+            h.addWidget(open_it)
+        if self.may("mods.manage"):
+            drop = push(text("desktop.mods.needs_you_remove"), "plain")
+            drop.setAccessibleName(f"{drop.text()}: {name}")
+            drop.clicked.connect(
+                lambda: self.ask(
+                    "POST",
+                    "/mods/needs-you/dismiss",
+                    lambda _r: self.changed(),
+                    self.said,
+                    body={"project": need["project"]},
+                )
+            )
+            h.addWidget(drop)
         return row
 
     def show_history(self, data: dict) -> None:
@@ -678,6 +751,15 @@ class ModsPage(Page):
                 )
             )
         h.addLayout(words, 1)
+        if hit.get("blocked"):
+            # Its author keeps it from other apps: its page, never a download.
+            words.addWidget(label(text("desktop.mods.blocked_hint"), "sub"))
+            if hit.get("page"):
+                open_it = push(text("desktop.mods.open_curseforge"))
+                open_it.setAccessibleName(f"{open_it.text()}: {title}")
+                open_it.clicked.connect(lambda: self.window_.pc.open_link(hit["page"]))
+                h.addWidget(open_it)
+            return row
         get = push(text("mods.install"))
         get.setAccessibleName(f"{text('mods.install')}: {title}")
         get.setEnabled(self.can_change)
@@ -716,7 +798,9 @@ class ModsPage(Page):
                     ),
                 ]
             hangar = slug.startswith("hangar:")
-            lines.append(text("desktop.mods.checked_hangar" if hangar else "mods.install_checked"))
+            checked = {"hangar": "desktop.mods.checked_hangar"}
+            checked["curseforge"] = "desktop.mods.checked_curseforge"
+            lines.append(text(checked.get(slug.partition(":")[0], "mods.install_checked")))
             deps = latest.get("dependencies") or []
             # Hangar's needs that live elsewhere are only ever a link to click.
             lines += [
@@ -764,6 +848,8 @@ class ModsPage(Page):
                 ]
                 if any(not d.get("installed") for d in result.get("dependencies_required") or []):
                     words.append(text("mods.deps_missing"))
+                if result.get("needs_you"):
+                    words.append(text("desktop.mods.needs_you_added"))
                 self.say(" ".join(words))
                 self.after_change()
 
@@ -872,7 +958,7 @@ class ModsPage(Page):
 
     def pick_pack(self) -> None:
         path = self.window_.pc.pick_file(
-            text("pack.into_title"), f"{text('pack.choose')} (*.mrpack)"
+            text("pack.into_title"), f"{text('pack.choose')} (*.mrpack *.zip)"
         )
         if path:
             self.bring_pack(path)
@@ -884,6 +970,38 @@ class ModsPage(Page):
         self.run_here(
             lambda: agent.upload(f"/modpacks/inspect?server_id={quote(sid)}", path),
             self.confirm_pack,
+        )
+
+    def find_pack(self) -> None:
+        """A CurseForge modpack by name: pick one, then it's read like a file."""
+        query = self.pack_box.text().strip()
+        if not query:
+            return
+        sid, agent = self.row["id"], self.window_.agent
+
+        def offer(found: dict) -> None:
+            hits = found.get("hits") or []
+            if not hits:
+                self.say(text("mods.nothing_found"))
+                return
+            picked = self.window_.pick(
+                text("desktop.mods.pack_find"),
+                text("desktop.mods.pack_pick"),
+                [f"{h.get('title')}  ·  {h.get('downloads') or 0:,}" for h in hits],
+            )
+            if picked is None:
+                return
+            body = {"project": hits[picked]["project_id"], "server_id": sid}
+            self.say(text("pack.reading"))
+            self.run_here(
+                lambda: agent.call("POST", "/modpacks/curseforge", body, slow=True),
+                self.confirm_pack,
+            )
+
+        self.say(text("mods.searching"))
+        self.run_here(
+            lambda: agent.call("GET", f"/modpacks/curseforge/search?q={quote(query)}&limit=10"),
+            offer,
         )
 
     def confirm_pack(self, read: dict) -> None:

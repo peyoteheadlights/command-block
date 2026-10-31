@@ -505,3 +505,47 @@ def test_a_paper_server_searches_hangar_too_and_names_each_site(qapp, agent_http
     page.search()
     wait_for(qapp, lambda: "Hangar isn't available right now." in shown_text(page), 20)
     assert "EssentialsX" in shown_text(page)
+
+
+def test_curseforge_results_needs_you_and_the_sha1_label(qapp, agent_http, monkeypatch):
+    from agent import downloads
+
+    from .test_curseforge import FakeCurseForge
+
+    relay = FakeCurseForge()
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(relay))
+    folder = mods_folder(agent_http)
+    folder.mkdir(exist_ok=True)
+    (folder / "lithium.jar").write_bytes(relay.jar(5001))
+    mods = core_of(agent_http).servers["survival"].mods
+    mods.db.set_setting(
+        "mod_source:lithium", {"source": "curseforge", "project": "curseforge:394468"}
+    )
+    mods.need_you(
+        {
+            "project": "curseforge:333",
+            "name": "Secret Mod",
+            "filename": "secret-1.0.jar",
+            "page": "https://www.curseforge.com/minecraft/mc-mods/m333",
+        }
+    )
+    use(agent_http, FakeModrinth({}))
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc=pc)
+    assert "Add from Modrinth or CurseForge" in shown_text(page)
+    wait_for(qapp, lambda: "Checked (sha1), a weaker check than Modrinth's" in shown_text(page))
+    assert "Needs you" in shown_text(page) and "The file: secret-1.0.jar" in shown_text(page)
+    row_button(page, "Open on CurseForge", "Secret Mod").click()
+    assert pc.opened == ["https://www.curseforge.com/minecraft/mc-mods/m333"]
+
+    page.search_box.setText("lithium")
+    page.search()
+    wait_for(qapp, lambda: "downloads on CurseForge" in shown_text(page), 20)
+    page.search_box.setText("secret")
+    page.search()
+    wait_for(qapp, lambda: "doesn't let other apps download it" in shown_text(page), 20)
+    assert not row_buttons(page, "Install", "Secret Mod"), "never a download for it"
+
+    row_button(page, "Remove from the list", "Secret Mod").click()
+    wait_for(qapp, lambda: not page.needs_you_card.isVisibleTo(page), 20)
+    assert mods.needs_you() == []

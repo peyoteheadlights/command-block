@@ -126,7 +126,9 @@ and far larger), `stop_server_for_backup`.
 
 `directory` (relative to the server folder), `backup_directory`,
 `trash_directory`, `modrinth_api`, `user_agent`, `backup_before_install`,
-`update_check_hours` 12.
+`update_check_hours` 12, `curseforge_relay` and `firebase_web_key` (our
+CurseForge relay and the Firebase project its anonymous sign-in is for;
+neither is a secret).
 
 ## notifications
 

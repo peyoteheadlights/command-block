@@ -206,7 +206,7 @@ class ServerContext:
         await asyncio.sleep(60)
         while True:
             try:
-                updates = await self.mods.check_updates()
+                updates = await self.mods.check_updates(background=True)
                 if updates:
                     await self.bus.publish(
                         Event(
@@ -283,6 +283,7 @@ class ServerContext:
                 "addons": self.config.server_type.addons,
                 "mods": bool(self.config.server_type.content_folder),
                 "hangar": bool(self.config.server_type.hangar_platform),
+                "curseforge": bool(self.mods.curseforge.loaders),
             },
             "crossplay": bool(self.config.server.crossplay),
             "game_port": self.core.ports.port_of(self).to_dict(),

@@ -240,9 +240,15 @@ ticked ones as one change, with the server stopped: one backup first, all
 put back if any update fails, one Undo; needs `mods.manage`).
 
 On Paper and Purpur servers search answers come from Modrinth and Hangar,
+on Fabric, Quilt, Forge and NeoForge servers from Modrinth and CurseForge,
 each hit with `source_name`, plus `problems` when one of them is down. Hangar
-ids look like `hangar:31` and go back unchanged to `project`, `install` and
-`version_id`.
+ids look like `hangar:31`, CurseForge's `curseforge:238222` (a file
+`curseforge:238222-4712345`), and go back unchanged to `project`, `install`
+and `version_id`. A CurseForge hit with `"blocked": true` can't be
+downloaded by the app; installing it, or a mod that needs it, lists it in
+`GET /api/mods`'s `needs_you` (its `page`, and the file to drop), and
+`POST /api/mods/needs-you/dismiss` (`{"project"}`) takes it off. CurseForge
+files say `"checked_with": "sha1"`.
 
 ## Game settings
 
@@ -263,6 +269,8 @@ Both saves keep a safety backup of the old file and answer with `changed`,
 | GET | `/api/servers/{id}/duplicate` | A suggested name and folder for a copy |
 | POST | `/api/servers/{id}/duplicate` | `{"name", "directory", "world": "copy" \| "fresh"}`. Runs as a job; the copy gets the next free port and an unused color |
 | POST | `/api/modpacks/inspect` | Multipart upload of a `.mrpack` (`?server_id=` adds `into`, what importing into that server would do). Reads it and answers with a `token` and the `pack`: versions, every file with `download`, `client_only` or `refused` and why, `problems`, `can_import`. Changes nothing |
+| GET | `/api/modpacks/curseforge/search?q=` | CurseForge modpacks, most popular first |
+| POST | `/api/modpacks/curseforge` | `{"project": "curseforge:<id>", "server_id"}`: downloads the pack's newest release and answers as `inspect` does (a CurseForge pack's `.zip` can be uploaded to `inspect` too). Its files may also be `needs_you` |
 | DELETE | `/api/modpacks/{token}` | Throw an uploaded pack away |
 | POST | `/api/modpacks/{token}/new-server` | Make a new server from the pack: `{"name", "directory", "eula_accepted": true}` |
 | POST | `/api/servers/{id}/modpack` | Import into this server: `{"token", "confirm": true}`. Stops it, backs it up, moves its mods aside, changes its version first if needed |

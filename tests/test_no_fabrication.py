@@ -660,3 +660,48 @@ async def test_an_added_file_is_never_shown_as_checked_by_a_site(mods, config, t
     assert "cooltech" in {row["mod_id"] for row in plan["unchecked"]}, (
         "a file's add-on is never counted as up to date"
     )
+
+
+async def test_curseforge_sha1_is_never_shown_as_the_stronger_check(mods, config, monkeypatch):
+    """CurseForge publishes only sha1, so its files say so and are never
+    shown the way Modrinth's SHA-512-checked files are."""
+    import httpx
+
+    from agent import downloads
+
+    from .test_curseforge import FakeCurseForge
+
+    relay = FakeCurseForge()
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(relay))
+    mods.server.mc_version = "1.21.4"
+    result = await mods.install_from_site("curseforge:306612", user="tester")
+    assert (result["checked_by"], result["checked_with"]) == ("CurseForge", "sha1")
+    make_jar(config.mods_dir / "fromsite.jar", "fromsite")
+    mods.remember("fromsite", "modrinth", {"project_id": "AAAA"})
+    rows = {row["mod_id"]: row for row in mods.list_installed()}
+    assert rows["fabric-api"]["checked_with"] == "sha1"
+    assert rows["fromsite"]["checked_by"] == "Modrinth" and rows["fromsite"]["checked_with"] is None
+    from desktop.words import text
+
+    assert "weaker" in text("desktop.mods.checked_sha1")
+
+
+async def test_a_blocked_curseforge_mod_never_gets_a_made_up_link(mods, monkeypatch):
+    """No download link is guessed for a mod its author keeps from other
+    apps, and its page is only ever the one CurseForge gives."""
+    import httpx
+
+    from agent import downloads
+    from agent.mods.curseforge import Blocked
+
+    from .test_curseforge import FakeCurseForge
+
+    relay = FakeCurseForge()
+    relay.mods[333]["links"] = {"websiteUrl": "https://example.com/secret"}
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(relay))
+    mods.server.mc_version = "1.21.4"
+    with pytest.raises(Blocked):
+        await mods.install_from_site("curseforge:333", user="tester")
+    (need,) = mods.needs_you()
+    assert need["page"] is None, "not CurseForge's own page, so not shown"
+    assert not any("forgecdn" in asked for asked in relay.asked)

@@ -104,8 +104,11 @@ GET /api/servers/{server_id}/mods/search
 GET /api/servers/{server_id}/mods/project/{project}
 POST /api/servers/{server_id}/mods/upload
 POST /api/modpacks/inspect
+GET /api/modpacks/curseforge/search
+POST /api/modpacks/curseforge
 DELETE /api/modpacks/{token}
 POST /api/servers/{server_id}/modpack
+POST /api/servers/{server_id}/mods/needs-you/dismiss
 GET /api/servers/{server_id}/addons
 POST /api/servers/{server_id}/addons/upload
 PUT /api/servers/{server_id}/addons/{pack_uuid}

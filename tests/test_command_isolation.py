@@ -531,9 +531,9 @@ def test_nothing_added_from_another_site_a_file_or_a_link_is_run():
     """Hangar, GitHub links and dropped files only write files the server
     reads; a link Hangar gives for a plugin hosted elsewhere is shown,
     never fetched."""
-    from agent.mods import addfrom, github, hangar
+    from agent.mods import addfrom, curseforge, github, hangar
 
-    for module in (addfrom, github, hangar):
+    for module in (addfrom, curseforge, github, hangar):
         source = Path(module.__file__).read_text(encoding="utf-8")
         for forbidden in (
             "send_command",
@@ -546,3 +546,15 @@ def test_nothing_added_from_another_site_a_file_or_a_link_is_run():
             assert forbidden not in source, (module.__name__, forbidden)
     source = Path(hangar.__file__).read_text(encoding="utf-8")
     assert "externalUrl" in source and "FileSpec(\n            url=str(url)" in source
+
+
+def test_the_app_never_holds_a_curseforge_key_or_asks_curseforge_itself():
+    """CurseForge is reached only through our relay, which holds the key."""
+    from agent import config, downloads
+    from agent.mods import curseforge
+
+    source = Path(curseforge.__file__).read_text(encoding="utf-8").lower()
+    assert "x-api-key" not in source and "api.curseforge.com" not in source
+    assert "api.curseforge.com" not in downloads.ALLOWED_HOSTS
+    relay = config.ModSettings().curseforge_relay
+    assert relay.startswith("https://") and "cloudfunctions.net/curseforge" in relay

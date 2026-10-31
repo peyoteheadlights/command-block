@@ -287,6 +287,17 @@ def isolated_saved_lists(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def fresh_curseforge_sign_in(monkeypatch):
+    """Each test signs in to the CurseForge relay afresh, with its own pace."""
+    from agent.mods import curseforge
+    from agent.mods.hangar import Pace
+
+    monkeypatch.setattr(curseforge, "SIGN_IN", curseforge.SignIn())
+    monkeypatch.setattr(curseforge, "PACE", Pace(60, 60.0))
+    monkeypatch.delenv(curseforge.ENV_KEY, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def clean_fake_env():
     keys = [
         "FAKE_CRASH_ON_START",

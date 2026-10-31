@@ -1060,11 +1060,17 @@ class Mod(Open):
     has_history: bool | None = None
     update_available: ModUpdate | None = None
     source: str | None = Field(
-        None, description="modrinth, hangar, github or file; null for a jar the app didn't add"
+        None,
+        description="modrinth, hangar, curseforge, github or file; null for a jar the app "
+        "didn't add",
     )
     source_name: str | None = None
     checked_by: str | None = Field(
-        None, description="The site that lists this file (Modrinth or Hangar); null: nobody"
+        None,
+        description="The site that lists this file (Modrinth, Hangar, CurseForge); null: nobody",
+    )
+    checked_with: str | None = Field(
+        None, description="sha1 for CurseForge, a weaker check than the other sites use"
     )
 
 
@@ -1073,8 +1079,20 @@ class ModProblem(ModIssue):
     filename: str | None = None
 
 
+class NeedsYou(Open):
+    """A CurseForge mod its author keeps from other apps: the owner opens
+    its page, downloads it and drops the file in."""
+
+    project: str
+    version_id: str | None = None
+    name: str | None = None
+    filename: str | None = None
+    page: str | None = Field(None, description="Its CurseForge page; null when not known now")
+
+
 class ModList(Open):
     mods: list[Mod]
+    needs_you: list[NeedsYou] = []
     problems: list[ModProblem] = []
     minecraft_version: str | None = Field(
         None, description="null until the server has started once"
@@ -1164,8 +1182,11 @@ class ModrinthHit(Open):
     page: str | None = None
     server_side: str | None = None
     client_side: str | None = None
-    source: str | None = Field(None, description="modrinth or hangar")
+    source: str | None = Field(None, description="modrinth, hangar or curseforge")
     source_name: str | None = None
+    blocked: bool | None = Field(
+        None, description="CurseForge: its author doesn't let other apps download it"
+    )
 
 
 class ModSearch(Open):
@@ -1241,6 +1262,9 @@ class ModInstalled(Open):
     dependencies_optional: list[DependencyOptional] = Field(
         [], description="Plugins it works with, listed but not added"
     )
+    needs_you: list[NeedsYou] = Field([], description="Needed mods now under Needs you")
+    checked_by: str | None = None
+    checked_with: str | None = Field(None, description='"sha1" for CurseForge')
 
 
 class DependencyItem(Open):
@@ -1298,9 +1322,11 @@ class ModUploaded(Open):
     ok: bool
     installed: dict[str, Any]
     source: str | None = Field(
-        None, description="modrinth or hangar when a site lists it, else file or github"
+        None,
+        description="modrinth, hangar or curseforge when a site lists it, else file or github",
     )
     checked_by: str | None = Field(None, description="null: nobody checked it")
+    checked_with: str | None = Field(None, description='"sha1" for CurseForge')
     undo: Undo | None = None
 
 

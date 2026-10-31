@@ -43,6 +43,8 @@ def jar_bytes(mod_id, version, depends=None):
 class FakeModrinth:
     """projects: slug -> dict(project_id, title, versions=[(number, [dep project ids], filename?)])"""
 
+    name, label = "modrinth", "Modrinth"
+
     def __init__(self, projects, mc="1.21.1"):
         self.projects = projects
         self.mc = mc

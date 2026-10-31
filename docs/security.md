@@ -516,10 +516,11 @@ Everything the agent downloads (server software, loader installers, mods
 and plugins, Geyser and Floodgate) goes through `agent/downloads.py`, which:
 
 - allows HTTPS only, to an allow-list of hosts (Mojang, FabricMC, QuiltMC,
-  Forge, NeoForged, PaperMC, PurpurMC, Modrinth, Hangar, GeyserMC). On hosts
-  that serve other people's files or other pages (GitHub; Mojang's Bedrock
-  hosts; Hangar), only the listed paths are allowed (`GITHUB_PATHS`,
-  `BEDROCK_PATHS`). One more GitHub repo's release list and files are allowed
+  Forge, NeoForged, PaperMC, PurpurMC, Modrinth, Hangar, CurseForge's file
+  servers and our CurseForge relay, GeyserMC). On hosts that serve other
+  people's files or other pages (GitHub; Mojang's Bedrock hosts; Hangar;
+  Google's sign-in hosts; the relay; CurseForge's file servers), only the
+  listed paths are allowed (`GITHUB_PATHS`, `SHARED_HOST_PATHS`). One more GitHub repo's release list and files are allowed
   only while an add-on from a pasted link to it is read, added or updated
   (`downloads.allow_releases`); any other pasted link is never fetched. The host is
   re-checked on every redirect hop, and redirects are followed by hand
@@ -540,7 +541,16 @@ downloaded. A file from a GitHub release is checked against the SHA-256
 GitHub lists when there is one, and like a dropped file it is shown as "Not
 checked by Modrinth".
 
+CurseForge is reached only through our relay, which holds CurseForge's key
+(the app never has one) and allows five read-only calls. The agent's
+anonymous Firebase sign-in token goes only to the relay: it is dropped from
+any redirect. CurseForge files are checked against CurseForge's sha1 and
+shown as "Checked (sha1)"; a file CurseForge flags as malware is refused
+even when dropped in by hand, and a mod whose author keeps it from other
+apps is never downloaded from a made-up link.
+
 Modpack mods are stricter still: each one must be on `cdn.modrinth.com`
+(a CurseForge pack's: on CurseForge's file servers, with CurseForge's sha1)
 and must come with a SHA-512 in the pack; anything else blocks the import
 before a single file is downloaded. Each file is checked against that
 SHA-512 (`allow_unverified=False`), and a mismatch stops the import: a new

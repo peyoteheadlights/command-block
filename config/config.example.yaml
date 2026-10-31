@@ -149,6 +149,9 @@ mods:
   backup_directory: mod-backups
   trash_directory: mod-trash
   modrinth_api: https://api.modrinth.com/v2
+  # CurseForge goes through Command Block's relay. Neither is a secret.
+  curseforge_relay: https://europe-west1-command-block-d4526.cloudfunctions.net/curseforge
+  firebase_web_key: AIzaSyDUobgN-1BPbhI4jsLAASFU2Mf6rp3So_g
   user_agent: command-block (self-hosted)
   backup_before_install: true
   auto_stop_for_install: false

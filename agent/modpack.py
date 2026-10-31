@@ -1,16 +1,26 @@
-"""Importing a Modrinth modpack (.mrpack), as a new server or into one.
+"""Importing a modpack, as a new server or into one: a Modrinth pack
+(.mrpack) or a CurseForge pack (a .zip with ``manifest.json``).
 
 A .mrpack is a zip holding ``modrinth.index.json`` (the Minecraft version,
 the loader and its version, and every mod file with its hashes and where to
 download it) and ``overrides/`` and ``server-overrides/`` folders of files
 copied in as they are (configs, scripts, small extras).
 
+A CurseForge pack's ``manifest.json`` lists only each mod's project and file
+id, and its ``overrides`` folder. Each file is asked of CurseForge through
+our relay (agent/mods/curseforge.py) when the pack is read, kept in memory
+only until it is imported, and downloaded from CurseForge's file servers
+checked by sha1. A mod its author keeps from other apps doesn't stop the
+import: it is listed under "Needs you" on the server's Mods page. A mod
+CurseForge tags for the game only is left out and listed for the players.
+
 Before anything is downloaded or changed, ``inspect`` reads the pack and
 says what it holds: the Minecraft version, the loader version and the full
 mod list, with what will be skipped and why. Then:
 
   * each mod is downloaded through the safe downloader, from Modrinth's CDN
-    only, and checked against the SHA-512 the pack lists. A file the pack
+    only (CurseForge's for its packs), and checked against the SHA-512 the
+    pack lists (the sha1 CurseForge lists). A file the pack
     gives no SHA-512 for, or that isn't on Modrinth's CDN, is refused; a
     pack with any such file the server needs can't be imported
   * client-only files (``env.server`` is "unsupported", and client folders
@@ -39,7 +49,7 @@ import shutil
 import tempfile
 import time
 import zipfile
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -47,6 +57,8 @@ from urllib.parse import urlparse
 from . import downloads, notes, servertypes
 from .downloads import DownloadError, FileSpec
 from .events import Event
+from .mods.curseforge import GOOD_STATUS, LOADERS, Blocked, CurseForgeClient, version_of
+from .mods.sources import SourceError
 from .security.paths import (
     EXECUTABLE_EXTENSIONS,
     PathSafetyError,
@@ -63,6 +75,15 @@ if TYPE_CHECKING:
 log = logging.getLogger("msc.modpack")
 
 INDEX = "modrinth.index.json"
+MANIFEST = "manifest.json"
+# A CurseForge pack's loader ("forge-47.2.0") as a .mrpack would name it.
+CURSEFORGE_LOADERS = {
+    "forge": "forge",
+    "fabric": "fabric-loader",
+    "quilt": "quilt-loader",
+    "neoforge": "neoforge",
+}
+FOLDER_RE = re.compile(r"^[\w.-]{1,64}$")
 UPLOAD_FOLDER = "modpack-uploads"
 MAX_PACK_BYTES = 1024 * 1024 * 1024  # the .mrpack itself
 MAX_INDEX_BYTES = 8 * 1024 * 1024
@@ -94,6 +115,12 @@ TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
 DOWNLOAD = "download"
 CLIENT = "client_only"
 REFUSED = "refused"
+PENDING = "pending"  # a CurseForge file not asked about yet
+NEEDS_YOU = "needs_you"  # its author keeps it from other apps
+OPTIONAL = "optional"  # the pack turns it off
+# A CurseForge pack, read and asked about, until it is imported. In memory
+# only: CurseForge's answers are never saved.
+READ: dict[str, Pack] = {}
 
 
 class ModpackError(RuntimeError):
@@ -109,7 +136,9 @@ class PackFile:
     reason: str | None = None
     server: str | None = None  # the pack's env.server: required, optional, unsupported
     sha512: str | None = field(default=None, repr=False)
+    sha1: str | None = field(default=None, repr=False)
     url: str | None = field(default=None, repr=False)
+    need: dict[str, Any] | None = None  # what "Needs you" shows
 
 
 @dataclass
@@ -126,6 +155,8 @@ class Pack:
     overrides_bytes: int
     skipped_overrides: list[str]
     problems: list[str]
+    site: str = "Modrinth"
+    folders: tuple[str, ...] = ("overrides", "server-overrides")
 
     @property
     def downloads(self) -> list[PackFile]:
@@ -135,8 +166,8 @@ class Pack:
         files = []
         for f in self.files:
             entry = asdict(f)
-            entry.pop("sha512", None)
-            entry.pop("url", None)
+            for hidden in ("sha512", "sha1", "url", "need"):
+                entry.pop(hidden, None)
             files.append(entry)
         return {
             "name": self.name,
@@ -153,6 +184,8 @@ class Pack:
             "refused": [
                 {"name": f.name, "reason": f.reason} for f in self.files if f.status == REFUSED
             ],
+            "needs_you": [f.need for f in self.files if f.need],
+            "site": self.site,
             "overrides": self.overrides,
             "overrides_bytes": self.overrides_bytes,
             "skipped_overrides": self.skipped_overrides,
@@ -205,11 +238,13 @@ def _check_file(entry: Any) -> PackFile:
     return found
 
 
-def _override_members(zf: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, str]]:
+def _override_members(
+    zf: zipfile.ZipFile, folders: tuple[str, ...] = OVERRIDE_FOLDERS
+) -> list[tuple[zipfile.ZipInfo, str]]:
     """(entry, path inside the server folder) for every override file, in
     the order they are applied."""
     found = []
-    for folder in OVERRIDE_FOLDERS:
+    for folder in folders:
         prefix = f"{folder}/"
         for info in zf.infolist():
             name = info.filename.replace("\\", "/")
@@ -222,8 +257,9 @@ def _override_members(zf: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, str]]:
 
 
 def inspect(archive: Path) -> Pack:
-    """Read a .mrpack and say what importing it would do. Raises
-    ModpackError when it isn't a usable modpack at all."""
+    """Read a .mrpack or a CurseForge pack and say what importing it would
+    do (a CurseForge pack's files are asked about later, in ``resolve``).
+    Raises ModpackError when it isn't a usable modpack at all."""
     try:
         zf = zipfile.ZipFile(archive)
     except (zipfile.BadZipFile, OSError) as exc:
@@ -232,23 +268,25 @@ def inspect(archive: Path) -> Pack:
         infos = zf.infolist()
         if len(infos) > MAX_MEMBERS:
             raise ModpackError("That pack holds far more files than a modpack does.")
-        try:
-            info = zf.getinfo(INDEX)
-        except KeyError:
-            raise ModpackError(
-                f"That file has no {INDEX}, so it isn't a Modrinth modpack (.mrpack)."
-            ) from None
-        if info.file_size > MAX_INDEX_BYTES:
-            raise ModpackError(f"The pack's {INDEX} is far too big.")
-        try:
-            index = json.loads(zf.read(INDEX).decode("utf-8"))
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise ModpackError(f"The pack's {INDEX} couldn't be read ({exc}).") from exc
-        if not isinstance(index, dict) or index.get("game") != "minecraft":
-            raise ModpackError("That pack isn't for Minecraft.")
-        if index.get("formatVersion") != 1:
-            raise ModpackError("That pack uses a format this app doesn't know yet.")
-        dependencies = index.get("dependencies")
+        names = set(zf.namelist())
+        curseforge = INDEX not in names and MANIFEST in names
+        index: Any
+        dependencies: Any
+        if curseforge:
+            index = _read_json(zf, MANIFEST)
+            dependencies, raw_files, folders = _from_manifest(index)
+        else:
+            if INDEX not in names:
+                raise ModpackError(
+                    f"That file has no {INDEX} or {MANIFEST}, so it isn't a Modrinth or "
+                    "CurseForge modpack."
+                )
+            index, folders = _read_json(zf, INDEX), OVERRIDE_FOLDERS
+            if not isinstance(index, dict) or index.get("game") != "minecraft":
+                raise ModpackError("That pack isn't for Minecraft.")
+            if index.get("formatVersion") != 1:
+                raise ModpackError("That pack uses a format this app doesn't know yet.")
+            dependencies, raw_files = index.get("dependencies"), index.get("files") or []
         if not isinstance(dependencies, dict) or not dependencies.get("minecraft"):
             raise ModpackError("The pack doesn't say which Minecraft version it is for.")
         try:
@@ -264,10 +302,9 @@ def inspect(archive: Path) -> Pack:
         except VersionError as exc:
             raise ModpackError(str(exc)) from exc
 
-        raw_files = index.get("files") or []
         if not isinstance(raw_files, list) or len(raw_files) > MAX_FILES:
             raise ModpackError("The pack's file list couldn't be read.")
-        files = [_check_file(entry) for entry in raw_files]
+        files = [(_curseforge_file if curseforge else _check_file)(e) for e in raw_files]
         problems = []
         refused = [f for f in files if f.status == REFUSED]
         if refused:
@@ -278,7 +315,7 @@ def inspect(archive: Path) -> Pack:
 
         overrides, size, skipped = 0, 0, []
         check_base = Path(tempfile.gettempdir()) / "mcsc-pack-check"
-        for member, relative in _override_members(zf):
+        for member, relative in _override_members(zf, folders):
             try:
                 check_archive_member(check_base, relative, zip_member_is_symlink(member))
             except PathSafetyError:
@@ -300,9 +337,10 @@ def inspect(archive: Path) -> Pack:
         if size > MAX_UNPACKED_BYTES:
             problems.append("The pack's extra files add up to more than 4 GB unpacked.")
 
+    version = index.get("versionId") or index.get("version")
     return Pack(
         name=str(index.get("name") or archive.stem)[:100],
-        version=str(index.get("versionId"))[:60] if index.get("versionId") else None,
+        version=str(version)[:60] if version else None,
         summary=str(index.get("summary"))[:300] if index.get("summary") else None,
         minecraft=minecraft,
         type_id=server_type.id,
@@ -313,7 +351,113 @@ def inspect(archive: Path) -> Pack:
         overrides_bytes=size,
         skipped_overrides=skipped[:50],
         problems=problems,
+        site="CurseForge" if curseforge else "Modrinth",
+        folders=folders,
     )
+
+
+def _read_json(zf: zipfile.ZipFile, name: str) -> Any:
+    if zf.getinfo(name).file_size > MAX_INDEX_BYTES:
+        raise ModpackError(f"The pack's {name} is far too big.")
+    try:
+        return json.loads(zf.read(name).decode("utf-8-sig"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ModpackError(f"The pack's {name} couldn't be read ({exc}).") from exc
+
+
+def _from_manifest(manifest: Any) -> tuple[dict[str, Any], Any, tuple[str, ...]]:
+    """A CurseForge manifest's versions (as a .mrpack names them), its files
+    and its overrides folder."""
+    if not isinstance(manifest, dict) or manifest.get("manifestType") != "minecraftModpack":
+        raise ModpackError("That pack isn't a Minecraft modpack.")
+    minecraft = manifest.get("minecraft")
+    minecraft = minecraft if isinstance(minecraft, dict) else {}
+    dependencies: dict[str, Any] = {"minecraft": minecraft.get("version")}
+    loaders = [x for x in minecraft.get("modLoaders") or [] if isinstance(x, dict)]
+    primary = next((x for x in loaders if x.get("primary")), loaders[0] if loaders else None)
+    if primary:
+        kind, _, version = str(primary.get("id") or "").partition("-")
+        # An unknown loader name passes through, so for_mrpack refuses it by name.
+        dependencies[CURSEFORGE_LOADERS.get(kind, kind or "an unknown loader")] = version
+    folder = str(manifest.get("overrides") or "overrides")
+    if not FOLDER_RE.match(folder) or folder in (".", ".."):
+        raise ModpackError("The pack's overrides folder has a name that isn't safe.")
+    return dependencies, manifest.get("files") or [], (folder,)
+
+
+def _curseforge_file(entry: Any) -> PackFile:
+    """One entry of a manifest's "files": a project and file id, asked of
+    CurseForge later (resolve)."""
+    project = entry.get("projectID") if isinstance(entry, dict) else None
+    file_id = entry.get("fileID") if isinstance(entry, dict) else None
+    if not isinstance(project, int) or not isinstance(file_id, int):
+        return PackFile(path="?", name="?", size=None, status=REFUSED, reason="not readable")
+    found = PackFile(
+        path=f"{project}-{file_id}", name=f"CurseForge {project}", size=None, status=PENDING
+    )
+    if entry.get("required") is False:
+        found.status, found.reason = OPTIONAL, "the pack turns it off"
+    return found
+
+
+async def resolve(pack: Pack, client: CurseForgeClient, job: JobHandle | None = None) -> None:
+    """Ask CurseForge about each of a CurseForge pack's files: where to
+    download it and its sha1, or why it can't be. One call or a few per
+    mod, at the relay's pace."""
+    pending = [f for f in pack.files if f.status == PENDING]
+    loader = LOADERS.get(pack.type_id)
+    for number, item in enumerate(pending, start=1):
+        if job:
+            job.step(f"Asking CurseForge about mod {number} of {len(pending)}")
+        project, file_id = item.path.split("-")
+        try:
+            found = await client.file(project, file_id, pack.minecraft, loader)
+        except SourceError as exc:
+            raise ModpackError(str(exc)) from exc
+        version = version_of(found) if found else None
+        name = (version or {}).get("file", {}).get("filename") or item.name
+        item.name, item.status = name, DOWNLOAD
+        try:
+            safe_filename(name, {".jar", ".zip"})
+        except PathSafetyError:
+            item.status, item.reason = REFUSED, "its file name isn't safe to write"
+            continue
+        if not version or version["status"] not in GOOD_STATUS:
+            item.status, item.reason = REFUSED, "CurseForge doesn't offer that file any more"
+        elif version["client_only"] or not name.lower().endswith(".jar"):
+            item.status, item.reason = CLIENT, "only for the game itself, not servers"
+        elif not version["file"]["sha1"]:
+            item.status, item.reason = REFUSED, "CurseForge gives no sha1 to check it against"
+        else:
+            item.path, item.size = f"mods/{name}", version["file"]["size"]
+            try:
+                spec = await client.spec(version)
+            except Blocked as exc:
+                item.status, item.reason, item.need = NEEDS_YOU, str(exc), exc.need
+                continue
+            except SourceError as exc:
+                item.status, item.reason = REFUSED, str(exc)
+                continue
+            item.url, item.sha1 = spec.url, spec.sha1
+    refused = [f for f in pack.files if f.status == REFUSED]
+    if refused:
+        pack.problems.append(
+            f"{len(refused)} file(s) the server needs can't be downloaded safely: "
+            + "; ".join(f"{f.name} ({f.reason})" for f in refused[:5])
+        )
+
+
+async def read(core: AgentCore, token: str, archive: Path) -> Pack:
+    """The pack behind ``token``: read, and for a CurseForge pack its files
+    asked about once and kept in memory until it's imported or forgotten."""
+    if token in READ:
+        return READ[token]
+    pack = await asyncio.to_thread(inspect, archive)
+    if any(f.status == PENDING for f in pack.files) and not pack.problems:
+        await resolve(pack, CurseForgeClient(core.config))
+    if pack.site == "CurseForge":
+        READ[token] = pack
+    return pack
 
 
 # ----------------------------------------------------------------------
@@ -350,6 +494,7 @@ def new_upload(core: AgentCore) -> tuple[str, Path]:
 
 
 def forget(core: AgentCore, token: str) -> None:
+    READ.pop(token, None)
     if TOKEN_RE.match(token or ""):
         (upload_folder(core) / f"{token}.mrpack").unlink(missing_ok=True)
 
@@ -362,18 +507,19 @@ async def _download_all(pack: Pack, folder: Path, job: JobHandle | None) -> list
     total = sum(f.size or 0 for f in wanted)
     if job:
         job.step(
-            f"Downloading {len(wanted)} file(s) from Modrinth",
+            f"Downloading {len(wanted)} file(s) from {pack.site}",
             total=total if total else None,
             unit="bytes",
         )
     fetched = []
     for item in wanted:
-        assert item.url and item.sha512
+        assert item.url and (item.sha512 or item.sha1)
         target = check_archive_member(folder, item.path)
         spec = FileSpec(
             url=downloads.check_url(item.url),
             name=item.name,
             sha512=item.sha512,
+            sha1=item.sha1,
             size=item.size,
             allow_unverified=False,
         )
@@ -381,16 +527,21 @@ async def _download_all(pack: Pack, folder: Path, job: JobHandle | None) -> list
             got = await downloads.download(spec, target.parent)
         except DownloadError as exc:
             raise ModpackError(f"{item.name}: {exc}") from exc
+        # A CurseForge pack lists no SHA-512, so the known bad list is asked now.
+        bad = item.sha1 and notes.known_bad(await asyncio.to_thread(got.path.read_bytes))
+        if bad:
+            got.path.unlink(missing_ok=True)
+            raise ModpackError(f"{item.name} is on the list of known bad files ({bad['why']}).")
         fetched.append({"path": item.path, **got.to_dict()})
         if job and item.size:
             job.advance(item.size)
     return fetched
 
 
-def _extract_overrides(archive: Path, folder: Path, advance=None) -> list[str]:
+def _extract_overrides(pack: Pack, archive: Path, folder: Path, advance=None) -> list[str]:
     written: list[str] = []
     with zipfile.ZipFile(archive) as zf:
-        for member, relative in _override_members(zf):
+        for member, relative in _override_members(zf, pack.folders):
             top = relative.split("/", 1)[0]
             if top in CLIENT_ONLY or Path(relative).suffix.lower() in EXECUTABLE_EXTENSIONS:
                 continue
@@ -414,7 +565,7 @@ async def put_in_place(
     if job:
         job.step("Copying the pack's other files", total=pack.overrides, unit="files")
     written = await asyncio.to_thread(
-        _extract_overrides, archive, folder, job.advance if job else None
+        _extract_overrides, pack, archive, folder, job.advance if job else None
     )
     return {"downloaded": fetched, "overrides": written}
 
@@ -429,8 +580,9 @@ def check_in_place(pack: Pack, folder: Path, result: dict[str, Any]) -> tuple[bo
     for relative in result["overrides"]:
         if not (folder / relative).is_file():
             return False, f"{relative} isn't there after the import"
+    against = "CurseForge's sha1" if pack.site == "CurseForge" else "the pack's SHA-512"
     return True, (
-        f"{len(pack.downloads)} mod file(s) checked against the pack's SHA-512 and "
+        f"{len(pack.downloads)} mod file(s) checked against {against} and "
         f"{len(result['overrides'])} other file(s) in place"
     )
 
@@ -453,7 +605,7 @@ async def import_new(
     from .servertypes.create import create_server
 
     archive = upload_path(core, token)
-    pack = await asyncio.to_thread(inspect, archive)
+    pack = await read(core, token, archive)
     if pack.problems:
         raise ModpackError(pack.problems[0])
 
@@ -480,6 +632,7 @@ async def import_new(
     )
     forget(core, token)
     ctx = core.get_server(result["server_id"])
+    _list_needs(ctx, pack)
     await ctx.bus.publish(_event(pack, ctx.name, result.get("modpack") or {}))
     return result
 
@@ -522,7 +675,7 @@ async def import_into(ctx: ServerContext, token: str, user: str = "system") -> d
     from .servertypes.install import change_version
 
     archive = upload_path(ctx.core, token)
-    pack = await asyncio.to_thread(inspect, archive)
+    pack = await read(ctx.core, token, archive)
     if pack.problems:
         raise ModpackError(pack.problems[0])
     version_result = None
@@ -572,6 +725,7 @@ async def import_into(ctx: ServerContext, token: str, user: str = "system") -> d
         "modpack", title, run, server_id=ctx.server_id, risky=True, user=user
     )
     forget(ctx.core, token)
+    _list_needs(ctx, pack)
     summary = _summary(pack, outcome, outcome["detail"])
     ctx.core.db.audit(
         "modpack_import",
@@ -595,7 +749,7 @@ def _pack_targets(pack: Pack, archive: Path) -> list[str]:
     downloads and the override files it extracts."""
     targets = [f.path.replace("\\", "/") for f in pack.downloads]
     with zipfile.ZipFile(archive) as zf:
-        for _member, relative in _override_members(zf):
+        for _member, relative in _override_members(zf, pack.folders):
             top = relative.split("/", 1)[0]
             if top in CLIENT_ONLY or Path(relative).suffix.lower() in EXECUTABLE_EXTENSIONS:
                 continue
@@ -660,8 +814,43 @@ def _summary(pack: Pack, result: dict[str, Any], detail: str) -> dict[str, Any]:
         "downloaded": len(result.get("downloaded") or []),
         "overrides": len(result.get("overrides") or []),
         "client_only": [f.name for f in pack.files if f.status == CLIENT],
+        "needs_you": [f.need["name"] for f in pack.files if f.need],
         "check": detail,
     }
+
+
+def _list_needs(ctx: ServerContext, pack: Pack) -> None:
+    """The pack's mods whose authors keep them from other apps, under the
+    server's "Needs you", to be dropped in by hand."""
+    for item in pack.files:
+        if item.need:
+            ctx.mods.need_you(item.need)
+
+
+async def from_curseforge(core: AgentCore, project: str) -> tuple[str, Pack]:
+    """Download a CurseForge modpack's newest release (sha1 checked) as an
+    upload, then read it like one."""
+    from .mods.curseforge import MODPACKS
+
+    client = CurseForgeClient(core.config)
+    try:
+        version = await client.latest_for(project, None, kind=MODPACKS)
+        if not version:
+            raise ModpackError("CurseForge has no file of that modpack to download.")
+        token, path = new_upload(core)
+        spec = await client.spec(version, ext=".zip", name=path.name)
+    except Blocked as exc:
+        raise ModpackError(str(exc)) from exc
+    except SourceError as exc:
+        raise ModpackError(str(exc)) from exc
+    try:
+        await downloads.download(replace(spec, max_bytes=MAX_PACK_BYTES), path.parent)
+        return token, await read(core, token, path)
+    except BaseException as exc:
+        forget(core, token)
+        if isinstance(exc, DownloadError):
+            raise ModpackError(str(exc)) from exc
+        raise
 
 
 def _event(pack: Pack, server_name: str, summary: dict[str, Any]) -> Event:

@@ -4,9 +4,9 @@ Mods (Fabric, Quilt, Forge, NeoForge) live in mods/; plugins (Paper,
 Purpur) live in plugins/; datapacks in the world's datapacks/. Which one,
 which loaders are accepted and which sites' listings fit come from the
 server type's capabilities (agent/servertypes). Add-ons come from Modrinth,
-Hangar or a GitHub release, all through the same calls (agent/mods/sources.py),
-or from a file. Everything that touches those folders goes through this
-class, and every write is:
+Hangar, CurseForge or a GitHub release, all through the same calls
+(agent/mods/sources.py), or from a file. Everything that touches those
+folders goes through this class, and every write is:
 
   * confined to the mods folder by agent.security.paths
   * limited to .jar (and .jar.disabled) files, and .zip datapacks
@@ -41,6 +41,7 @@ from ..security.paths import (
     safe_join,
 )
 from . import checks
+from .curseforge import Blocked, CurseForgeClient, file_prints
 from .dependencies import PLATFORM_IDS, DependencyResolver
 from .github import GitHubReleases
 from .hangar import HangarClient
@@ -75,12 +76,32 @@ MOD_FILES = (
 # How deep required plugins of required plugins are added.
 MAX_NEEDS_DEPTH = 6
 NO_UPDATES = "Added from a file, so there's no list to check it against for updates."
+# Mods CurseForge's authors don't let other apps download: their page and a
+# drop zone, until the owner drops the file in (see Blocked).
+NEEDS_YOU = "curseforge_needs_you"
+BLOCKED_UPDATE = "{version} is out, but its author doesn't let other apps download it."
+# How each site's files are checked, for the one weaker than the rest.
+CHECKED_WITH = {"curseforge": "sha1"}
 # How many mods Update all asks Modrinth about at the same time.
 PLAN_CHECKS_AT_ONCE = 6
 
 
 class ModError(RuntimeError):
     """Operator-visible mod management problem."""
+
+
+class AlreadyHere(ModError):
+    """A needed mod turned out to be installed already, from another site."""
+
+
+def checked(source: str | None) -> dict[str, Any]:
+    """Who checked a file, and how when it's the weaker sha1: only a site
+    that lists the very file has looked at it."""
+    listed = source in ("modrinth", "hangar", "curseforge")
+    return {
+        "checked_by": LABELS[source] if listed and source else None,
+        "checked_with": CHECKED_WITH.get(source or ""),
+    }
 
 
 def refuse_known_bad(data: bytes, filename: str) -> None:
@@ -143,6 +164,7 @@ class ModManager:
         self.modrinth = ModrinthClient(config)
         self.hangar = HangarClient(config)
         self.github = GitHubReleases(config)
+        self.curseforge = CurseForgeClient(config)
         self.deps = DependencyResolver(self)
         self._cache: tuple[float, list[ModInfo]] | None = None
 
@@ -178,10 +200,15 @@ class ModManager:
         """The add-on source called ``name``, when this server can use it."""
         if name == "hangar" and not self.server_type.hangar_platform:
             raise ModError(f"Hangar has plugins for Paper servers, not {self.server_type.name}.")
+        if name == "curseforge" and not self.curseforge.loaders:
+            raise ModError(
+                f"CurseForge here has mods for mod loaders, not {self.server_type.name}."
+            )
         sites: dict[str, AddonSource] = {
             "modrinth": self.modrinth,
             "hangar": self.hangar,
             "github": self.github,
+            "curseforge": self.curseforge,
         }
         if name not in sites:
             raise ModError("That add-on source isn't known.")
@@ -223,6 +250,40 @@ class ModManager:
             self.remember(mod.mod_id, "hangar", {"project_id": f"hangar:{project}"})
         else:  # still asked on Modrinth by its id, as before
             self.db.set_setting(f"mod_source:{mod.mod_id}", {"hangar_checked": True})
+
+    async def match_on_curseforge(self, mods: list[ModInfo]) -> None:
+        """Jars that came from nowhere the app knows, looked up on CurseForge
+        by fingerprint, all in one call, once. A match counts only when its
+        sha1 is the jar's too, so a mod is never taken for another."""
+        fresh = [mod for mod in mods if not self.record_of(mod)]
+        if not fresh or not self.curseforge.loaders:
+            return
+        prints = await asyncio.to_thread(lambda: [file_prints(mod.path) for mod in fresh])
+        try:
+            found = await self.curseforge.by_fingerprint([p for p, _ in prints])
+        except SourceError:
+            return  # asked again next time
+        for mod, (print_, sha1) in zip(fresh, prints, strict=True):
+            version = found.get(print_)
+            if version and version["file"]["sha1"] == sha1:
+                self.remember(mod.mod_id, "curseforge", version)
+            else:  # still asked on Modrinth by its id, as before
+                self.db.set_setting(f"mod_source:{mod.mod_id}", {"curseforge_checked": True})
+
+    def needs_you(self) -> list[dict[str, Any]]:
+        return self.db.get_setting(NEEDS_YOU) or []
+
+    def need_you(self, need: dict[str, Any]) -> None:
+        """List a mod under "Needs you" (once)."""
+        rest = [n for n in self.needs_you() if n["project"] != need["project"]]
+        self.db.set_setting(NEEDS_YOU, [*rest, need])
+
+    def done_needing(self, project: str) -> bool:
+        """Take ``project`` off "Needs you"; whether it was there."""
+        before = self.needs_you()
+        rest = [n for n in before if n["project"] != project]
+        self.db.set_setting(NEEDS_YOU, rest)
+        return len(rest) != len(before)
 
     def source_of(self, mod: ModInfo) -> str | None:
         """The source the app installed ``mod`` from, None for a jar it
@@ -325,7 +386,7 @@ class ModManager:
             row["source_name"] = LABELS.get(source or "")
             # Only a site that lists the file has looked at it; a file or a
             # GitHub release was checked by nobody.
-            row["checked_by"] = LABELS[source] if source in ("modrinth", "hangar") else None
+            row.update(checked(source))
             update = self.db.get_setting(f"mod_update:{mod.mod_id}")
             if update and update.get("installed_version") == mod.version:
                 row["update_available"] = update
@@ -611,7 +672,9 @@ class ModManager:
         depth: int = 0,
     ) -> dict[str, Any]:
         """Download and install a mod or plugin from Modrinth, or from
-        Hangar when ``project`` is "hangar:<id>". Returns what changed."""
+        Hangar or CurseForge when ``project`` is "hangar:<id>" or
+        "curseforge:<id>". Returns what changed. A CurseForge mod its author
+        keeps from other apps is put under "Needs you" (Blocked)."""
         self._require_content()
         self.require_server_offline(f"install a {self.word}")
         mc_version = minecraft_version or self.server.mc_version
@@ -651,7 +714,11 @@ class ModManager:
                 "was changed. Use Update, or confirm that you want to replace it."
             )
 
-        data, filename, sha256 = await site.download(version)
+        try:
+            data, filename, sha256 = await site.download(version)
+        except Blocked as exc:
+            self.need_you(exc.need)
+            raise
         refuse_known_bad(data, filename)
         twin = next((m for m in self.scan() if m.sha256 == sha256 and m.path != str(target)), None)
         if twin:
@@ -664,6 +731,9 @@ class ModManager:
         try:
             info = read_mod_jar(temp, compute_hash=False)
             self._check_loader(info)
+            here = depth and self.find_by_id(info.mod_id)
+            if here:  # a needed mod already brought by a jar from elsewhere
+                raise AlreadyHere(f"{info.mod_id} is already installed as {here.filename}.")
             replaced = None
             if target.exists():
                 assert_not_symlink(target)
@@ -691,6 +761,7 @@ class ModManager:
         self.remember(
             installed.mod_id, source, {**version, "project_id": version.get("project_id") or plain}
         )
+        self.done_needing(version.get("project_id") or plain)
         self._cache = None
         await self._emit(
             "mod_installed",
@@ -715,6 +786,7 @@ class ModManager:
             "sha256": sha256,
             "source": version["file"]["url"],
             "release_type": version["release_type"],
+            **checked(source),
             "dependencies_required": [],
             "dependencies_installed": [],
             # Hangar's: the ones not on Hangar (a link the owner clicks; never
@@ -729,9 +801,10 @@ class ModManager:
                 for d in version.get("dependencies") or []
                 if d["type"] == "optional" and d.get("project_id")
             ],
+            "needs_you": [],
         }
 
-        if source == "hangar":
+        if source in ("hangar", "curseforge"):
             needs = [
                 d
                 for d in version.get("dependencies") or []
@@ -741,6 +814,7 @@ class ModManager:
                 done = await self._add_needs(needs, user, depth)
                 report["dependencies_installed"] = [r for r in done if r["result"] == "installed"]
                 report["dependencies_failed"] = [r for r in done if r["result"] == "failed"]
+                report["needs_you"] = [r["need"] for r in done if r["result"] == "needs_you"]
                 needs = [d for d in needs if not self._has(d)]
             report["dependencies_required"] = [
                 {"mod_id": d["project_id"], "title": d.get("name"), "installed": False}
@@ -774,19 +848,22 @@ class ModManager:
         return report
 
     def _has(self, need: dict[str, Any]) -> bool:
-        """Whether a required plugin is here already: added from that
+        """Whether a required add-on is here already: added from that
         project, or a jar of that name."""
         name = str(need.get("name") or "").lower()
+        site = split(need["project_id"])[0]
         return any(
-            mod.mod_id.lower() == name or self.origin(mod) == ("hangar", need["project_id"])
+            mod.mod_id.lower() == name or self.origin(mod) == (site, need["project_id"])
             for mod in self.scan()
         )
 
     async def _add_needs(
         self, needs: list[dict[str, Any]], user: str, depth: int
     ) -> list[dict[str, Any]]:
-        """Add each required Hangar plugin, with a version that fits this
-        server, and theirs in turn. One that fails is reported, not hidden."""
+        """Add each required Hangar plugin or CurseForge mod, with a version
+        that fits this server, and theirs in turn. One that fails is
+        reported, not hidden; one its author keeps from other apps waits
+        under "Needs you" while the rest go ahead."""
         results: list[dict[str, Any]] = []
         for need in needs:
             title = need.get("name") or need["project_id"]
@@ -805,13 +882,26 @@ class ModManager:
                 got = await self.install_from_site(
                     need["project_id"], user, install_dependencies=True, depth=depth + 1
                 )
+            except AlreadyHere:
+                continue
+            except Blocked as exc:
+                results.append({"title": exc.need["name"], "result": "needs_you", "need": exc.need})
+                continue
             except (ModError, SourceError, PathSafetyError) as exc:
                 results.append({"title": title, "result": "failed", "detail": str(exc)})
                 continue
+            installed = got["installed"]
             results.append(
-                {"title": title, "result": "installed", "version": got["installed"]["version"]}
+                {
+                    "title": installed.get("name") or title,
+                    "result": "installed",
+                    "version": installed["version"],
+                }
             )
             results += got["dependencies_installed"] + got.get("dependencies_failed", [])
+            results += [
+                {"title": n["name"], "result": "needs_you", "need": n} for n in got["needs_you"]
+            ]
         return results
 
     async def install_local_file(
@@ -861,6 +951,8 @@ class ModManager:
         self.archive(target, installed, source="uploaded" if source == "file" else where)
         self.record("install", user, installed, source=where, detail=f"Added {filename}")
         self.remember(installed.mod_id, source, version)
+        if source == "curseforge" and version:
+            self.done_needing(version["project_id"])
         self._cache = None
         await self._emit(
             "mod_installed",
@@ -872,7 +964,7 @@ class ModManager:
         return {
             "installed": {**installed.to_dict(), "kind": self.word},
             "source": source,
-            "checked_by": LABELS[source] if source in ("modrinth", "hangar") else None,
+            **checked(source),
             "loaded_by_minecraft": "not verified",
             "loaded_detail": (
                 f"The file is in the {self.server_type.content} folder. Start the server "
@@ -1024,20 +1116,26 @@ class ModManager:
         pending = self.server.pending_version or {}
         return pending.get("minecraft_version") or self.server.mc_version
 
-    async def check_updates(self, minecraft_version: str | None = None) -> list[dict[str, Any]]:
+    async def check_updates(
+        self, minecraft_version: str | None = None, background: bool = False
+    ) -> list[dict[str, Any]]:
         """Ask the site each mod or plugin came from (turned-off ones too,
         so their updates are offered; they stay off) and save what it says
-        for the Mods list. Returns the updates found."""
-        found, _ = await self._check(minecraft_version or self._target_version())
+        for the Mods list. Returns the updates found. The ``background``
+        check every few hours leaves CurseForge out: our relay is asked
+        only when someone presses Check or opens Update all."""
+        found, _ = await self._check(minecraft_version or self._target_version(), not background)
         return [entry for _, entry in found]
 
     async def _check(
-        self, mc_version: str | None
+        self, mc_version: str | None, relay: bool = True
     ) -> tuple[list[tuple[ModInfo, dict[str, Any]]], list[tuple[ModInfo, str]]]:
         """Each mod with a newer version and its saved update, and each mod
         its site couldn't be asked about with the reason. Several are asked
         at once."""
         mods = self.scan()
+        if relay:
+            await self.match_on_curseforge(mods)
         asking = asyncio.Semaphore(PLAN_CHECKS_AT_ONCE)
 
         async def ask(
@@ -1049,6 +1147,8 @@ class ModManager:
                 source, project = self.origin(mod)
                 if source == "file" or not project:
                     return "", SourceError(NO_UPDATES), None
+                if source == "curseforge" and not relay:
+                    return project, SourceError("Checked when you press Check."), None
                 with savedlists.watch() as used:
                     try:
                         site = self.site(source)
@@ -1069,6 +1169,17 @@ class ModManager:
                 continue
             if latest:
                 entry = self._note_update(mod, project, latest, saved)
+            if latest and entry and entry["source"] == "curseforge" and not latest["file"]["url"]:
+                # Its author keeps CurseForge files from other apps: no
+                # Update button for it, only where to get it.
+                self.db.set_setting(f"mod_update:{mod.mod_id}", None)
+                need = await self.curseforge.need_for(latest)
+                reason = BLOCKED_UPDATE.format(version=entry["latest_version"])
+                where = (
+                    f" Get it from {need['page']}" if need["page"] else " Get it from CurseForge."
+                )
+                unchecked.append((mod, reason + where))
+                continue
             if entry:
                 found.append((mod, entry))
             elif saved:

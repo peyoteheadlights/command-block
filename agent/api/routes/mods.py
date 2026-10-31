@@ -1,11 +1,12 @@
-"""Installed mods, search and install from Modrinth and Hangar, add from a
-file or link, updates, rollback and dependencies."""
+"""Installed mods, search and install from Modrinth, Hangar and CurseForge,
+add from a file or link, "Needs you", updates, rollback and dependencies."""
 
 from __future__ import annotations
 
 import asyncio
 import time
 from itertools import zip_longest
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
@@ -36,6 +37,7 @@ from ..responses import (
     ModUpdates,
     ModUploaded,
     ModVersions,
+    Ok,
     UpdateAllPlan,
     UpdateAllResult,
 )
@@ -45,6 +47,7 @@ from .models import (
     ModInstallRequest,
     ModLinkAddRequest,
     ModLinkRequest,
+    ModProjectRequest,
     ModRollbackRequest,
     ModUpdateRequest,
     UpdateAllRequest,
@@ -68,6 +71,7 @@ async def list_mods(principal: Principal = Depends(require(SERVER_VIEW)), ctx=De
         "directory": str(ctx.config.mods_dir),
         "server_state": ctx.server.state.value,
         "updates_checked_at": ctx.db.get_setting("mod_updates_checked_at"),
+        "needs_you": ctx.mods.needs_you(),
     }
 
 
@@ -81,17 +85,20 @@ async def search_mods(
     ctx=Depends(get_server),
 ):
     version = minecraft_version or ctx.server.mc_version or None
-    if not ctx.config.server_type.hangar_platform:
-        return await ctx.mods.modrinth.search(
-            q, minecraft_version=version, limit=limit, offset=offset
-        )
-    # Plugin servers: Modrinth and Hangar side by side, each named. Their
-    # files share no checksum (SHA-512 and SHA-256), so the same plugin can
-    # show twice; installing it twice is refused by its hash.
+    mods = ctx.mods
+    other = mods.hangar if ctx.config.server_type.hangar_platform else None
+    if mods.curseforge.loaders:
+        other = mods.curseforge
+    if other is None:
+        return await mods.modrinth.search(q, minecraft_version=version, limit=limit, offset=offset)
+    # Modrinth and Hangar (plugin servers) or CurseForge (mod servers) side
+    # by side, each named. Their files share no checksum, so the same add-on
+    # can show twice; installing it twice is refused by its hash.
     # shortcut: each site fills half the page, so once one runs out the
     # pages get shorter and the other's offset can repeat a few results.
     half, start = max(1, limit // 2), max(0, offset) // 2
-    sites = (ctx.mods.modrinth, ctx.mods.hangar)
+    sites = (mods.modrinth, other)
+    names = [site.label for site in sites]
     answers = await asyncio.gather(
         *(site.search(q, minecraft_version=version, limit=half, offset=start) for site in sites),
         return_exceptions=True,
@@ -104,10 +111,10 @@ async def search_mods(
         raise answers[0]
     problems = [
         f"{name} isn't available right now."
-        for name, a in zip(("Modrinth", "Hangar"), answers, strict=True)
+        for name, a in zip(names, answers, strict=True)
         if not isinstance(a, dict)
     ]
-    for name, answer in zip(("Modrinth", "Hangar"), answers, strict=True):
+    for name, answer in zip(names, answers, strict=True):
         for hit in answer["hits"] if isinstance(answer, dict) else []:
             hit.setdefault("source_name", name)
     hits = [hit for pair in zip_longest(*(a["hits"] for a in found)) for hit in pair if hit]
@@ -119,9 +126,10 @@ async def mod_project(
     project: str, principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
 ):
     source, plain = split(project)
-    site = ctx.mods.hangar if source == "hangar" else ctx.mods.modrinth
-    if source == "hangar":
-        ctx.mods.site("hangar")  # refused on a server Hangar has nothing for
+    if source not in ("modrinth", "hangar", "curseforge"):
+        raise HTTPException(status_code=404, detail="That add-on source isn't known.")
+    ctx.mods.site(source)  # refused on a server the site has nothing for
+    site: Any = getattr(ctx.mods, source)  # .modrinth, .hangar or .curseforge
     info = await site.project(plain)
     versions = await site.versions(plain, ctx.server.mc_version)
     return {
@@ -201,6 +209,18 @@ async def mod_link_add(
         result = await add_from_link(ctx, payload.version_id, user=principal.user)
     audit(ctx, request, "mod_link_add", target=result["installed"]["filename"])
     return {"ok": True, **result}
+
+
+@router.post("/mods/needs-you/dismiss", response_model=Ok)
+async def dismiss_needs_you(
+    payload: ModProjectRequest,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Take a mod off "Needs you" without adding it."""
+    if not ctx.mods.done_needing(payload.project):
+        raise HTTPException(status_code=404, detail="That mod isn't under Needs you.")
+    return {"ok": True}
 
 
 @router.get("/mods/impact", response_model=ModImpact)

@@ -98,6 +98,7 @@ class About(Section):
             )
         layout.addWidget(label(text("mobile.about.free"), "sub"))
         layout.addWidget(label(text("mobile.about.disclaimer"), "muted"))
+        layout.addWidget(label(text("desktop.about.curseforge"), "muted"))
         links = [
             ("desktop.about.docs", f"{REPO}#readme"),
             ("mobile.about.source", REPO),

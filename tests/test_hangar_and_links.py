@@ -212,6 +212,8 @@ class FakeSites:
             )
         if url.host == "release-assets.githubusercontent.com":
             return httpx.Response(200, content=self.asset_bytes(path.rsplit("/", 1)[1]))
+        if url.host == "identitytoolkit.googleapis.com":
+            return httpx.Response(503)  # CurseForge (test_curseforge.py) is down here
         raise AssertionError(f"unexpected request to {url}")
 
     def asset(self, tag: str, name: str, asset_id: int) -> dict:
@@ -313,9 +315,11 @@ def test_hangar_down_never_blocks_modrinth(paper, sites):
 
 
 def test_hangar_is_not_offered_on_a_fabric_server(client, monkeypatch):
-    monkeypatch.setattr(
-        downloads, "TRANSPORT", httpx.MockTransport(lambda r: pytest.fail(f"asked {r.url}"))
-    )
+    def nothing_from_hangar(request):
+        assert "hangar" not in request.url.host, f"asked {request.url}"
+        return httpx.Response(503)  # CurseForge, asked on mod servers instead
+
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(nothing_from_hangar))
     client.app.state.core.mods.modrinth = FakeModrinth({})
     headers = auth(token_for(client))
     assert client.get("/api/mods/search?q=via", headers=headers).json()["hits"] == []
