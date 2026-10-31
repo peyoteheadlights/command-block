@@ -674,11 +674,13 @@ async def test_a_mod_that_declares_nothing_is_unknown_not_assumed(ctx, network):
     assert "quiet.jar" in report["unknown_support"]
 
 
-async def test_a_type_change_lists_the_mods_that_would_be_moved_aside(ctx, network):
+async def test_a_type_change_lists_the_mods_the_new_type_wont_use(ctx, network):
     make_jar(ctx.config.mods_dir / "sodium.jar", "sodium", "0.5.8")
     report = await install_module.preflight(ctx, "paper", MC)
     assert report["type_change"] is True
-    assert report["moved_aside"] == ["sodium.jar"]
+    # Paper ignores mods/, so they stay there, unused, and nothing moves.
+    assert report["files"]["left"] == ["sodium.jar"]
+    assert report["moved_aside"] == []
     assert report["target_content_kind"] == "plugins"
 
 
@@ -741,12 +743,10 @@ async def test_a_failed_download_leaves_the_old_files_in_place(ctx, monkeypatch,
     assert ctx.config.server.type == "fabric", "the type only changes once the change worked"
 
 
-async def test_a_type_change_moves_incompatible_mods_aside_rather_than_deleting(ctx, network):
+async def test_a_type_change_leaves_a_folder_the_new_type_ignores(ctx, network):
     make_jar(ctx.config.mods_dir / "sodium.jar", "sodium", "0.5.8")
     await install_module.change_version(ctx, "paper", MC, user="tester")
-    assert not (ctx.config.server_dir / "mods" / "sodium.jar").exists()
-    moved = list(ctx.config.mod_trash_dir.rglob("sodium.jar"))
-    assert moved, "the mod is kept, not deleted"
+    assert (ctx.config.server_dir / "mods" / "sodium.jar").is_file(), "kept where it was"
     assert ctx.config.server_type.content == "plugins"
     assert ctx.config.mods_dir.name == "plugins"
 

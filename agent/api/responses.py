@@ -1757,6 +1757,48 @@ class VersionPreflight(Open):
     crossplay_available: bool = False
 
 
+class TypeChangeTarget(Open):
+    id: str
+    name: str
+    changes_farms: bool = False
+
+
+class WorldCopy(Open):
+    """A suggested name and folder for a Bedrock/Java copy, and what it leaves out."""
+
+    name: str
+    directory: str
+    warning: str
+    left_out: list[str]
+
+
+class TypeChangeOptions(Open):
+    """What the Change server type card offers (owner only)."""
+
+    type: str
+    targets: list[TypeChangeTarget]
+    minecraft_version: str | None = Field(None, description="null: not seen yet, so no change")
+    problem: str | None = None
+    running: bool
+    players_online: int = 0
+    copy_to_other_edition: WorldCopy | None = Field(None, description="Technical mode only")
+
+
+class SimilarAddon(Open):
+    kind: str = Field(description="same (that add-on's build for the new type) or look_alike")
+    name: str
+    project: str = Field(description="The id to send to /mods/install")
+
+
+class SimilarAddons(Open):
+    """After Change server type: add-ons to offer with Add buttons. Each also
+    says which old add-on it is for ("for")."""
+
+    type: str
+    suggestions: list[SimilarAddon]
+    problems: list[str] = []
+
+
 class VersionChanged(Open):
     ok: bool
     job_id: str

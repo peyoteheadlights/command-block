@@ -18,6 +18,9 @@ start and once a day. What it may hold:
     provider, launch kind and allowed site (Folia through PaperMC's Fill
     API, ``"like": "paper"``). Nothing new is downloaded from anywhere
     else or run; it is offered in Technical only and never recommended.
+  * ``look_alikes``: for an add-on (its source and project) and a server
+    type, hand-checked add-ons that do the same job on that type. Offered
+    with Add buttons after Change server type, never added by themselves.
 
 Data can only add warnings or blocks. It never runs anything and never
 removes a check. The file is refused as a whole, and the last good one
@@ -77,6 +80,11 @@ NO_NOTES = "Couldn't check for safety notes."
 UPDATE_APP = "Update Command Block to get the newest notes."
 TYPES = ("vanilla", "fabric", "quilt", "forge", "neoforge", "paper", "purpur", "leaf", "bedrock")
 
+# The add-on sites a look-alike may point at (a GitHub file has no project).
+LOOK_ALIKE_SOURCES = ("modrinth", "hangar", "curseforge")
+# (source, project, type) -> [{"project", "name"}], from the last good notes file.
+LOOK_ALIKES: dict[tuple[str, str, str], list[dict[str, str]]] = {}
+
 # SHA-512 -> entry, from the last good notes file. Read by the mod and
 # plugin installer (agent/mods/manager.py) and modpack import.
 BAD_FILES: dict[str, dict[str, Any]] = {}
@@ -85,6 +93,9 @@ _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _TYPE_ID = re.compile(r"^[a-z][a-z0-9]{1,31}$")
 _SHA512 = re.compile(r"^[0-9a-f]{128}$")
+# An add-on id as the apps send it: Modrinth's own, or "hangar:<id>",
+# "curseforge:<id>".
+_PROJECT = re.compile(r"^(?:(hangar|curseforge):)?[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+\-]{0,63}$")
 _APP_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 # Plain text: no control characters and nothing that could be read as markup.
@@ -105,6 +116,7 @@ class Notes:
     known_bad_files: list[dict[str, Any]] = field(default_factory=list)
     java: list[dict[str, Any]] = field(default_factory=list)
     server_types: list[dict[str, Any]] = field(default_factory=list)
+    look_alikes: list[dict[str, Any]] = field(default_factory=list)
     # Entries marked for a newer app than this one.
     skipped: int = 0
 
@@ -203,6 +215,36 @@ def _server_type(row: dict) -> dict[str, Any]:
     }
 
 
+def _project(entry: dict) -> tuple[str, str]:
+    """(source, project) of an add-on id, from its "hangar:" or "curseforge:"
+    prefix; a plain id is Modrinth's."""
+    project = _match(entry, "project", _PROJECT)
+    found = _PROJECT.match(project)
+    return (found.group(1) if found and found.group(1) else "modrinth"), project
+
+
+def _look_alike(row: dict) -> dict[str, Any]:
+    """Ratchet: only ids of the sites the app already installs from, and a
+    short list per add-on. Data only: each is offered, never installed."""
+    source, project = _project(row)
+    if row.get("type") not in TYPES or row.get("type") == "bedrock":
+        raise NotesRefused("The notes file has a bad 'type'.")
+    rows = row.get("look_alikes")
+    if not isinstance(rows, list) or not 0 < len(rows) <= 10:
+        raise NotesRefused("The notes file has a bad 'look_alikes'.")
+    alikes = []
+    for alike in rows:
+        if not isinstance(alike, dict):
+            raise NotesRefused("The notes file has a bad 'look_alikes'.")
+        alikes.append({"project": _project(alike)[1], "name": _text(alike, "name", 60)})
+    return {"source": source, "project": project, "type": row["type"], "look_alikes": alikes}
+
+
+def look_alikes(source: str | None, project: str | None, type_id: str) -> list[dict[str, str]]:
+    """The hand-checked look-alikes for an add-on on this type, or none."""
+    return LOOK_ALIKES.get((source or "", project or "", type_id), [])
+
+
 def _date(body: dict, key: str) -> dt.date:
     value = _match(body, key, _DATE)
     try:
@@ -235,6 +277,7 @@ def parse(document: bytes, highest_serial: int, now: float, app_version: str) ->
     bad, b = _entries(body, "known_bad_files", _bad_file, app_version)
     java, c = _entries(body, "java", _java_row, app_version)
     kinds, d = _entries(body, "server_types", _server_type, app_version)
+    alikes, e = _entries(body, "look_alikes", _look_alike, app_version)
     today = dt.datetime.fromtimestamp(now, dt.UTC).date()
     return Notes(
         serial=serial,
@@ -245,7 +288,8 @@ def parse(document: bytes, highest_serial: int, now: float, app_version: str) ->
         known_bad_files=bad,
         java=java,
         server_types=kinds,
-        skipped=a + b + c + d,
+        look_alikes=alikes,
+        skipped=a + b + c + d + e,
     )
 
 
@@ -387,6 +431,10 @@ class SafetyNotes:
         self.notes = notes
         BAD_FILES.clear()
         BAD_FILES.update({row["sha512"]: row for row in notes.known_bad_files})
+        LOOK_ALIKES.clear()
+        for row in notes.look_alikes:
+            key = (row["source"], row["project"], row["type"])
+            LOOK_ALIKES[key] = LOOK_ALIKES.get(key, []) + row["look_alikes"]
         newest = max(threshold for threshold, _ in MINECRAFT_JAVA_REQUIREMENTS)
         rows = [(parse_minecraft(r["minecraft"]), r["java"]) for r in notes.java]
         # Data can only add rows newer than the built-in table's newest.

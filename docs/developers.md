@@ -134,7 +134,9 @@ the lock files and pre-commit.
 
 ### Building the installer
 
-On Windows, with `requirements-build.lock` installed:
+On Windows, with `requirements-build.lock` installed, plus Git and Java 17
+or newer (the first step builds Chunker's jar from source at the pinned
+version, `scripts/build_chunker.py`):
 
 ```powershell
 python scripts/build_installer.py

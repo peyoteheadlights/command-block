@@ -19,6 +19,8 @@ datas = [
     (str(ROOT / "LICENSE"), "."),
     (str(ROOT / "THIRD-PARTY-NOTICES.md"), "."),
     (str(ROOT / "licenses"), "licenses"),
+    # Chunker's command-line jar, built from source by scripts/build_chunker.py.
+    (str(ROOT / "build" / "tools" / "chunker-cli.jar"), "tools"),
     (str(ROOT / "CHANGELOG.md"), "."),
 ]
 # uvicorn picks its loop, protocol and lifespan parts by name at run time.

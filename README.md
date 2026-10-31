@@ -35,6 +35,8 @@ As a kid I remember how rough it was not being able to figure out how to play Mi
 
 In Technical mode you can also run your own server jar.
 
+You can change a server's type later (for example Vanilla to Paper) and keep your world. In Technical mode you can also make a Java copy of a Bedrock world, or a Bedrock copy of a Java one, with [Chunker](https://github.com/HiveGamesOSS/Chunker) by Hive Games.
+
 You can bring in a server you already have (from a folder or a zip, including CurseForge server packs), or let the app make a new one.
 
 ## How do I get it?
@@ -66,7 +68,6 @@ This app is in no way done and will be supported for a good long while. Here's e
 
 - Safety notes and saved version lists that stay up to date without a new release.
 - Manage servers on several PCs under one owner account.
-- Switching a server's type (for example Vanilla to Paper).
 - Add mods from a link or file, including CurseForge (if they let me have the api key), plus recommended add-ons, performance and QoL suggestions, and guides for popular add-ons.
 - Editing add-on config files inside the app.
 - Bring servers back from a backup folder on a new PC.
@@ -103,6 +104,6 @@ Command Block is free, open-source and will stay that way. If you want to suppor
 
 ## License
 
-[MIT License](LICENSE), Copyright (c) 2026 peyoteheadlights. The setup and the program use Qt for Python (PySide6) under the LGPLv3, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[MIT License](LICENSE), Copyright (c) 2026 peyoteheadlights. The setup and the program use Qt for Python (PySide6) under the LGPLv3, and Chunker by Hive Games under the MIT License, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.

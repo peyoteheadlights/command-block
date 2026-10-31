@@ -83,6 +83,8 @@ def test_every_route_checks_on_its_own_server(multi_client, owner):
     survival route needing more is refused."""
     sam = add_helper(multi_client, owner)
     give(multi_client, owner, {"survival": P.START_AND_STOP, "creative": P.SERVER_PERMISSIONS})
+    # This walk sends more requests than the per-minute limit allows.
+    multi_client.app.state.core.auth.api_rate.check = lambda key: None
     checked, wrong = 0, []
     for path, route, scope in api_routes():
         permission = declared(route)

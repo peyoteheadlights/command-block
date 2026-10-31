@@ -280,8 +280,13 @@ def move_software_aside(ctx: ServerContext, server_type: ServerType, label: str)
     directory = _server_dir(ctx)
     keep = ctx.config.data_dir / PREVIOUS / f"{time.strftime('%Y%m%d-%H%M%S')}-{label}"
     keep.mkdir(parents=True, exist_ok=True)
+    entries = software_entries(directory, server_type)
+    custom = ctx.config.server.custom_jar
+    own = directory / ctx.config.server.jar
+    if custom and own.is_file() and not own.is_symlink() and own not in entries:
+        entries.append(own)  # the owner's own jar goes with the software
     moved = []
-    for path in software_entries(directory, server_type):
+    for path in entries:
         shutil.move(str(path), str(keep / path.name))
         moved.append(path.name)
     return {
@@ -290,6 +295,7 @@ def move_software_aside(ctx: ServerContext, server_type: ServerType, label: str)
         "type": server_type.id,
         "jar": ctx.config.server.jar,
         "args_file": ctx.config.server.args_file,
+        "custom_jar": custom,
     }
 
 
@@ -316,36 +322,6 @@ def put_software_back(ctx: ServerContext, kept: dict[str, Any]) -> list[str]:
     return restored
 
 
-def move_wrong_loader_content_aside(ctx: ServerContext, target: ServerType) -> dict[str, Any]:
-    """Move mods or plugins that the new type cannot load into the trash
-    folder (kept, never deleted). Returns what moved and what stayed."""
-    from ..mods.jarinfo import read_mod_jar
-
-    current = ctx.config.server_type
-    source_folder = ctx.config.mods_dir
-    moved, kept = [], []
-    if not source_folder.is_dir() or current.content_folder == target.content_folder:
-        if not source_folder.is_dir():
-            return {"moved": [], "kept": [], "folder": None}
-    trash = (
-        ctx.config.mod_trash_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{current.id}-to-{target.id}"
-    )
-    for entry in sorted(source_folder.iterdir()):
-        if not entry.is_file() or entry.is_symlink():
-            continue
-        if not entry.name.endswith(".jar") and ".jar" not in entry.name:
-            continue
-        info = read_mod_jar(entry, compute_hash=False)
-        loaders = info.loaders or [info.loader]
-        if any(loader in target.accepts for loader in loaders):
-            kept.append(entry.name)
-            continue
-        trash.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(entry), str(trash / entry.name))
-        moved.append(entry.name)
-    return {"moved": moved, "kept": kept, "folder": str(trash) if moved else None}
-
-
 # ----------------------------------------------------------------------
 # the preflight
 # ----------------------------------------------------------------------
@@ -361,7 +337,8 @@ async def preflight(
     current = ctx.config.server_type
     target = servertypes.get(type_id)
     refuse_other_edition(current, target)
-    refuse_custom_jar(ctx)
+    if target.id == current.id:
+        refuse_custom_jar(ctx)
     versions = await list_versions(target.id)
     entry = next((v for v in versions if v.minecraft == minecraft), None)
     if entry is None:
@@ -409,7 +386,13 @@ async def preflight(
                     "declared_range": declared or None,
                 }
             )
-    moved_aside = [c for c in content if not c["fits_type"]]
+    # Where add-ons and the Nether and End go on a type change: the new
+    # type's folder only holds what it loads, the rest is moved, not deleted.
+    files = None
+    if target.id != current.id:
+        from .change import plan_files
+
+        files = plan_files(_server_dir(ctx), current, target)
     return {
         "current": {
             "type": current.id,
@@ -439,7 +422,8 @@ async def preflight(
         "content_kind": current.content,
         "target_content_kind": target.content,
         "content": content,
-        "moved_aside": [c["filename"] for c in moved_aside],
+        "moved_aside": files["out"] if files else [],
+        "files": files,
         "unknown_support": [c["filename"] for c in content if c["declares_target"] is None],
         # Add-ons that stay but say they don't support the target version:
         # the ones most likely to stop the server starting.
@@ -497,7 +481,9 @@ async def change_version(
     target = servertypes.get(type_id)
     current = ctx.config.server_type
     refuse_other_edition(current, target)
-    refuse_custom_jar(ctx)
+    type_change = target.id != current.id
+    if not type_change:
+        refuse_custom_jar(ctx)
     if target.download_terms:
         from . import bedrock
 
@@ -509,7 +495,6 @@ async def change_version(
     if target.needs_java:
         await java_for(minecraft)
     directory = _server_dir(ctx)
-    type_change = target.id != current.id
     # What the console last reported, kept before the change clears it.
     before = ctx.server.mc_version
     previous_loader = ctx.server.loader_version
@@ -549,17 +534,20 @@ async def change_version(
     async def apply(job: JobHandle | None) -> dict[str, Any]:
         if target.launch == "exe":
             return await apply_exe(job)
+        from .change import move_files, plan_files, undo_moves
+
         kept = move_software_aside(
             ctx, current, f"{current.id}-{ctx.server.mc_version or 'unknown'}"
         )
         moved_content: dict[str, Any] = {"moved": [], "kept": [], "folder": None}
         try:
             if type_change:
-                moved_content = move_wrong_loader_content_aside(ctx, target)
+                moved_content = move_files(directory, plan_files(directory, current, target))
             result = await install_plan(ctx, plan, directory, job=job)
         except BaseException:
-            # Put the old software back, so a failed change leaves the
-            # server exactly as it was.
+            # Put the old software and files back, so a failed change leaves
+            # the server exactly as it was.
+            undo_moves(directory, moved_content.get("moves", []))
             for entry in plan.downloads:
                 (directory / entry.spec.name).unlink(missing_ok=True)
             if plan.jar:
@@ -614,6 +602,9 @@ async def change_version(
         crossplay_off = type_change and crossplay_was_on
         if crossplay_off:
             ctx.config.set("server.crossplay", False)
+        # The owner's own jar was moved aside with the old software.
+        if type_change:
+            ctx.config.set("server.custom_jar", False)
         ctx.config.save()
         ctx.core.db.set_server_software(ctx.server_id, target.id, outcome["loader_version"])
         ctx.core.db.register_server(
@@ -718,7 +709,12 @@ async def roll_back(ctx: ServerContext, user: str = "system") -> dict[str, Any]:
         restored = put_software_back(ctx, previous)
         moved = record.get("content_moved_aside") or {}
         put_back = []
-        if moved.get("folder") and Path(moved["folder"]).is_dir():
+        if "moves" in moved:
+            # Add-ons and the Nether and End go back where they were.
+            from .change import undo_moves
+
+            put_back = undo_moves(directory, moved["moves"])
+        elif moved.get("folder") and Path(moved["folder"]).is_dir():
             content_folder = (
                 directory / (previous_type.content_folder or "mods")
                 if previous_type.has_content
@@ -736,6 +732,7 @@ async def roll_back(ctx: ServerContext, user: str = "system") -> dict[str, Any]:
         ctx.config.set("server.type", previous_type.id)
         ctx.config.set("server.jar", previous.get("jar") or previous_type.jar)
         ctx.config.set("server.args_file", previous.get("args_file") or "")
+        ctx.config.set("server.custom_jar", bool(previous.get("custom_jar")))
         if previous_type.content_folder:
             ctx.config.set("mods.directory", previous_type.content_folder)
         problem = ctx.server.launch_problem()

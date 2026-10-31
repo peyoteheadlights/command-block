@@ -20,9 +20,12 @@ from ...security.permissions import (
     SERVERS_MANAGE,
     SETTINGS_GAME,
     SETTINGS_SERVER,
+    check,
     require,
 )
 from ...servertypes import bedrock as bedrock_module
+from ...servertypes import change as change_module
+from ...servertypes import chunker as chunker_module
 from ...servertypes import create as create_module
 from ...servertypes import custom as custom_module
 from ...servertypes import install as install_module
@@ -41,7 +44,9 @@ from ..responses import (
     ServerCreated,
     ServerTypes,
     ServerVersion,
+    SimilarAddons,
     TypeAdvice,
+    TypeChangeOptions,
     TypeVersions,
     VersionChanged,
     VersionPreflight,
@@ -51,10 +56,12 @@ from .models import (
     BedrockTermsRequest,
     BringInReadRequest,
     BringInRequest,
+    ConvertRequest,
     CreateServerRequest,
     CrossplayRequest,
     CustomServerRequest,
     ReplaceJarRequest,
+    TypeChangeRequest,
     VersionChangeRequest,
 )
 
@@ -298,6 +305,19 @@ async def change_version(
             status_code=400,
             detail="This change needs to be confirmed, because the server is stopped for it.",
         )
+    if payload.type and payload.type != ctx.config.server.type:
+        # A type change is the owner's, with its own rules (Change server type).
+        check(principal, SERVERS_MANAGE, ctx.server_id)
+        result = await change_module.change_type(
+            ctx,
+            payload.type,
+            technical=True,
+            stop_first=True,  # confirmed above; the change stops it
+            minecraft=payload.minecraft_version,
+            user=principal.user,
+        )
+        audit(ctx, request, "type_change", detail=payload.type)
+        return {"ok": True, **result}
     result = await install_module.change_version(
         ctx,
         payload.type or ctx.config.server.type,
@@ -319,6 +339,87 @@ async def roll_back_version(
     """Put the version that was there before the last change back."""
     result = await install_module.roll_back(ctx, user=principal.user)
     audit(ctx, request, "version_rollback")
+    return {"ok": True, **result}
+
+
+# ---------------------------------------------- Change server type (owner only)
+@router.get("/type-change", response_model=TypeChangeOptions)
+async def type_change_options(
+    technical: bool = False,
+    principal: Principal = Depends(require(SERVERS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """The types this server can change to, and the version the change keeps."""
+    return {
+        **change_module.options(ctx, technical),
+        "copy_to_other_edition": chunker_module.suggestion(ctx.core, ctx) if technical else None,
+    }
+
+
+@router.post("/type-change/preflight", response_model=VersionPreflight)
+async def type_change_preflight(
+    payload: TypeChangeRequest,
+    principal: Principal = Depends(require(SERVERS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """What comes along and what doesn't, before anything changes."""
+    return await change_module.plan(ctx, payload.type, payload.technical)
+
+
+@router.post("/type-change", response_model=VersionChanged)
+async def change_type(
+    payload: TypeChangeRequest,
+    request: Request,
+    principal: Principal = Depends(require(SERVERS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Change server type: a backup first, the version kept, Roll back after."""
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="This change needs to be confirmed, because the server is stopped for it.",
+        )
+    result = await change_module.change_type(
+        ctx,
+        payload.type,
+        technical=payload.technical,
+        stop_first=payload.stop_first,
+        user=principal.user,
+    )
+    audit(ctx, request, "type_change", detail=payload.type)
+    return {"ok": True, **result}
+
+
+@router.get("/type-change/similar", response_model=SimilarAddons)
+async def similar_addons(
+    principal: Principal = Depends(require(SERVERS_MANAGE)), ctx=Depends(get_server)
+):
+    """After a type change: the same add-ons for the new type, then the notes
+    file's look-alikes. Only offered; nothing is added here."""
+    return await change_module.similar(ctx)
+
+
+@router.post("/type-change/copy", response_model=ServerCreated)
+async def copy_to_other_edition(
+    payload: ConvertRequest,
+    request: Request,
+    principal: Principal = Depends(require(SERVERS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """A new server of the other edition from a copy of this world (Chunker).
+    The original isn't changed."""
+    result = await chunker_module.convert(
+        ctx.core,
+        ctx,
+        type_id=payload.type,
+        minecraft=payload.minecraft_version,
+        name=payload.name,
+        directory=payload.directory,
+        eula_accepted=payload.eula_accepted,
+        understood=payload.understood,
+        user=principal.user,
+    )
+    audit(ctx, request, "world_copy_other_edition", detail=payload.type)
     return {"ok": True, **result}
 
 

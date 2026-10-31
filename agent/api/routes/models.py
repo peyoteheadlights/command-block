@@ -162,6 +162,27 @@ class VersionChangeRequest(BaseModel):
     start_after: bool = False
 
 
+class TypeChangeRequest(BaseModel):
+    type: str = Field(min_length=1, max_length=32)
+    # Simple mode offers only Vanilla to and from Fabric and Paper.
+    technical: bool = False
+    # "Stop and change": the server is stopped for the change.
+    stop_first: bool = False
+    confirm: bool = False
+
+
+class ConvertRequest(BaseModel):
+    """Bedrock to Java or back with Chunker, as a new server."""
+
+    type: str = Field(min_length=1, max_length=32)
+    minecraft_version: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=60)
+    directory: str = Field(min_length=1, max_length=400)
+    eula_accepted: bool = False
+    # The owner ticked "I understand what doesn't come along".
+    understood: bool = False
+
+
 class CreateServerRequest(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     # The folder to create. Must be empty or not exist yet; checked by

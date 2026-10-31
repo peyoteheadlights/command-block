@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 from .agent import AgentError
 from .overview import card
 from .ui import Page, duration, field, label, push, refill, swatches
-from .version import crossplay_card, version_card
+from .version import crossplay_card, type_card, version_card
 from .words import mode, text
 
 if TYPE_CHECKING:
@@ -870,7 +870,11 @@ class SettingsPage(Page):
 
     # ------------------------------------------------------------ version and Bedrock players
     def show_version(self, data: dict) -> None:
-        refill(self.slots["version"], [version_card(self, data)])
+        cards = [version_card(self, data)]
+        java = data["capabilities"].get("edition") != "bedrock"
+        if self.may("servers.manage") and (java or mode["technical"]):
+            cards.append(type_card(self, data))
+        refill(self.slots["version"], cards)
 
     def show_crossplay(self, status: dict) -> None:
         refill(self.slots["bedrock"], [crossplay_card(self, status)])

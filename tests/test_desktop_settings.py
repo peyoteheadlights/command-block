@@ -136,13 +136,23 @@ def test_changing_the_version_is_checked_first(qapp, agent_http, monkeypatch):
     assert "The version is only known once this server starts" in shown_text(version)
     button(version, "Make the change").click()
     assert not button(version, "Make the change").isEnabled()  # until the list is open
-    button(version, "Change the kind or version").click()
+    button(version, "Change the version").click()
     combos = version.findChildren(QtWidgets.QComboBox)
-    wait_for(qapp, lambda: combos[1].count() > 0, 20)
+    wait_for(qapp, lambda: combos[0].count() > 0, 20)
     button(version, "Make the change").click()
     assert "Press Check first" in shown_text(version)
     button(version, "Check first").click()
     wait_for(qapp, lambda: "After the change: Fabric" in shown_text(version), 20)
+
+
+def test_change_server_type_is_its_own_card_and_never_guesses_the_version(qapp, agent_http):
+    _window, page = settings_page(qapp, agent_http)
+    wait_for(qapp, lambda: "Start the server once" in shown_text(page), 20)
+    card = card_of(page, "Change server type")
+    assert "Your world, settings and Minecraft version stay" in shown_text(card)
+    assert not [
+        b for b in card.findChildren(QtWidgets.QPushButton) if b.text() == "Stop and change"
+    ]
 
 
 def test_bedrock_players_says_what_the_server_still_needs(qapp, agent_http):
@@ -233,10 +243,9 @@ def test_the_version_picker_says_how_old_a_saved_list_is(qapp, agent_http, monke
     wait_for(
         qapp,
         lambda: (
-            "Change the kind or version"
-            in [b.text() for b in page.findChildren(QtWidgets.QPushButton)]
+            "Change the version" in [b.text() for b in page.findChildren(QtWidgets.QPushButton)]
         ),
     )
     version = card_of(page, "Kind and version")
-    button(version, "Change the kind or version").click()
+    button(version, "Change the version").click()
     wait_for(qapp, lambda: "ago, couldn't reach Fabric." in shown_text(version), 20)

@@ -305,6 +305,7 @@ def test_only_the_documented_places_start_a_program():
     allowed = {
         "process.py",  # launching Minecraft itself
         "install.py",  # the Forge/NeoForge/Quilt installer (documented exception)
+        "chunker.py",  # Chunker world conversion, after a click (documented exception)
         "java.py",  # asking the installed Java for its version
         "tailscale.py",  # asking Tailscale for this PC's address
         "certs.py",  # making this app's own HTTPS certificate
@@ -342,6 +343,22 @@ def test_the_installer_is_run_as_an_argument_list_with_no_shell():
     # its output is captured into the install log, not left on a console
     assert "stdout=asyncio.subprocess.PIPE" in source
     assert "log_file.write_text" in source
+
+
+def test_chunker_is_run_as_an_argument_list_with_no_shell():
+    from agent.api.routes import servertypes as routes
+    from agent.servertypes import chunker
+
+    source = inspect.getsource(chunker.run)
+    assert "argv = command(java, JAR, source, output, fmt)" in source
+    assert "*argv," in source and "shell" not in source
+    assert "stdin=asyncio.subprocess.DEVNULL" in source
+    assert "stdout=asyncio.subprocess.PIPE" in source and "log_file.write_text" in source
+    # The format only ever comes from a version checked against Chunker's list.
+    assert "fmt = output_format(target.edition, minecraft)" in inspect.getsource(chunker.convert)
+    assert "chunker_module.run" not in inspect.getsource(routes)
+    text = (Path(__file__).resolve().parent.parent / "docs" / "security.md").read_text("utf-8")
+    assert "Chunker world conversion, after a click" in text
 
 
 def test_the_installer_file_name_is_never_taken_from_a_request():

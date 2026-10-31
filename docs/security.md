@@ -179,6 +179,30 @@ install.py` is the only place that does it, and the rules are:
 list of every file in the agent that starts a program at all: a new one
 fails that test until it is added on purpose.
 
+### Chunker world conversion, after a click
+
+Making a Java copy of a Bedrock server (or a Bedrock copy of a Java one)
+runs Chunker (Hive Games, MIT, github.com/HiveGamesOSS/Chunker), the
+open-source world converter. The release build builds its command-line jar
+from source at a pinned tag and commit (`scripts/build_chunker.py`) and ships
+it as `tools/chunker-cli.jar`; nothing is downloaded when it runs.
+`agent/servertypes/chunker.py` is the only place that runs it, and only
+after the owner's click (`servers.manage`, which no moderator can have):
+
+- the command is a list (`[java, -Xmx<size>, "-jar", <shipped jar>, "-i",
+  <folder>, "-o", <folder>, "-f", <format>]`), never a string, never through
+  a shell. Both folders are made by this app inside its own data folder. The
+  format is built from a version checked against the pinned Chunker's own
+  list of versions, so nothing from a request reaches it as text;
+- Chunker reads a copy of the world, so the original server is only read,
+  and the result becomes a new server, which is removed again if anything
+  fails;
+- `stdin` is `DEVNULL`, output is captured into the original server's
+  `install-log` folder, it gets a memory limit of a quarter of the PC's
+  memory (1 to 4 GB), and it is killed after 3 hours. A run that doesn't
+  leave a `level.dat` is an error with the log's path, even when Chunker
+  exits with 0.
+
 ### Updating the app itself
 
 The second exception. The desktop app shows "Version X is out" and, for the
@@ -595,8 +619,8 @@ whose private half was never kept, so every copy refuses every file and
 says "Couldn't check for safety notes".
 
 Nothing downloaded is executed by the agent, with the documented exceptions
-under Command injection: the loader installer, Mojang's Bedrock server
-program, the owner's own server jar (picked by the owner, never
+under Command injection: the loader installer, Chunker (shipped with the
+app, never downloaded), Mojang's Bedrock server program, the owner's own server jar (picked by the owner, never
 downloaded), and an update of this app, which runs only after its signature and
 checksum check out.
 
