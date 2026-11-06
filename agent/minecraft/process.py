@@ -1164,15 +1164,16 @@ class MinecraftServer:
             return
 
         # ---------------- crash path ----------------
-        self.started_at = None
-        self.record_crash()
-        await self._set_state(
-            ServerState.CRASHED,
-            "Server crashed" if reason == ExitReason.CRASH else "Server failed to start",
-            level="error",
-            exit_code=code,
-            reason=reason.value,
-        )
+        async with self._lock:  # never between a Start's check and its launch
+            self.started_at = None
+            self.record_crash()
+            await self._set_state(
+                ServerState.CRASHED,
+                "Server crashed" if reason == ExitReason.CRASH else "Server failed to start",
+                level="error",
+                exit_code=code,
+                reason=reason.value,
+            )
         context: dict[str, Any] = {"exit_code": code, "reason": reason.value, "uptime": uptime}
         if self.crash_hook:
             try:
@@ -1200,10 +1201,24 @@ class MinecraftServer:
         cutoff = time.time() - window
         return len([t for t in self._crash_times if t >= cutoff])
 
+    def may_restart_by_itself(self) -> str | None:
+        """Why the agent must not restart this server by itself (crash
+        restart and the not-answering watchdog), or None when it may."""
+        if not self.config.monitor.auto_restart:
+            return "Automatic restart is off. Press Restart to fix it."
+        if self.auto_restart_blocked:
+            return (
+                f"Automatic restart is stopped after {self.auto_restart_block_reason}. "
+                "Press Restart after looking at the reason."
+            )
+        if self.maintenance and self.config.maintenance.block_auto_restart:
+            return "Maintenance mode is on, so it wasn't restarted by itself. Press Restart."
+        return None
+
     async def _maybe_auto_restart(self) -> None:
         if not self.config.monitor.auto_restart or self.auto_restart_blocked:
             return
-        if self.maintenance and self.config.maintenance.block_auto_restart:
+        if self.may_restart_by_itself():
             await self.bus.publish(
                 Event(
                     type="auto_restart_skipped",
@@ -1233,15 +1248,19 @@ class MinecraftServer:
             )
             return
         delay = self.config.monitor.restart_delay
-        self.restart_delay = delay
-        self.restart_at = time.time() + delay
-        await self._set_state(
-            ServerState.RESTART_PENDING,
-            f"Restarting automatically in {delay:.0f}s",
-            level="warn",
-            restart_at=self.restart_at,
-            delay=delay,
-        )
+        async with self._lock:
+            # A Start pressed since the crash has already won.
+            if self.state is not ServerState.CRASHED:
+                return
+            self.restart_delay = delay
+            self.restart_at = time.time() + delay
+            await self._set_state(
+                ServerState.RESTART_PENDING,
+                f"Restarting automatically in {delay:.0f}s",
+                level="warn",
+                restart_at=self.restart_at,
+                delay=delay,
+            )
         log.info("restart_scheduled delay=%.0fs crash=%d/%d", delay, recent, max_crashes)
         await self.bus.publish(
             Event(

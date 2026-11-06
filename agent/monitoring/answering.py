@@ -220,6 +220,7 @@ class AnswerWatch:
             (float(t) for t in ctx.db.get_setting("answering_fixes") or []), maxlen=MAX_FIXES
         )
         self._task: asyncio.Task | None = None
+        self._fix_task: asyncio.Task | None = None
 
     def status(self) -> dict[str, Any]:
         """``ok`` is None until a check ran: never a guessed yes."""
@@ -229,6 +230,8 @@ class AnswerWatch:
         self._task = asyncio.create_task(self._run(), name=f"answering-{self.ctx.server_id}")
 
     async def stop(self) -> None:
+        if self._fix_task:
+            self._fix_task.cancel()
         if self._task:
             self._task.cancel()
             try:
@@ -326,10 +329,9 @@ class AnswerWatch:
     async def fix(self) -> str:
         """Backup, then restart, when automatic restart is on. Says what it did."""
         ctx, server = self.ctx, self.ctx.server
-        if not ctx.config.monitor.auto_restart:
-            return "Automatic restart is off. Press Restart to fix it."
-        if server.maintenance and ctx.config.maintenance.block_auto_restart:
-            return "Maintenance mode is on, so it wasn't restarted by itself. Press Restart."
+        why = server.may_restart_by_itself()
+        if why:
+            return why
         if self.recent_fixes() >= MAX_FIXES:
             return (
                 f"It got stuck {MAX_FIXES} times in {FIX_WINDOW // 3600} hours, so the app "
@@ -346,8 +348,18 @@ class AnswerWatch:
                 f"The app couldn't take a backup first ({exc}), so it didn't restart the "
                 "server by itself. Press Restart to restart it anyway."
             )
+        # The backup can take minutes: look again before acting on it.
+        if server.state.value != "ONLINE" or server.may_restart_by_itself():
+            return (
+                "The server was stopped or changed while the backup ran, so the app "
+                "didn't restart it."
+            )
+        port = ctx.core.ports.port_of(ctx).port
+        game = await asyncio.to_thread(ping, ctx.config.server_type.ping, server_ip(ctx), port)
+        if game["answer"] is not None and await self.ask_console():
+            return "The app took a backup and the server answers again, so it wasn't restarted."
         self.note_fix()
-        asyncio.create_task(self._restart(), name=f"answering-fix-{ctx.server_id}")
+        self._fix_task = asyncio.create_task(self._restart(), name=f"answering-fix-{ctx.server_id}")
         return "The app took a backup and is restarting the server."
 
     def recent_fixes(self) -> int:
@@ -360,12 +372,14 @@ class AnswerWatch:
 
     async def _restart(self) -> None:
         try:
-            await self.ctx.server.restart(actor="answer check")
+            result = await self.ctx.server.restart(actor="answer check")
         except Exception as exc:
+            result = {"restarted": False, "error": str(exc)}
+        if not result.get("restarted"):
             await self.ctx.bus.publish(
                 Event(
                     type="server_restart_failed",
                     level="error",
-                    message=f"Restart failed: {exc}",
+                    message=f"Restart failed: {result.get('error')}",
                 )
             )
