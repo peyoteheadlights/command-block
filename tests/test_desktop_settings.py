@@ -201,6 +201,19 @@ def test_changing_the_version_is_checked_first(qapp, agent_http, monkeypatch):
     button(version, "Check first").click()
     wait_for(qapp, lambda: "After the change: Fabric" in shown_text(version), 20)
 
+    # A check that answers after another version was picked is an old answer:
+    # it never lets the change go ahead for the new pick.
+    late = []
+    monkeypatch.setattr(page, "ask", lambda *args, **kw: late.append(args[2]))
+    combos[0].setCurrentIndex(0)
+    button(version, "Check first").click()
+    assert combos[0].count() > 1
+    combos[0].setCurrentIndex(1)
+    late[0]({"target": {"type_name": "Fabric", "minecraft_version": "old"}})
+    button(version, "Make the change").click()
+    assert "Press Check first" in shown_text(version)
+    assert len(late) == 1  # nothing was sent
+
 
 def test_change_server_type_is_its_own_card_and_never_guesses_the_version(qapp, agent_http):
     _window, page = settings_page(qapp, agent_http)

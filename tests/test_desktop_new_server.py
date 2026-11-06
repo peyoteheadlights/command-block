@@ -204,3 +204,21 @@ def test_a_modpack_found_by_name_is_read_before_anything_is_made(
     wait_for(qapp, lambda: "Test Pack 1.2.0" in shown_text(screen), 20)
     assert picks == [[f"Test Pack  ·  Modrinth  ·  Fabric {MC}  ·  1,234 downloads  ·  Shows ads"]]
     assert button(screen, "Create server")
+
+
+def test_a_late_goal_answer_never_wipes_a_newer_pick(qapp, agent_http, monkeypatch):
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(fake_sources()))
+    window, screen = plus_tab(qapp, agent_http)
+    answers = []
+    monkeypatch.setattr(window, "run", lambda work, done, failed=None: answers.append(done))
+    radios = {b.text(): b for b in screen.findChildren(QtWidgets.QRadioButton)}
+    radios["Plain vanilla with friends"].setChecked(True)
+    radios["Mods"].setChecked(True)
+    mods = {"recommended": ["fabric"], "warn": []}
+    answers[1](mods)  # the newer goal answers first
+    answers[0]({"recommended": ["vanilla"], "warn": []})  # then the older one
+    assert screen.advice == mods
+    radios["Plain vanilla with friends"].setChecked(True)
+    screen.choice["type"] = "fabric"  # a kind picked while that goal is asked
+    answers[2]({"recommended": ["vanilla"], "warn": []})
+    assert screen.choice["type"] == "fabric"

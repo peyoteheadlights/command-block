@@ -358,14 +358,18 @@ class SetupPages(
         val c = client() ?: return
         val type = pickedType ?: return
         val minecraft = pickedVersion ?: return
+        val loader = pickedLoader
         report = Read(loading = true)
         scope.launch {
-            report = try {
-                Read(c.versionPreflight(serverId, type, minecraft, pickedLoader))
+            val answer = try {
+                Read(c.versionPreflight(serverId, type, minecraft, loader))
             } catch (e: AgentException) {
                 noted(e)
                 Read(problem = Message.of(e))
             }
+            // Another kind, version or loader was picked meanwhile: an old answer.
+            if (pickedType != type || pickedVersion != minecraft || pickedLoader != loader) return@launch
+            report = answer
         }
     }
 

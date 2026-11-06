@@ -289,15 +289,20 @@ final class SetupPages {
 
     func check() async {
         guard let client = client(), let type = pickedType, let minecraft = pickedVersion else { return }
+        let loader = pickedLoader
         report = PageRead(loading: true)
+        let answer: PageRead<VersionPreflight>?
         do {
-            report = PageRead(value: try await client.versionPreflight(serverId: serverId, type: type, minecraft: minecraft, loader: pickedLoader))
+            answer = PageRead(value: try await client.versionPreflight(serverId: serverId, type: type, minecraft: minecraft, loader: loader))
         } catch let problem as AgentError {
             noted(problem)
-            report = PageRead(problem: problem)
+            answer = PageRead(problem: problem)
         } catch {
-            report = nil
+            answer = nil
         }
+        // Another kind, version or loader was picked meanwhile: an old answer.
+        guard pickedType == type, pickedVersion == minecraft, pickedLoader == loader else { return }
+        report = answer
     }
 
     /// After the one confirmation: the server stops, a backup is taken,

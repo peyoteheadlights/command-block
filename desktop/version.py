@@ -246,9 +246,13 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
             }
 
         def check() -> None:
+            asked = choice()
+
             def got(report: dict) -> None:
+                if choice() != asked:
+                    return  # the version or loader changed while checking: an old answer
                 checked.clear()
-                checked.update(report)
+                checked.update(report, asked=asked)
                 say_found(report_lines(report))
 
             page.ask(
@@ -260,7 +264,8 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
             )
 
         def change() -> None:
-            if not checked:
+            if checked.get("asked") != choice():
+                # Never checked, or checked for another version or loader.
                 said.setText(text("version.check_first"))
                 return
             after = checked["target"]
@@ -286,7 +291,7 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
                 "/version",
                 done,
                 lambda e: said.setText(str(e)),
-                body={**choice(), "confirm": True},
+                body={**checked["asked"], "confirm": True},
                 slow=True,
             )
 
@@ -422,9 +427,12 @@ def fill_type_card(page: SettingsPage, layout: QVBoxLayout, current: dict, found
         def check() -> None:
             checked.clear()
             say([(text("version.checking"), "sub")])
+            asked = body()
 
             def got(report: dict) -> None:
-                checked.update(report)
+                if body() != asked:
+                    return  # another type was picked while checking: an old answer
+                checked.update(report, asked=asked)
                 say(type_lines(report))
 
             page.ask(
@@ -436,7 +444,8 @@ def fill_type_card(page: SettingsPage, layout: QVBoxLayout, current: dict, found
             )
 
         def change() -> None:
-            if not checked:
+            if checked.get("asked") != body():
+                # Never checked, or checked for another type.
                 said.setText(text("version.check_first"))
                 return
             name = checked["target"]["type_name"]
@@ -456,7 +465,7 @@ def fill_type_card(page: SettingsPage, layout: QVBoxLayout, current: dict, found
                 "/type-change",
                 lambda _r: page.done(text("desktop.typechange.done", type=name)),
                 lambda e: said.setText(str(e)),
-                body={**body(), "stop_first": True, "confirm": True},
+                body={**checked["asked"], "stop_first": True, "confirm": True},
                 slow=True,
             )
 

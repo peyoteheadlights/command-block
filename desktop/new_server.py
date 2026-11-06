@@ -237,15 +237,18 @@ class NewServerScreen(QScrollArea):
         self.goal = goal
         technical = "true" if mode["technical"] else "false"
         window = self.window_
+        kind = self.choice.get("type")
         window.run(
             lambda: window.agent.call(
                 "GET", f"/server-types/recommend?goal={goal}&technical={technical}"
             ),
-            self.show_advice,
+            lambda advice: self.show_advice(advice, goal, kind),
             self.failed,
         )
 
-    def show_advice(self, advice: dict) -> None:
+    def show_advice(self, advice: dict, goal: str, kind: str | None) -> None:
+        if self.goal != goal or self.choice.get("type") != kind:
+            return  # another goal or a kind was picked while asking: an old answer
         self.advice = advice
         self.choice.update(type=None, minecraft=None, loader=None)
         refill(self.kinds_slot, [self.kinds_card()])
