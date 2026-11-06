@@ -1029,3 +1029,19 @@ def test_the_game_port_cant_be_the_servers_own_ipv6_port(bedrock_client):
     )
     assert answer.status_code == 400
     assert "IPv6" in json.dumps(answer.json())
+
+
+async def test_a_running_bedrock_server_is_duplicated_under_save_hold(running, tmp_path):
+    from agent import duplicate
+    from agent.jobs import RUNNING, SUCCEEDED
+
+    sent = record_commands(running)
+    job = await duplicate.start_duplicate(
+        running.core, running, name="Copy", directory=str(tmp_path / "Copy"), world="copy"
+    )
+    assert await wait_for(lambda: running.core.jobs.get(job.id).state != RUNNING, 30)
+    done = running.core.jobs.get(job.id)
+    assert done.state == SUCCEEDED, done.message
+    assert "save hold" in sent and "save resume" in sent
+    assert "save-off" not in sent
+    assert (tmp_path / "Copy" / "worlds" / "Bedrock level" / "level.dat").is_file()
