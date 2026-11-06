@@ -25,7 +25,7 @@ public enum LiveSignal: Equatable, Sendable {
     /// longer use any server. The app asks /api/auth/me which (a 401 there
     /// signs the app out). `message` is the agent's own words.
     case closed(message: String?)
-    /// The connection dropped; the app reconnects when it is next shown.
+    /// The connection dropped; the app connects again after a short wait.
     case lost(AgentError)
 }
 

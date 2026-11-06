@@ -179,15 +179,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val watchers = mutableListOf<String>()
     private val pagesBy = mutableMapOf<String, ServerPages>()
 
-    /** The PC folder picker's listing, shared by every screen that chooses a folder. */
-    val folders by lazy { FolderBrowser(viewModelScope, { client() }, { prefs.lastProblem = it.key }) }
-
-    /** The "+" on All servers, kept while the app runs so setting up shows its progress again. */
-    val adding by lazy { AddServerPages(viewModelScope, { client() }, { prefs.lastProblem = it.key }, ::refreshServers) }
     // The pages that belong to the signed-in account. Made again when it signs
     // out, with their own scope, so nothing of one PC or account shows on the
     // next and an update wait doesn't go on polling the old PC.
     private var accountScope = newAccountScope()
+
+    /** The PC folder picker's listing, shared by every screen that chooses a folder. */
+    var folders = FolderBrowser(accountScope, { client() }, { prefs.lastProblem = it.key })
+        private set
+
+    /** The "+" on All servers, kept while signed in so setting up shows its progress again. */
+    var adding = AddServerPages(accountScope, { client() }, { prefs.lastProblem = it.key }, ::refreshServers)
+        private set
 
     /** Settings > Moderators (owner only). */
     var moderators = ModeratorPages(accountScope, { client() }, { prefs.lastProblem = it.key })
@@ -216,6 +219,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         pagesBy.clear()
         accountScope.cancel()
         accountScope = newAccountScope()
+        folders = FolderBrowser(accountScope, { client() }, { prefs.lastProblem = it.key })
+        adding = AddServerPages(accountScope, { client() }, { prefs.lastProblem = it.key }, ::refreshServers)
         moderators = ModeratorPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         yourAccount = AccountPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         pcSettings = PcPages(accountScope, { client() }, { prefs.lastProblem = it.key })

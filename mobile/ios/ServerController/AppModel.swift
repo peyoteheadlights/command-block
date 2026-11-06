@@ -39,12 +39,8 @@ final class AppModel {
     @ObservationIgnored private var watchers: [String] = []
     private var watching: String? = nil
     @ObservationIgnored private var pagesById: [String: ServerPages] = [:]
-    /// The "+" on All servers, kept while the app runs so setting up shows its progress again.
-    @ObservationIgnored private(set) lazy var adding = AddServerPages(
-        client: { [weak self] in self?.client },
-        noted: { [weak self] problem in self?.note(problem) },
-        listChanged: { [weak self] in await self?.refreshServers() }
-    )
+    /// The "+" on All servers, kept while signed in so setting up shows its progress again.
+    @ObservationIgnored private(set) lazy var adding = makeAddingPages()
 
     /// Settings > Moderators (owner only).
     @ObservationIgnored private(set) lazy var moderators = makeModeratorPages()
@@ -59,6 +55,14 @@ final class AppModel {
 
     // The pages of the signed-in account, made again when it signs out so
     // nothing of one PC or account shows on the next.
+    private func makeAddingPages() -> AddServerPages {
+        AddServerPages(
+            client: { [weak self] in self?.client },
+            noted: { [weak self] problem in self?.note(problem) },
+            listChanged: { [weak self] in await self?.refreshServers() }
+        )
+    }
+
     private func makeModeratorPages() -> ModeratorPages {
         ModeratorPages(client: { [weak self] in self?.client }, noted: { [weak self] problem in self?.note(problem) }, strings: strings)
     }
@@ -405,6 +409,7 @@ final class AppModel {
         waking = false
         wakeFailed = false
         pcSettings.stop()
+        adding = makeAddingPages()
         moderators = makeModeratorPages()
         yourAccount = makeAccountPages()
         pcSettings = makePcPages()
@@ -623,52 +628,66 @@ final class AppModel {
     func startLive() {
         guard let client = client, signedIn, !locked else { return }
         liveTask?.cancel()
-        let feed = LiveFeed(client: client, token: { TokenStore.read() })
-        self.feed = feed
-        let watched = watching
         liveTask = Task { [weak self] in
-            for await signal in feed.connect(serverId: watched) {
-                guard let self = self else { return }
-                switch signal {
-                case .ready:
-                    self.live = true
-                case .changed(let serverId, let type):
-                    self.scheduleRefresh()
-                    self.changed(serverId, type)
-                case .activity(let row):
-                    for pages in self.pagesById.values {
-                        pages.onEvent(row)
-                    }
-                case .console(let serverId, let line):
-                    if let serverId = serverId {
-                        self.pagesById[serverId]?.onConsoleLine(line)
-                    }
-                case .chat(let serverId, let message):
-                    if let serverId = serverId {
-                        self.pagesById[serverId]?.onChat(message)
-                    }
-                case .consoleTail(let serverId, let lines):
-                    self.pagesById[serverId]?.onConsoleTail(lines)
-                case .task(let serverId, let job):
-                    self.adding.onTask(job)
-                    if let serverId = serverId {
-                        self.pagesById[serverId]?.content.onTask(job)
-                        self.pagesById[serverId]?.world.onTask(job)
-                        self.pagesById[serverId]?.setup.onTask(job)
-                    }
-                case .closed:
-                    self.live = false
-                    // Ask who this is: a 401 there signs the app out.
-                    await self.loadAccount()
-                case .lost(let problem):
-                    self.live = false
-                    self.note(problem)
-                case .signedOut:
-                    self.live = false
-                    self.signedOutByPC()
-                }
+            // A dropped feed (the PC restarted after an update, Wi-Fi changed)
+            // connects again by itself, waiting longer each time, as on Android.
+            var wait: UInt64 = 2
+            while !Task.isCancelled {
+                guard let self = self, self.signedIn, !self.locked else { return }
+                let feed = LiveFeed(client: client, token: { TokenStore.read() })
+                self.feed = feed
+                await self.listen(feed, watched: self.watching, wait: &wait)
+                if Task.isCancelled { return }
+                self.live = false
+                try? await Task.sleep(nanoseconds: wait * 1_000_000_000)
+                wait = min(wait * 2, 30)
             }
-            self?.live = false
+        }
+    }
+
+    /// One connection of the live feed, until it ends.
+    private func listen(_ feed: LiveFeed, watched: String?, wait: inout UInt64) async {
+        for await signal in feed.connect(serverId: watched) {
+            if Task.isCancelled { return }
+            switch signal {
+            case .ready:
+                self.live = true
+                wait = 2
+            case .changed(let serverId, let type):
+                self.scheduleRefresh()
+                self.changed(serverId, type)
+            case .activity(let row):
+                for pages in self.pagesById.values {
+                    pages.onEvent(row)
+                }
+            case .console(let serverId, let line):
+                if let serverId = serverId {
+                    self.pagesById[serverId]?.onConsoleLine(line)
+                }
+            case .chat(let serverId, let message):
+                if let serverId = serverId {
+                    self.pagesById[serverId]?.onChat(message)
+                }
+            case .consoleTail(let serverId, let lines):
+                self.pagesById[serverId]?.onConsoleTail(lines)
+            case .task(let serverId, let job):
+                self.adding.onTask(job)
+                if let serverId = serverId {
+                    self.pagesById[serverId]?.content.onTask(job)
+                    self.pagesById[serverId]?.world.onTask(job)
+                    self.pagesById[serverId]?.setup.onTask(job)
+                }
+            case .closed:
+                self.live = false
+                // Ask who this is: a 401 there signs the app out.
+                await self.loadAccount()
+            case .lost(let problem):
+                self.live = false
+                self.note(problem)
+            case .signedOut:
+                self.live = false
+                self.signedOutByPC()
+            }
         }
     }
 

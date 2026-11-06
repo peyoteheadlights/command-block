@@ -52,7 +52,7 @@ sealed class LiveSignal {
      * signs the app out). [message] is the agent's own words. */
     data class Closed(val message: String?) : LiveSignal()
 
-    /** The connection dropped; the app reconnects when it is next shown. */
+    /** The connection dropped; the app connects again after a short wait. */
     data class Lost(val problem: AgentException) : LiveSignal()
 }
 

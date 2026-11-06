@@ -148,7 +148,8 @@ class AddServerPages(
         val c = client() ?: return
         scope.launch {
             try {
-                AddServer.creating(c.runningJobs().jobs)?.let { task = it }
+                // None running: a missed "done" must not keep Create locked.
+                task = AddServer.creating(c.runningJobs().jobs)
             } catch (e: AgentException) {
                 noted(e)
             }
@@ -227,6 +228,8 @@ class AddServerPages(
             } catch (e: AgentException) {
                 noted(e)
                 said = Said(Message.of(e).text(strings), good = false)
+                // Lost track of it: the PC may still be making it, so read what it's doing.
+                if (e is AgentException.StillWorking) resume()
             } finally {
                 busy = null
                 task = null
@@ -324,6 +327,8 @@ class AddServerPages(
             } catch (e: AgentException) {
                 noted(e)
                 said = Said(Message.of(e).text(strings), good = false)
+                // Lost track of it: the PC may still be making it, so read what it's doing.
+                if (e is AgentException.StillWorking) resume()
             } finally {
                 busy = null
                 task = null

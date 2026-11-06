@@ -124,7 +124,8 @@ final class AddServerPages {
     func resume() async {
         guard let client = client() else { return }
         do {
-            if let running = AddServer.creating(try await client.runningJobs().jobs) { task = running }
+            // None running: a missed "done" must not keep Create locked.
+            task = AddServer.creating(try await client.runningJobs().jobs)
         } catch let problem as AgentError {
             noted(problem)
         } catch {}
@@ -177,9 +178,10 @@ final class AddServerPages {
         guard let client = client(), let kind = type, let chosen = version, busy == nil else { return }
         busy = "create"
         said = nil
+        var lost = false
         defer {
             busy = nil
-            task = nil
+            if !lost { task = nil }
         }
         let request = NewServerRequest(
             name: name.trimmingCharacters(in: .whitespaces), directory: folder, type: kind.id, minecraft: chosen.minecraft,
@@ -193,6 +195,11 @@ final class AddServerPages {
         } catch let problem as AgentError {
             noted(problem)
             said = Said(text: problem.message(strings), good: false)
+            // Lost track of it: the PC may still be making it, so read what it's doing.
+            if problem == .stillWorking {
+                lost = true
+                await resume()
+            }
         } catch {}
     }
 
@@ -267,9 +274,10 @@ final class AddServerPages {
         guard let client = client(), let read = pack, busy == nil else { return }
         busy = "create"
         said = nil
+        var lost = false
         defer {
             busy = nil
-            task = nil
+            if !lost { task = nil }
         }
         do {
             let made = try await client.modpackServer(
@@ -281,6 +289,11 @@ final class AddServerPages {
         } catch let problem as AgentError {
             noted(problem)
             said = Said(text: problem.message(strings), good: false)
+            // Lost track of it: the PC may still be making it, so read what it's doing.
+            if problem == .stillWorking {
+                lost = true
+                await resume()
+            }
         } catch {}
     }
 
