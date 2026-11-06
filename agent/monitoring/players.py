@@ -215,8 +215,8 @@ class PlayerTracker:
         )
         return changed.rowcount > 0
 
-    async def player_left(self, username: str) -> None:
-        now = time.time()
+    async def player_left(self, username: str, at: float | None = None) -> None:
+        now = at if at is not None else time.time()
         self.mark_verified("leave observed in console")
         row = self.db.query_one(
             "SELECT * FROM players WHERE server_id = ? AND username = ?", (self.server_id, username)
@@ -261,14 +261,15 @@ class PlayerTracker:
         # what established the count.
         self.mark_verified("/list reply from the server")
 
-    async def clear_online(self) -> None:
+    async def clear_online(self, at: float | None = None) -> None:
         """Called when the server stops or crashes: nobody is online any more.
 
         Closing these sessions is itself a verified fact - the process is
-        gone, so no one can be connected to it.
+        gone, so no one can be connected to it. ``at``: when they ended, if
+        not now (the agent's last sign of life, after it was cut off).
         """
         for player in self.online():
-            await self.player_left(player["username"])
+            await self.player_left(player["username"], at=at)
         self.mark_verified("server process is not running")
 
     def names_by_id(self) -> dict[str, str]:

@@ -331,6 +331,8 @@ class ServerContext:
             log.warning("backup after stop failed: %s", exc)
 
     async def start(self) -> None:
+        # Read before this start writes anything new.
+        last_alive = self.core.agent_last_alive()
         # A change cut off by a power cut is put back before anything can
         # start the server on half-moved files.
         self.backups.changes.settle(await safechange.recover(self.server))
@@ -357,7 +359,14 @@ class ServerContext:
         await asyncio.to_thread(self.server.detect_java)
         if self.server.state.value == "OFFLINE":
             # Nothing is running, so "nobody is online" is a verified fact.
-            await self.players.clear_online()
+            # Sessions the last agent left open end when it was last alive,
+            # not now: hours the PC was off aren't playtime.
+            await self.players.clear_online(at=last_alive)
+        elif self.server.left_behind is not None:
+            # Still running, but without its console nobody's joins or leaves
+            # can be seen: the old sessions end there and the count is unknown.
+            await self.players.clear_online(at=last_alive)
+            self.players.verified_at = self.players.verified_source = None
         self.metrics.start(
             player_source=lambda: self.players.online() if self.players.verified else None
         )
@@ -625,6 +634,18 @@ class AgentCore:
         # to back up after; they start again with the agent.
         self.stopping = False
 
+    def agent_last_alive(self) -> float | None:
+        """The newest thing the last run of the agent wrote (a measurement
+        or an event, for any server): when it was last known to be running.
+        Read once, before this run writes anything."""
+        if not hasattr(self, "_last_alive"):
+            row = self.db.query_one(
+                "SELECT MAX(ts) AS ts FROM (SELECT MAX(ts) AS ts FROM metrics "
+                "UNION ALL SELECT MAX(ts) FROM events)"
+            )
+            self._last_alive = float(row["ts"]) if row and row["ts"] is not None else None
+        return self._last_alive
+
     def request_restart(self) -> None:
         """Stop so the startup task starts the agent again. agent/main.py
         sets ``restart``; run any other way, nothing can restart the agent."""
@@ -715,6 +736,7 @@ class AgentCore:
 
     # ------------------------------------------------------------------
     async def start(self) -> None:
+        self.agent_last_alive()
         await asyncio.to_thread(antivirus.load)  # loading amsi.dll can take a moment
         for ctx in list(self.servers.values()):
             await ctx.start()

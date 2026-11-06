@@ -230,3 +230,35 @@ async def test_the_watchdogs_fix_count_is_kept_over_an_agent_restart(tmp_path):
     finally:
         await again.jobs.stop()
         again.db.close()
+
+
+async def test_playtime_cut_off_by_an_agent_crash_ends_when_the_agent_was_last_alive(tmp_path):
+    import time
+
+    core = AgentCore(build_multi_config(tmp_path))
+    try:
+        await core.get_server("survival").players.player_joined("Steve")
+    finally:
+        await core.jobs.stop()
+        core.db.close()
+
+    # Steve joined two hours ago; the agent's last sign of life was an hour
+    # ago (its last measurement), then the PC lost power.
+    now = time.time()
+    again = AgentCore(build_multi_config(tmp_path))
+    try:
+        again.db.execute("UPDATE events SET ts = ?", (now - 7200,))
+        again.db.execute("UPDATE players SET session_started = ?", (now - 7200,))
+        again.db.execute(
+            "INSERT INTO metrics (server_id, ts) VALUES ('creative', ?)", (now - 3600,)
+        )
+        ctx = again.get_server("survival")
+        await ctx.start()
+        row = again.db.query_one("SELECT total_seconds FROM players WHERE username = 'Steve'")
+        assert 3500 < row["total_seconds"] < 3700  # not the two hours "until now"
+        session = again.db.query_one("SELECT left_at FROM player_sessions")
+        assert abs(session["left_at"] - (now - 3600)) < 5
+        await ctx.stop()
+    finally:
+        await again.jobs.stop()
+        again.db.close()
