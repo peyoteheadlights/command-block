@@ -262,3 +262,20 @@ async def test_playtime_cut_off_by_an_agent_crash_ends_when_the_agent_was_last_a
     finally:
         await again.jobs.stop()
         again.db.close()
+
+
+# ------------------------------------------------------- slow starts
+async def test_a_start_that_takes_too_long_is_alerted_and_left_running(make_config, monkeypatch):
+    monkeypatch.setenv("FAKE_BOOT_DELAY", "2")
+    config = make_config(**{"server.start_timeout": 0.5})
+    bus = EventBus()
+    seen = collector(bus)
+    server = MinecraftServer(config, bus)
+    await server.start()
+    await asyncio.sleep(1.0)
+    slow = [e for e in seen if e.type == "start_slow"]
+    assert slow and slow[0].level == "warn"
+    assert server.state is ServerState.STARTING  # an alert only, never stopped
+    assert await server.wait_online(timeout=10)
+    await server.stop()
+
