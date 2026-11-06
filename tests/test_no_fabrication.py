@@ -5,6 +5,8 @@ than producing a plausible number. These are the tests that fail if someone
 later adds a convenient default.
 """
 
+import asyncio
+
 import pytest
 
 from agent.backups.manager import BackupError, BackupManager
@@ -753,3 +755,31 @@ def test_a_download_count_always_says_where_and_when(make, monkeypatch):  # noqa
     counts = {s["project"]: s["downloads"] for s in get(make())["good_to_have"]}
     assert counts["chunky"] is None  # the site gave none: none is shown
     assert all(c is None or (c["source"] == "Modrinth" and c["read_at"]) for c in counts.values())
+
+
+async def test_an_unknown_player_count_is_stored_as_unknown_not_zero(parts):
+    config, bus, db, server = parts
+    monitor = MetricsMonitor(config, bus, db, server)
+    seen = []
+
+    async def sample(player_count=None):
+        seen.append(player_count)
+        raise asyncio.CancelledError
+
+    monitor.sample_once = sample
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(monitor.run(player_source=lambda: None), timeout=3)
+    assert seen == [None]
+
+
+def test_the_update_check_counts_players_on_an_online_server(multi):
+    core = AgentCore(multi)
+    try:
+        ctx = core.get_server("survival")
+        ctx.server.state = ServerState.ONLINE
+        ctx.players.online_count = lambda: 3
+        found = core.updates.preflight()
+        assert found["players_online"] == 3
+        assert found["players"] == [{"server": ctx.name, "players": 3}]
+    finally:
+        core.db.close()

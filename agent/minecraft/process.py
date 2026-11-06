@@ -913,7 +913,8 @@ class MinecraftServer:
             self.mod_count = sig.mod_count
         if sig.tps is not None:
             self.tps, self.tps_updated = sig.tps, time.time()
-            self.tps_source = self.config.monitor.tps_command
+            # Keeps the command detection found; the setting can say "auto".
+            self.tps_source = self.tps_source or str(self.config.monitor.tps_command)
         if sig.target_tps is not None:
             self._target_tps = sig.target_tps
         if sig.mspt is not None:

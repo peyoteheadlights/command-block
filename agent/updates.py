@@ -332,7 +332,7 @@ class Updater:
         players = []
         unknown = False
         for ctx in self.core.servers.values():
-            if not ctx.server.running:
+            if ctx.server.state.value != "ONLINE":
                 continue
             count = ctx.players.online_count()
             if count is None:
