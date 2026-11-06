@@ -257,6 +257,7 @@ class PcPages(
         val c = client() ?: return
         val before = checks ?: update ?: return
         val target = before.latest?.version ?: return
+        if (busy != null) return
         checks = null
         busy = "update"
         said = null

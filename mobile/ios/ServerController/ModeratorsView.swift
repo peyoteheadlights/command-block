@@ -130,7 +130,7 @@ final class AccountPages {
     }
 
     func changePassword(current: String, new: String) async -> Bool {
-        guard let client = client() else { return false }
+        guard let client = client(), busy == nil else { return false }
         busy = "password"
         said = nil
         defer { busy = nil }

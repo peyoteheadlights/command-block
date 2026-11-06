@@ -624,6 +624,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun act(serverId: String, action: String) {
         val client = client() ?: return
+        // A fast second tap doesn't send it twice.
+        if (server[serverId]?.busyAction != null) return
         update(serverId) { it.copy(busyAction = action, done = null, refused = null) }
         viewModelScope.launch {
             try {

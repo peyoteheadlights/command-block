@@ -262,6 +262,7 @@ class WorldPages(
      * file; [discard] removes it again when the download didn't finish. */
     fun download(backup: Backup, open: () -> OutputStream?, discard: () -> Unit, strings: Strings) {
         val c = client() ?: return
+        if (busy != null) return
         busy = "download:${backup.id}"
         said = null
         downloading = Downloading(backup.name, 0L, backup.sizeBytes)

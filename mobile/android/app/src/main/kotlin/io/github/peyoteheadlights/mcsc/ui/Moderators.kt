@@ -177,6 +177,7 @@ class AccountPages(
 
     fun changePassword(current: String, new: String, strings: Strings, onChanged: () -> Unit) {
         val c = client() ?: return
+        if (busy != null) return
         busy = "password"
         said = null
         scope.launch {

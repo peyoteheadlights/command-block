@@ -214,7 +214,7 @@ final class PcPages {
 
     /// Starts the update, then waits for the PC to come back by itself.
     func install() async {
-        guard let client = client(), let before = checks ?? update, let target = before.latest?.version else { return }
+        guard let client = client(), let before = checks ?? update, let target = before.latest?.version, busy == nil else { return }
         checks = nil
         busy = "update"
         said = nil
