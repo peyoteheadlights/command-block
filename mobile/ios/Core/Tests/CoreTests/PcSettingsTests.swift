@@ -183,6 +183,36 @@ final class PcSettingsTests: XCTestCase {
         XCTAssertEqual(PcSettings.exportSaid(strings, PcSettings.exporting(noFolder)), strings.t("export.failed"))
     }
 
+    func testAnExportReadThatLosesThePCTriesAgainAsThePCGoesOnWriting() async throws {
+        let job = try JSONDecoder().decode(ExportJob.self, from: Data(#"{"id": "j", "state": "running", "step": "Copying", "progress": 0.4}"#.utf8))
+        var reads = 0
+        let state = try await PcSettings.readExport({
+            reads += 1
+            if reads < 3 { throw AgentError.unreachable }
+            return job
+        }, pause: {})
+        XCTAssertEqual(state, .running(step: "Copying", progress: 0.4))
+        XCTAssertEqual(reads, 3)
+        // A refusal is the PC's answer: not tried again.
+        reads = 0
+        do {
+            _ = try await PcSettings.readExport({ reads += 1; throw AgentError.notAllowed(reason: "No") }, pause: {})
+            XCTFail("A refusal was tried again")
+        } catch {
+            XCTAssertEqual(error as? AgentError, .notAllowed(reason: "No"))
+        }
+        XCTAssertEqual(reads, 1)
+        // Gone for good: the problem shows after the last try.
+        reads = 0
+        do {
+            _ = try await PcSettings.readExport({ reads += 1; throw AgentError.unreachable }, tries: 4, pause: {})
+            XCTFail("A PC that never came back read as an export")
+        } catch {
+            XCTAssertEqual(error as? AgentError, .unreachable)
+        }
+        XCTAssertEqual(reads, 4)
+    }
+
     func testGetHelpListsItsFilesThenMakesOne() async throws {
         let c = client()
         StubAgent.json("{\"files\": [{\"name\": \"logs/agent.log\", \"size\": 1200}, {\"name\": \"system-check.json\", \"size\": null}]}")

@@ -349,6 +349,21 @@ object PcSettings {
         else -> Exporting.Failed(job.message)
     }
 
+    /** Reads an export's progress. A dropped connection (the phone slept,
+     * Wi-Fi changed) doesn't end it, since the PC goes on writing: the read
+     * is tried again, with [pause] between, and only the last failure shows. */
+    suspend fun readExport(read: suspend () -> ExportJob, tries: Int = 30, pause: suspend () -> Unit): Exporting {
+        repeat(tries - 1) {
+            try {
+                return exporting(read())
+            } catch (e: AgentException) {
+                if (e !is AgentException.Unreachable && e !is AgentException.StillWorking) throw e
+            }
+            pause()
+        }
+        return exporting(read())
+    }
+
     fun exportSaid(strings: Strings, state: Exporting): String? = when (state) {
         is Exporting.Running -> null
         is Exporting.Saved -> strings.t("mobile.pc.export_saved", "path" to state.path, "size" to Display.bytes(strings, state.size))

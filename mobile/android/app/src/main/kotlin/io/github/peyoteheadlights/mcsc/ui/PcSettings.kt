@@ -302,11 +302,12 @@ class PcPages(
             exporting = PcSettings.Exporting.Running(null, null)
             try {
                 val started = c.startExport(PcSettings.exportBody(worlds, backups, secrets, passphrase, folder))
-                var state = PcSettings.exporting(c.exportJob(started.jobId))
+                val read = suspend { c.exportJob(started.jobId) }
+                var state = PcSettings.readExport(read) { delay(1_000) }
                 exporting = state
                 while (state is PcSettings.Exporting.Running) {
                     delay(1_000)
-                    state = PcSettings.exporting(c.exportJob(started.jobId))
+                    state = PcSettings.readExport(read) { delay(1_000) }
                     exporting = state
                 }
                 Said(PcSettings.exportSaid(strings, state).orEmpty(), good = state is PcSettings.Exporting.Saved)

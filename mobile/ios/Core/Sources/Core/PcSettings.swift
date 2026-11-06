@@ -611,6 +611,22 @@ public enum PcSettings {
         }
     }
 
+    /// Reads an export's progress. A dropped connection (the phone slept,
+    /// Wi-Fi changed) doesn't end it, since the PC goes on writing: the read
+    /// is tried again, with `pause` between, and only the last failure shows.
+    public static func readExport(
+        _ read: () async throws -> ExportJob, tries: Int = 30, pause: () async throws -> Void
+    ) async throws -> Exporting {
+        for _ in 1..<tries {
+            do {
+                return exporting(try await read())
+            } catch AgentError.unreachable, AgentError.stillWorking {
+                try await pause()
+            }
+        }
+        return exporting(try await read())
+    }
+
     public static func exportSaid(_ strings: Strings, _ state: Exporting) -> String? {
         switch state {
         case .running: return nil

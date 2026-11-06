@@ -163,6 +163,28 @@ class PcSettingsTest {
     }
 
     @Test
+    fun `an export read that loses the PC tries again, as the PC goes on writing`() = runBlocking {
+        var reads = 0
+        val read = suspend {
+            reads++
+            if (reads < 3) throw AgentException.Unreachable()
+            ExportJob("j", state = "running", step = "Copying", progress = 0.4)
+        }
+        assertEquals(PcSettings.Exporting.Running("Copying", 0.4), PcSettings.readExport(read) {})
+        assertEquals(3, reads)
+        // A refusal is the PC's answer: not tried again.
+        reads = 0
+        val refused = suspend { reads++; throw AgentException.NotAllowed("No") }
+        assertTrue(runCatching { PcSettings.readExport(refused) {} }.exceptionOrNull() is AgentException.NotAllowed)
+        assertEquals(1, reads)
+        // Gone for good: the problem shows after the last try.
+        reads = 0
+        val gone = suspend { reads++; throw AgentException.Unreachable() }
+        assertTrue(runCatching { PcSettings.readExport(gone, tries = 4) {} }.exceptionOrNull() is AgentException.Unreachable)
+        assertEquals(4, reads)
+    }
+
+    @Test
     fun `export shows its progress, then where on the PC it was saved`() = runBlocking {
         TestAgent().use { agent ->
             agent.server.enqueue(agent.json("""{"ok": true, "job_id": "j1"}"""))

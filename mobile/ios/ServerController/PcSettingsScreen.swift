@@ -267,12 +267,14 @@ final class PcPages {
             let started = try await client.startExport(
                 PcSettings.exportBody(worlds: worlds, backups: backups, secrets: secrets, passphrase: passphrase, folder: folder)
             )
-            var state = PcSettings.exporting(try await client.exportJob(started.jobId))
+            let read = { try await client.exportJob(started.jobId) }
+            let pause = { try await Task.sleep(nanoseconds: 1_000_000_000) }
+            var state = try await PcSettings.readExport(read, pause: pause)
             exporting = state
             while case .running = state, !stopped {
-                try await Task.sleep(nanoseconds: 1_000_000_000)
+                try await pause()
                 if stopped { return nil }
-                state = PcSettings.exporting(try await client.exportJob(started.jobId))
+                state = try await PcSettings.readExport(read, pause: pause)
                 exporting = state
             }
             var good = false
