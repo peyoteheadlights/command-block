@@ -123,6 +123,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                 )
             }
         }
+        ui.refused?.let { refused -> item { ProblemNote(refused) } }
         ui.problem?.let { problem -> item { ProblemNote(problem, onRetry = { vm.refreshServer(serverId) }) } }
         item { SectionTitle(t("mobile.server.players_now")) }
         item { Players(vm, state, status) }

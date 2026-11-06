@@ -76,9 +76,12 @@ data class ServersUi(
 data class ServerUi(
     val status: ServerStatus? = null,
     val checkedAt: Double? = null,
+    /** The last status read failed: the state is unknown. */
     val problem: Message? = null,
     val busyAction: String? = null,
     val done: Message? = null,
+    /** The PC refused the last action, in its words. A later read keeps it. */
+    val refused: Message? = null,
 )
 
 data class PhoneUi(
@@ -619,14 +622,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun act(serverId: String, action: String) {
         val client = client() ?: return
-        update(serverId) { it.copy(busyAction = action, done = null, problem = null) }
+        update(serverId) { it.copy(busyAction = action, done = null, refused = null) }
         viewModelScope.launch {
             try {
                 client.serverAction(serverId, action)
                 update(serverId) { it.copy(busyAction = null, done = Message("mobile.server.done_${action.replace('-', '_')}")) }
             } catch (e: AgentException) {
                 prefs.lastProblem = e.key
-                update(serverId) { it.copy(busyAction = null, problem = Message.of(e)) }
+                update(serverId) { it.copy(busyAction = null, refused = Message.of(e)) }
             }
             refreshServer(serverId)
             refreshServers()

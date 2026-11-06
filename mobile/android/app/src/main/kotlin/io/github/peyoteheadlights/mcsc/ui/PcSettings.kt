@@ -141,13 +141,19 @@ class PcPages(
         busy = what
         said = null
         scope.launch {
-            said = try {
-                work(c)
+            try {
+                said = work(c)
             } catch (e: AgentException) {
                 noted(e)
-                Said(Message.of(e).text(strings), good = false)
+                said = Said(Message.of(e).text(strings), good = false)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Saving the help file on this phone failed (phone full): no crash.
+                said = Said(strings.t("mobile.download.save_failed", "reason" to (e.message ?: strings.t("value.unknown"))), good = false)
+            } finally {
+                busy = null
             }
-            busy = null
         }
     }
 

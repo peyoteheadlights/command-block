@@ -588,6 +588,7 @@ private fun ChangesCard(vm: AppViewModel, serverId: String, changes: Changes, co
                         }, danger = true, enabled = busy == null),
                     ),
                 )
+                vm.server[serverId]?.refused?.let { Note(it.text(), color = colors.danger) }
             } else {
                 Note(t("mods.running_notice", "state" to t(Display.state(controls.label).key)), color = colors.text2)
             }
