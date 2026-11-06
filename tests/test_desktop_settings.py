@@ -108,6 +108,50 @@ def test_a_card_saves_only_what_changed_and_says_so(qapp, agent_http):
     )
 
 
+def test_saving_one_card_keeps_what_was_typed_in_the_others(qapp, agent_http):
+    _window, page = settings_page(qapp, agent_http)
+    headers = owner(agent_http)
+
+    def monitor():
+        url = "/api/servers/survival/settings"
+        return agent_http.get(url, headers=headers).json()["monitor"]
+
+    def typed_still_there():
+        keep = card_of(page, "How many backups to keep")  # the one on screen now
+        return keep.findChildren(QtWidgets.QSpinBox)[0].value() == typed
+
+    keep = card_of(page, "How many backups to keep")
+    daily = keep.findChildren(QtWidgets.QSpinBox)[0]
+    daily.setValue(daily.value() + 3)  # typed, not saved
+    typed = daily.value()
+    crashes = card_of(page, "Restart after a crash")
+    delay = crashes.findChildren(QtWidgets.QDoubleSpinBox)[0]
+    was = delay.value()
+    delay.setValue(was + 5)
+    button(crashes, "Save").click()
+    wait_for(qapp, lambda: "Settings saved." in shown_text(crashes), 20)
+    assert monitor()["restart_delay"] == pytest.approx(was + 5)
+    switch = crashes.findChild(Switch)
+    on = switch.isChecked()
+    switch.click()  # saves by itself
+    wait_for(qapp, lambda: monitor()["auto_restart"] is not on, 20, pause=0.5)
+    game = card_of(section(page, "Game settings"), "Game settings")
+    difficulty = next(c for c in game.findChildren(QtWidgets.QComboBox) if c.findData("hard") >= 0)
+    difficulty.setCurrentIndex(difficulty.findData("hard"))
+    button(game, "Save").click()
+    game_saved = ("uses them next time", "Restart the server to use them")
+    wait_for(qapp, lambda: any(words in shown_text(page) for words in game_saved))
+    qapp.processEvents()
+    assert typed_still_there()
+    # Put back by hand: the card knows the agent has the new value now.
+    delay.setValue(was)
+    button(crashes, "Save").click()
+    wait_for(qapp, lambda: monitor()["restart_delay"] == pytest.approx(was), 20, pause=0.5)
+    switch.click()
+    wait_for(qapp, lambda: monitor()["auto_restart"] is on, 20, pause=0.5)
+    assert typed_still_there()
+
+
 def test_a_game_setting_is_saved_and_a_bad_one_is_marked(qapp, agent_http):
     _window, page = settings_page(qapp, agent_http)
     game = card_of(section(page, "Game settings"), "Game settings")

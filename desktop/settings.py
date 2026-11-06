@@ -214,6 +214,16 @@ def slider_card(
     return frame, layout, big
 
 
+def merge(old: dict, new: dict) -> None:
+    """``new``'s values into ``old``, keeping each dict inside the same
+    object, so the Save buttons' closures read the new values."""
+    for key, value in new.items():
+        if isinstance(value, dict) and isinstance(old.get(key), dict):
+            merge(old[key], value)
+        else:
+            old[key] = value
+
+
 class SettingsPage(Page):
     def __init__(self, window: MainWindow) -> None:
         super().__init__(window)
@@ -223,6 +233,8 @@ class SettingsPage(Page):
         self.column.addWidget(self.sections)
         self.section: dict[str, QWidget] = {}
         self.slots: dict[str, QVBoxLayout] = {}
+        self.server_data: dict = {}  # what the server cards were built from
+        self.memory_data: dict = {}
         for key, _words in SECTIONS:
             holder = self.section[key] = QWidget()
             column = QVBoxLayout(holder)
@@ -269,8 +281,8 @@ class SettingsPage(Page):
             self.jump("server")
         refill(self.slots["bedrock"], [])
         self.ask("GET", "/settings", self.show_server)
-        self.ask("GET", "/game-settings", self.show_game, self.game_failed)
-        self.ask("GET", "/memory", self.show_memory, lambda exc: self.problem("memory", exc))
+        self.load_game()
+        self.load_memory()
         self.window_.with_types(
             lambda: self.ask(
                 "GET", "/version", self.show_version, lambda e: self.problem("version", e)
@@ -298,11 +310,25 @@ class SettingsPage(Page):
         forms would throw away what someone is typing."""
         self.ask("GET", "/game-settings", self.show_banner, lambda _e: None)
 
-    def done(self, words: str) -> None:
-        """After a change: the page again from the agent, and what happened on top."""
-        self.load()
+    def done(self, words: str, reload: Callable[[], None] | None = None) -> None:
+        """After a change: the page again from the agent (or only the part
+        ``reload`` asks for again), and what happened on top."""
+        (reload or self.load)()
         self.say(words)
         self.verticalScrollBar().setValue(0)
+
+    def settings_again(self) -> None:
+        """After a Save: what the agent has now becomes what each card's Save
+        compares with, without building the cards again, so what someone
+        typed in another card and hasn't saved yet stays."""
+        self.ask("GET", "/settings", lambda data: merge(self.server_data, data))
+        self.ask("GET", "/memory", lambda data: merge(self.memory_data, data), lambda _e: None)
+
+    def load_game(self) -> None:
+        self.ask("GET", "/game-settings", self.show_game, self.game_failed)
+
+    def load_memory(self) -> None:
+        self.ask("GET", "/memory", self.show_memory, lambda exc: self.problem("memory", exc))
 
     def problem(self, slot: str, exc: Exception) -> None:
         refill(self.slots[slot], [label(str(exc), "problem")])
@@ -316,7 +342,7 @@ class SettingsPage(Page):
         said.setStyle(said.style())
         if not rejected:
             self.window_.refresh()  # the name and color show in the tabs
-            self.load()
+            self.settings_again()
 
     def applies(self, switch: Switch, key: str, layout: QVBoxLayout) -> None:
         """Makes ``switch`` save ``key`` as soon as it is flipped. If the
@@ -339,7 +365,7 @@ class SettingsPage(Page):
             if rejected:
                 back(" ".join(rejected))
             else:
-                self.load()
+                self.settings_again()
 
         def flip(on: bool) -> None:
             if not quiet[0]:
@@ -382,6 +408,7 @@ class SettingsPage(Page):
 
     # ------------------------------------------------------------ server settings
     def show_server(self, data: dict) -> None:
+        self.server_data = data
         server, editable = data["server"], self.may("settings.server")
         address = self.address_card()
         cards = [
@@ -1637,7 +1664,10 @@ class SettingsPage(Page):
                 said.setText(text("game.fix_marked") if problems else str(exc))
 
             def done(result: dict) -> None:
-                self.done(text("game.saved_running" if result.get("running") else "game.saved"))
+                self.done(
+                    text("game.saved_running" if result.get("running") else "game.saved"),
+                    self.load_game,
+                )
                 if (result.get("changed") or {}).get("online-mode") == "false":
                     self.ask("GET", "/protection", self.offer_login, lambda _e: None)
 
@@ -1677,7 +1707,8 @@ class SettingsPage(Page):
                 "PUT",
                 "/game-settings",
                 lambda r: self.done(
-                    text("game.saved_running" if r.get("running") else "game.saved")
+                    text("game.saved_running" if r.get("running") else "game.saved"),
+                    self.load_game,
                 ),
                 failed,
                 body={"values": {"view-distance": str(value)}},
@@ -1767,7 +1798,10 @@ class SettingsPage(Page):
             if result.get("nothing_changed"):
                 said.setText(text("settings.nothing_changed"))
                 return
-            self.done(text("game.saved_running" if result.get("running") else "game.saved"))
+            self.done(
+                text("game.saved_running" if result.get("running") else "game.saved"),
+                self.load_game,
+            )
 
         save.clicked.connect(
             lambda: self.ask(
@@ -1822,6 +1856,7 @@ class SettingsPage(Page):
     # ------------------------------------------------------------ memory
     def show_memory(self, data: dict) -> None:
         """The memory limit (-Xmx only), bounded by the PC's memory as measured."""
+        self.memory_data = data
         total = data.get("total_mb")
         editable = self.may("settings.server")
         current = data.get("limit_mb")
@@ -1886,7 +1921,8 @@ class SettingsPage(Page):
 
                 def done(result: dict) -> None:
                     self.done(
-                        text("memory.saved_running" if result.get("running") else "memory.saved")
+                        text("memory.saved_running" if result.get("running") else "memory.saved"),
+                        self.load_memory,
                     )
 
                 def failed(exc: Exception) -> None:
@@ -1924,7 +1960,7 @@ class SettingsPage(Page):
                             said.setText(refused)
                             return
                         back = (lambda: put(before, "memory.raw_undone", False)) if undo else None
-                        self.done(text(words))
+                        self.done(text(words), self.load_memory)
                         self.say(text(words), back)
 
                     self.ask(
