@@ -212,9 +212,12 @@ press **Start**, and watch the Console page. When you see
 `Done (12.345s)! For help, type "help"` the server shows as online.
 
 Press Ctrl+C in the PowerShell window to stop the agent. **Stopping the agent
-does not stop Minecraft**: that is deliberate, so an agent restart never
-disconnects your players. Stop Minecraft from the desktop app first if you want
-it down.
+stops Minecraft too**: players get a short in-game message, every running
+server is stopped cleanly at the same time, and each starts again the next time the agent starts. Minecraft's
+console belongs to the agent, so a server left running without it couldn't be
+backed up safely or show who is playing. If the agent dies instead (a crash, a
+power cut), the next start finds the server still running from the process id
+in its folder and never starts a second copy.
 
 ### 9. Firewall and service
 

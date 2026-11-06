@@ -129,7 +129,12 @@ async def restart_if_empty(ctx: ServerContext) -> bool:
 async def stop_for_agent(core: AgentCore) -> list[str]:
     """Warn players, stop every running server at once and wait for each to
     save, and write down which were running. Returns their ids."""
-    running = [ctx for ctx in core.servers.values() if ctx.server.running]
+    # One left running by an agent that died has no console to stop it with.
+    running = [
+        ctx
+        for ctx in core.servers.values()
+        if ctx.server.running and ctx.server.left_behind is None
+    ]
     ids = [ctx.server_id for ctx in running]
     core.db.set_setting(RUNNING_KEY, ids)
     if not running:
@@ -168,7 +173,8 @@ async def start_after_agent(core: AgentCore) -> None:
     wanted = [
         ctx
         for ctx in core.servers.values()
-        if ctx.server_id in remembered or ctx.config.server.autostart_minecraft
+        if (ctx.server_id in remembered or ctx.config.server.autostart_minecraft)
+        and not ctx.server.running  # never started twice
     ]
 
     async def start(ctx: ServerContext) -> None:

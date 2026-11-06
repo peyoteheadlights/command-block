@@ -56,6 +56,7 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "server_answering_again": ("server_recovered", 0x3BA55D, "{server} answers again"),
     # Only an alert: the server is never stopped for starting slowly.
     "start_slow": ("server_crashed", 0xFAA61A, "{server} is taking long to start"),
+    "server_left_running": ("server_crashed", 0xFAA61A, "{server} runs without its console"),
     "restart_scheduled": (
         "server_restarted",
         0xFAA61A,

@@ -338,6 +338,21 @@ class ServerContext:
         # Establish facts before the apps can ask for them, so the first
         # status it sees is verified rather than assumed.
         self.server.verify_state()
+        if self.server.left_behind is not None:
+            await self.server.watch_left_behind()
+            await self.bus.publish(
+                Event(
+                    type="server_left_running",
+                    level="warn",
+                    message=(
+                        f"{self.name} was still running when the agent started, so the "
+                        "agent can't reach its console: commands, backups and the player "
+                        "list wait until it restarts. Type /stop in the game to stop it "
+                        "cleanly, then start it from the app."
+                    ),
+                    data={"pid": self.server.pid},
+                )
+            )
         # `java -version` can take seconds on a cold disk; don't block the loop.
         await asyncio.to_thread(self.server.detect_java)
         if self.server.state.value == "OFFLINE":
@@ -729,6 +744,9 @@ class AgentCore:
         # After the bot, so a request that ran out while the agent was off
         # still tells its asker.
         self.start_requests.load()
+        for ctx in list(self.servers.values()):
+            if ctx.server.left_behind is not None and ctx.server.behind_guard:
+                await self.guard.take_back(ctx)
         await downtime.start_after_agent(self)
 
     async def _check_database_access(self, windows: bool = os.name == "nt") -> None:

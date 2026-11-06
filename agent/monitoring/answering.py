@@ -250,6 +250,7 @@ class AnswerWatch:
         server = self.ctx.server
         return (
             server.state.value != "ONLINE"
+            or server.left_behind is not None  # no console to ask
             or bool(server.held_by)
             or self.ctx.core.jobs.risky_job(self.ctx.server_id) is not None
         )

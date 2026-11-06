@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from agent import joinguard
 from agent.joinguard import PRESETS, Listener, Rules, address_key, proxy_addon
 from agent.main import create_app
+from agent.minecraft.state import ServerState
 from agent.security.auth import hash_password
 
 from .conftest import PASSWORD, build_multi_config
@@ -851,3 +852,24 @@ def test_bedrock_stays_outside_the_guard():
 
     assert not servertypes.get("bedrock").wakes_on_join
     assert all(t.wakes_on_join for t in servertypes.TYPES.values() if t.edition == "java")
+
+
+def test_a_server_left_behind_the_guard_gets_its_public_port_back(agent):
+    settings(agent, **{"server.join_protection": True})
+    start(agent)
+    ctx = ctx_of(agent)
+    core = agent.app.state.core
+    public = ctx.core.ports.port_of(ctx).port
+    child = ctx.server.process
+    # The agent dies: it stops watching Minecraft and its guard port closes.
+    agent.portal.call(ctx.server.shutdown)
+    agent.portal.call(core.guard.close, "survival")
+    ctx.server.process, ctx.server.state = None, ServerState.UNKNOWN
+    ctx.server.launch_args, ctx.server.behind_guard = [], None
+    try:
+        assert ctx.server.verify_state() is ServerState.ONLINE  # found again
+        assert ctx.server.behind_guard == public
+        agent.portal.call(core.guard.take_back, ctx)
+        assert asyncio.run(ping(public))["description"]["text"] == "A fake server"
+    finally:
+        child.kill()

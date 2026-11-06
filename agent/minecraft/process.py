@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import shutil
 import subprocess
@@ -31,6 +32,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .. import serveruser
+import psutil
+
 from ..events import Event, EventBus
 from ..safechange import blocked_message, unfinished
 from . import cpu
@@ -45,6 +48,19 @@ log = logging.getLogger("msc.process")
 
 # The only programs a Bedrock server is launched as (house rule 2).
 EXE_NAMES = frozenset({"bedrock_server.exe", "bedrock_server"})
+
+# Written in the server's folder while the agent runs it: which process it
+# is, so an agent that died without stopping it finds it again instead of
+# starting a second copy on the same world.
+PID_FILE = ".command-block.pid"
+NO_CONSOLE = (
+    "This server was still running when the agent started, so the agent can't reach its "
+    "console until it is restarted."
+)
+STOP_IN_GAME = (
+    f"{NO_CONSOLE} To stop it cleanly, type /stop in the game. Force stop works too, but "
+    "loses what changed since Minecraft last saved by itself."
+)
 
 
 class ServerError(RuntimeError):
@@ -79,6 +95,9 @@ class MinecraftServer:
         self.state_verified_at: float | None = None
         self.process: asyncio.subprocess.Process | None = None
         self.pid: int | None = None
+        # A server an earlier agent started and never stopped (it died, or
+        # the PC's power was cut). Its console went with that agent.
+        self.left_behind: psutil.Process | None = None
 
         self.started_at: float | None = None
         self.started_as_account = False  # started as the separate Windows user
@@ -184,6 +203,8 @@ class MinecraftServer:
     # ------------------------------------------------------------------
     @property
     def running(self) -> bool:
+        if self.left_behind is not None:
+            return True
         return self.process is not None and self.process.returncode is None
 
     @property
@@ -201,6 +222,11 @@ class MinecraftServer:
         so the apps never have to guess how much to trust it."""
         if self.state is ServerState.UNKNOWN:
             return "not checked"
+        if self.left_behind is not None:
+            return (
+                "process found still running from before the agent started "
+                "(its id is saved in the server folder); no console"
+            )
         if self.state is ServerState.ONLINE:
             return "process running + startup line detected in console"
         if self.state in (ServerState.STARTING, ServerState.STOPPING, ServerState.RESTARTING):
@@ -245,16 +271,97 @@ class MinecraftServer:
         Called at agent startup so the very first state the apps see has
         actually been verified rather than assumed.
         """
-        if self.process is not None and self.process.returncode is None:
+        if self.running:
             # a child we launched and are still tracking
             self.state_verified_at = time.time()
             return self.state
+        found = self._find_left_behind()
+        if found is not None:
+            self.left_behind, saved = found
+            self.pid = self.left_behind.pid
+            self.started_at = saved.get("created")
+            self.behind_guard = saved.get("behind_guard")
+            self.launch_args = [str(a) for a in saved.get("launch_args") or []]
+            self._exited_event.clear()
+            self.state = ServerState.ONLINE
+            self.state_verified_at = time.time()
+            return self.state
+        self._clear_pid()
         if self.state in (ServerState.CRASHED, ServerState.RESTART_PENDING):
             self.state_verified_at = time.time()
             return self.state
         self.state = ServerState.OFFLINE
         self.state_verified_at = time.time()
         return self.state
+
+    # -- the process id file ------------------------------------------------
+    def _pid_path(self) -> Path | None:
+        return self.config.server_dir / PID_FILE if self.config.server_dir_configured else None
+
+    def _write_pid(self) -> None:
+        path = self._pid_path()
+        if path is None or self.pid is None:
+            return
+        try:
+            created = psutil.Process(self.pid).create_time()
+            path.write_text(
+                json.dumps(
+                    {
+                        "pid": self.pid,
+                        "created": created,
+                        "behind_guard": self.behind_guard,
+                        "launch_args": self.launch_args,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        except (OSError, psutil.Error):
+            log.warning("could not save the server's process id", exc_info=True)
+
+    def _clear_pid(self) -> None:
+        path = self._pid_path()
+        if path is not None:
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+
+    def _find_left_behind(self) -> tuple[psutil.Process, dict[str, Any]] | None:
+        """The process the id file names, only when it is still the same
+        process (same start time, so not a reused number) running in this
+        server's folder."""
+        path = self._pid_path()
+        if path is None:
+            return None
+        try:
+            saved: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+            proc = psutil.Process(int(saved["pid"]))
+            same = abs(proc.create_time() - float(saved["created"])) < 1.0
+            here = Path(proc.cwd()).resolve() == self.config.server_dir.resolve()
+            alive = proc.status() != psutil.STATUS_ZOMBIE
+        except (OSError, ValueError, TypeError, KeyError, psutil.Error):
+            return None
+        return (proc, saved) if same and here and alive else None
+
+    async def watch_left_behind(self) -> None:
+        """Notice when a left-behind server ends, like _wait_exit does for
+        our own child."""
+        if self.left_behind is None or (self._waiter_task and not self._waiter_task.done()):
+            return
+        self._waiter_task = asyncio.create_task(self._wait_left_behind(), name="mc-wait")
+
+    async def _wait_left_behind(self) -> None:
+        proc = self.left_behind
+        assert proc is not None
+        while True:
+            try:
+                # Short waits, so no thread outlives the agent.
+                code = await asyncio.to_thread(proc.wait, 1)
+                break
+            except psutil.TimeoutExpired:
+                continue
+            except psutil.Error:
+                code = None
+                break
+        await self._on_exit(code)
 
     def detect_java(self):
         """Detect the Java runtime. Source of truth: `java -version` output."""
@@ -601,6 +708,7 @@ class MinecraftServer:
                 raise ServerError(words) from exc
 
             self.pid = self.process.pid
+            self._write_pid()
             if self.config.server.cpu_cores:
                 await self.apply_cpu_cores()
             if self.config.server.low_priority:
@@ -832,6 +940,8 @@ class MinecraftServer:
     ) -> dict[str, Any]:
         if not self.running:
             raise ServerError("The server isn't running.")
+        if self.left_behind is not None:
+            raise ServerError(STOP_IN_GAME)
         timeout = timeout if timeout is not None else self.config.server.stop_timeout
         self._stop_requested = True
         self._stop_reason = reason
@@ -856,6 +966,15 @@ class MinecraftServer:
         return {"graceful": not forced, "command_sent": sent}
 
     async def _terminate(self) -> None:
+        if self.left_behind is not None:
+            proc = self.left_behind
+            with contextlib.suppress(psutil.Error):
+                proc.terminate()
+                try:
+                    await asyncio.to_thread(proc.wait, 20)
+                except psutil.TimeoutExpired:  # pragma: no cover
+                    proc.kill()
+            return
         if not self.process:
             return
         with contextlib.suppress(ProcessLookupError, OSError):
@@ -875,6 +994,7 @@ class MinecraftServer:
         self._stop_requested = True
         self._stop_reason = ExitReason.FORCE_KILLED
         self._emit_console(f"[agent] force kill requested by {actor}")
+        await self.watch_left_behind()
         await self._terminate()
         await self.wait_exit(timeout=30)
 
@@ -884,6 +1004,8 @@ class MinecraftServer:
             # Checked before the stop: the start after it would be refused,
             # and the server left off.
             raise ServerError(f"Wait for '{doing}' to finish first.")
+        if self.left_behind is not None:
+            raise ServerError(STOP_IN_GAME)
         if self.running:
             await self._set_state(ServerState.RESTARTING, f"Restart requested by {actor}")
             await self.stop(actor=actor, reason=ExitReason.USER_STOP, restart=True)
@@ -919,7 +1041,7 @@ class MinecraftServer:
         )
         return any(any(mk in ln.raw for mk in markers) for ln in self.console.tail(60))
 
-    def _classify_exit(self, code: int) -> ExitReason:
+    def _classify_exit(self, code: int | None) -> ExitReason:
         if self._stop_requested:
             return (
                 self._stop_reason
@@ -928,6 +1050,12 @@ class MinecraftServer:
             )
         if self._stop_reason == ExitReason.CLEAN_EXIT:
             return ExitReason.CLEAN_EXIT
+        if self.left_behind is not None:
+            # No console to read: only the exit code tells (/stop in the game
+            # ends with 0). Without one, nothing is claimed.
+            if code is None:
+                return ExitReason.UNKNOWN
+            return ExitReason.CLEAN_EXIT if code == 0 else ExitReason.CRASH
         if self.state == ServerState.STARTING:
             return ExitReason.STARTUP_FAILURE
         try:
@@ -939,10 +1067,12 @@ class MinecraftServer:
             return ExitReason.CLEAN_EXIT
         return ExitReason.CRASH
 
-    async def _on_exit(self, code: int) -> None:
+    async def _on_exit(self, code: int | None) -> None:
         self.last_exit_code = code
         reason = self._classify_exit(code)
         self.last_exit_reason = reason
+        self.left_behind = None
+        self._clear_pid()
         pid, self.pid = self.pid, None
         uptime = self.uptime
         restart_wanted = self._restart_after_stop
@@ -955,7 +1085,7 @@ class MinecraftServer:
         self.tps_asked_at = None
         self._emit_console(f"[agent] process {pid} exited with code {code} ({reason.value})")
 
-        if reason in NORMAL_REASONS or reason == ExitReason.FORCE_KILLED:
+        if reason in NORMAL_REASONS or reason in (ExitReason.FORCE_KILLED, ExitReason.UNKNOWN):
             self.started_at = None
             await self._set_state(
                 ServerState.OFFLINE,
@@ -1194,6 +1324,8 @@ class MinecraftServer:
         this method; here we additionally refuse embedded newlines so one call
         can never become two commands.
         """
+        if self.left_behind is not None:
+            raise ServerError(NO_CONSOLE)
         if not self.running or not self.process or not self.process.stdin:
             raise ServerError("The server isn't running.")
         if "\n" in command or "\r" in command:
