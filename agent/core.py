@@ -133,6 +133,7 @@ class ServerContext:
         self.server.signal_hook = self._console_signals
         self.server.crash_hook = self.crashes.collect
         self.server.maintenance = core.config.maintenance.enabled
+        self.scheduler.set_maintenance = core.set_maintenance
         self.server.start_guard = lambda: core.ports.start_conflicts(self)
         self.server.start_warnings = lambda: [
             # The guard holding the port isn't "another program".
@@ -1000,9 +1001,17 @@ class AgentCore:
         return self.default.status()
 
     def set_maintenance(self, enabled: bool, user: str = "system") -> dict[str, Any]:
+        """The one owner of maintenance mode: the button, a setting and a
+        schedule all come here. Saved, so a restart keeps it."""
+        previous = self.config.maintenance.enabled
+        self.config.set("maintenance.enabled", bool(enabled))
+        try:
+            self.config.save()
+        except OSError:
+            self.config.set("maintenance.enabled", previous)
+            raise
         for ctx in self.servers.values():
             ctx.server.maintenance = bool(enabled)
-        self.config.set("maintenance.enabled", bool(enabled))
         self.db.audit("maintenance_mode", user=user, detail="on" if enabled else "off")
         self.bus.publish_soon(
             Event(

@@ -267,6 +267,7 @@ class Recorder:
         self.state = ServerState.ONLINE
         self.maintenance = False
         self.tps = None
+        self.running = True
 
     async def send_command(self, command, internal=False):
         self.said.append(command)
@@ -274,6 +275,7 @@ class Recorder:
 
     async def restart(self, actor="system"):
         self.restarted = True
+        return {"restarted": True}
 
 
 @pytest.fixture

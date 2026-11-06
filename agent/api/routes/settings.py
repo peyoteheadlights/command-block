@@ -110,6 +110,9 @@ async def update_settings(
                 status_code=500, detail=f"Settings could not be written to disk: {exc}"
             ) from exc
         audit(core, request, "settings_update", detail=", ".join(applied))
+        if "maintenance.enabled" in applied:
+            # Through the one switch, so running servers follow it now.
+            core.set_maintenance(core.config.maintenance.enabled, user=principal.user)
         if "power.keep_awake" in applied:
             # Turned off or on while a server runs: Windows is told now, not
             # at the next start or stop.
