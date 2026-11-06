@@ -383,3 +383,35 @@ def test_the_clean_up_shows_first_then_moves_to_the_bin_with_undo(qapp, agent_ht
     page.note.undo.click()
     wait_for(qapp, lambda: "Put back where it was." in page.note.text())
     assert old.read_bytes() == b"old log"
+
+
+def test_a_download_cut_half_way_never_takes_the_files_name(tmp_path):
+    """Quitting mid-download skips every clean-up; the chosen name only ever
+    holds a whole file."""
+    kept = tmp_path / "old.zip"
+    kept.write_bytes(b"keep me")
+    seen: list = []
+
+    def cut_off():
+        yield b"half a backup"
+        seen.append(kept.read_bytes())  # what the name holds while it downloads
+        raise httpx.ReadError("cut off")
+
+    agent = AgentClient(
+        httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, content=cut_off())),
+            base_url="http://x",
+        )
+    )
+    with pytest.raises(AgentError):
+        agent.download_to("/servers/survival/backups/1/download", str(kept))
+    assert seen == [b"keep me"] and kept.read_bytes() == b"keep me"
+    assert list(tmp_path.iterdir()) == [kept]
+    whole = AgentClient(
+        httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"whole")),
+            base_url="http://x",
+        )
+    )
+    whole.download_to("/servers/survival/backups/1/download", str(kept))
+    assert kept.read_bytes() == b"whole" and list(tmp_path.iterdir()) == [kept]
