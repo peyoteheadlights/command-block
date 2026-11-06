@@ -72,14 +72,17 @@ happen, then on confirmation:
 3. A **safety backup of the current state** is taken and named `safety-…`
 4. Every path inside the archive is checked so nothing can write outside the
    server folder
-5. Current `world/` etc. are **moved aside** as `world.replaced-20260920-1030`,
-   not deleted
-6. The archive is extracted
-7. If anything fails, the moved-aside folders are put back
+5. Current `world/` etc. are **moved aside** as `world.replaced-20260920-1030`
+6. The archive is extracted and a sample of its files is checked on disk
+7. If anything fails, the half-written files are removed and the moved-aside
+   folders are put back. Once the check passes, the moved-aside folders are
+   deleted: the safety backup from step 3 already holds them, and Undo puts
+   it back
 8. The server starts again only if you ticked that box
 
-Your old world is still on disk afterwards, under its `.replaced-` name. Delete
-it yourself once you are happy.
+If the PC loses power in the middle, the agent puts the moved-aside folders
+back the next time it starts and sends an alert. If it can't, the server
+won't start until you restore the safety backup.
 
 ## Restore world
 

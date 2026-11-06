@@ -33,7 +33,7 @@ from ..changes import ChangeHistory
 from ..events import Event, EventBus
 from ..minecraft.properties import world_folders
 from ..mods import sides
-from ..safechange import SafeChange, run_safe_change
+from ..safechange import SafeChange, note_moved, put_back_moved, run_safe_change
 from ..security.paths import (
     PathSafetyError,
     check_archive_member,
@@ -83,6 +83,15 @@ def _unique(path: Path) -> Path:
         if not candidate.exists():
             return candidate
         number += 1
+
+
+def _remove(paths: list[str]) -> None:
+    for name in paths:
+        path = Path(name)
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            path.unlink(missing_ok=True)
 
 
 def label(row: dict[str, Any]) -> str | None:
@@ -748,7 +757,6 @@ class BackupManager:
         backup_id: int,
         user: str = "system",
         start_after: bool = False,
-        safety_backup: bool = True,
         only: set[str] | None = None,
         history: str = "push",
         note: str | None = None,
@@ -783,17 +791,17 @@ class BackupManager:
             change=change,
             check=verify_result,
             start_after=start_after,
-            take_backup=safety_backup,
             backup_name="pre-restore",
             backup_note=note or f"Before restoring {row['name']}",
             undo_on_change_error=False,
             history=history,
+            puts_back=True,
             undo_scope=sorted(only) if only is not None else None,
         )
 
         async def run(job: JobHandle | None) -> dict[str, Any]:
             try:
-                return await run_safe_change(self.server, self, plan, job=job, user=user)
+                result = await run_safe_change(self.server, self, plan, job=job, user=user)
             except Exception as exc:
                 await self.bus.publish(
                     Event(type="restore_failed", level="error", message=f"Restore failed: {exc}")
@@ -801,6 +809,11 @@ class BackupManager:
                 if isinstance(exc, BackupError):
                     raise
                 raise BackupError(f"Restore failed: {exc}") from exc
+            # The checked safety backup is the way back, so what was moved
+            # aside is not kept as well (it would double the disk use).
+            if result["safety_backup"]:
+                await asyncio.to_thread(_remove, result["replaced"])
+            return result
 
         job_id = None
         if self.jobs is not None:
@@ -866,6 +879,7 @@ class BackupManager:
         them."""
         replaced: list[str] = []
         moved: list[tuple[Path, Path]] = []
+        units: set[str] = set()
         try:
             with zipfile.ZipFile(path) as zf:
                 members = zf.namelist()
@@ -883,20 +897,29 @@ class BackupManager:
                 def unit(member: str) -> str:
                     return next((e for e in files if in_scope(member, {e})), member.split("/")[0])
 
-                for unit_name in sorted({unit(m) for m in members} - {""}):
+                units = {unit(m) for m in members} - {""}
+                for unit_name in sorted(units):
                     live = base / unit_name
                     if live.exists():
                         stamp = time.strftime("%Y%m%d-%H%M%S")
                         retired = _unique(live.with_name(f"{live.name}.replaced-{stamp}"))
+                        note_moved(self.db, live, retired)
                         shutil.move(str(live), str(retired))
                         moved.append((live, retired))
                         replaced.append(str(retired))
+                    else:
+                        note_moved(self.db, live, None)
                 zf.extractall(base, members=members)
         except Exception as exc:
-            # put back whatever was moved aside
-            for live, retired in moved:
-                if retired.exists() and not live.exists():
-                    shutil.move(str(retired), str(live))
+            # What this restore made where nothing was before goes too.
+            moved_names = {live for live, _ in moved}
+            new = [(base / u, None) for u in sorted(units) if base / u not in moved_names]
+            left = put_back_moved([*new, *moved])
+            if left:
+                raise BackupError(
+                    f"Restore failed: {exc}. The previous files could not be put back; "
+                    f"they are still in {', '.join(left)}."
+                ) from exc
             raise BackupError(
                 f"Restore failed and the previous files were put back: {exc}"
             ) from exc

@@ -55,7 +55,6 @@ class BackupRequest(BaseModel):
 class RestoreRequest(BaseModel):
     confirm: bool = False
     start_after: bool = False
-    safety_backup: bool = True
 
 
 class KeepRequest(BaseModel):

@@ -132,7 +132,7 @@ async def restore_backup(
                 "The Minecraft server will be stopped if it is running",
                 "The backup will be verified before anything is replaced",
                 "A safety backup of the current world will be created first",
-                "Current folders will be moved aside, not deleted",
+                "Current folders will be moved aside until the restore checks out",
                 "The server will start again"
                 if payload.start_after
                 else "The server will stay offline",
@@ -143,7 +143,6 @@ async def restore_backup(
             backup_id,
             user=principal.user,
             start_after=payload.start_after,
-            safety_backup=payload.safety_backup,
         )
     return {"ok": True, **result}
 

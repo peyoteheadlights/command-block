@@ -79,6 +79,8 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "high_mspt": ("high_mspt", 0xFAA61A, "{server}: game falling behind"),
     "backup_completed": ("backup_completed", 0x3BA55D, "{server}: backup finished"),
     "backup_failed": ("backup_failed", 0xED4245, "{server}: backup failed"),
+    # Same switch as a failed backup: both are about the world being safe.
+    "change_interrupted": ("backup_failed", 0xED4245, "{server}: a change didn't finish"),
     "mod_installed": ("mod_installed", 0x3BA55D, "{server}: mod installed"),
     "mod_removed": ("mod_removed", 0xFAA61A, "{server}: mod removed"),
     "jar_scan_found": ("jar_scan_found", 0xED4245, "{server}: jar check found something"),
@@ -200,6 +202,7 @@ ALERT_PAGES = {
     "start_slow": "crashes",
     "backup_completed": "backups",
     "backup_failed": "backups",
+    "change_interrupted": "backups",
     "backup_copy_failed": "backups",
     "mod_installed": "mods",
     "mod_removed": "mods",

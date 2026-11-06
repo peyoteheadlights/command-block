@@ -133,12 +133,11 @@ object Backups {
         return strings.t("mobile.backups.restored_backup", "name" to name, "safety" to safety)
     }
 
-    /** The body a restore is confirmed with. The backup made first is
-     * always asked for. */
+    /** The body a restore is confirmed with. The agent always makes a
+     * backup first. */
     fun restoreBody(confirm: Boolean, startAfter: Boolean): JsonObject = buildJsonObject {
         put("confirm", confirm)
         put("start_after", startAfter)
-        put("safety_backup", true)
     }
 }
 

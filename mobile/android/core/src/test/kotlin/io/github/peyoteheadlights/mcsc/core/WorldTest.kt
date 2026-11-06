@@ -346,7 +346,7 @@ class WorldTest {
             val asked = agent.server.takeRequest()
             assertEquals("/api/servers/survival/backups/4/restore", asked.path)
             val body = asked.body.readUtf8()
-            assertTrue(body, body.contains("\"confirm\":false") && body.contains("\"safety_backup\":true"))
+            assertTrue(body, body.contains("\"confirm\":false"))
 
             agent.server.enqueue(agent.json("""{"ok": true, "restored": "a.zip", "safety_backup": {"id": 9, "name": "pre.zip"}, "undo": {"kind": "restore_backup", "backup_id": 9, "backup": "pre.zip"}, "job_id": "j1"}"""))
             val done = c.restoreBackup("survival", 4, confirm = true, startAfter = true)

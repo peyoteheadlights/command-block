@@ -147,6 +147,6 @@ async def restore(ctx: ServerContext, backup_id: int, user: str = "system") -> d
     # server.properties, and putting those back would quietly undo every
     # mod or setting changed since, which "Restore world" never promised.
     result = await ctx.backups.restore(
-        backup_id, user=user, start_after=False, safety_backup=True, only=world_parts(ctx)
+        backup_id, user=user, start_after=False, only=world_parts(ctx)
     )
     return {**result, "point": point}

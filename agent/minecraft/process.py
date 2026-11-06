@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from .. import serveruser
 from ..events import Event, EventBus
+from ..safechange import blocked_message, unfinished
 from . import cpu
 from .console import ConsoleBuffer, ConsoleLine, extract_signals
 from .state import NORMAL_REASONS, ExitReason, ServerState
@@ -351,6 +352,10 @@ class MinecraftServer:
                 f"Wait for '{self.held_by}' to finish first. The server's files are being "
                 "changed, so it cannot start until that is done."
             )
+            return result
+        left = unfinished(self.db) if self.db is not None else None
+        if left:
+            result.problems.append(blocked_message(left))
             return result
         if not self.config.server_dir_configured:
             result.problems.append(

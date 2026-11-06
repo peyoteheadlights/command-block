@@ -28,6 +28,7 @@ from . import (
     linkedpack,
     memory,
     protection,
+    safechange,
     supportask,
     watchers,
 )
@@ -316,6 +317,9 @@ class ServerContext:
             log.warning("backup after stop failed: %s", exc)
 
     async def start(self) -> None:
+        # A change cut off by a power cut is put back before anything can
+        # start the server on half-moved files.
+        self.backups.changes.settle(await safechange.recover(self.server))
         # Establish facts before the apps can ask for them, so the first
         # status it sees is verified rather than assumed.
         self.server.verify_state()

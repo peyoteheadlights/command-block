@@ -641,7 +641,7 @@ class BackupsPage(Page):
                     text("backups.restored", name=r.get("restored") or b["name"]), r
                 ),
                 self.said,
-                body={"confirm": True, "start_after": again, "safety_backup": True},
+                body={"confirm": True, "start_after": again},
                 slow=True,
             )
 

@@ -61,8 +61,10 @@ async def test_restore_makes_a_safety_backup_and_puts_files_back(backups, config
     assert marker.read_text() == "original world"
     assert result["safety_backup"] is not None
     assert result["safety_backup"]["name"].startswith("safety-")
-    # the replaced folder was moved aside, not deleted
-    assert any(p.name.startswith("world.replaced-") for p in config.server_dir.iterdir())
+    # The safety backup is the way back, so the folder moved aside while
+    # restoring is deleted once the result checked out (it would double the
+    # world's disk use on every restore and Undo).
+    assert not any(".replaced-" in p.name for p in config.server_dir.iterdir())
 
 
 async def test_restore_refuses_an_unverifiable_backup(backups, config):
