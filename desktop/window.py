@@ -1092,6 +1092,7 @@ class MainWindow(FramelessWindow):
                 partial(self._servers_of, pc),
                 partial(self._elsewhere_found, pc),
                 partial(self._elsewhere_failed, pc),
+                this_pc=False,
             )
         self.screens["All servers"].show_all()  # type: ignore[attr-defined]
 
@@ -1126,6 +1127,7 @@ class MainWindow(FramelessWindow):
             lambda: self._client_for(pc).server_action(row["id"], action),
             done,
             lambda exc: self.screens["All servers"].failed(exc),  # type: ignore[attr-defined]
+            this_pc=False,
         )
 
     def servers_loaded(self, servers: list[dict]) -> None:
@@ -1503,7 +1505,9 @@ class MainWindow(FramelessWindow):
             self.down_screen.say(text("desktop.wake.awake", pc=self.wake_name()), "")
             QTimer.singleShot(1500, lambda: self.agent_up(health))
             return
-        if self.screen_name == "Agent not running" or self.tailscale_step.restarting:
+        if self.screen_name in ("Agent not running", "Update needed") or (
+            self.tailscale_step.restarting
+        ):
             self.still_down.stop()
             self.retry.stop()
             if self.tailscale_step.restarting:
@@ -1511,6 +1515,7 @@ class MainWindow(FramelessWindow):
             else:
                 self.show_screen(self.back_to)
             if self.agent.token:
+                self.feed.start()  # stopped while an update was needed
                 self.refresh()
 
     def agent_down(self) -> None:
@@ -1679,10 +1684,13 @@ class MainWindow(FramelessWindow):
         self.quit_app()
 
     def stop_for_update(self, agent_api: int | None) -> None:
-        """A different API version: stop before sending anything it can't handle."""
+        """A different API version: stop before sending anything it can't
+        handle, and keep asking, so the app carries on once the update is in."""
+        if self.screen_name not in ("Agent not running", "Update needed"):
+            self.back_to = self.screen_name
         self.feed.stop()
         self.still_down.stop()
-        self.retry.stop()
+        self.retry.start()
         newer = isinstance(agent_api, int) and agent_api > API_VERSION
         self.update_screen.say(
             text("desktop.update.title"),
@@ -2010,9 +2018,12 @@ class MainWindow(FramelessWindow):
         done: Callable[[Any], None],
         failed: Callable[[AgentError], None] | None = None,
         always: Callable[[], None] | None = None,
+        this_pc: bool = True,
     ) -> None:
         """Run ``work`` off the window's thread, then ``done`` or ``failed``
-        back on it. Being signed out always goes back to the sign-in screen."""
+        back on it. Being signed out always goes back to the sign-in screen.
+        ``this_pc=False`` for work on the owner's other PCs: their problems
+        never sign this PC out or show it as not running."""
         task = Task(work)
         self._tasks.add(task)
 
@@ -2023,12 +2034,12 @@ class MainWindow(FramelessWindow):
 
         def on_failed(exc: AgentError) -> None:
             finish()
-            if isinstance(exc, SignedOut) and self.screen_name != "Sign-in":
+            if this_pc and isinstance(exc, SignedOut) and self.screen_name != "Sign-in":
                 self.signed_out(text("error.session_ended"))
                 return
             if failed:
                 failed(exc)
-            if isinstance(exc, Unreachable):
+            if this_pc and isinstance(exc, Unreachable):
                 self.agent_down()
 
         def on_done(result: Any) -> None:

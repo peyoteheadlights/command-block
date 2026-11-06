@@ -1150,6 +1150,40 @@ def test_a_different_api_version_stops_the_app(qapp, agent_http, monkeypatch):
     assert "Update Command Block to keep using it" in shown_text(window)
 
 
+def test_update_needed_carries_on_once_the_versions_match(qapp, agent_http, monkeypatch):
+    from agent import API_VERSION
+
+    monkeypatch.setattr("desktop.window.API_VERSION", API_VERSION + 1)
+    window = open_window(qapp, agent_http)
+    wait_for(qapp, lambda: window.screen_name == "Update needed")
+    monkeypatch.setattr("desktop.window.API_VERSION", API_VERSION)  # the update went in
+    wait_for(qapp, lambda: window.screen_name == "Sign-in", 30)
+    sign_in(qapp, window)
+    on_all_servers(qapp, window)
+
+
+def test_another_pc_that_is_off_or_signed_out_leaves_this_pc_alone(qapp, agent_http, monkeypatch):
+    from desktop.agent import SignedOut, Unreachable
+
+    pc = FakePC()
+    window = open_window(qapp, agent_http, pc)
+    sign_in(qapp, window, remember=True)
+    on_all_servers(qapp, window)
+    away = {"id": "b", "name": "Bedroom", "address": "x", "port": 1, "fingerprint": "f"}
+    for problem in (Unreachable("Can't reach x:1."), SignedOut("Signed out.")):
+
+        def refuse(_window, _pc, problem=problem):
+            raise problem
+
+        monkeypatch.setattr(MainWindow, "_servers_of", refuse)
+        window.pcs_loaded({"pcs": [away]})
+        wait_for(qapp, lambda problem=problem: window.elsewhere.get("b") == str(problem))
+        qapp.processEvents()
+        assert window.screen_name == "All servers"
+        assert window.agent.token and pc.saved_sign_in(window.agent.place)
+        window.elsewhere.clear()
+
+
 # ------------------------------------------------------------- the Tailscale step
 def tailscale_is(
     monkeypatch,
