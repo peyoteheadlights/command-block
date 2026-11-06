@@ -735,7 +735,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             wait = 2_000L
                         }
                         is LiveSignal.Changed -> {
-                            soon(signal.type in shared.feed)
+                            // The agent sends "alert" for every alert it keeps.
+                            soon(alertsToo = signal.type == "alert")
                             changed(signal)
                         }
                         is LiveSignal.Console -> signal.serverId?.let { pagesBy[it] }?.onConsoleLine(signal.line)

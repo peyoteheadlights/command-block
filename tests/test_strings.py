@@ -94,6 +94,19 @@ def test_every_alert_in_the_feed_has_words():
     assert not [key for key in feed.values() if key not in strings]
 
 
+def test_every_server_down_or_data_alert_is_in_the_feed_and_the_desktop_reads_it():
+    """The phones read the Notifications tab again for these right away, and
+    every app words them the same, so none may be left out of feed.json."""
+    from agent.notifications.dispatcher import EVENT_MAP
+    from desktop.activity import FEED
+
+    feed = json.loads((SHARED / "feed.json").read_text(encoding="utf-8"))
+    urgent = {kind for kind, (key, _, _) in EVENT_MAP.items() if key in feed}
+    assert {"server_not_answering", "start_slow", "saving_off"} <= urgent
+    assert not urgent - set(feed), "alerts filed with a feed alert but missing from feed.json"
+    assert feed == FEED
+
+
 def test_every_word_the_desktop_app_uses_exists_and_its_own_are_all_used():
     strings = table()
     source = "\n".join(p.read_text(encoding="utf-8") for p in (ROOT / "desktop").glob("*.py"))

@@ -14,42 +14,16 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
 from .fixes import get_help, run_fix, sure
 from .overview import card, title_of
 from .parts import Row, Segmented
+from .theme import SHARED
 from .ui import Page, clock, duration, label, push, refill
 from .words import mode, text
 
 if TYPE_CHECKING:
     from .window import MainWindow
 
-# Event type to its sentence. Anything else
-# shows the agent's own message.
-FEED = {
-    kind: f"feed.{kind}"
-    for kind in (
-        "server_started",
-        "server_stopped",
-        "server_crashed",
-        "server_restarted",
-        "server_recovered",
-        "crash_loop",
-        "player_joined",
-        "player_left",
-        "backup_completed",
-        "backup_failed",
-        "low_tps",
-        "high_mspt",
-        "high_ram",
-        "high_cpu",
-        "low_disk",
-        "high_ram_ended",
-        "high_cpu_ended",
-        "low_disk_ended",
-        "auth_failure",
-        "agent_started",
-        "agent_stopping",
-        "start_slow",
-        "restart_when_empty",
-    )
-}
+# Event type to its sentence (shared/feed.json, as the phones read it).
+# Anything else shows the agent's own message.
+FEED: dict[str, str] = json.loads((SHARED / "feed.json").read_text(encoding="utf-8"))
 # Steps on the way to something that matters: Simple leaves them out.
 INTERNAL = {
     "state",
