@@ -47,6 +47,7 @@ from .minecraft.chat import ChatLog, parse_chat
 from .minecraft.crash import CrashReporter
 from .minecraft.playeractions import PlayerActions
 from .minecraft.process import MinecraftServer, ServerError
+from .minecraft.state import controls
 from .mods import sides
 from .mods.deepscan import DeepScanner
 from .mods.fit import Later as FitCheck
@@ -467,7 +468,17 @@ class ServerContext:
         status["sleep"] = self.autosleep.status()
         status["answering"] = self.answering.status()
         status["restart_waiting"] = downtime.waiting(self)
+        status.update(self.controls())
         return status
+
+    def controls(self) -> dict[str, Any]:
+        """The label and buttons every app shows (minecraft/state.py)."""
+        return controls(
+            self.server.state,
+            self.answering.status(),
+            self.busy(),
+            self.server.left_behind is not None,
+        )
 
     def summary(self) -> dict[str, Any]:
         """One row of the All servers view: measured facts only."""
@@ -520,6 +531,7 @@ class ServerContext:
             "default": self.server_id == self.core.config.default_server_id,
             "recent_crashes": status["recent_crashes"],
             "answering": self.answering.status(),
+            **self.controls(),
         }
 
 

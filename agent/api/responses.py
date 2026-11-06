@@ -50,6 +50,8 @@ class ServerRow(Open):
     name: str
     color: str | None = None
     state: str
+    label: str | None = Field(None, description="what every app shows: a state.* word")
+    can: list[str] = Field(default_factory=list, description="the buttons the agent takes now")
     state_verified: bool | None = None
     uptime: float | None = None
     players_online: int | None = Field(None, description="null until it has been measured")
@@ -133,6 +135,8 @@ class ServerStatus(Open):
     server_id: str | None = None
     name: str | None = None
     state: str
+    label: str | None = Field(None, description="what every app shows: a state.* word")
+    can: list[str] = Field(default_factory=list, description="the buttons the agent takes now")
     state_verified: bool | None = None
     uptime: float | None = None
     minecraft_version: str | None = None
