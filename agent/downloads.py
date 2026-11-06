@@ -134,6 +134,10 @@ SHARED_HOST_PATHS = {
 # One more repo whose release list and release files may be read, while an
 # add-on from a GitHub link is read or updated (see allow_releases).
 _link_repo: ContextVar[str | None] = ContextVar("link_repo", default=None)
+# A rented server's Pterodactyl panel, which the owner allowed by clicking
+# Connect: only its client API, only inside one panel call (agent/rented.py).
+_panel_host: ContextVar[str | None] = ContextVar("panel_host", default=None)
+PANEL_PATH = "/api/client"
 
 MAX_LIST_BYTES = 20 * 1024 * 1024  # a version list or API answer
 MAX_FILE_BYTES = 300 * 1024 * 1024  # one server jar, installer or mod
@@ -165,6 +169,16 @@ def allow_releases(repo: str) -> Iterator[None]:
         yield
     finally:
         _link_repo.reset(token)
+
+
+@contextmanager
+def allow_panel(host: str) -> Iterator[None]:
+    """Inside the block, ``host``'s Pterodactyl client API may be called."""
+    token = _panel_host.set(host.lower())
+    try:
+        yield
+    finally:
+        _panel_host.reset(token)
 
 
 @dataclass(frozen=True)
@@ -218,6 +232,12 @@ def check_url(url: str) -> str:
     if parsed.scheme != "https":
         raise DownloadError("Only secure (https) downloads are allowed.")
     host = (parsed.hostname or "").lower()
+    if host and host == _panel_host.get():
+        if parsed.username or parsed.password or parsed.port not in (None, 443):
+            raise DownloadError("That panel address isn't allowed.")
+        if parsed.path != PANEL_PATH and not parsed.path.startswith(PANEL_PATH + "/"):
+            raise DownloadError(f"Only the panel's client API can be called on {host}.")
+        return url
     if host not in ALLOWED_HOSTS:
         raise DownloadError(
             f"Downloads from {host or 'that address'} aren't allowed. "

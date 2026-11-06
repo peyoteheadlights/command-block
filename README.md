@@ -39,6 +39,8 @@ You can change a server's type later (for example Vanilla to Paper) and keep you
 
 You can bring in a server you already have (from a folder or a zip, including CurseForge server packs), or let the app make a new one.
 
+Rented a server from a host? If the host uses a Pterodactyl panel (most do, like Sparked Host), you can connect it with a client API key and see it next to your own servers: status, start, stop, restart, the console and the host's backups. Your moderators, alerts and the Discord bot work for it too. Aternos doesn't allow other apps, so it only gets an "Open Aternos" link.
+
 ## How do I get it?
 
 You need a Windows 10 or 11 PC, and [Tailscale](https://tailscale.com) (free) on that PC and on each phone or laptop you want to use.
@@ -75,7 +77,8 @@ This app is in no way done and will be supported for a good long while. Here's e
 - A server store through Tebex, cosmetics only by default.
 - Attack protection, a changeable port, and sign-in for offline-mode servers.
 - Start a sleeping server when someone tries to join, a "new version is out" alert, a player activity graph and your own command buttons.
-- Controlling servers on rented hosts that have an official API.
+- Rented servers on Nitrado, and files, mods and safe changes on rented servers.
+- Rented servers in the phone apps.
 - playit.gg support.
 
 **After 1.0**

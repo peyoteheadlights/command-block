@@ -41,6 +41,10 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "server_started": ("server_started", 0x3BA55D, "{server} is online"),
     "server_stopped": ("server_stopped", 0x9AA0A6, "{server} stopped"),
     "server_crashed": ("server_crashed", 0xED4245, "{server} crashed"),
+    # A rented server on a host's panel (agent/rented.py).
+    "rented_started": ("server_started", 0x3BA55D, "{server} is online"),
+    "rented_stopped": ("server_stopped", 0x9AA0A6, "{server} stopped"),
+    "rented_unreachable": ("server_crashed", 0xED4245, "{server}: the host's panel didn't answer"),
     "server_restarted": ("server_restarted", 0x5865F2, "{server} restarted"),
     "server_recovered": ("server_recovered", 0x3BA55D, "{server} recovered"),
     "crash_loop": ("server_crashed", 0xED4245, "{server}: automatic restart disabled"),

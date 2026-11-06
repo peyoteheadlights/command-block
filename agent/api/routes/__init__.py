@@ -46,6 +46,7 @@ from . import (
     pushalerts,
     quests,
     recommendations,
+    rented,
     schedules,
     security,
     server,
@@ -99,6 +100,7 @@ GLOBAL = (
     wake,
     discord,
     pcs,
+    rented,
 )
 MODULES = (*GLOBAL, *PER_SERVER)
 SERVER_PREFIX = "/servers/{server_id}"

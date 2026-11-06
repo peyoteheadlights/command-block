@@ -1068,7 +1068,7 @@ class Bot:
         await self.rest.request(
             "PUT",
             f"/applications/{self.app['id']}/guilds/{guild_id}/commands",
-            command_list(self.choices(guild_id)),
+            command_list(self.choices(guild_id), self.rented_choices()),
         )
         await self.check(guild_id)
 
@@ -1108,6 +1108,14 @@ class Bot:
                 f"{n} ({remote[r]['pc_name'] if r in remote else here})" if n in twice else n
             )
             for r, n in names.items()
+        }
+
+    def rented_choices(self) -> dict[str, str]:
+        """Rented servers the owner put on Discord (agent/rented.py)."""
+        return {
+            s.id: f"{s.name} ({self.core.rented.panels[s.panel_id]['host']})"
+            for s in self.core.rented.servers.values()
+            if s.discord != "off"
         }
 
     def xp(self) -> dict[str, int]:
@@ -1431,9 +1439,10 @@ def logo() -> bytes | None:
         return None
 
 
-def command_list(names: dict[str, str]) -> list[dict]:
+def command_list(names: dict[str, str], rented: dict[str, str] | None = None) -> list[dict]:
     """The commands as Discord registers them in one Discord server. The
-    server option lists that Discord server's own Minecraft servers."""
+    server option lists that Discord server's own Minecraft servers; /rented
+    is there only when the owner put a rented server on Discord."""
     server = {
         "type": 3,
         "name": "server",
@@ -1444,6 +1453,11 @@ def command_list(names: dict[str, str]) -> list[dict]:
     out: list[dict] = []
     for command in COMMANDS.values():
         options = list(command.options)
+        if command.group == "rented":
+            if not rented:
+                continue
+            choices = [{"name": n[:100], "value": i} for i, n in sorted(rented.items())][:25]
+            options = [{**RENTED_OPTION, "choices": choices}]
         if command.needs_server and server["choices"]:
             options.append(server)
         entry = {
@@ -1668,6 +1682,72 @@ async def request_start(bot: Bot, call: Call) -> str:
         f"Asked. The owner and moderators of {ctx.name} have been told; "
         "you'll hear here within 15 minutes."
     )
+
+
+RENTED_STATES = {
+    "ONLINE": "online",
+    "OFFLINE": "stopped",
+    "STARTING": "starting",
+    "STOPPING": "stopping",
+}
+
+
+def rented_server(bot: Bot, call: Call, control: bool):
+    """The picked rented server, if the owner put it on Discord (and, for
+    start and stop, allowed those)."""
+    found = bot.core.rented.servers.get(str(call.options.get("rented") or ""))
+    if found is None or found.discord == "off":
+        raise Refused("That rented server isn't on Discord.")
+    if control and found.discord != "control":
+        raise Refused(
+            f"{found.name} can't be started or stopped from Discord. "
+            "The owner can allow it in Command Block."
+        )
+    return found
+
+
+def rented_words(server) -> str:
+    if server.state == "UNKNOWN":
+        return "in an unknown state: the host's panel didn't answer"
+    return RENTED_STATES.get(server.state, "in an unknown state")
+
+
+async def rented_status(bot: Bot, call: Call) -> str:
+    server = rented_server(bot, call, control=False)
+    return f"{server.name} is {rented_words(server)}."
+
+
+async def rented_power(bot: Bot, call: Call, signal: str, wanted: str) -> str:
+    from ..rented import PanelError
+
+    server = rented_server(bot, call, control=True)
+    if server.state != wanted:
+        raise Refused(f"{server.name} is {rented_words(server)}.")
+    wait = bot.started.get(server.id, 0) + START_COOLDOWN - time.time()
+    if wait > 0:
+        raise Refused(
+            f"{server.name} was started or stopped from Discord a moment ago. "
+            f"Try again in {math.ceil(wait / 60)} min."
+        )
+    try:
+        await bot.core.rented.power(server, signal)
+    except PanelError as exc:
+        # Why stays on the PC: the panel's words can name the host's setup.
+        log.info("a rented %s from Discord failed: %s", signal, exc)
+        raise Refused("The host didn't take it. The owner can see why in Command Block.") from None
+    bot.started[server.id] = time.time()
+    bot.core.db.audit(
+        f"rented_{signal}", user=call.principal.user, target=server.id, detail="discord"
+    )
+    return f"Asked the host to {signal} {server.name}. /rented status says when it's done."
+
+
+async def rented_start(bot: Bot, call: Call) -> str:
+    return await rented_power(bot, call, "start", "OFFLINE")
+
+
+async def rented_stop(bot: Bot, call: Call) -> str:
+    return await rented_power(bot, call, "stop", "ONLINE")
 
 
 # -- the buttons ---------------------------------------------------------------------
@@ -2188,7 +2268,14 @@ QUEST_OPTION = {
     "required": True,
     "min_value": 1,
 }
+RENTED_OPTION = {
+    "type": 3,
+    "name": "rented",
+    "description": "Which rented server",
+    "required": True,
+}
 GROUPS = {
+    "rented": "Rented servers on a host: status, start and stop",
     "quest": "Quests: join one, see your progress, say you're done",
     "event": "Events: make one (if your Discord role may)",
     "poll": "Polls: make one (if your Discord role may)",
@@ -2241,6 +2328,30 @@ COMMANDS: dict[str, Command] = {
             status,
         ),
         Command("players", "Who's playing right now", P.SERVER_VIEW, players),
+        # Rented servers (agent/rented.py): only status, start and stop.
+        Command(
+            "rented status",
+            "Is the rented server online",
+            P.SERVER_VIEW,
+            rented_status,
+            needs_server=False,
+        ),
+        Command(
+            "rented start",
+            "Start the rented server (if your Discord role may start servers)",
+            P.SERVER_CONTROL,
+            rented_start,
+            needs_server=False,
+            slow=True,
+        ),
+        Command(
+            "rented stop",
+            "Stop the rented server (if your Discord role may start servers)",
+            P.SERVER_CONTROL,
+            rented_stop,
+            needs_server=False,
+            slow=True,
+        ),
         Command("ip", "How to join the Minecraft server", P.SERVER_VIEW, ip, slow=True),
         Command(
             "start",

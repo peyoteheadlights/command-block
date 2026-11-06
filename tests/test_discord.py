@@ -107,7 +107,8 @@ def test_the_bot_connects_names_itself_and_registers_its_commands(agent, fake):
     assert profile[0]["avatar"].startswith("data:image/png;base64,")
     registered = wait_for(lambda: fake.made("PUT", "/applications/"))
     # "quest join" and the others are registered as /quest's subcommands.
-    assert {c["name"] for c in registered[-1]} == {n.split(" ")[0] for n in COMMANDS}
+    # /rented only once the owner puts a rented server on Discord.
+    assert {c["name"] for c in registered[-1]} == {n.split(" ")[0] for n in COMMANDS} - {"rented"}
     assert status["guilds"][0]["name"] == "Friends"
     # The message intents only because the Message Content switch is on.
     identify = next(m for m in fake.gateway_sent if m["op"] == 2)

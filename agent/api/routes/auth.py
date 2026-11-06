@@ -164,7 +164,7 @@ async def me(principal: Principal = Depends(require(ACCOUNT)), core=Depends(get_
         "account_permissions": sorted(held - SERVER_PERMISSIONS),
         "server_permissions": {
             sid: sorted(on_server(principal, sid) & SERVER_PERMISSIONS)
-            for sid in core.servers
+            for sid in core.server_names()  # rented servers too
             if can_see_server(principal, sid)
         },
         "preferences": core.auth.preferences(principal.user),

@@ -93,6 +93,12 @@ moderator or a Discord role on purpose.
   stopped, with 5 minutes between starts from Discord. If the server refuses
   to start, Discord only hears that it didn't (the reason can name folders
   on the PC); the app shows why.
+- `/rented status`, `/rented start` and `/rented stop` are for servers rented
+  from a host (a Pterodactyl panel). They're there only once the owner sets
+  a rented server's "From Discord" to status, or to status, start and stop.
+  Start and stop need a Discord role that may start a server here, only
+  work while the server is stopped (or online), and have the same 5
+  minutes between them. A rented server gets nothing else in Discord.
 - `/request-start` (a start request) is for everyone else: only while the
   server is stopped, one open request per server, 10 minutes between
   requests, 15 minutes to answer. The owner and moderators with Start get

@@ -435,6 +435,10 @@ class AgentCore:
         self.quests = Quests(self)
         self.game_events = GameEvents(self)
         self.whitelist = Whitelist(self)
+        # Servers on a host's Pterodactyl panel (agent/rented.py).
+        from .rented import RentedServers
+
+        self.rented = RentedServers(self)
         self.discord: Any = None
         # The bot posts alerts in its alerts channel (and the webhook steps aside).
         self.notifier.bot = lambda: self.discord
@@ -467,6 +471,11 @@ class AgentCore:
     def discord_servers(self) -> dict[str, ServerContext]:
         """The servers the Discord bot knows: every one but Test servers."""
         return {sid: ctx for sid, ctx in self.servers.items() if not ctx.config.server.test}
+
+    def server_names(self) -> dict[str, str]:
+        """Every server a moderator can be given, id -> name: this PC's and
+        the rented ones (agent/rented.py)."""
+        return {**{sid: ctx.name for sid, ctx in self.servers.items()}, **self.rented.names()}
 
     def get_server(self, server_id: str) -> ServerContext:
         ctx = self.servers.get(server_id)
@@ -537,6 +546,7 @@ class AgentCore:
     async def start(self) -> None:
         for ctx in list(self.servers.values()):
             await ctx.start()
+        self.rented.start()
         self._cert_task = asyncio.create_task(self._certificate_watch_loop(), name="cert-watch")
         await self.bus.publish(
             Event(type="agent_started", level="success", message="Server agent started")
@@ -689,6 +699,7 @@ class AgentCore:
         for ctx in list(self.servers.values()):
             await ctx.stop()
         await self.guard.stop()
+        await self.rented.stop()
         await self.pcs.stop()
         self.keepawake.stop()
         await self.notifier.stop()

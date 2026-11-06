@@ -132,6 +132,16 @@ of kind `discord` built from their Discord roles' grants, checked by the same
 `permissions.check` as every route. It never holds a moderator's account
 extras or anything owner-only (see [discord.md](discord.md)).
 
+A rented server's Pterodactyl client API key (`agent/rented.py`) is saved
+in `rented-keys.bin` in the data folder, encrypted with DPAPI for the
+agent's Windows account and readable only by SYSTEM, Administrators and
+that account, like the separate Windows user's password. It's sent only
+to that panel, as a bearer token, and dropped on any redirect. No route
+answers with it, and it's never logged. Remove key deletes it. The app
+asks for a client key, never the panel password or the Application (admin)
+API, and points out when the key belongs to the main panel account rather
+than a limited sub-user.
+
 Two files leave the PC on purpose, and both are built to hold no secrets
 unless asked:
 
@@ -671,6 +681,11 @@ and plugins, Geyser and Floodgate) goes through `agent/downloads.py`, which:
   (`downloads.allow_releases`); any other pasted link is never fetched. The host is
   re-checked on every redirect hop, and redirects are followed by hand
   rather than by the HTTP client, so a redirect can't leave the list;
+- allows a rented server's Pterodactyl panel only after the owner ticked
+  "Let Command Block talk to this panel", only inside that panel's own
+  calls (`downloads.allow_panel`), only HTTPS on port 443, and only its
+  client API (`/api/client`). The console uses the `wss://` address the
+  panel gives with a short-lived token;
 - caps the size of a list (20 MB) and of a file (300 MB), and stops reading
   rather than filling the disk;
 - writes to `<name>.part` and renames it into place only after the file has

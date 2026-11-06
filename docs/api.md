@@ -343,6 +343,27 @@ permissions). Per server, with Players (`players.manage`):
 `POST .../discord-links/requests/{id}` (`answer`, `uuid`). See
 [discord.md](discord.md).
 
+## Rented servers (Pterodactyl panels)
+
+`agent/rented.py`. `GET /api/rented` (`server.view`; only the rented
+servers this account can see; `panels` for the owner): each with `kind`
+`pterodactyl`, `host`, `state` (`ONLINE`, `OFFLINE`, `STARTING`,
+`STOPPING`, or `UNKNOWN` with `state_reason` when the panel didn't answer,
+never the last known state), `resources` (`memory_bytes`, `cpu_percent`,
+`disk_bytes`, `uptime_ms`, or null), `discord`, `needs_this_pc` and
+`later`. Owner only (`servers.manage`): `POST /api/rented/check` and
+`POST /api/rented/panels` (`address`, `key`, `allow_host` which must be
+true, `servers`), `DELETE /api/rented/panels/{id}` (Remove key). Per rented
+server, checked like a home server's permissions:
+`GET .../{id}/status`, `POST .../{id}/power` (`signal` start, stop,
+restart or kill; kill needs `confirm`), `GET .../{id}/console?after=n`
+(`console.read`), `POST .../{id}/command` (`console.send`, the usual
+command checks), `GET|POST .../{id}/backups` (`backups.create` to make
+one), `PUT .../{id}/discord` (`choice` off, status or control;
+`discord.manage`). A panel's refusal answers 502 with plain words. The key
+is never in an answer. Moderators can be given rented servers like home
+servers (`/api/accounts`).
+
 ## TPS monitoring
 
 `GET /api/tps` (state, command, how it was detected, what was tried),

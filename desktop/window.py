@@ -55,6 +55,7 @@ from .mods import takes
 from .new_server import NewServerScreen
 from .overview import SimpleOverview, TechnicalOverview
 from .pc import WindowsPC
+from .rented import ConnectPanel, RentedRow, RentedScreen
 from .server_tab import BUSY, ServerScreen, state_words
 from .tailscale_step import TailscaleStep
 from .ui import clock, content_page, has_packs, label, push, refill
@@ -268,6 +269,10 @@ class AllServersScreen(QWidget):
         heading = label(text("page.servers"))
         heading.setObjectName("title")
         top.addWidget(heading, 1)
+        # A server rented from a host, on its Pterodactyl panel (owner only).
+        self.connect_button = push(text("desktop.rented.connect"), "plain")
+        self.connect_button.clicked.connect(lambda: ConnectPanel(window).exec())
+        top.addWidget(self.connect_button)
         outer.addLayout(top)
         self.problem = label(kind="problem")
         self.problem.hide()
@@ -308,6 +313,11 @@ class AllServersScreen(QWidget):
             self.rows.addWidget(label(text("servers.none"), "sub"))
         for row in self.servers:
             self.rows.addWidget(ServerRow(self.window_, row))
+        self.connect_button.setVisible(self.window_.role in (None, "owner"))
+        if self.window_.rented:
+            self.rows.addWidget(label(text("desktop.rented.heading_list"), name="h2"))
+            for row in self.window_.rented:
+                self.rows.addWidget(RentedRow(self.window_, row))
         for pc in others:
             self.rows.addWidget(label(pc.get("name") or "", name="h2"))
             found = self.window_.elsewhere.get(pc["id"])
@@ -348,6 +358,7 @@ class MainWindow(QMainWindow):
         self._elsewhere_at = 0.0
         self.types: list[dict] = []  # the server types, asked for once (/server-types)
         self.server_id: str | None = None
+        self.rented: list[dict] = []  # servers on a host's panel (desktop/rented.py)
         self.alerts: list[dict] = []  # newest first, as the bell lists them
         self.last_alert = 0  # the newest alert id seen, to catch up after a reconnect
         self.caught_up = False  # the alerts from before signing in are loaded
@@ -406,6 +417,7 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.screens: dict[str, QWidget] = {}
         self.server_screen = ServerScreen(self)
+        self.rented_screen = RentedScreen(self)
         self.notifications = NotificationsScreen(self)
         self.down_screen = NoticeScreen("Agent not running")
         self.update_screen = NoticeScreen("Update needed")
@@ -414,6 +426,7 @@ class MainWindow(QMainWindow):
             SignInScreen(self),
             AllServersScreen(self),
             self.server_screen,
+            self.rented_screen,
             self.notifications,
             self.down_screen,
             self.update_screen,
@@ -652,9 +665,12 @@ class MainWindow(QMainWindow):
         self.binder.blockSignals(False)
 
     def select_binder_tab(self) -> None:
-        wanted = {"All servers": "all", "New server": "new", "Server": self.server_id}.get(
-            self.screen_name
-        )
+        wanted = {
+            "All servers": "all",
+            "Rented server": "all",
+            "New server": "new",
+            "Server": self.server_id,
+        }.get(self.screen_name)
         for i in range(self.binder.count()):
             if self.binder.tabData(i) == wanted:
                 self.binder.setCurrentIndex(i)
@@ -678,9 +694,32 @@ class MainWindow(QMainWindow):
         self.show_screen("Server")
         self.load_server_parts()
 
+    def open_rented(self, server_id: str) -> None:
+        row = next((r for r in self.rented if r["id"] == server_id), None)
+        if row is None:
+            return
+        self.apply_look(None)
+        self.rented_screen.open(row)
+        self.show_screen("Rented server")
+        self.select_binder_tab()
+
+    def rented_loaded(self, found: dict) -> None:
+        self.rented = found.get("servers") or []
+        self.screens["All servers"].show_all()  # type: ignore[attr-defined]
+        if self.screen_name == "Rented server":
+            row = next(
+                (r for r in self.rented if r["id"] == self.rented_screen.row.get("id")), None
+            )
+            if row is None:
+                self.show_screen("All servers")
+            else:
+                self.rented_screen.show_row(row)
+
     # ------------------------------------------------------------ data
     def refresh(self) -> None:
         self.run(self.agent.servers, self.servers_loaded, self.screens["All servers"].failed)  # type: ignore[attr-defined]
+        # A moderator with no rented server may be refused: then there are none.
+        self.run(lambda: self.agent.call("GET", "/rented"), self.rented_loaded, lambda _e: None)
         if time.time() - self._elsewhere_at >= self.ELSEWHERE_EVERY:
             self._elsewhere_at = time.time()
             self.run(lambda: self.agent.call("GET", "/pcs"), self.pcs_loaded, lambda _e: None)
