@@ -116,7 +116,11 @@ folder; the refusal names the other server.
 ## security
 
 `session_hours` 12, `max_failed_logins` 5, `lockout_minutes` 15,
-`rate_limit_requests` 120, `rate_limit_window` 60.
+`rate_limit_requests` 120, `rate_limit_window` 60,
+`separate_windows_user` (true for new installs, false after an update: run
+servers, Chunker and loader installers as the hidden Windows account
+`CommandBlockServer`; change it in Settings, which runs the installer as
+Administrator, see [security](security.md#the-separate-windows-user)).
 
 ## backups
 

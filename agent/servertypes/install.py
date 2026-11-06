@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .. import downloads, servertypes
+from .. import downloads, servertypes, serveruser
 from ..downloads import DownloadError
 from ..safechange import SafeChange, run_safe_change
 from ..safechange import before as before_change
@@ -137,13 +137,16 @@ async def run_installer(
         job.step("Setting the server up (this can take a few minutes)")
     log.info("running installer %s in %s", installer, directory)
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(directory),
+        process = await serveruser.start(
+            ctx.config,
+            command,
+            cwd=directory,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
+    except (serveruser.ServerUserMissing, serveruser.FolderRightsFailed) as exc:
+        raise InstallError(str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise InstallError(f"The setup program couldn't be started: {exc}") from exc
     try:

@@ -358,6 +358,9 @@ counting down; `restart_at` in `/api/status` is the deadline (Unix time).
 `GET|POST /api/schedules`, `PUT|DELETE /api/schedules/{id}`,
 `POST /api/schedules/{id}/run`,
 `GET|PUT /api/settings`, `POST /api/maintenance`,
+`GET|POST /api/settings/separate-windows-user` (`{on}`: is it on and does
+the account work; switching restarts running servers, and needs the account
+made by `mcsc server-user on` first),
 `POST /api/notifications/test?channel=` (`discord`, `email` or `push`),
 `GET /api/notifications/history` (owner only, like `GET /api/settings`),
 `GET /api/security`, `GET /api/security/tls`, `GET /api/security/audit`,

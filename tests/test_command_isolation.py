@@ -306,6 +306,7 @@ def test_only_the_documented_places_start_a_program():
         "process.py",  # launching Minecraft itself
         "install.py",  # the Forge/NeoForge/Quilt installer (documented exception)
         "chunker.py",  # Chunker world conversion, after a click (documented exception)
+        "serveruser.py",  # icacls: the separate Windows user's folder rights
         "java.py",  # asking the installed Java for its version
         "tailscale.py",  # asking Tailscale for this PC's address
         "certs.py",  # making this app's own HTTPS certificate
@@ -334,11 +335,11 @@ def test_the_installer_is_run_as_an_argument_list_with_no_shell():
     assert "command = installer_command(java, installer, plan)" in source
     builder = inspect.getsource(install.installer_command)
     assert "check_version(" in builder and "installer_args" in builder
-    assert "*command," in source
+    assert "serveruser.start(" in source and "command," in source
     assert "shell" not in source
     # the working directory is fixed to the server's own folder, and the
     # installer gets no input of its own
-    assert "cwd=str(directory)" in source
+    assert "cwd=directory," in source
     assert "stdin=asyncio.subprocess.DEVNULL" in source
     # its output is captured into the install log, not left on a console
     assert "stdout=asyncio.subprocess.PIPE" in source
@@ -351,7 +352,7 @@ def test_chunker_is_run_as_an_argument_list_with_no_shell():
 
     source = inspect.getsource(chunker.run)
     assert "argv = command(java, JAR, source, output, fmt)" in source
-    assert "*argv," in source and "shell" not in source
+    assert "serveruser.start(" in source and "argv," in source and "shell" not in source
     assert "stdin=asyncio.subprocess.DEVNULL" in source
     assert "stdout=asyncio.subprocess.PIPE" in source and "log_file.write_text" in source
     # The format only ever comes from a version checked against Chunker's list.

@@ -2345,6 +2345,17 @@ class SettingsSaved(Open):
     rejected: dict[str, str] = Field(description="Each refused key with the reason")
 
 
+class SeparateWindowsUser(Open):
+    on: bool
+    ok: bool = Field(description="The account and its saved password both work")
+    problem: str | None = Field(
+        description="account, password or windows_only when ok is false, else null"
+    )
+    account: str
+    available: bool
+    restarting: list[str] = []
+
+
 class MaintenanceSet(Open):
     ok: bool
     maintenance: bool

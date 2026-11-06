@@ -266,6 +266,42 @@ after the owner's click (`servers.manage`, which no moderator can have):
   leave a `level.dat` is an error with the log's path, even when Chunker
   exits with 0.
 
+### The separate Windows user
+
+With "Run servers as a separate Windows user" on (the default for new
+installs), Minecraft, Chunker and the loader installer run as the hidden
+local account `CommandBlockServer` instead of the owner, so a harmful mod or
+plugin can't read the owner's files, the app's data folder or its keys
+(ADR 0007). `agent/serveruser.py` `start()` is the one place that starts
+them, and:
+
+- it uses `CreateProcessWithLogonW` (the only call a normal program can use
+  to start a program as another account), with the same pipes as before.
+  Python's own process call is wrapped only while `start()` runs, for that
+  one asyncio task; every other program the app starts is unchanged;
+- when the setting is on and the account or its password is missing or
+  refused, nothing starts and the app says "The separate Windows user is
+  missing" with Repair. There is no code path that falls back to the owner;
+- before a start it gives the account change rights (`icacls ... /grant
+  CommandBlockServer:(OI)(CI)M`) on that program's own folder only (the
+  server folder, or Chunker's work folder), and read-and-run on the Java
+  folder. Backups, the data folder and the owner's profile get nothing.
+  The agent owns those folders, so this needs no Administrator;
+- the started process's access list is widened for the agent's own account
+  only (stop, CPU cores, reading memory and CPU use).
+
+The installer (Administrator) makes the account with Windows' own calls
+(`NetUserAdd`, `LsaAddAccountRights`; no program is run, so the password is
+never on a command line): password never expires, Remote Desktop and
+network sign-in are denied, and it is left off the sign-in screen. A
+keyboard sign-in stays allowed only because `CreateProcessWithLogonW` needs
+that kind of sign-in; nobody knows the password. The password is 40 random
+characters, saved DPAPI-encrypted for the owner's account in the data folder
+(`server-user.bin`, owner, SYSTEM and Administrators only), and never
+logged, printed or sent by the API. Settings' Turn on, Repair and Turn off
+run `mcsc server-user on|repair|off` as Administrator (Windows asks); Turn
+off and removing the app delete the account and its profile folder.
+
 ### Updating the app itself
 
 The second exception. The desktop app shows "Version X is out" and, for the

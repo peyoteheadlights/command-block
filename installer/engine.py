@@ -262,6 +262,7 @@ class Engine:
         self.stopped_servers: list[str] = []
         self.agent_stopped = False
         self.certificate_renewed = False
+        self.server_user_dir: Path | None = None  # set once step_server_user made it
         self.notes: list[str] = []
         self._plan()
 
@@ -308,6 +309,8 @@ class Engine:
             (self.existing and c.java_servers) or (c.action == INSTALL and not c.servers)
         ):
             add("java_servers", "Pointing your servers at the new Java", 1)
+        if c.action == INSTALL:
+            add("server_user", "Making the separate Windows user for your servers", 2)
         add("password", "Saving your password", 2)
         add("certificate", "Setting up secure connection", 5)
         add("firewall", "Letting your phone and other devices connect", 3)
@@ -335,6 +338,7 @@ class Engine:
             ("java", self.step_java),
             ("servers", self.step_servers),
             ("java_servers", self.step_java_servers),
+            ("server_user", self.step_server_user),
             ("password", self.step_password),
             ("certificate", self.step_certificate),
             ("firewall", self.step_firewall),
@@ -842,6 +846,30 @@ class Engine:
         self.log.write("java_servers", servers=changed, java=java)
         return None
 
+    def step_server_user(self) -> str | None:
+        """New installs run servers as the separate Windows user
+        (installer/serveruser.py). An install over settings that were
+        already there keeps their choice, like an update does."""
+        from agent.config import Config
+
+        from . import serveruser
+
+        if self.config_path not in self.created_settings:
+            return "Your settings were already here, so their choice is kept."
+        config = Config.load(self.config_path, self.env_path)
+        try:
+            serveruser.make(self.system, config.data_dir)
+        except (SystemError_, OSError) as exc:
+            self.log.write("server_user_failed", error=str(exc))
+            return (
+                "The separate Windows user couldn't be made, so servers run as you for "
+                "now. Turn it on in Settings."
+            )
+        self.server_user_dir = config.data_dir
+        config.set("security.separate_windows_user", True)
+        config.save(self.config_path)
+        return None
+
     def step_password(self) -> str | None:
         from agent.security.auth import hash_password, is_password_hash
 
@@ -1078,6 +1106,11 @@ class Engine:
                 else:
                     restorepoint.restore(self.point)
                     actions.append("put your settings and database back")
+            if self.server_user_dir is not None:
+                from . import serveruser
+
+                serveruser.remove(self.system, self.server_user_dir)
+                actions.append("removed the separate Windows user it had made")
             if self.previous_launch and self.previous_launch.get("command"):
                 launch = {
                     k: self.previous_launch[k]

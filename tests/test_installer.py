@@ -12,14 +12,17 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import string
 from pathlib import Path
 
 import pytest
 
 from agent import datafolder
+from agent import serveruser as agent_serveruser
 from agent.config import SECRET_ENV_KEYS
 from agent.security.auth import hash_password
-from installer import detect, engine, fileops, layout, restorepoint
+from installer import detect, engine, fileops, layout, restorepoint, uninstall
+from installer import serveruser as serveruser_setup
 from installer.engine import Choices, Engine
 from installer.progress import Progress
 
@@ -122,6 +125,13 @@ class FakeSystem:
 
     def install_msi(self, command):
         self.calls.append(("msi", command))
+
+    def make_server_user(self, name, password):
+        self.calls.append(("make_server_user", name))
+        self.server_user_password = password
+
+    def remove_server_user(self, name):
+        self.calls.append(("remove_server_user", name))
 
     def remove_startup(self):
         self.calls.append(("remove_startup",))
@@ -1336,3 +1346,153 @@ def test_open_command_block_signs_the_app_in_once_as_the_person(
     data_dir = Config.load(w.engine.config_path, w.engine.env_path).data_dir  # the agent's
     stored = (data_dir / ONE_TIME_FILE).read_text()
     assert code and code not in stored
+
+
+# ====================================================================
+# the separate Windows user (installer/serveruser.py)
+# ====================================================================
+def test_a_new_password_is_long_random_and_complex():
+    seen = {serveruser_setup.new_password() for _ in range(50)}
+    assert len(seen) == 50
+    for password in seen:
+        assert len(password) == 40
+        assert any(c in string.ascii_uppercase for c in password)
+        assert any(c in string.digits for c in password)
+
+
+def test_a_new_install_makes_the_separate_user_and_turns_it_on(tmp_path, places, program_files):
+    server = make_server(tmp_path)
+    system = FakeSystem()
+    system.running = True
+    choices = Choices(
+        action=engine.INSTALL,
+        program_dir=places["program"],
+        data_root=places["data"],
+        servers=[{"folder": str(server), "name": "Survival"}],
+        password=PASSWORD,
+    )
+    _, result, _ = run_engine(choices, program_files, system)
+    assert result.ok, result.message + result.details
+    assert system.called("make_server_user") == [("make_server_user", "CommandBlockServer")]
+    config = (places["data"] / "config" / "config.yaml").read_text()
+    assert "separate_windows_user: true" in config
+    from agent.config import Config
+
+    settings = places["data"] / "config"
+    saved = Config.load(settings / "config.yaml", settings / ".env").data_dir / "server-user.bin"
+    assert agent_serveruser.read_password(saved) == system.server_user_password
+    # The password is never in the install log.
+    logs = "".join(p.read_text() for p in (places["data"] / "logs").rglob("*") if p.is_file())
+    assert system.server_user_password not in logs
+
+
+def test_a_failed_account_leaves_servers_running_as_the_owner_and_says_so(
+    tmp_path, places, program_files
+):
+    from installer.system import SystemError_
+
+    system = FakeSystem()
+    system.running = True
+
+    def refuse(name, password):
+        raise SystemError_("The separate Windows user couldn't be made.", "NetUserAdd 5")
+
+    system.make_server_user = refuse
+    choices = Choices(
+        action=engine.INSTALL,
+        program_dir=places["program"],
+        data_root=places["data"],
+        password=PASSWORD,
+    )
+    eng, result, _ = run_engine(choices, program_files, system)
+    assert result.ok
+    assert eng.progress.step("server_user").state == "skipped"
+    assert "Turn it on in Settings" in eng.progress.step("server_user").message
+    assert "separate_windows_user: false" in (places["data"] / "config" / "config.yaml").read_text()
+
+
+def test_an_update_keeps_the_choice_and_makes_no_account(places, program_files):
+    found = make_installer_copy(places)
+    system = FakeSystem()
+    system.running = True
+    choices = Choices(
+        action=engine.UPDATE,
+        program_dir=places["program"],
+        data_root=places["data"],
+        found=found,
+    )
+    _, result, _ = run_engine(choices, program_files, system)
+    assert result.ok, result.message + result.details
+    assert system.called("make_server_user") == []
+
+
+def installed_settings(tmp_path, monkeypatch) -> Path:
+    data = tmp_path / "data"
+    (data / "config").mkdir(parents=True)
+    path = data / "config" / "config.yaml"
+    path.write_text(f"paths:\n  data_dir: '{data}'\n", encoding="utf-8")
+    monkeypatch.setattr("agent.appinfo.default_config_path", lambda: path)
+    monkeypatch.setattr("agent.appinfo.default_env_path", lambda: data / "config" / ".env")
+    return data
+
+
+def test_turn_on_repair_and_turn_off_from_the_command(tmp_path, monkeypatch, capsys):
+    data = installed_settings(tmp_path, monkeypatch)
+    system = FakeSystem()
+    assert serveruser_setup.main(["on"], system) == 0
+    first = agent_serveruser.read_password(data / "server-user.bin")
+    assert serveruser_setup.main(["repair"], system) == 0
+    assert agent_serveruser.read_password(data / "server-user.bin") != first  # a new password
+    assert len(system.called("make_server_user")) == 2
+    assert serveruser_setup.main(["off"], system) == 0
+    assert system.called("remove_server_user") == [("remove_server_user", "CommandBlockServer")]
+    assert not (data / "server-user.bin").exists()
+    printed = capsys.readouterr()
+    assert first not in printed.out + printed.err
+
+
+def test_the_command_needs_administrator_and_a_known_word(tmp_path, monkeypatch):
+    installed_settings(tmp_path, monkeypatch)
+    system = FakeSystem()
+    assert serveruser_setup.main(["sideways"], system) == 2
+    system.is_admin = lambda: False
+    assert serveruser_setup.main(["on"], system) == 5
+    system.is_admin = lambda: True
+    # Another administrator said Yes at Windows' prompt: the owner's app
+    # couldn't read a password saved for that account, so nothing is made.
+    monkeypatch.setenv("USERNAME", "Admin")
+    assert serveruser_setup.main(["on", "Mark"], system) == serveruser_setup.NOT_THE_OWNER
+    assert system.called("make_server_user") == []
+    assert serveruser_setup.main(["on", "admin"], system) == 0
+
+
+def test_removing_the_app_removes_the_separate_user(places):
+    make_installer_copy(places)
+    system = FakeSystem()
+    (places["data"] / "server-user.bin").write_bytes(b"x")
+    result = uninstall.uninstall(places["program"], places["data"], system=system)
+    assert ("remove_server_user", "CommandBlockServer") in system.calls
+    assert "removed the separate Windows user" in result["done"]
+    assert not (places["data"] / "server-user.bin").exists()
+
+
+def test_a_failed_install_removes_the_separate_user_it_made(tmp_path, places, program_files):
+    system = FakeSystem()
+    system.running = True
+    choices = Choices(
+        action=engine.INSTALL,
+        program_dir=places["program"],
+        data_root=places["data"],
+        password=PASSWORD,
+    )
+    eng = Engine(choices, program_files, system=system, version="1.2.0")
+
+    def broken():
+        raise engine.StepFailed("The certificate couldn't be made.", "test")
+
+    eng.step_certificate = broken
+    result = eng.run()
+    assert not result.ok
+    if not system.called("remove_server_user"):
+        eng.roll_back()  # when the run leaves it to the setup window's button
+    assert ("remove_server_user", "CommandBlockServer") in system.calls

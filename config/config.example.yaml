@@ -125,6 +125,10 @@ security:
   lockout_minutes: 15
   rate_limit_requests: 120
   rate_limit_window: 60
+  # Run servers as the hidden Windows account CommandBlockServer, so a
+  # harmful mod or plugin can't read your files. Change it in Settings, not
+  # here: turning it on or off needs the installer (Administrator).
+  separate_windows_user: false
 
 backups:
   directory: backups         # relative paths resolve inside the agent data folder

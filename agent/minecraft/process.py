@@ -23,12 +23,14 @@ import asyncio
 import contextlib
 import logging
 import shutil
+import subprocess
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .. import serveruser
 from ..events import Event, EventBus
 from . import cpu
 from .console import ConsoleBuffer, ConsoleLine, extract_signals
@@ -527,21 +529,33 @@ class MinecraftServer:
 
             creationflags = NEW_PROCESS_GROUP | NO_WINDOW
             try:
-                self.process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    cwd=str(self.config.server_dir),
+                # As the owner, or as the separate Windows user when that's
+                # on (agent/serveruser.py). Never the owner as a fallback.
+                self.process = await serveruser.start(
+                    self.config,
+                    cmd,
+                    cwd=self.config.server_dir,
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     creationflags=creationflags,
                 )
-            except (OSError, ValueError) as exc:
+            except (
+                OSError,
+                ValueError,
+                subprocess.SubprocessError,
+                serveruser.ServerUserMissing,
+                serveruser.FolderRightsFailed,
+            ) as exc:
                 self.started_at = None
                 self._exited_event.set()
-                await self._set_state(
-                    ServerState.OFFLINE, f"Could not launch Minecraft: {exc}", level="error"
+                words = (
+                    str(exc)
+                    if isinstance(exc, serveruser.ServerUserMissing | serveruser.FolderRightsFailed)
+                    else f"Could not launch Minecraft: {exc}"
                 )
-                raise ServerError(f"Could not launch Minecraft: {exc}") from exc
+                await self._set_state(ServerState.OFFLINE, words, level="error")
+                raise ServerError(words) from exc
 
             self.pid = self.process.pid
             if self.config.server.cpu_cores:

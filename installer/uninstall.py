@@ -23,7 +23,7 @@ from typing import Any
 
 from agent import appinfo
 
-from . import layout
+from . import layout, serveruser
 from .bootstrap import UPDATE_FOLDER_SUFFIX
 from .installlog import InstallLog
 from .system import System
@@ -78,6 +78,10 @@ def uninstall(
             ("Installed apps entry", system.remove_uninstall_entry),
             ("Windows alerts entry", system.remove_alerts_entry),
             ("firewall rules", lambda: _remove_firewall(system, port)),
+            (
+                "separate Windows user",
+                lambda: serveruser.remove(system, _data_dir(data_root)),
+            ),
         )
     for name, action in removals:
         try:
@@ -189,3 +193,14 @@ def _settings(data_root: Path) -> tuple[str, int, bool, str]:
 
     host, port, tls = read_address(layout.config_path(data_root))
     return host, port, tls, read_env(layout.env_path(data_root)).get("MCSC_API_TOKEN", "")
+
+
+def _data_dir(data_root: Path) -> Path:
+    """The agent's data folder (where the separate Windows user's password
+    file is): the data root unless the settings moved it."""
+    from agent.config import Config, ConfigError
+
+    try:
+        return Config.load(layout.config_path(data_root), layout.env_path(data_root)).data_dir
+    except (ConfigError, OSError):
+        return data_root

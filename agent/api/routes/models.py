@@ -124,6 +124,10 @@ class SettingsRequest(BaseModel):
     updates: dict[str, Any]
 
 
+class SeparateWindowsUserRequest(BaseModel):
+    on: bool
+
+
 class MaintenanceRequest(BaseModel):
     enabled: bool
 

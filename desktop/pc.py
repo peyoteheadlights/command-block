@@ -62,6 +62,16 @@ INSTALL_SCRIPT = (
 )
 
 
+# Runs "mcsc server-user on|repair|off" as administrator and waits for it
+# (Windows asks first); installer/serveruser.py does the work.
+SERVER_USER_SCRIPT = (
+    "try { $p = Start-Process -FilePath $env:CB_FILE -Verb RunAs -Wait -PassThru "
+    "-WindowStyle Hidden -ArgumentList ('server-user ' + $env:CB_WHAT + ' \"' + $env:USERNAME + '\"'); "
+    "exit $p.ExitCode } "
+    f"catch {{ exit {CANCELLED} }}"
+)
+
+
 # Opens a program the way Explorer does, so Windows asks UAC when it needs to.
 OPEN_SCRIPT = f"try {{ Start-Process -FilePath $env:CB_FILE; exit 0 }} catch {{ exit {CANCELLED} }}"
 
@@ -322,6 +332,23 @@ class WindowsPC:
         )
         if done.returncode == CANCELLED:
             raise PCError(text("desktop.fix.setup_refused"))
+
+    def server_user(self, what: str) -> int:
+        """Make, repair or remove the separate Windows user (one UAC
+        prompt). Returns the exit code; CANCELLED when Windows was told No."""
+        from agent import appinfo
+
+        if what not in ("on", "repair", "off"):
+            raise ValueError(what)
+        program = appinfo.program_dir() / appinfo.CLI_EXE
+        if not program.is_file():
+            raise PCError(text("desktop.fix.no_setup"))
+        done = subprocess.run(
+            [*POWERSHELL, SERVER_USER_SCRIPT],
+            env={**os.environ, "CB_FILE": str(program), "CB_WHAT": what},
+            creationflags=NO_WINDOW,
+        )
+        return done.returncode
 
     def install_msi(self, path: Path) -> int:
         """Runs the setup as administrator and waits. Returns its exit code."""

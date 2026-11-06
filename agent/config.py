@@ -259,6 +259,10 @@ class SecuritySettings(Section):
     chat_spam_rule: bool = True
     chat_spam_names: int = 5
     chat_spam_seconds: float = 60
+    # Servers (and Chunker, the Forge installer) run as the hidden Windows
+    # account CommandBlockServer (agent/serveruser.py). The installer turns
+    # it on for new installs; upgrades turn it on in Settings.
+    separate_windows_user: bool = False
 
 
 @dataclass(frozen=True)

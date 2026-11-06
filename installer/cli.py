@@ -13,6 +13,7 @@ shortcut opens the desktop app (``CommandBlock.exe``) instead.
     mcsc autostart status      the Windows startup task (also: test, run)
     mcsc setup ...             the installer's screens (setup.exe runs this)
     mcsc apply-update          run by the update task only (see docs/security.md)
+    mcsc server-user on|repair|off   the separate Windows user (Administrator)
     mcsc version
 """
 
@@ -55,6 +56,10 @@ def cli_entry(argv: list[str] | None = None) -> int:
         from . import apply_update
 
         return apply_update.main(rest)
+    if command == "server-user":
+        from . import serveruser
+
+        return serveruser.main(rest)
     if command == "version":
         from agent import API_VERSION, __version__
 

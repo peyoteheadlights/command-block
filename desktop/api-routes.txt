@@ -228,3 +228,5 @@ GET /api/servers/{server_id}/players/hours
 POST /api/servers/{server_id}/world/new-season
 POST /api/bring-back/read
 POST /api/bring-back
+GET /api/settings/separate-windows-user
+POST /api/settings/separate-windows-user

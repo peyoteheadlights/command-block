@@ -242,6 +242,7 @@ class PCSettings(Section):
                 "look",
                 "alerts",
                 "awake",
+                "server_user",
                 "maintenance",
                 "tailscale",
                 "wake",
@@ -268,6 +269,11 @@ class PCSettings(Section):
             return agent.call("GET", "/settings"), power
 
         self.window_.run(read, self.show_settings, self.problem)
+        self.call(
+            "GET",
+            "/settings/separate-windows-user",
+            lambda state: self.fill("server_user", self.server_user_card(state)),
+        )
         self.call("GET", "/export", lambda sizes: self.fill("export", self.export_card(sizes)))
         if agent.place == "this PC":
             self.call("GET", "/tailscale", self.show_tailscale)
@@ -481,6 +487,68 @@ class PCSettings(Section):
                 )
             )
         return frame
+
+    # -------------------------------------------------------- separate Windows user
+    def server_user_card(self, state: dict) -> QFrame:
+        frame, layout = card(text("serveruser.title"))
+        layout.addWidget(label(text("serveruser.help"), "sub"))
+        agent = self.window_.agent
+        if not state.get("available"):
+            layout.addWidget(label(text("serveruser.unsupported"), "sub"))
+            return frame
+        if not state.get("on"):
+            layout.addWidget(label(text("serveruser.off"), "sub"))
+            action = "on"
+        elif state.get("ok"):
+            layout.addWidget(label(text("serveruser.on"), "sub"))
+            action = "off" if mode["technical"] else ""  # Turn off is Technical only
+        else:
+            layout.addWidget(label(text("serveruser.missing"), "problem"))
+            action = "repair"
+        if not action:
+            return frame
+        if agent.place != "this PC":
+            layout.addWidget(label(text("serveruser.not_here", pc=agent.place), "sub"))
+            return frame
+        layout.addWidget(label(text("serveruser.restarts"), "sub"))
+        button = push(text(f"serveruser.{'turn_' + action if action != 'repair' else action}"))
+        button.clicked.connect(lambda: self.switch_server_user(action))
+        layout.addLayout(buttons(button))
+        return frame
+
+    def switch_server_user(self, action: str) -> None:
+        """Turn on and Repair: the installer makes the account, then the
+        agent switches. Turn off: the agent switches first (servers restart
+        as you), then the installer removes the account."""
+        from installer.serveruser import NOT_THE_OWNER
+
+        from .pc import CANCELLED, PCError
+
+        agent, pc = self.window_.agent, self.window_.pc
+
+        def installer() -> None:
+            code = pc.server_user(action)
+            if code == CANCELLED:
+                raise PCError(text("serveruser.refused"))
+            if code == NOT_THE_OWNER:
+                raise PCError(text("serveruser.not_owner"))
+            if code != 0:
+                raise PCError(text("serveruser.failed", code=code))
+
+        def work() -> None:
+            if action == "off":
+                # Waits while running servers restart as you.
+                agent.call("POST", "/settings/separate-windows-user", {"on": False}, slow=True)
+                try:
+                    installer()
+                except PCError as exc:
+                    raise PCError(text("serveruser.off_left", why=exc)) from exc
+            else:
+                installer()
+                agent.call("POST", "/settings/separate-windows-user", {"on": True})
+
+        words = {"on": "turned_on", "off": "turned_off", "repair": "repaired"}[action]
+        self.window_.run(work, self.then_reload(text(f"serveruser.{words}")), self.problem)
 
     def maintenance_card(self, data: dict) -> QFrame:
         frame, layout = card(text("appset.maintenance"))

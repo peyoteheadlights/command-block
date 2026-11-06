@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 import psutil
 
-from .. import servertypes
+from .. import servertypes, serveruser
 from ..config import PROJECT_ROOT
 from ..minecraft.properties import FILENAME, PropertiesFile, world_folder
 from .install import InstallError, _log_path
@@ -158,14 +158,19 @@ async def run(ctx: ServerContext, java: str, source: Path, output: Path, fmt: st
     log_file = _log_path(ctx)
     log.info("running Chunker on a copy of %s's world", ctx.name)
     try:
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=str(output.parent),
+        # Chunker reads the copy in work/in and writes work/out: both inside
+        # output.parent, the only folder it may change.
+        process = await serveruser.start(
+            ctx.config,
+            argv,
+            cwd=output.parent,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             creationflags=NO_WINDOW,
         )
+    except (serveruser.ServerUserMissing, serveruser.FolderRightsFailed) as exc:
+        raise InstallError(str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise InstallError(f"Chunker couldn't be started with Java: {exc}") from exc
     try:

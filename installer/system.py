@@ -501,6 +501,157 @@ class System:
 
         secure_directory(root)
 
+    # ------------------------------------------------------------ the separate Windows user
+    # installer/serveruser.py. Windows' own calls through ctypes: no program
+    # is run, so the password is never on a command line.
+    def make_server_user(self, name: str, password: str) -> None:
+        """Make the hidden local account, or give it this new password and
+        turn it back on when it's there already (Repair). It can't sign in
+        by Remote Desktop or over the network, its password never expires,
+        and it's left off the sign-in screen. A keyboard sign-in stays
+        allowed only because Windows needs that kind to start a program as
+        it (Mark's pick, 2026-11-06); nobody knows the password."""
+        if not IS_WINDOWS:
+            raise SystemError_("The separate Windows user is only on Windows.")
+        import ctypes
+        from ctypes import wintypes
+
+        class UserInfo1(ctypes.Structure):
+            _fields_ = [
+                ("name", wintypes.LPWSTR),
+                ("password", wintypes.LPWSTR),
+                ("password_age", wintypes.DWORD),
+                ("priv", wintypes.DWORD),
+                ("home_dir", wintypes.LPWSTR),
+                ("comment", wintypes.LPWSTR),
+                ("flags", wintypes.DWORD),
+                ("script_path", wintypes.LPWSTR),
+            ]
+
+        class UserInfo1003(ctypes.Structure):
+            _fields_ = [("password", wintypes.LPWSTR)]
+
+        class UserInfo1008(ctypes.Structure):
+            _fields_ = [("flags", wintypes.DWORD)]
+
+        # UF_SCRIPT | UF_PASSWD_CANT_CHANGE | UF_DONT_EXPIRE_PASSWD
+        flags = 0x1 | 0x40 | 0x10000
+        netapi = ctypes.WinDLL("netapi32")
+        wrong = wintypes.DWORD()
+        info = UserInfo1(
+            name, password, 0, 1, None, "Runs Command Block's Minecraft servers", flags, None
+        )
+        code = netapi.NetUserAdd(None, 1, ctypes.byref(info), ctypes.byref(wrong))
+        if code == 2224:  # NERR_UserExists
+            code = netapi.NetUserSetInfo(
+                None, name, 1003, ctypes.byref(UserInfo1003(password)), ctypes.byref(wrong)
+            )
+            if code == 0:  # without UF_ACCOUNTDISABLE or UF_LOCKOUT: on again
+                code = netapi.NetUserSetInfo(
+                    None, name, 1008, ctypes.byref(UserInfo1008(flags)), ctypes.byref(wrong)
+                )
+        if code != 0:
+            raise SystemError_(
+                "The separate Windows user couldn't be made.", f"NetUser* answered {code}"
+            )
+        self._hide_from_sign_in(name, hide=True)
+        problem = self._logon_rights(name, add=True)
+        if problem:
+            # Never leave an account Remote Desktop could reach.
+            self.remove_server_user(name)
+            raise SystemError_(
+                "The separate Windows user couldn't be kept off Remote Desktop.", problem
+            )
+
+    def remove_server_user(self, name: str) -> None:
+        """Remove the account, its rights, its profile folder and the
+        sign-in screen entry. Nothing to do when it's gone already."""
+        if not IS_WINDOWS:
+            return
+        import ctypes
+
+        self._logon_rights(name, add=False)
+        sid = _sid_text(name)
+        if sid:
+            userenv = ctypes.WinDLL("userenv")
+            userenv.DeleteProfileW(sid, None, None)  # its profile folder; may be gone
+        netapi = ctypes.WinDLL("netapi32")
+        code = netapi.NetUserDel(None, name)
+        if code not in (0, 2221):  # 2221: NERR_UserNotFound
+            raise SystemError_(
+                "The separate Windows user couldn't be removed.", f"NetUserDel answered {code}"
+            )
+        self._hide_from_sign_in(name, hide=False)
+
+    @staticmethod
+    def _hide_from_sign_in(name: str, hide: bool) -> None:
+        import winreg
+
+        key_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList"
+        access = winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY
+        if hide:
+            with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, access) as key:
+                winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, 0)
+            return
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, access) as key:
+                winreg.DeleteValue(key, name)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _logon_rights(name: str, add: bool) -> str | None:
+        """Deny Remote Desktop and network sign-in (add), or take every
+        right off the account (remove). Returns what went wrong, or None."""
+        import ctypes
+        from ctypes import wintypes
+
+        class LsaText(ctypes.Structure):
+            _fields_ = [
+                ("Length", wintypes.USHORT),
+                ("MaximumLength", wintypes.USHORT),
+                ("Buffer", wintypes.LPWSTR),
+            ]
+
+        class LsaAttributes(ctypes.Structure):
+            _fields_ = [
+                ("Length", wintypes.ULONG),
+                ("RootDirectory", wintypes.HANDLE),
+                ("ObjectName", ctypes.c_void_p),
+                ("Attributes", wintypes.ULONG),
+                ("SecurityDescriptor", ctypes.c_void_p),
+                ("SecurityQualityOfService", ctypes.c_void_p),
+            ]
+
+        sid = _sid(name)
+        if sid is None:
+            return None if not add else "the account wasn't found"
+        advapi = ctypes.WinDLL("advapi32")
+        attributes = LsaAttributes()
+        attributes.Length = ctypes.sizeof(attributes)
+        policy = ctypes.c_void_p()
+        # POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES
+        status = advapi.LsaOpenPolicy(
+            None, ctypes.byref(attributes), 0x10 | 0x800, ctypes.byref(policy)
+        )
+        if status != 0:
+            return f"LsaOpenPolicy {advapi.LsaNtStatusToWinError(status)}"
+        try:
+            if add:
+                names = ("SeDenyRemoteInteractiveLogonRight", "SeDenyNetworkLogonRight")
+                rights = (LsaText * len(names))(
+                    *(LsaText(len(n) * 2, len(n) * 2 + 2, n) for n in names)
+                )
+                status = advapi.LsaAddAccountRights(policy, sid, rights, len(names))
+            else:
+                status = advapi.LsaRemoveAccountRights(policy, sid, True, None, 0)
+        finally:
+            advapi.LsaClose(policy)
+        if status != 0:
+            code = advapi.LsaNtStatusToWinError(status)
+            return None if code == 2 else f"LsaAccountRights {code}"  # 2: it had none
+        return None
+
     def install_msi(self, command: list[str]) -> None:
         code, out, err = self.run(command, timeout=900)
         if code not in (0, 3010):  # 3010: done, a restart finishes it
@@ -508,6 +659,42 @@ class System:
                 "Java didn't install.",
                 f"msiexec exited {code}: {(err or out).strip()[:2000]}",
             )
+
+
+def _sid(name: str):
+    """The account's SID as Windows keeps it, or None when there's no such
+    account."""
+    import ctypes
+    from ctypes import wintypes
+
+    advapi = ctypes.WinDLL("advapi32")
+    size, domain_size, use = wintypes.DWORD(0), wintypes.DWORD(0), wintypes.DWORD()
+    advapi.LookupAccountNameW(None, name, None, ctypes.byref(size), None,
+                              ctypes.byref(domain_size), ctypes.byref(use))  # fmt: skip
+    if not size.value:
+        return None
+    sid = ctypes.create_string_buffer(size.value)
+    domain = ctypes.create_unicode_buffer(domain_size.value)
+    if not advapi.LookupAccountNameW(None, name, sid, ctypes.byref(size), domain,
+                                     ctypes.byref(domain_size), ctypes.byref(use)):  # fmt: skip
+        return None
+    return sid
+
+
+def _sid_text(name: str) -> str | None:
+    import ctypes
+
+    sid = _sid(name)
+    if sid is None:
+        return None
+    text = ctypes.c_wchar_p()
+    advapi = ctypes.WinDLL("advapi32")
+    if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+        return None
+    try:
+        return text.value
+    finally:
+        ctypes.windll.kernel32.LocalFree(text)
 
 
 def updater_task_xml(
