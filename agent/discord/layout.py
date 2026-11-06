@@ -250,6 +250,26 @@ def role_for(level: int, roles: list[tuple[int, str]]) -> str | None:
     return next((rid for at, rid in reversed(roles) if level >= at), None)
 
 
+def store_roles(db, guild_id: str) -> dict[str, str]:
+    """Store rank id (agent/store.py) -> the Discord role that goes with it."""
+    rows = db.query(
+        "SELECT kind, role_id FROM discord_roles WHERE guild_id = ? AND kind GLOB 'store_*'",
+        (guild_id,),
+    )
+    return {r["kind"].split("_", 1)[1]: r["role_id"] for r in rows}
+
+
+def set_store_roles(db, guild_id: str, pairs: dict[str, str]) -> None:
+    """Replace the Store rank roles (already checked with level_role_refused).
+    A role that stops being one is taken back by the next sync."""
+    db.execute("DELETE FROM discord_roles WHERE guild_id = ? AND kind GLOB 'store_*'", (guild_id,))
+    for rank, role_id in pairs.items():
+        db.execute(
+            "INSERT INTO discord_roles (guild_id, kind, role_id) VALUES (?, ?, ?)",
+            (guild_id, f"store_{rank}", role_id),
+        )
+
+
 def level_settings(db, guild_id: str) -> dict[str, Any]:
     """announce: post level-ups; leaderboard_day: 0 (Monday) to 6, or None
     for no weekly leaderboard; custom: the owner changed the Level roles."""

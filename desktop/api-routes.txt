@@ -230,3 +230,6 @@ POST /api/bring-back/read
 POST /api/bring-back
 GET /api/settings/separate-windows-user
 POST /api/settings/separate-windows-user
+GET /api/servers/{server_id}/store
+POST /api/servers/{server_id}/store/connect
+POST /api/servers/{server_id}/store/check

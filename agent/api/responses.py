@@ -2524,6 +2524,10 @@ class DiscordLevels(Open):
     roles: list[dict[str, Any]] = Field(
         description="Each Level role: level, role_id and name (null until the bot has read it)"
     )
+    store_ranks: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="The Store ranks and their paired role_id, when a server here has a store",
+    )
 
 
 class PlayerStats(Open):
@@ -2692,3 +2696,23 @@ class SyncHello(Open):
     signing_key: str
     records: list[dict[str, Any]]
     seq: int
+
+
+class StoreView(Open):
+    offered: bool = Field(
+        description="False: no Store tab (kids, Test, not for a community, Bedrock)"
+    )
+    reason: str | None
+    needs_type: bool = Field(
+        description="Not Paper, Purpur, Leaf or Fabric: offer Change server type"
+    )
+    connected: bool
+    installed: dict[str, bool]
+    ranks: list[dict[str, Any]]
+    store: dict[str, Any] = Field(description="What the last check read from Tebex; never the key")
+    packages: list[dict[str, Any]] | None
+    checklist: str
+
+
+class StoreChecked(StoreView):
+    remind: list[str] = Field(description="Packages the app didn't make, seen for the first time")

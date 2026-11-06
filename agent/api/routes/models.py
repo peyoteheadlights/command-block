@@ -509,12 +509,19 @@ class DiscordLevelRole(BaseModel):
     role_id: str = Field(pattern=r"^\d{1,25}$")
 
 
+class DiscordStoreRole(BaseModel):
+    rank: str = Field(pattern=r"^[a-z]{1,20}$")  # a Store rank id (agent/store.py)
+    role_id: str = Field(pattern=r"^\d{1,25}$")
+
+
 class DiscordLevelSettings(BaseModel):
     announce: bool = True
     # 0 (Monday) to 6 (Sunday); null: no weekly leaderboard.
     leaderboard_day: int | None = Field(None, ge=0, le=6)
     # Left out: the Level roles stay as they are.
     roles: list[DiscordLevelRole] | None = Field(None, max_length=20)
+    # Left out: the Store rank roles stay as they are.
+    store_roles: list[DiscordStoreRole] | None = Field(None, max_length=10)
 
 
 class DiscordAddress(BaseModel):

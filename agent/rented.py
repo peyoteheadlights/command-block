@@ -29,7 +29,6 @@ import asyncio
 import collections
 import json
 import logging
-import os
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -39,6 +38,7 @@ from urllib.parse import urlparse
 
 from . import downloads
 from .events import Event
+from .security.records import read_secrets, write_secrets
 
 log = logging.getLogger("msc.rented")
 
@@ -241,33 +241,10 @@ class RentedServers:
         tmp.replace(self.list_path)
 
     def _keys(self) -> dict[str, str]:
-        try:
-            raw = self.key_path.read_bytes()
-            if os.name == "nt":
-                from .security.records import _dpapi
-
-                raw = _dpapi(raw, protect=False)
-            keys = json.loads(raw)
-        except FileNotFoundError:
-            return {}
-        except (OSError, ValueError):
-            log.warning("rented-keys.bin couldn't be read")
-            return {}
-        return {str(k): str(v) for k, v in keys.items()}
+        return read_secrets(self.key_path)
 
     def _write_keys(self, keys: dict[str, str]) -> None:
-        from .security.certs import _restrict_file
-
-        raw = json.dumps(keys).encode()
-        if os.name == "nt":
-            from .security.records import _dpapi
-
-            raw = _dpapi(raw, protect=True)
-        tmp = self.key_path.with_suffix(".tmp")
-        self.key_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_bytes(raw)
-        _restrict_file(tmp)
-        tmp.replace(self.key_path)
+        write_secrets(self.key_path, keys)
 
     def panel_of(self, server: RentedServer) -> Panel:
         key = self._keys().get(server.panel_id)

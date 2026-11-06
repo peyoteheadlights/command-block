@@ -39,6 +39,8 @@ You can change a server's type later (for example Vanilla to Paper) and keep you
 
 You can bring in a server you already have (from a folder or a zip, including CurseForge server packs), or let the app make a new one.
 
+Running a server for a community? In Technical mode the owner can set up a store through [Tebex](https://www.tebex.io): Command Block installs Tebex's plugin and LuckPerms, makes three cosmetic ranks and gives you the steps to paste into Tebex's site. Payments stay on Tebex; Command Block never touches money. Never on a server for kids or a Test server.
+
 Rented a server from a host? If the host uses a Pterodactyl panel (most do, like Sparked Host), you can connect it with a client API key and see it next to your own servers: status, start, stop, restart, the console and the host's backups. Your moderators, alerts and the Discord bot work for it too. Aternos doesn't allow other apps, so it only gets an "Open Aternos" link.
 
 ## How do I get it?
@@ -74,7 +76,7 @@ This app is in no way done and will be supported for a good long while. Here's e
 - Editing add-on config files inside the app.
 - Bring servers back from a backup folder on a new PC.
 - Test servers, and "New season" (keep the old world, start a fresh one with the same settings).
-- A server store through Tebex, cosmetics only by default.
+- The Store tab in the phone apps.
 - Attack protection, a changeable port, and sign-in for offline-mode servers.
 - Start a sleeping server when someone tries to join, a "new version is out" alert, a player activity graph and your own command buttons.
 - Rented servers on Nitrado, and files, mods and safe changes on rented servers.

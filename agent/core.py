@@ -354,6 +354,9 @@ class ServerContext:
             "custom_jar": self.config.server.custom_jar,
             # A Test server: the apps show a Test badge, Simple mode hides it.
             "test": self.config.server.test,
+            # Who it's for (first run's question): the Store tab is only on
+            # "community" servers (agent/store.py).
+            "played_by": self.config.server.played_by,
             "content": self.config.server_type.content,
             # Java or Bedrock, and what this type can and can't do, so the
             # pages show "not applicable" instead of a control that does

@@ -50,6 +50,7 @@ from ..servertypes import UnknownServerType
 from ..servertypes.bedrock import BedrockError
 from ..servertypes.install import InstallError
 from ..servertypes.versions import VersionError
+from ..store import StoreError
 from ..transfer import TransferError
 from ..whitelist import WhitelistError
 from ..worldimport import WorldImportError
@@ -96,6 +97,7 @@ ERROR_STATUS: dict[type[Exception], int] = {
     ConfigFileError: 400,
     FileChanged: 409,  # the file changed on the PC since it was opened
     ProtectionError: 400,
+    StoreError: 400,
 }
 DOMAIN_ERRORS: tuple[type[Exception], ...] = tuple(ERROR_STATUS)
 

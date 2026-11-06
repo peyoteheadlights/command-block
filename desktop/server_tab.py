@@ -35,6 +35,7 @@ from .players import PlayersPage
 from .quests import QuestsPage
 from .schedules import SchedulesPage
 from .settings import SettingsPage
+from .store import StorePage, store_tab
 from .ui import Page, clock, content_page, has_packs, label, push, refill
 from .words import mode, text
 
@@ -64,6 +65,7 @@ PAGES = [
     ("Schedules", "page.schedules", "schedules", False),
     ("Quests and events", "desktop.page.quests", "quests", False),
     ("Performance", "page.performance", "performance", True),
+    ("Store", "desktop.page.store", "store", True),
     ("Settings", "desktop.page.settings", "settings", False),
 ]
 PAGE_CLASSES: dict[str, type[Page]] = {
@@ -75,6 +77,7 @@ PAGE_CLASSES: dict[str, type[Page]] = {
     "Schedules": SchedulesPage,
     "Settings": SettingsPage,
     "Quests and events": QuestsPage,
+    "Store": StorePage,
 }
 
 
@@ -411,7 +414,7 @@ class ServerScreen(QWidget):
 
     def build_tabs(self) -> None:
         """The page tabs for the mode: 7 in Simple, 9 in Technical (one fewer
-        without Quests and events)."""
+        without Quests and events, one more with the owner's Store)."""
         for button in self.tabs.buttons():
             self.tabs.removeButton(button)
             button.setParent(None)
@@ -427,6 +430,8 @@ class ServerScreen(QWidget):
             and (p[0] != "Mods" or content is not None)
             # Only for people who may run quests here (the owner, Quests and events).
             and (p[0] != "Quests and events" or self.window_.may(self.row["id"], "quests.manage"))
+            # Only the owner, only on a community server (agent/store.py).
+            and (p[0] != "Store" or (self.window_.role in (None, "owner") and store_tab(self.row)))
         ]
         if self.current_page not in [self.real(p[0]) for p in shown] + ["Activity"]:
             self.current_page = "Overview"

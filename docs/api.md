@@ -364,6 +364,21 @@ one), `PUT .../{id}/discord` (`choice` off, status or control;
 is never in an answer. Moderators can be given rented servers like home
 servers (`/api/accounts`).
 
+## Store (Tebex)
+
+`agent/store.py`. Owner only (`servers.manage`), per server:
+`GET .../store` (the Store tab: `offered` and `reason` (no store on a kids,
+Test, Bedrock or non-community server), `needs_type` (not Paper, Purpur,
+Leaf or Fabric), `connected`, `installed`, `ranks`, `store` (name, link,
+currency, offline, from Tebex), `packages`, `checklist`), `POST
+.../store/connect` (`key`: checked with Tebex, then Tebex's plugin and
+LuckPerms are installed and the Store ranks made, backup first and one
+Undo) and `POST .../store/check` (reads the packages back, ticks the ones
+named like a Store rank; `remind` lists new packages the app didn't make).
+The key is never in an answer. A server row's `played_by` says who it's
+for. In `PUT /api/discord/guilds/{id}/levels`, `store_roles` (`rank`,
+`role_id`) pairs Store ranks with Discord roles.
+
 ## TPS monitoring
 
 `GET /api/tps` (state, command, how it was detected, what was tried),

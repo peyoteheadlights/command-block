@@ -102,6 +102,8 @@ ALLOWED_HOSTS = frozenset(
         "minecraft.azureedge.net",
         # Tailscale's Windows setup, for the desktop app's Tailscale step.
         "pkgs.tailscale.com",
+        # Tebex's Game Server API, read only, for the Store (agent/store.py).
+        "plugin.tebex.io",
     }
 )
 
@@ -117,7 +119,7 @@ GITHUB_PATHS = {
 # Google's sign-in and Firebase hosts and CurseForge's file servers, which
 # also serve web pages and other files: only the links list, the Bedrock
 # server zips, Tailscale's Windows setup, Hangar's API and its plugin files,
-# the relay, the two sign-in calls and CurseForge's mod files.
+# the relay, the two sign-in calls, CurseForge's mod files and Tebex's two reads.
 SHARED_HOST_PATHS = {
     "net-secondary.web.minecraft-services.net": ("/api/v1.0/download/links",),
     "www.minecraft.net": ("/bedrockdedicatedserver/",),
@@ -130,6 +132,7 @@ SHARED_HOST_PATHS = {
     "securetoken.googleapis.com": ("/v1/token",),
     "edge.forgecdn.net": ("/files/",),
     "mediafilez.forgecdn.net": ("/files/",),
+    "plugin.tebex.io": ("/information", "/packages"),
 }
 # One more repo whose release list and release files may be read, while an
 # add-on from a GitHub link is read or updated (see allow_releases).
@@ -310,7 +313,11 @@ async def _send(
             location = response.headers.get("location", "")
             await response.aclose()
             url = urljoin(url, location)
-            headers = {k: v for k, v in (headers or {}).items() if k.lower() != "authorization"}
+            headers = {
+                k: v
+                for k, v in (headers or {}).items()
+                if k.lower() not in ("authorization", "x-tebex-secret")
+            }
             method, content = "GET", None
             continue
         # 304: unchanged since the ETag asked with (fetch_if_changed).

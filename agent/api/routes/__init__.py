@@ -53,6 +53,7 @@ from . import (
     server_settings,
     servertypes,
     settings,
+    store,
     system,
     transfer,
     updates,
@@ -83,6 +84,7 @@ PER_SERVER = (
     guides,
     configfiles,
     protection,
+    store,
 )
 GLOBAL = (
     auth,

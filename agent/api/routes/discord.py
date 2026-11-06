@@ -11,6 +11,7 @@ import binascii
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ... import store
 from ...discord import layout
 from ...security import permissions as P
 from ...security.auth import AuthError, Principal
@@ -331,6 +332,24 @@ async def set_levels(
             if refused:
                 raise HTTPException(status_code=400, detail=refused)
         layout.set_level_roles(core.db, guild_id, wanted)
+    if payload.store_roles is not None:
+        ranks = {r["id"] for r in store.RANKS}
+        pairs = {r.rank: r.role_id for r in payload.store_roles}
+        if set(pairs) - ranks or len(pairs) != len(payload.store_roles):
+            raise HTTPException(status_code=400, detail="Each Store rank only once.")
+        found = {
+            r["id"]: r
+            for r in await discord_call(bot.rest.request("GET", f"/guilds/{guild_id}/roles"))
+        }
+        ours = layout.our_roles(core.db, guild_id)
+        for role_id in pairs.values():
+            if role_id not in found:
+                raise HTTPException(status_code=404, detail="There's no such Discord role.")
+            refused = layout.level_role_refused(guild_id, found[role_id], ours, "a Store rank role")
+            if refused:
+                raise HTTPException(status_code=400, detail=refused)
+        layout.set_store_roles(core.db, guild_id, pairs)
+        bot.resync_store()
     # Saved before waiting on Discord, so all of it is saved at once.
     layout.set_level_settings(
         core.db, guild_id, announce=payload.announce, leaderboard_day=payload.leaderboard_day

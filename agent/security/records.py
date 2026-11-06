@@ -107,6 +107,35 @@ def write_keys(path: Path, keys: dict[str, bytes]) -> None:
     tmp.replace(path)
 
 
+def read_secrets(path: Path) -> dict[str, str]:
+    """A small file of named secrets (a panel's key, a store's key),
+    encrypted with DPAPI on Windows. Empty when it's missing or can't be read."""
+    try:
+        raw = path.read_bytes()
+        if os.name == "nt":
+            raw = _dpapi(raw, protect=False)
+        found = json.loads(raw)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        log.warning("%s couldn't be read", path.name)
+        return {}
+    return {str(k): str(v) for k, v in found.items()}
+
+
+def write_secrets(path: Path, secrets_: dict[str, str]) -> None:
+    from .certs import _restrict_file
+
+    raw = json.dumps(secrets_).encode()
+    if os.name == "nt":
+        raw = _dpapi(raw, protect=True)
+    tmp = path.with_suffix(".tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_bytes(raw)
+    _restrict_file(tmp)
+    tmp.replace(path)
+
+
 # ------------------------------------------------------------------ the clock
 class Clock:
     def __init__(self, pc: str, newest: str | None = None) -> None:

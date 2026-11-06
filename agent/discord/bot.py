@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from .. import levels
+from .. import levels, store
 from ..config import PROJECT_ROOT
 from ..events import OWNER_ONLY_EVENTS, Event
 from ..game_events import ANSWERS
@@ -69,6 +69,9 @@ LIVE_EVERY = 60.0  # seconds between status message and presence checks
 START_COOLDOWN = 300.0  # seconds between starts of one server from Discord
 BATCH = 1.0  # seconds game lines are gathered before they're posted
 REFUSED = "\N{NO ENTRY SIGN}"  # the reaction on a message that didn't go into the game
+STORE_SEEN_KEY = "discord_store_seen"  # guild id -> member id -> Store rank roles given
+STORE_EVERY = 3600.0  # Store rank roles are checked hourly, and soon after a player joins
+STORE_AFTER_JOIN = 120.0  # Tebex runs a purchase's commands within minutes of a join
 SEEN_KEY = "discord_levels_seen"  # member id -> the Level their roles were last set for
 BOARDS_KEY = "discord_leaderboards"  # guild id -> the day its leaderboard was last posted
 BOARD_HOUR = 18  # on the PC's clock
@@ -202,6 +205,7 @@ class Bot:
         self._posts_lock = asyncio.Lock()
         self._console_lock = asyncio.Lock()
         self._resync = False  # set when the Level roles changed: everyone's are set again
+        self._store_due = 0.0  # when the Store rank roles are checked next
         # Each server's console channels, read from the database once a
         # minute and on a change, never per console line.
         self.consoles: dict[str, list[str]] = {}
@@ -330,7 +334,7 @@ class Bot:
             # Levels and leaderboards count every PC's servers: the Bot PC's job.
             works = [self.update_live, self.update_quests, self.update_events, self.minute]
             if not self.rest_only:
-                works += [self.update_levels, self.post_leaderboards]
+                works += [self.update_levels, self.post_leaderboards, self.update_store_roles]
             for work in works:
                 try:
                     await work()
@@ -504,6 +508,83 @@ class Bot:
         if wanted and wanted not in held:
             await self.rest.request("PUT", f"{path}/{wanted}")
         return wanted
+
+    def resync_store(self) -> None:
+        """The Store rank roles changed: check them on the next minute."""
+        self._store_due = 0.0
+
+    def store_ranks_of(self, guild_id: str) -> list[dict[str, Any]]:
+        """The Store ranks, for the Level roles editor, when one of this
+        Discord server's Minecraft servers has a store; with the paired role."""
+        servers = [self.core.servers.get(sid) for sid in layout.servers_of(self.core.db, guild_id)]
+        if not any(ctx and store.key_of(ctx) for ctx in servers):
+            return []
+        pairs = layout.store_roles(self.core.db, guild_id)
+        return [
+            {"rank": r["id"], "name": r["name"], "role_id": pairs.get(r["id"])} for r in store.RANKS
+        ]
+
+    async def update_store_roles(self) -> None:
+        """Hourly, and two minutes after a player joins: each member whose
+        linked Minecraft account holds a Store rank gets the paired Discord
+        role, and loses the ones this bot gave when the rank goes (expiry,
+        refund or chargeback). Read from LuckPerms' own files, never the
+        console. Discord is only called for a change."""
+        now = time.time()
+        if now < self._store_due:
+            return
+        self._store_due = now + STORE_EVERY
+        db = self.core.db
+        seen: dict[str, dict[str, list[str]]] = db.get_setting(STORE_SEEN_KEY, {}) or {}
+
+        def plain(uuid: str) -> str:
+            return uuid.replace("-", "").lower()
+
+        for gid in list(self.guilds):
+            pairs = layout.store_roles(db, gid)
+            before = seen.get(gid) or {}
+            if not pairs and not before:
+                continue
+            held: dict[str, set[str]] = {}
+            for sid in layout.servers_of(db, gid):
+                ctx = self.core.servers.get(sid)
+                for uuid, ranks in (store.holders(ctx) if ctx else {}).items():
+                    held.setdefault(plain(uuid), set()).update(ranks)
+            try:
+                found = {r["id"]: r for r in await self.rest.request("GET", f"/guilds/{gid}/roles")}
+            except client.DiscordError:
+                self._store_due = now + LIVE_EVERY * 5  # try again soon, not in an hour
+                raise
+            ours = layout.our_roles(db, gid)
+            usable = {
+                rank: rid
+                for rank, rid in pairs.items()
+                if rid in found and not layout.level_role_refused(gid, found[rid], ours)
+            }
+            wanted: dict[str, set[str]] = {}
+            for row in db.query("SELECT discord_id, uuid FROM discord_links"):
+                roles = {usable[r] for r in held.get(plain(row["uuid"]), ()) if r in usable}
+                if roles:
+                    wanted.setdefault(row["discord_id"], set()).update(roles)
+            after: dict[str, list[str]] = {}
+            for member in set(wanted) | set(before):
+                want, had = wanted.get(member, set()), set(before.get(member) or [])
+                path = f"/guilds/{gid}/members/{member}/roles"
+                try:
+                    for rid in sorted(want - had):
+                        await self.rest.request("PUT", f"{path}/{rid}")
+                    for rid in sorted(had - want):
+                        await self.rest.request("DELETE", f"{path}/{rid}")
+                except client.DiscordError as exc:
+                    log.info("couldn't set a Store rank role: %s", exc)
+                    if exc.status != 404:  # not in this Discord server: nothing to keep
+                        after[member] = sorted(had)
+                        self._store_due = min(self._store_due, now + LIVE_EVERY * 5)
+                    continue
+                if want:
+                    after[member] = sorted(want)
+            seen[gid] = after
+        db.set_setting(STORE_SEEN_KEY, seen)
 
     async def post_leaderboards(self, now: datetime.datetime | None = None) -> None:
         """Each Discord server's weekly leaderboard, on its day from 18:00,
@@ -895,6 +976,8 @@ class Bot:
         if event.type == "console":
             self._to_console(event)
             return
+        if event.type == "player_joined":
+            self._store_due = min(self._store_due, time.time() + STORE_AFTER_JOIN)
         line = bridge.game_line(event)
         if line is None:
             return
@@ -1194,6 +1277,7 @@ class Bot:
                 {"level": at, "role_id": rid, "name": names.get(rid)}
                 for at, rid in layout.level_roles(self.core.db, guild_id)
             ],
+            "store_ranks": self.store_ranks_of(guild_id),
         }
 
     def problem(self) -> dict[str, Any] | None:
@@ -1642,6 +1726,15 @@ async def ip(bot: Bot, call: Call) -> str:
     shared = layout.addresses(bot.core.db).get(call.ctx.server_id)
     info = await asyncio.to_thread(join_info, call.ctx)  # asks Tailscale
     return live.ip(call.ctx, shared, info)
+
+
+async def store_link(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    link = store.link_of(ctx)
+    if not link:
+        raise Refused(f"{ctx.name} has no store.")
+    return f"Support {ctx.name} here: {link}\nIn the game, type /{store.BUY_COMMAND}."
 
 
 async def start_server(ctx: ServerContext, actor: str) -> None:
@@ -2353,6 +2446,7 @@ COMMANDS: dict[str, Command] = {
             slow=True,
         ),
         Command("ip", "How to join the Minecraft server", P.SERVER_VIEW, ip, slow=True),
+        Command("store", "Where to support the Minecraft server", P.SERVER_VIEW, store_link),
         Command(
             "start",
             "Start the Minecraft server (if your Discord role may)",

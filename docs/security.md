@@ -142,6 +142,13 @@ asks for a client key, never the panel password or the Application (admin)
 API, and points out when the key belongs to the main panel account rather
 than a limited sub-user.
 
+A Tebex store's Game Server secret key (`agent/store.py`) is saved the
+same way, in `store-keys.bin`. It's sent only to Tebex's Game Server API
+(`plugin.tebex.io`, the `/information` and `/packages` reads), in the
+`X-Tebex-Secret` header, dropped on any redirect, and written into the
+Tebex plugin's own `config.yml`, where the plugin reads it. No route
+answers with it, it's never logged, and moderators can't reach the store.
+
 Two files leave the PC on purpose, and both are built to hold no secrets
 unless asked:
 

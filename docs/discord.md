@@ -93,6 +93,11 @@ moderator or a Discord role on purpose.
   stopped, with 5 minutes between starts from Discord. If the server refuses
   to start, Discord only hears that it didn't (the reason can name folders
   on the PC); the app shows why.
+- `/store` posts the server's store link (once the owner connected a Tebex
+  store). In the Level roles editor, each Store rank can have a Discord
+  role: a member whose linked Minecraft account holds the rank gets it, and
+  loses it when the rank goes (expiry, refund, chargeback). Checked every
+  hour and two minutes after a player joins, from LuckPerms' own files.
 - `/rented status`, `/rented start` and `/rented stop` are for servers rented
   from a host (a Pterodactyl panel). They're there only once the owner sets
   a rented server's "From Discord" to status, or to status, start and stop.

@@ -555,6 +555,22 @@ def levels_box(guild: dict, roles: list[dict], save: Callable[[dict], None]) -> 
 
     for row in saved.get("roles") or []:
         add_row(row["level"], row["role_id"])
+    # Store ranks (agent/store.py), when a server here has a store: one role each.
+    store_picks: list[tuple[str, QComboBox]] = []
+    ranks = saved.get("store_ranks") or []
+    if ranks:
+        grid.addWidget(label(text("desktop.store.roles"), "step"), 50, 0, 1, 3)
+        grid.addWidget(label(text("desktop.store.roles_hint"), "muted"), 51, 0, 1, 3)
+    for at, rank in enumerate(ranks, start=52):
+        pick = QComboBox()
+        pick.setAccessibleName(f"{text('desktop.store.roles')}: {rank['name']}")
+        pick.addItem(text("desktop.store.no_role"), None)
+        for role in roles:
+            pick.addItem(role["name"], role["id"])
+        pick.setCurrentIndex(max(pick.findData(rank.get("role_id")), 0))
+        grid.addWidget(label(rank["name"]), at, 0)
+        grid.addWidget(pick, at, 1, 1, 2)
+        store_picks.append((rank["rank"], pick))
     add = push(text("discord.level_add"), "plain")
     add.clicked.connect(lambda: add_row(max((n.value() for n, _ in rows), default=0) + 5, None))
     save_button = push(text("discord.level_save"), "primary")
@@ -570,6 +586,9 @@ def levels_box(guild: dict, roles: list[dict], save: Callable[[dict], None]) -> 
         # Only sent when changed: once changed, setup leaves Level roles alone.
         if wanted != sorted((r["level"], r["role_id"]) for r in saved.get("roles") or []):
             body["roles"] = [{"level": at, "role_id": rid} for at, rid in wanted]
+        pairs = {rank: p.currentData() for rank, p in store_picks if p.currentData()}
+        if pairs != {r["rank"]: r["role_id"] for r in ranks if r.get("role_id")}:
+            body["store_roles"] = [{"rank": k, "role_id": v} for k, v in pairs.items()]
         save(body)
 
     save_button.clicked.connect(send)
