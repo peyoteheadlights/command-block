@@ -183,3 +183,50 @@ async def test_the_agent_stops_its_servers_at_the_same_time(tmp_path, monkeypatc
 
 async def _done():
     return True
+
+
+# ------------------------------------------------- kept over an agent restart
+async def test_sleep_and_the_crash_loop_block_are_kept_over_an_agent_restart(tmp_path):
+    config = build_multi_config(tmp_path)
+    core = AgentCore(config)
+    try:
+        server = core.get_server("survival").server
+        server.stopped_for_sleep = True
+        server.record_crash()
+        server.auto_restart_blocked = True
+        server.auto_restart_block_reason = "5 crashes within 10 minutes"
+        server.remember()
+    finally:
+        await core.jobs.stop()
+        core.db.close()
+
+    again = AgentCore(build_multi_config(tmp_path))
+    try:
+        server = again.get_server("survival").server
+        assert server.stopped_for_sleep is True
+        assert server.auto_restart_blocked is True
+        assert server.auto_restart_block_reason == "5 crashes within 10 minutes"
+        assert server.recent_crash_count() == 1
+        other = again.get_server("creative").server
+        assert other.stopped_for_sleep is False and other.auto_restart_blocked is False
+    finally:
+        await again.jobs.stop()
+        again.db.close()
+
+
+async def test_the_watchdogs_fix_count_is_kept_over_an_agent_restart(tmp_path):
+    core = AgentCore(build_multi_config(tmp_path))
+    try:
+        watch = core.get_server("survival").answering
+        watch.note_fix()
+        watch.note_fix()
+    finally:
+        await core.jobs.stop()
+        core.db.close()
+    again = AgentCore(build_multi_config(tmp_path))
+    try:
+        assert again.get_server("survival").answering.recent_fixes() == 2
+        assert again.get_server("creative").answering.recent_fixes() == 0
+    finally:
+        await again.jobs.stop()
+        again.db.close()

@@ -215,7 +215,10 @@ class AnswerWatch:
         self.last_ok: bool | None = None
         self._misses = 0
         self._checks = 0
-        self._fixes: deque[float] = deque(maxlen=MAX_FIXES)
+        # Kept in the database: an agent restart must not reset the cap.
+        self._fixes: deque[float] = deque(
+            (float(t) for t in ctx.db.get_setting("answering_fixes") or []), maxlen=MAX_FIXES
+        )
         self._task: asyncio.Task | None = None
 
     def status(self) -> dict[str, Any]:
@@ -327,8 +330,7 @@ class AnswerWatch:
             return "Automatic restart is off. Press Restart to fix it."
         if server.maintenance and ctx.config.maintenance.block_auto_restart:
             return "Maintenance mode is on, so it wasn't restarted by itself. Press Restart."
-        cutoff = time.time() - FIX_WINDOW
-        if len([t for t in self._fixes if t >= cutoff]) >= MAX_FIXES:
+        if self.recent_fixes() >= MAX_FIXES:
             return (
                 f"It got stuck {MAX_FIXES} times in {FIX_WINDOW // 3600} hours, so the app "
                 "stopped restarting it by itself. Press Restart after looking at the reason."
@@ -344,9 +346,17 @@ class AnswerWatch:
                 f"The app couldn't take a backup first ({exc}), so it didn't restart the "
                 "server by itself. Press Restart to restart it anyway."
             )
-        self._fixes.append(time.time())
+        self.note_fix()
         asyncio.create_task(self._restart(), name=f"answering-fix-{ctx.server_id}")
         return "The app took a backup and is restarting the server."
+
+    def recent_fixes(self) -> int:
+        cutoff = time.time() - FIX_WINDOW
+        return len([t for t in self._fixes if t >= cutoff])
+
+    def note_fix(self) -> None:
+        self._fixes.append(time.time())
+        self.ctx.db.set_setting("answering_fixes", list(self._fixes))
 
     async def _restart(self) -> None:
         try:

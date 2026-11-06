@@ -172,7 +172,7 @@ class MinecraftServer:
         self.maintenance = False
         # True when auto-sleep stopped this server because nobody was
         # playing, so the apps can say why it is off. Cleared on start.
-        self.stopped_for_sleep = False
+        self._stopped_for_sleep = False
         # Join protection (agent/joinguard.py): called as the server starts,
         # gives extra start arguments (["--port", private] behind the guard).
         # behind_guard is then the public port the guard holds, and
@@ -197,6 +197,45 @@ class MinecraftServer:
         # server.properties as the server read it, taken at "Done"
         # (gamesettings.waiting_for_restart compares the file with it).
         self.properties_at_start: dict[str, str] | None = None
+        self._load_kept()
+
+    # -- kept in the database, so an agent restart doesn't forget them -----
+    def _load_kept(self) -> None:
+        kept = (self.db.get_setting("lifecycle") if self.db is not None else None) or {}
+        self._stopped_for_sleep = bool(kept.get("stopped_for_sleep"))
+        self._crash_times.extend(float(t) for t in kept.get("crash_times") or [])
+        self.auto_restart_block_reason = kept.get("blocked_reason")
+        self.auto_restart_blocked = self.auto_restart_block_reason is not None
+
+    def remember(self) -> None:
+        if self.db is None:
+            return
+        self.db.set_setting(
+            "lifecycle",
+            {
+                "stopped_for_sleep": self._stopped_for_sleep,
+                "crash_times": list(self._crash_times),
+                "blocked_reason": (
+                    (self.auto_restart_block_reason or "blocked")
+                    if self.auto_restart_blocked
+                    else None
+                ),
+            },
+        )
+
+    @property
+    def stopped_for_sleep(self) -> bool:
+        return self._stopped_for_sleep
+
+    @stopped_for_sleep.setter
+    def stopped_for_sleep(self, value: bool) -> None:
+        if value != self._stopped_for_sleep:
+            self._stopped_for_sleep = value
+            self.remember()
+
+    def record_crash(self) -> None:
+        self._crash_times.append(time.time())
+        self.remember()
 
     # ------------------------------------------------------------------
     # info
@@ -1126,7 +1165,7 @@ class MinecraftServer:
 
         # ---------------- crash path ----------------
         self.started_at = None
-        self._crash_times.append(time.time())
+        self.record_crash()
         await self._set_state(
             ServerState.CRASHED,
             "Server crashed" if reason == ExitReason.CRASH else "Server failed to start",
@@ -1179,6 +1218,7 @@ class MinecraftServer:
         if recent >= max_crashes:
             self.auto_restart_blocked = True
             self.auto_restart_block_reason = f"{recent} crashes within {window_min:.0f} minutes"
+            self.remember()
             await self.bus.publish(
                 Event(
                     type="crash_loop",
@@ -1313,6 +1353,7 @@ class MinecraftServer:
         self._crash_times.clear()
         self.auto_restart_blocked = False
         self.auto_restart_block_reason = None
+        self.remember()
 
     # ------------------------------------------------------------------
     # console commands
