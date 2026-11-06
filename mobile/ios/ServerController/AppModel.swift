@@ -339,11 +339,14 @@ final class AppModel {
     /// Sign out here and on the PC.
     func signOut() async {
         stopLive()
+        var heard = true
         if let client = client, signedIn {
-            await client.logout()
+            heard = await client.logout()
         }
         TokenStore.delete()
         clearSignedIn()
+        // The PC still has this phone signed in: say where to end it.
+        if !heard { signInNotice = t("mobile.settings.sign_out_not_heard") }
     }
 
     /// Forget this PC: sign out, then forget the address, the pinned

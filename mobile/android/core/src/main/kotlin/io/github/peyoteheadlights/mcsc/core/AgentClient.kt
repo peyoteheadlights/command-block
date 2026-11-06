@@ -134,8 +134,14 @@ class AgentClient(
         return call(post("/api/auth/login", body), LoginResult.serializer(), signedIn = false)
     }
 
-    suspend fun logout() {
-        runCatching { call(post("/api/auth/logout", JsonObject(emptyMap())), JsonObject.serializer()) }
+    /** False when the PC didn't hear it: its sign-in for this phone stays until it is signed out there. */
+    suspend fun logout(): Boolean = try {
+        call(post("/api/auth/logout", JsonObject(emptyMap())), JsonObject.serializer())
+        true
+    } catch (e: AgentException.SignedOut) {
+        true
+    } catch (e: AgentException) {
+        false
     }
 
     suspend fun me(): Me = get("/api/auth/me", Me.serializer())

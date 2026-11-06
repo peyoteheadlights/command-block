@@ -424,9 +424,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun leave(tellPc: Boolean) {
         val client = graph.client()
         viewModelScope.launch {
+            var heard = true
             if (tellPc) {
                 if (prefs.lockAlerts) runCatching { client?.forgetPhone() }
-                client?.logout()
+                heard = client?.logout() ?: true
             }
             stopLive()
             graph.forgetSignIn()
@@ -437,7 +438,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             wake = WakeUi()
             alerts = AlertState()
             forgetAccountPages()
-            stage = Stage.SignIn()
+            // The PC still has this phone signed in: say where to end it.
+            stage = Stage.SignIn(if (heard) null else Message("mobile.settings.sign_out_not_heard"))
         }
     }
 

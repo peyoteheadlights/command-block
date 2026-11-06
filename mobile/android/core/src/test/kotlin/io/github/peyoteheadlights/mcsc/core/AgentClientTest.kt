@@ -36,6 +36,22 @@ class AgentClientTest {
     }
 
     @Test
+    fun `sign-out says whether the PC heard it`() = runBlocking {
+        TestAgent().use { agent ->
+            agent.server.enqueue(agent.json("""{"ok": true}"""))
+            assertTrue(client(agent).logout())
+            // Already signed out on the PC: nothing left there.
+            agent.server.enqueue(agent.json("""{"detail": "Not signed in"}""", code = 401))
+            assertTrue(client(agent).logout())
+            agent.server.enqueue(agent.json("""{"detail": "Oops"}""", code = 500))
+            assertFalse(client(agent).logout())
+        }
+        val port = TestAgent().use { it.port }
+        val off = AgentClient(Pairing("localhost", port, null), { token }, systemTrust = TestAgent.trustingNothing())
+        assertFalse(off.logout())
+    }
+
+    @Test
     fun `signing the phone out on the PC signs the app out`() = runBlocking {
         TestAgent().use { agent ->
             agent.server.enqueue(agent.json("""{"detail": "Not signed in"}""", code = 401))

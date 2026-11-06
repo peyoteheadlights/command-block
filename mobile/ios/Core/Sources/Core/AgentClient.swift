@@ -149,8 +149,17 @@ public final class AgentClient: @unchecked Sendable {
         return try await call("POST", "/api/auth/login", body: try AgentClient.encode(body), signedIn: false, as: LoginResult.self)
     }
 
-    public func logout() async {
-        _ = try? await call("POST", "/api/auth/logout", body: Data("{}".utf8), as: Empty.self)
+    /// False when the PC didn't hear it: its sign-in for this phone stays until it is signed out there.
+    @discardableResult
+    public func logout() async -> Bool {
+        do {
+            _ = try await call("POST", "/api/auth/logout", body: Data("{}".utf8), as: Empty.self)
+            return true
+        } catch AgentError.signedOut {
+            return true
+        } catch {
+            return false
+        }
     }
 
     public func me() async throws -> Me {

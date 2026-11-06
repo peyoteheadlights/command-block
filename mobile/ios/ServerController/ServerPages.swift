@@ -351,8 +351,10 @@ final class ServerPages {
     }
 
     func playerAction(_ action: String, name: String, reason: String?, _ strings: Strings) async {
-        guard let client = client() else { return }
-        playerBusy = "\(action):\(name)"
+        // One press at a time, so the same kick or ban can't go twice.
+        guard let client = client(), playerBusy == nil else { return }
+        let mine = "\(action):\(name)"
+        playerBusy = mine
         playerProblem = nil
         let confirm = PlayerActions.CONFIRM.contains(action)
         do {
@@ -372,7 +374,8 @@ final class ServerPages {
             noted(problem)
             playerProblem = problem.message(strings)
         } catch {}
-        playerBusy = nil
+        // Another action may have started while this one was followed.
+        if playerBusy == mine { playerBusy = nil }
         await loadPlayers()
     }
 

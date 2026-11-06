@@ -66,11 +66,13 @@ final class ModeratorPages {
         }
     }
 
-    func save(_ name: String, _ body: [String: JSONValue]) async {
+    @discardableResult
+    func save(_ name: String, _ body: [String: JSONValue]) async -> Bool {
         let saved = await run("save") { client in
             _ = try await client.saveModerator(username: name, body: body)
         }
         if saved { said = Said(text: strings.t("mobile.mod.saved"), good: true) }
+        return saved
     }
 
     /// A new invite; with `forgetPassword` the owner's Reset password.
@@ -612,10 +614,10 @@ struct ModeratorServerView: View {
         }
     }
 
-    /// Saved: the screen shows what the agent now has.
+    /// Saved: the screen shows what the agent now has. Not saved: the ticks
+    /// stay, so they can be saved again (as on Android).
     private func save(_ pages: ModeratorPages, _ body: [String: JSONValue]) async {
-        await pages.save(name, body)
-        perms = nil
+        if await pages.save(name, body) { perms = nil }
     }
 }
 

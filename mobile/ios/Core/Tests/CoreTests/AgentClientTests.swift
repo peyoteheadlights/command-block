@@ -63,6 +63,19 @@ final class AgentClientTests: XCTestCase {
         XCTAssertEqual(row.state, "UNKNOWN")
     }
 
+    func testSignOutSaysWhetherThePCHeardIt() async {
+        StubAgent.json("{\"ok\": true}")
+        let heard = await client().logout()
+        XCTAssertTrue(heard)
+        // Already signed out on the PC: nothing left there.
+        StubAgent.json("{\"detail\": \"Not signed in\"}", status: 401)
+        let gone = await client().logout()
+        XCTAssertTrue(gone)
+        StubAgent.enqueue(StubAgent.Answer(status: 0, headers: [:], body: Data(), failure: URLError(.cannotConnectToHost)))
+        let off = await client().logout()
+        XCTAssertFalse(off)
+    }
+
     func testSigningThePhoneOutOnThePCSignsTheAppOut() async {
         StubAgent.json("{\"detail\": \"Not signed in\"}", status: 401)
         var signedOut = false

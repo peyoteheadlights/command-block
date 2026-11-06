@@ -1966,6 +1966,7 @@
 "mobile.settings.sign_out": ["Sign out", "Sign out"],
 "mobile.settings.sign_out_title": ["Sign out of this phone?", "Sign out?"],
 "mobile.settings.sign_out_body": ["You'll need your password to sign in again.", "The session is revoked on the agent."],
+"mobile.settings.sign_out_not_heard": ["Signed out on this phone, but your PC didn't get the message. In Command Block on your PC, open the gear, then Signed-in devices, and sign this phone out.", "Logout request failed; the session is still valid. Revoke it under Signed-in devices."],
 "mobile.settings.forget_pc": ["Forget this PC", "Unpair"],
 "mobile.settings.forget_pc_title": ["Forget this PC?", "Unpair this agent?"],
 "mobile.settings.forget_pc_body": ["The app signs out and forgets the address. Scan the code again to come back.", "Signs out and clears the pairing and pinned certificate."],
