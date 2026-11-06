@@ -275,7 +275,7 @@ class BackupsPage(Page):
         self.timeline = {}  # it may be another server's
         self.back_up.setVisible(self.may("backups.create"))
         # Another server's backup or download may have left these greyed out.
-        self.back_up.setEnabled(True)
+        self.back_up.setEnabled(not self.busy("backup"))
         self.take_home.setEnabled(True)
         self.save_world.setText(text("backups.save_world"))
         self.save_world.setVisible(technical and self.may("server.control"))
@@ -376,7 +376,9 @@ class BackupsPage(Page):
             if point.get("checked"):
                 restore = push(text("world.title"))
                 restore.setAccessibleName(f"{text('world.title')}: {made}")
-                restore.setEnabled(bool(self.timeline.get("can_restore")))
+                restore.setEnabled(
+                    bool(self.timeline.get("can_restore")) and not self.busy("restore")
+                )
                 restore.clicked.connect(lambda: self.restore_world(point))
                 h.addWidget(restore)
             else:
@@ -409,7 +411,10 @@ class BackupsPage(Page):
         if self.may("backups.delete"):
             actions.append(("backups.delete", lambda: self.delete(b)))
         for key, do in actions:
-            menu.addAction(text(key)).triggered.connect(lambda _=False, d=do: d())
+            action = menu.addAction(text(key))
+            action.triggered.connect(lambda _=False, d=do: d())
+            # greyed while a restore runs: one at a time
+            action.setEnabled(key != "desktop.backups.restore_all" or not self.busy("restore"))
         more.setMenu(menu)
         h.addWidget(more)
         return row
@@ -476,8 +481,9 @@ class BackupsPage(Page):
             done,
             self.said,
             body={},
-            always=lambda: self.back_up.setEnabled(True),
+            always=lambda: self.back_up.setEnabled(not self.busy("backup")),
             slow=True,
+            busy="backup",
         )
 
     def verify(self, b: dict) -> None:
@@ -614,7 +620,9 @@ class BackupsPage(Page):
             lambda r: self.restored(text("desktop.backups.world_done"), r),
             self.said,
             body={"backup_id": point["backup_id"], "confirm": True},
+            always=self.load_list,  # its buttons come back
             slow=True,
+            busy="restore",
         )
 
     def restore_all(self, b: dict) -> None:
@@ -642,7 +650,9 @@ class BackupsPage(Page):
                 ),
                 self.said,
                 body={"confirm": True, "start_after": again},
+                always=self.load_list,  # its buttons come back
                 slow=True,
+                busy="restore",
             )
 
         self.ask(

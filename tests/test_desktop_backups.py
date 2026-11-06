@@ -415,3 +415,29 @@ def test_a_download_cut_half_way_never_takes_the_files_name(tmp_path):
     )
     whole.download_to("/servers/survival/backups/1/download", str(kept))
     assert kept.read_bytes() == b"whole" and list(tmp_path.iterdir()) == [kept]
+
+
+def test_a_running_backup_stays_greyed_when_the_page_comes_back(qapp, agent_http, monkeypatch):
+    import threading
+
+    window, page = backups_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.back_up.isEnabled())
+    release, sent = threading.Event(), []
+    real_on = AgentClient.on
+
+    def slow_on(self, sid, method, path, body=None, slow=False):
+        if method == "POST" and path == "/backups":
+            sent.append(path)
+            release.wait(30)
+        return real_on(self, sid, method, path, body, slow)
+
+    monkeypatch.setattr(AgentClient, "on", slow_on)
+    page.make_backup()
+    wait_for(qapp, lambda: sent)
+    open_page(qapp, window, "Players and chat")
+    page = open_page(qapp, window, "Backups")  # load() runs again
+    assert not page.back_up.isEnabled()
+    page.make_backup()  # a second press, however it got there, sends nothing
+    release.set()
+    wait_for(qapp, lambda: page.back_up.isEnabled(), 30)
+    assert sent == ["/backups"]

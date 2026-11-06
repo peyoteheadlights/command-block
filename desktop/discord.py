@@ -52,6 +52,7 @@ class Discord(Moderators):
         )
         self.data: dict = {}  # the moderators' catalogue and the servers (GET /accounts)
         self.state: dict = {}
+        self.setting_up: set[str] = set()  # Discord servers being set up now
         self.role_names: dict[str, str] = {}
 
     def allowed(self) -> bool:
@@ -323,19 +324,37 @@ class Discord(Moderators):
             ticks[s["id"]] = tick
             layout.addWidget(tick)
         setup = push(text("discord.set_up"), "primary" if not tied else "")
-        setup.clicked.connect(
-            lambda: self.call(
+        # Greyed until the answer, even if the page is built again meanwhile:
+        # a second press would make the channels twice in someone's Discord.
+        setup.setEnabled(gid not in self.setting_up)
+
+        def set_up() -> None:
+            self.setting_up.add(gid)
+            setup.setEnabled(False)
+
+            def made(found: dict) -> None:
+                self.setting_up.discard(gid)
+                self.done(
+                    text("discord.set_up_done", made=", ".join(found["made"]))
+                    if found["made"]
+                    else text("discord.set_up_nothing")
+                )(found["status"])
+
+            def failed(exc: Exception) -> None:
+                self.setting_up.discard(gid)
+                self.show_state((self.state, self.data))  # the button back, wherever it is now
+                self.problem(exc)
+
+            self.call(
                 "POST",
                 f"/discord/guilds/{gid}/setup",
-                lambda made: self.done(
-                    text("discord.set_up_done", made=", ".join(made["made"]))
-                    if made["made"]
-                    else text("discord.set_up_nothing")
-                )(made["status"]),
+                made,
+                failed,
                 body={"servers": [sid for sid, t in ticks.items() if t.isChecked()]},
                 slow=True,
             )
-        )
+
+        setup.clicked.connect(set_up)
         layout.addLayout(buttons(setup))
         layout.addWidget(label(text("discord.set_up_hint"), "muted"))
         if tied and report.get("channels") is not None:

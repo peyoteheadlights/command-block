@@ -264,6 +264,9 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
             )
 
         def change() -> None:
+            if page.busy("change"):
+                said.setText(text("version.changing"))
+                return
             if checked.get("asked") != choice():
                 # Never checked, or checked for another version or loader.
                 said.setText(text("version.check_first"))
@@ -286,13 +289,20 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
                 page.done(" ".join(notes))
 
             said.setText(text("version.changing"))
+            change_button.setEnabled(False)
+
+            def failed(exc: Exception) -> None:
+                said.setText(str(exc))
+                change_button.setEnabled(True)
+
             page.ask(
                 "POST",
                 "/version",
                 done,
-                lambda e: said.setText(str(e)),
+                failed,
                 body={**checked["asked"], "confirm": True},
                 slow=True,
+                busy="change",
             )
 
         versions.currentIndexChanged.connect(fill_loaders)
@@ -444,6 +454,9 @@ def fill_type_card(page: SettingsPage, layout: QVBoxLayout, current: dict, found
             )
 
         def change() -> None:
+            if page.busy("change"):
+                said.setText(text("version.changing"))
+                return
             if checked.get("asked") != body():
                 # Never checked, or checked for another type.
                 said.setText(text("version.check_first"))
@@ -460,13 +473,20 @@ def fill_type_card(page: SettingsPage, layout: QVBoxLayout, current: dict, found
             if not window.confirm(text("desktop.typechange.confirm_title", type=name), words, yes):
                 return
             said.setText(text("version.changing"))
+            go.setEnabled(False)
+
+            def failed(exc: Exception) -> None:
+                said.setText(str(exc))
+                go.setEnabled(True)
+
             page.ask(
                 "POST",
                 "/type-change",
                 lambda _r: page.done(text("desktop.typechange.done", type=name)),
-                lambda e: said.setText(str(e)),
+                failed,
                 body={**checked["asked"], "stop_first": True, "confirm": True},
                 slow=True,
+                busy="change",
             )
 
         def forget(_index: int) -> None:

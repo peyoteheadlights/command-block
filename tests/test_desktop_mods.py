@@ -298,6 +298,36 @@ def test_update_all_shows_a_ticked_list_and_is_one_change_with_one_undo(qapp, ag
     wait_for(qapp, lambda: window.server_screen.header.undo.isVisible())
 
 
+def test_update_all_stays_greyed_while_it_runs_even_when_the_list_refreshes(
+    qapp, agent_http, monkeypatch
+):
+    import threading
+
+    from desktop.agent import AgentClient
+
+    with_mods(agent_http)
+    window, page = mods_page(qapp, agent_http)
+    seen = ticks(window)
+    release, sent = threading.Event(), []
+    real_on = AgentClient.on
+
+    def slow_on(self, sid, method, path, body=None, slow=False):
+        if method == "POST" and path == "/mods/update-all":
+            sent.append(path)
+            release.wait(30)
+        return real_on(self, sid, method, path, body, slow)
+
+    monkeypatch.setattr(AgentClient, "on", slow_on)
+    wait_for(qapp, lambda: button(page, "Update all").isEnabled())
+    button(page, "Update all").click()
+    wait_for(qapp, lambda: sent and seen)
+    page.update_all_ready()  # what every refresh of the list does
+    assert not page.update_all.isEnabled()
+    release.set()
+    wait_for(qapp, lambda: "Updated 1." in page.note.text(), 60)
+    wait_for(qapp, lambda: page.update_all.isEnabled())
+
+
 def test_a_failed_update_all_names_the_mod_and_changes_nothing(qapp, agent_http):
     folder = with_mods(agent_http, BrokenModrinth(PROJECTS, broken={"beta"}))
     window, page = mods_page(qapp, agent_http)

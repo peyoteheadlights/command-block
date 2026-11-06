@@ -232,6 +232,13 @@ class Page(QScrollArea):
         self.note = Note()
         self.column.addWidget(self.note)
         self.setWidget(body)
+        # Slow work running, as (server, kind): kept here, not in a button,
+        # so a page built again (or another server's) never offers it twice.
+        self.working: set[tuple[str, str]] = set()
+
+    def busy(self, kind: str) -> bool:
+        """Slow work of ``kind`` is running for the open server."""
+        return (self.row.get("id", ""), kind) in self.working
 
     def say(self, words: str, undo: Callable[[], None] | None = None) -> None:
         self.note.say(words, undo)
@@ -254,13 +261,15 @@ class Page(QScrollArea):
         body: dict | None = None,
         always: Callable[[], None] | None = None,
         slow: bool = False,
+        busy: str = "",
     ) -> None:
         """Call one of this server's routes off the window's thread. An
         answer that comes back after another server was opened is dropped.
         What went wrong shows under the server's name, unless ``failed``.
         ``slow`` for work the agent answers only once done (AgentClient.call);
         if that work ends after another server was opened, a Windows alert
-        says how it went, as nothing on this page would."""
+        says how it went, as nothing on this page would. ``busy``: the kind
+        of work (see busy()); a second one while it runs is not sent."""
         sid, window = self.row["id"], self.window_
         name, agent = self.row.get("name") or sid, window.agent
         tell = slow and method != "GET"
@@ -274,9 +283,20 @@ class Page(QScrollArea):
 
             return got
 
+        key = (sid, busy)
+        if busy:
+            if key in self.working:
+                return
+            self.working.add(key)
+
+        def ended() -> None:
+            self.working.discard(key)
+            if always:
+                always()
+
         window.run(
             lambda: agent.on(sid, method, path, body, slow),
             answer(done, lambda _r: text("desktop.finished_elsewhere")),
             answer(failed or window.page_problem, str),
-            always,
+            ended,
         )

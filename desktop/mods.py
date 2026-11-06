@@ -1517,7 +1517,9 @@ class ModsPage(SharePage):
 
     # ------------------------------------------------------------ Update all
     def update_all_ready(self) -> None:
-        self.update_all.setEnabled(self.can_change and bool(self.data.get("mods")))
+        self.update_all.setEnabled(
+            self.can_change and bool(self.data.get("mods")) and not self.busy("update_all")
+        )
 
     def plan_update_all(self) -> None:
         """Greyed out from the press until it's over: asked, cancelled or done."""
@@ -1528,7 +1530,9 @@ class ModsPage(SharePage):
             self.said(exc)
             self.update_all_ready()
 
-        self.ask("GET", "/mods/update-all", self.confirm_update_all, failed, slow=True)
+        self.ask(
+            "GET", "/mods/update-all", self.confirm_update_all, failed, slow=True, busy="update_all"
+        )
 
     def confirm_update_all(self, plan: dict) -> None:
         updates = plan.get("updates") or []
@@ -1602,6 +1606,7 @@ class ModsPage(SharePage):
             body={"mods": wanted},
             always=self.after_change,
             slow=True,
+            busy="update_all",
         )
 
     # ------------------------------------------------------------ Modrinth
