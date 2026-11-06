@@ -643,7 +643,7 @@ class MainWindow(FramelessWindow):
         self.alerts: list[dict] = []  # newest first, as the bell lists them
         self.last_alert = 0  # the newest alert id seen, to catch up after a reconnect
         self.caught_up = False  # the alerts from before signing in are loaded
-        self.unread = 0
+        self.read_up_to = 0  # how far this account has read the alerts, on any device
         self.popped: dict[str, dict] = {}  # the alert behind each Windows alert, by id
         self.allowed: dict[str, list[str]] = {}  # server id -> what this account may do
         self.role: str | None = None  # owner or helper, once known
@@ -955,9 +955,8 @@ class MainWindow(FramelessWindow):
 
     def show_screen(self, name: str) -> None:
         if name == "Notifications":
-            self.unread = 0
-            self.show_unread()
             self.mark_alerts_read()
+            self.show_unread()
         # These four fill the window: no tabs, no tools, and their own small
         # sheet. The window's own buttons stay when it has no Windows frame.
         whole = name in ("Sign-in", "Agent not running", "Update needed", "Tailscale")
@@ -1332,17 +1331,21 @@ class MainWindow(FramelessWindow):
         self.quit_app()
 
     def caught_up_with(self, found: dict) -> None:
+        # Unread is what this account hasn't read on any device: read on a
+        # phone lowers the count here at the next catch up.
+        self.read_up_to = max(self.read_up_to, int(found.get("read_up_to") or 0))
         self.alerts_loaded(found["alerts"], pop=self.caught_up)
-        if not self.caught_up:
-            # Unread is what this account hasn't read on any device.
-            read = int(found.get("read_up_to") or 0)
-            self.unread = sum(1 for a in self.alerts if a["id"] > read)
-            self.show_unread()
+        self.show_unread()
         self.caught_up = True
+
+    def seeing_notifications(self) -> bool:
+        """The Notifications screen is in front of someone, not hidden away."""
+        return self.screen_name == "Notifications" and self.isVisible() and not self.isMinimized()
 
     def mark_alerts_read(self) -> None:
         if self.last_alert:
             up_to = self.last_alert
+            self.read_up_to = max(self.read_up_to, up_to)
             self.run(lambda: self.agent.mark_alerts_read(up_to), lambda _r: None, lambda _e: None)
 
     def feed_changed(self) -> None:
@@ -1365,11 +1368,9 @@ class MainWindow(FramelessWindow):
         self.notifications.fill(self.alerts, names)
         if not pop:
             return
-        if self.screen_name != "Notifications":
-            self.unread += len(new)
-            self.show_unread()
-        else:
+        if self.seeing_notifications():
             self.mark_alerts_read()  # seen as they arrive
+        self.show_unread()
         shown = self.pc.setting("show_alerts") not in (False, "false")
         showing = [
             alert
@@ -1402,6 +1403,10 @@ class MainWindow(FramelessWindow):
                 ]
             self.popped = {str(alert["id"]): alert, **dict(list(self.popped.items())[:49])}
             self.pc.show_alert(alert["title"], alert["body"], str(alert["id"]), tuple(buttons))
+
+    @property
+    def unread(self) -> int:
+        return sum(1 for alert in self.alerts if alert["id"] > self.read_up_to)
 
     def show_unread(self) -> None:
         bell = self.tools["bell"]
@@ -1821,7 +1826,7 @@ class MainWindow(FramelessWindow):
     def signed_out(self, problem: str = "") -> None:
         """Back to the sign-in screen, forgetting any saved sign-in."""
         self.feed.stop()
-        self.alerts, self.last_alert, self.unread, self.popped = [], 0, 0, {}
+        self.alerts, self.last_alert, self.read_up_to, self.popped = [], 0, 0, {}
         self.caught_up = False
         self.allowed, self.role, self.user = {}, None, None
         self.account_permissions = []

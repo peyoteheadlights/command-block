@@ -62,11 +62,6 @@ class Prefs(context: Context) {
         get() = p.getString("agent_version", null)
         set(value) = p.edit { putString("agent_version", value) }
 
-    /** The newest alert already shown on the lock screen. */
-    var notifiedUpTo: Long
-        get() = p.getLong("notified_up_to", 0)
-        set(value) = p.edit { putLong("notified_up_to", value) }
-
     /** What waking the PC needs, kept while it answered (core/Wake.kt), as JSON. */
     var wake: String?
         get() = p.getString("wake", null)

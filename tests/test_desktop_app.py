@@ -691,8 +691,19 @@ def test_the_bell_counts_what_the_account_has_not_read(qapp, agent_http):
     core.auth.mark_alerts_read("admin", ids[0])
     window = signed_in_on(qapp, agent_http)
     wait_for(qapp, lambda: window.unread == 2)
+    # Read on a phone: the next catch up lowers the count here too.
+    core.auth.mark_alerts_read("admin", ids[1])
+    window.caught_up_with(window.agent.alerts(window.last_alert))
+    assert window.unread == 1
     window.tools["bell"].click()
     wait_for(qapp, lambda: core.auth.alerts_read("admin") == ids[-1])
+    assert window.unread == 0
+    # A hidden window on the Notifications screen hasn't shown anything.
+    window.hide()
+    window.alerts_loaded([{"id": ids[-1] + 1, "title": "Crash 3", "body": "b"}], pop=True)
+    assert window.unread == 1
+    qapp.processEvents()
+    assert core.auth.alerts_read("admin") == ids[-1]
 
 
 def test_a_hint_shows_on_hover_on_tab_and_space_and_to_narrator(qapp, agent_http):

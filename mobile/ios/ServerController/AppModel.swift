@@ -496,7 +496,8 @@ final class AppModel {
         }
         do {
             let caughtUp = try await sync.catchUp(alertState)
-            let next = account.map(caughtUp.onlyFor) ?? caughtUp
+            // A Mark all read tapped while this read waited is kept.
+            let next = (account.map(caughtUp.onlyFor) ?? caughtUp).keepingMarks(alertState)
             alertState = next
             store.alertState = next
         } catch let problem as AgentError {
@@ -562,6 +563,7 @@ final class AppModel {
             case "start": return t("mobile.server.done_start")
             case "stop": return t("mobile.server.done_stop")
             case "restart-when-empty", "cancel-restart-when-empty": return t("mobile.server.done_\(action.replacingOccurrences(of: "-", with: "_"))")
+            case "force_stop": return t("mobile.server.done_force_stop")
             default: return t("mobile.server.done_restart")
             }
         } catch let problem as AgentError {

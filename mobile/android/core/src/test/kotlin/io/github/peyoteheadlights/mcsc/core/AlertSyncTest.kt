@@ -47,6 +47,47 @@ class AlertSyncTest {
     }
 
     @Test
+    fun `lock-screen alerts start again with the list`() = runBlocking {
+        val agent = Agent(last = 500)
+        val sync = AlertSync(agent::answer)
+        var state = sync.catchUp(AlertState())
+        assertEquals(emptyList<AppAlert>(), state.toNotify)
+        agent.last = 502
+        state = sync.catchUp(state)
+        assertEquals(listOf(501L, 502L), state.toNotify.map { it.id })
+        state = state.notified()
+        assertEquals(emptyList<AppAlert>(), state.toNotify)
+        // The agent's list started again (or another PC was paired, which
+        // starts from a fresh AlertState): its low numbers still notify.
+        agent.last = 3
+        state = sync.catchUp(state)
+        agent.last = 5
+        state = sync.catchUp(state)
+        assertEquals(listOf(4L, 5L), state.toNotify.map { it.id })
+        // Lock-screen alerts just turned on: nothing already in the list.
+        assertEquals(emptyList<AppAlert>(), state.nothingOlderToNotify().toNotify)
+    }
+
+    @Test
+    fun `mark all read while the list is being caught up is kept`() = runBlocking {
+        val agent = Agent(last = 10)
+        val sync = AlertSync(agent::answer)
+        var state = sync.catchUp(AlertState())
+        agent.last = 12
+        state = sync.catchUp(state)
+        val started = state
+        val readMeanwhile = state.markAllRead() // tapped while the next read waits
+        agent.last = 13
+        val caughtUp = sync.catchUp(started).keepingMarks(readMeanwhile)
+        assertEquals(12L, caughtUp.readUpTo)
+        assertEquals(1, caughtUp.unread)
+        // A list that started again keeps its own fresh marks.
+        agent.last = 2
+        val restarted = sync.catchUp(caughtUp).keepingMarks(caughtUp.markAllRead())
+        assertEquals(2L, restarted.readUpTo)
+    }
+
+    @Test
     fun `the phone keeps the newest 200`() = runBlocking {
         val agent = Agent(last = 0)
         val sync = AlertSync(agent::answer)

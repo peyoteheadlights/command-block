@@ -670,9 +670,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val caughtUp = AlertSync { after, limit -> client.alerts(after, limit) }.catchUp(graph.alerts.read())
-                val next = account?.let(caughtUp::onlyFor) ?: caughtUp
-                graph.alerts.write(next)
-                alerts = next
+                // Marks set while this read waited (Mark all read) are kept.
+                alerts = graph.alerts.update { current -> (account?.let(caughtUp::onlyFor) ?: caughtUp).keepingMarks(current) }
             } catch (e: AgentException) {
                 prefs.lastProblem = e.key
             }
@@ -871,7 +870,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         return@launch
                     }
                     client.registerPhone(token, "android", graph.deviceLabel())
-                    prefs.notifiedUpTo = maxOf(prefs.notifiedUpTo, alerts.cursor ?: 0)
+                    alerts = graph.alerts.update { it.nothingOlderToNotify() }
                 } else {
                     client.forgetPhone()
                     Push.stop(getApplication())

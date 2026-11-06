@@ -31,6 +31,16 @@ public struct AlertState: Codable, Equatable, Sendable {
         return copy
     }
 
+    /// This list, caught up while `current` changed on the phone (Mark all
+    /// read tapped meanwhile): the newer read mark is kept, unless the list
+    /// started again, when its own fresh mark is right.
+    public func keepingMarks(_ current: AlertState) -> AlertState {
+        if (cursor ?? 0) < (current.cursor ?? 0) { return self }
+        var copy = self
+        copy.readUpTo = Swift.max(readUpTo, current.readUpTo)
+        return copy
+    }
+
     public func markAllRead() -> AlertState {
         var copy = self
         let newest = alerts.map { $0.id }.max() ?? 0
