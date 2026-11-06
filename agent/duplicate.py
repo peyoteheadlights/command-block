@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .backups.manager import single_files
+from .backups.hold import resume_saving
 from .config import PROJECT_ROOT
 from .events import Event
 from .jobs import Job
@@ -313,10 +314,7 @@ async def start_duplicate(
                 if held:
                     ctx.server.held_by = None
                 if paused:
-                    try:
-                        await ctx.server.send_command("save-on", internal=True)
-                    except Exception:  # pragma: no cover - logged, never hidden
-                        log.warning("could not turn saving back on", exc_info=True)
+                    await resume_saving(ctx.server, "save-on", "copying the server")
             return {"files": copied, "size_bytes": size}
 
         async def check(result: dict[str, Any]) -> tuple[bool, str]:

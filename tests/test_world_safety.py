@@ -247,3 +247,66 @@ async def test_while_an_undo_runs_it_is_on_neither_stack(backups, config, monkey
     await backups.changes.undo("tester")
     assert seen == [([], [])]
     assert [c["title"] for c in backups.changes.redo_stack()] == ["Changing the marker"]
+
+
+class _DeafServer:
+    """A running server whose console refuses every command."""
+
+    def __init__(self, fails: int):
+        self.running = True
+        self.bus = EventBus()
+        self.fails = fails
+        self.sent: list[str] = []
+
+    async def send_command(self, command, internal=False):
+        self.sent.append(command)
+        if len(self.sent) <= self.fails:
+            raise RuntimeError("the console didn't take it")
+
+
+async def test_saving_left_off_is_tried_again_then_alerted(monkeypatch):
+    from agent.backups import hold
+
+    monkeypatch.setattr(hold, "RETRY_SECONDS", 0)
+    server = _DeafServer(fails=2)
+    seen = []
+    server.bus.subscribe(seen.append)
+    await hold.resume_saving(server, "save-on", "the backup")
+    assert server.sent == ["save-on", "save-on"]
+    assert [e.type for e in seen] == ["saving_off"]
+    assert "the backup" in seen[0].message
+
+
+async def test_saving_turned_back_on_by_the_retry_sends_no_alert(monkeypatch):
+    from agent.backups import hold
+
+    monkeypatch.setattr(hold, "RETRY_SECONDS", 0)
+    server = _DeafServer(fails=1)
+    seen = []
+    server.bus.subscribe(seen.append)
+    await hold.resume_saving(server, "save resume", "the backup")
+    assert server.sent == ["save resume", "save resume"]
+    assert seen == []
+
+
+async def test_a_cancelled_backup_leaves_no_half_written_archive(backups, config, monkeypatch):
+    import asyncio
+
+    real = backups._zip_sync
+
+    def zip_then_cancel(target, *args, **kwargs):
+        real(target, *args, **kwargs)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(backups, "_zip_sync", zip_then_cancel)
+    with pytest.raises(asyncio.CancelledError):
+        await backups.create(user="tester")
+    assert list(config.backup_dir.iterdir()) == []
+
+
+async def test_a_backup_cut_off_by_a_power_cut_is_cleared_by_the_next_one(backups, config):
+    left = config.backup_dir / "manual-20261106-120000.zip.part"
+    left.write_bytes(b"half a zip")
+    result = await backups.create(user="tester")
+    assert not left.exists()
+    assert [p.name for p in config.backup_dir.iterdir()] == [result["name"]]

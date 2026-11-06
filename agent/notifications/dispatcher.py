@@ -81,6 +81,7 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "backup_failed": ("backup_failed", 0xED4245, "{server}: backup failed"),
     # Same switch as a failed backup: both are about the world being safe.
     "change_interrupted": ("backup_failed", 0xED4245, "{server}: a change didn't finish"),
+    "saving_off": ("backup_failed", 0xED4245, "{server}: world saving is off"),
     "mod_installed": ("mod_installed", 0x3BA55D, "{server}: mod installed"),
     "mod_removed": ("mod_removed", 0xFAA61A, "{server}: mod removed"),
     "jar_scan_found": ("jar_scan_found", 0xED4245, "{server}: jar check found something"),
@@ -203,6 +204,7 @@ ALERT_PAGES = {
     "backup_completed": "backups",
     "backup_failed": "backups",
     "change_interrupted": "backups",
+    "saving_off": "backups",
     "backup_copy_failed": "backups",
     "mod_installed": "mods",
     "mod_removed": "mods",

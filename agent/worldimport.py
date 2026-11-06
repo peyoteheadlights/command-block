@@ -38,6 +38,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .backups.hold import resume_saving
 from .events import Event
 from .minecraft import nbt
 from .minecraft.properties import FILENAME, PropertiesFile, world_folder
@@ -659,10 +660,7 @@ async def prepare_download(ctx: ServerContext, user: str = "system") -> dict[str
             raise
         finally:
             if paused:
-                try:
-                    await server.send_command("save-on", internal=True)
-                except Exception:
-                    log.warning("could not turn saving back on", exc_info=True)
+                await resume_saving(server, "save-on", "packing the world to download")
         return {"token": token, "files": files, "size_bytes": target.stat().st_size}
 
     _, result = await ctx.core.jobs.run(

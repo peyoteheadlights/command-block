@@ -43,7 +43,7 @@ from ..security.paths import (
     safe_join,
     zip_member_is_symlink,
 )
-from . import offsite
+from . import hold, offsite
 
 if TYPE_CHECKING:
     from ..jobs import JobHandle, JobTracker
@@ -83,6 +83,13 @@ def _unique(path: Path) -> Path:
         if not candidate.exists():
             return candidate
         number += 1
+
+
+def _unlink(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:  # still open (Windows); the next backup removes it
+        log.warning("could not remove %s", path, exc_info=True)
 
 
 def _remove(paths: list[str]) -> None:
@@ -312,6 +319,11 @@ class BackupManager:
     ) -> dict[str, Any]:
         if self._running:
             raise BackupError("A backup is already running")
+        # An archive is written as name.zip.part and renamed once whole, so a
+        # half-written one never looks like a backup. One left by a power
+        # cut or a cancel is removed here.
+        for left in self.directory.glob("*.part"):
+            _unlink(left)
         if job:
             job.step("Finding the files to back up")
         sources = self._sources(includes)
@@ -347,6 +359,7 @@ class BackupManager:
         # What the backup holds, recorded by top-level name (a Bedrock
         # world copied under hold still counts as "worlds").
         included = ",".join(p.relative_to(self.config.server_dir).as_posix() for p in sources)
+        part = target.with_name(f"{target.name}.part")
         self._running = True
         started = time.time()
         await self.bus.publish(Event(type="backup_started", message=f"Backup started: {base_name}"))
@@ -369,8 +382,6 @@ class BackupManager:
                 # Bedrock: the world is copied while the server holds its
                 # saves (agent/backups/hold.py); the rest is copied as is.
                 import tempfile
-
-                from . import hold
 
                 if job:
                     job.step("Asking the server to hold its world still")
@@ -415,7 +426,7 @@ class BackupManager:
                 job.step("Writing the backup", total=len(members) + len(extra), unit="files")
             files, size = await asyncio.to_thread(
                 self._zip_sync,
-                target,
+                part,
                 members,
                 self.config.server_dir,
                 job.advance if job else None,
@@ -424,9 +435,10 @@ class BackupManager:
             )
             if job:
                 job.step("Checking the backup")
-            digest = await asyncio.to_thread(self._sha256, target)
+            digest = await asyncio.to_thread(self._sha256, part)
+            part.replace(target)
         except Exception as exc:
-            target.unlink(missing_ok=True)
+            _unlink(part)
             self.db.insert(
                 "backups",
                 {
@@ -452,15 +464,15 @@ class BackupManager:
                 )
             )
             raise BackupError(str(exc)) from exc
+        except BaseException:
+            _unlink(part)  # cancelled: no row, no file
+            raise
         finally:
             self._running = False
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)
             if saving_disabled:
-                try:
-                    await self.server.send_command("save-on", internal=True)
-                except Exception:
-                    log.warning("could not re-enable world saving", exc_info=True)
+                await hold.resume_saving(self.server, "save-on", "the backup")
 
         # "the zip command returned" is not the same as "there is a good
         # backup". Verify the archive before recording it as usable: it must
