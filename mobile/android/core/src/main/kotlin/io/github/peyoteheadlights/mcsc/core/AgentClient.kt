@@ -168,8 +168,11 @@ class AgentClient(
     /** start, stop or restart. */
     suspend fun serverAction(serverId: String, action: String): ServerAction {
         require(action in QUICK_ACTIONS) { "Not an action the app offers: $action" }
+        // Force stop is a stop the agent ends without the console.
+        val body = if (action == "force_stop") buildJsonObject { put("force", true) } else JsonObject(emptyMap())
+        val route = if (action == "force_stop") "stop" else action
         return call(
-            post("/api/servers/${path(serverId)}/server/$action", JsonObject(emptyMap())),
+            post("/api/servers/${path(serverId)}/server/$route", body),
             ServerAction.serializer(),
         )
     }
@@ -1674,7 +1677,7 @@ class AgentClient(
     }
 
     companion object {
-        val QUICK_ACTIONS = listOf("start", "stop", "restart")
+        val QUICK_ACTIONS = listOf("start", "stop", "restart", "force_stop")
 
         const val SLOW_SECONDS = 30L * 60
         const val SEARCH_PAGE = 20

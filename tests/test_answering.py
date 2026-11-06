@@ -280,8 +280,18 @@ async def test_an_offline_server_is_not_judged(core, monkeypatch):
 
 
 def test_the_apps_never_say_online_for_a_stuck_server(qapp):
-    from desktop.server_tab import state_words
+    from desktop.server_tab import main_action, state_words
 
-    stuck = {"state": "ONLINE", "answering": {"ok": False}}
-    assert state_words(stuck) == "Not answering"
-    assert state_words({"state": "ONLINE", "answering": {"ok": None}}) == "Online"
+    # The desktop shows the agent's label and buttons, and decides neither.
+    assert state_words({"state": "ONLINE", "label": "not_answering"}) == "Not answering"
+    assert state_words({"state": "ONLINE", "label": "online"}) == "Online"
+    assert state_words({"state": "ONLINE"}) == "Unknown"
+    # A countdown to an automatic restart: the agent refuses Start.
+    assert main_action({"state": "RESTART_PENDING", "label": "crashed", "can": []}) == (
+        "start",
+        False,
+    )
+    assert main_action({"label": "online", "can": ["stop", "restart"]}) == ("stop", True)
+    assert main_action({"label": "online", "can": ["force_stop"]}) == ("force_stop", True)
+    assert main_action({"label": "starting", "can": ["stop"]}) == ("stop", True)
+    assert main_action({"label": "stopping", "can": []}) == ("stop", False)

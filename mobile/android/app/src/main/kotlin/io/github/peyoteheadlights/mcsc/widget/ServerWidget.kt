@@ -70,7 +70,7 @@ private fun Body(paired: Boolean, snapshot: WidgetSnapshot?, strings: Strings, n
             Row(GlanceModifier.fillMaxWidth().padding(vertical = 3.dp)) {
                 Text(server.name, style = primary, maxLines = 1, modifier = GlanceModifier.defaultWeight())
                 Spacer(GlanceModifier.width(8.dp))
-                Text(strings.t(Display.state(server.state).key), style = secondary, maxLines = 1)
+                Text(strings.t(Display.state(server.label).key), style = secondary, maxLines = 1)
             }
             if (server.state == "ONLINE") {
                 Text(

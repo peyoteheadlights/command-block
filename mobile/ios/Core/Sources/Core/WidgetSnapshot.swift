@@ -7,20 +7,25 @@ public struct WidgetServer: Codable, Equatable, Identifiable, Sendable {
     public var state: String
     public var playersOnline: Int?
     public var maxPlayers: Int?
+    /// The agent's label, so a stuck server reads "Not answering" here too
+    /// (nil in a snapshot saved before labels: Unknown).
+    public var label: String?
 
-    public init(id: String, name: String, color: String? = nil, state: String = States.UNKNOWN, playersOnline: Int? = nil, maxPlayers: Int? = nil) {
+    public init(id: String, name: String, color: String? = nil, state: String = States.UNKNOWN, playersOnline: Int? = nil, maxPlayers: Int? = nil, label: String? = nil) {
         self.id = id
         self.name = name
         self.color = color
         self.state = state
         self.playersOnline = playersOnline
         self.maxPlayers = maxPlayers
+        self.label = label
     }
 
     /// The name and color only: what a server was doing isn't known.
     public var unknown: WidgetServer {
         var copy = self
         copy.state = States.UNKNOWN
+        copy.label = "unknown"
         copy.playersOnline = nil
         return copy
     }
@@ -63,7 +68,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
             checkedAt: now,
             reached: true,
             servers: list.servers.map {
-                WidgetServer(id: $0.id, name: $0.name, color: $0.color, state: $0.state, playersOnline: $0.playersOnline, maxPlayers: $0.maxPlayers)
+                WidgetServer(id: $0.id, name: $0.name, color: $0.color, state: $0.state, playersOnline: $0.playersOnline, maxPlayers: $0.maxPlayers, label: $0.label)
             }
         )
     }

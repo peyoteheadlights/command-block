@@ -39,13 +39,14 @@ def test_the_header_has_one_status_mark_and_icon_buttons_with_names(qapp, agent_
     assert header.diagnose.property("hoverName") == "Diagnose server"
     # Start is the screen's one filled button; Stop is not filled.
     assert header.main.property("kind") == "primary"
-    header.show_row({**header.row, "state": "ONLINE"})
+    online = {"state": "ONLINE", "label": "online", "can": ["stop", "restart"]}
+    header.show_row({**header.row, **online})
     assert (status.state, status.text()) == ("on", "Online")
     assert header.main.text() == "Stop" and header.main.property("kind") == ""
     assert header.restart.accessibleName() == "Restart"
-    header.show_row({**header.row, "state": "ONLINE", "answering": {"ok": False}})
+    header.show_row({**header.row, **online, "label": "not_answering"})
     assert status.state == "bad"
-    header.show_row({**header.row, "state": "STARTING"})
+    header.show_row({**header.row, "state": "STARTING", "label": "starting", "can": ["stop"]})
     assert status.state == "wait"
 
 

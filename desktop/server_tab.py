@@ -44,16 +44,6 @@ if TYPE_CHECKING:
     from .window import MainWindow
 
 WIDE = 1100  # narrower than this, the right panel goes under the Overview
-BUSY = {"STARTING", "STOPPING", "RESTARTING"}
-STATE_WORDS = {
-    "ONLINE": "state.online",
-    "OFFLINE": "state.offline",
-    "STARTING": "state.starting",
-    "STOPPING": "state.stopping",
-    "RESTARTING": "state.restarting",
-    "RESTART_PENDING": "state.crashed",
-    "CRASHED": "state.crashed",
-}
 # (page, words, icon, Technical only). The mods page is named after what
 # the server takes: mods, plugins or add-ons (a Bedrock server's packs, on
 # their own page), and isn't there for a type that takes none.
@@ -82,20 +72,35 @@ PAGE_CLASSES: dict[str, type[Page]] = {
 }
 
 
+def state_label(row: dict) -> str:
+    """The agent's own label for the server (agent/minecraft/state.py)."""
+    return row.get("label") or "unknown"
+
+
 def state_words(row: dict) -> str:
-    if row.get("state") == "ONLINE" and (row.get("answering") or {}).get("ok") is False:
-        return text("state.not_answering")
-    return text(STATE_WORDS.get(row.get("state", ""), "state.unknown"))
+    return text(f"state.{state_label(row)}")
+
+
+def main_action(row: dict) -> tuple[str, bool]:
+    """The big button (Start, Stop or Force stop) and whether the agent
+    takes it now, from the agent's ``can`` list."""
+    can = row.get("can") or []
+    for action in ("force_stop", "stop", "start"):
+        if action in can:
+            return action, True
+    # Nothing to press now: keep the word that fits, greyed.
+    off = state_label(row) in ("offline", "crashed", "unknown")
+    return ("start" if off else "stop"), False
 
 
 def state_mark(row: dict) -> str:
-    """Which of the status mark's four colors a server's state gets."""
-    state = row.get("state")
-    if state == "ONLINE":
-        return "bad" if (row.get("answering") or {}).get("ok") is False else "on"
-    if state in BUSY:
+    """Which of the status mark's four colors a server's label gets."""
+    label = state_label(row)
+    if label == "online":
+        return "on"
+    if label in ("starting", "stopping", "restarting"):
         return "wait"
-    return "bad" if state in ("CRASHED", "RESTART_PENDING") else "off"
+    return "bad" if label in ("not_answering", "crashed") else "off"
 
 
 def facts(row: dict, port: bool = True, players: bool = True) -> list[str]:
@@ -204,8 +209,7 @@ class Header(QFrame):
         DiagnoseWindow(self.window_, self.row["id"], self.row["name"]).show()
 
     def start_or_stop(self) -> None:
-        running = self.row.get("state") in ("ONLINE", *BUSY)
-        self.window_.server_action(self.row["id"], "stop" if running else "start")
+        self.window_.server_action(self.row["id"], main_action(self.row)[0])
 
     def show_row(self, row: dict) -> None:
         if row["id"] != self.row.get("id"):
@@ -215,17 +219,16 @@ class Header(QFrame):
             self.show_notice()
         self.row = row
         self.name.setText(row["name"])
-        state = row.get("state")
-        action = "stop" if state in ("ONLINE", *BUSY) else "start"
+        action, allowed = main_action(row)
         self.main.setText(text(f"action.{action}"))
         self.main.setAccessibleName(f"{text(f'action.{action}')} {row['name']}")
-        self.main.setEnabled(state not in BUSY)
+        self.main.setEnabled(allowed)
         # Only Start is filled: one filled button on a screen.
         self.main.setProperty("kind", "primary" if action == "start" else "")
         self.main.setStyle(self.main.style())
         control = self.window_.may(row["id"], "server.control")
         self.main.setVisible(control)
-        self.restart.setVisible(state == "ONLINE" and control)
+        self.restart.setVisible("restart" in (row.get("can") or []) and control)
         self.diagnose.setVisible(self.window_.may(row["id"], "server.diagnose"))
         self.more.setAccessibleName(text("desktop.more"))
         # Only on the server's own PC: elsewhere the path is another PC's.

@@ -60,14 +60,14 @@ object Content {
 
     /**
      * Which change buttons a mod or plugin row offers. Only someone with
-     * mods.manage sees any; they work only while the server is stopped
-     * (or crashed); a state not known is not
-     * guessed to be stopped.
+     * mods.manage sees any; they work only when the agent lists "change"
+     * (the server is stopped and nothing else is changing it); a state not
+     * known is not guessed to be stopped.
      */
-    fun changes(canManage: Boolean, serverState: String?): Changes = when {
+    fun changes(canManage: Boolean, label: String?, can: List<String>): Changes = when {
         !canManage -> Changes.NOT_ALLOWED
-        serverState == null || serverState == States.UNKNOWN -> Changes.UNKNOWN
-        serverState == States.OFFLINE || serverState == States.CRASHED -> Changes.READY
+        label == null || label == "unknown" -> Changes.UNKNOWN
+        "change" in can -> Changes.READY
         else -> Changes.STOP_FIRST
     }
 
@@ -76,7 +76,7 @@ object Content {
     fun packChanges(canManage: Boolean): Changes = if (canManage) Changes.READY else Changes.NOT_ALLOWED
 
     /** "Stop the server first" offers Stop only while Stop would work. */
-    fun canStopHere(serverState: String?, canControl: Boolean): Boolean = canControl && serverState == States.ONLINE
+    fun canStopHere(can: List<String>, canControl: Boolean): Boolean = canControl && "stop" in can
 
     fun status(mod: Mod): StateWords = if (!mod.enabled) StateWords("mods.status_off", Tone.NEUTRAL) else when (mod.status) {
         "ok" -> StateWords("mods.status_ok", Tone.SUCCESS)

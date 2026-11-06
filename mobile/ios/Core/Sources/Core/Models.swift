@@ -180,8 +180,13 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
     /// Who it's for (first run's question): "community" servers may get the Store.
     public var playedBy: String?
 
+    /// What every app shows (a state.* word), worked out by the agent.
+    public var label: String
+    /// The buttons the agent takes now: start, stop, force_stop, restart, change.
+    public var can: [String]
+
     enum CodingKeys: String, CodingKey {
-        case id, name, color, state, uptime, content, edition, capabilities, answering, position, group, test
+        case id, name, color, state, uptime, content, edition, capabilities, answering, position, group, test, label, can
         case playedBy = "played_by"
         case stateVerified = "state_verified"
         case playersOnline = "players_online"
@@ -210,7 +215,9 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         position: Int? = nil,
         group: String? = nil,
         test: Bool = false,
-        playedBy: String? = nil
+        playedBy: String? = nil,
+        label: String = "unknown",
+        can: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -231,6 +238,8 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         self.group = group
         self.test = test
         self.playedBy = playedBy
+        self.label = label
+        self.can = can
     }
 
     public init(from decoder: Decoder) throws {
@@ -254,6 +263,8 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         group = try? c.decodeIfPresent(String.self, forKey: .group)
         test = (try? c.decodeIfPresent(Bool.self, forKey: .test)) ?? false
         playedBy = try? c.decodeIfPresent(String.self, forKey: .playedBy)
+        label = try c.decodeIfPresent(String.self, forKey: .label) ?? "unknown"
+        can = try c.decodeIfPresent([String].self, forKey: .can) ?? []
     }
 }
 
@@ -327,8 +338,13 @@ public struct ServerStatus: Codable, Equatable, Sendable {
     /// The jar check or deep scan runs before a start; the start waits for it.
     public var checkingJars: Bool
 
+    /// What every app shows (a state.* word), worked out by the agent.
+    public var label: String
+    /// The buttons the agent takes now: start, stop, force_stop, restart, change.
+    public var can: [String]
+
     enum CodingKeys: String, CodingKey {
-        case name, state, uptime, players, answering
+        case name, state, uptime, players, answering, label, can
         case restartWaiting = "restart_waiting"
         case restartWhenEmpty = "restart_when_empty"
         case checkingJars = "checking_jars"
@@ -356,7 +372,9 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         answering: Answering? = nil,
         restartWaiting: [String] = [],
         restartWhenEmpty: Bool = false,
-        checkingJars: Bool = false
+        checkingJars: Bool = false,
+        label: String = "unknown",
+        can: [String] = []
     ) {
         self.restartWaiting = restartWaiting
         self.restartWhenEmpty = restartWhenEmpty
@@ -373,6 +391,8 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         self.maxPlayers = maxPlayers
         self.answering = answering
         self.checkingJars = checkingJars
+        self.label = label
+        self.can = can
     }
 
     public init(from decoder: Decoder) throws {
@@ -392,6 +412,8 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         restartWaiting = try c.decodeIfPresent([String].self, forKey: .restartWaiting) ?? []
         restartWhenEmpty = try c.decodeIfPresent(Bool.self, forKey: .restartWhenEmpty) ?? false
         checkingJars = try c.decodeIfPresent(Bool.self, forKey: .checkingJars) ?? false
+        label = try c.decodeIfPresent(String.self, forKey: .label) ?? "unknown"
+        can = try c.decodeIfPresent([String].self, forKey: .can) ?? []
     }
 }
 

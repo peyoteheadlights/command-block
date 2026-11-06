@@ -94,6 +94,19 @@ final class AgentClientTests: XCTestCase {
         XCTAssertEqual(failed as? AgentError, .failed(status: 409, reason: "Busy", requestId: "abc123"))
     }
 
+    func testForceStopIsAStopWithForceOnAndTheLabelAndButtonsAreRead() async throws {
+        StubAgent.json("{\"result\": \"VERIFIED\", \"state\": \"OFFLINE\"}")
+        StubAgent.json("{\"state\": \"ONLINE\", \"label\": \"not_answering\", \"can\": [\"stop\", \"restart\"]}")
+        let c = client()
+        _ = try await c.serverAction(serverId: "survival", action: "force_stop")
+        let sent = StubAgent.requests[0]
+        XCTAssertTrue(sent.request.url?.absoluteString.hasSuffix("/api/servers/survival/server/stop") ?? false)
+        XCTAssertEqual(String(data: sent.body, encoding: .utf8), #"{"force":true}"#)
+        let status = try await c.status(serverId: "survival")
+        XCTAssertEqual(status.label, "not_answering")
+        XCTAssertEqual(status.can, ["stop", "restart"])
+    }
+
     func testOnlyStartStopAndRestartCanBeSent() async {
         let c = client()
         let error = await expectError { try await c.serverAction(serverId: "survival", action: "command") }

@@ -76,7 +76,7 @@ public final class NoLog: AgentLog {
 /// Keychain; `onSignedOut` is called on a 401, so the app forgets the token
 /// and locks itself out at once.
 public final class AgentClient: @unchecked Sendable {
-    public static let QUICK_ACTIONS = ["start", "stop", "restart"]
+    public static let QUICK_ACTIONS = ["start", "stop", "restart", "force_stop"]
 
     /// How long a request may wait with nothing arriving: a PC that is off
     /// is noticed quickly.
@@ -180,10 +180,12 @@ public final class AgentClient: @unchecked Sendable {
         guard AgentClient.QUICK_ACTIONS.contains(action) else {
             throw NotAnAction(action: action)
         }
+        // Force stop is a stop the agent ends without the console.
+        let force = action == "force_stop"
         return try await call(
             "POST",
-            "/api/servers/\(AgentClient.pathSegment(serverId))/server/\(action)",
-            body: Data("{}".utf8),
+            "/api/servers/\(AgentClient.pathSegment(serverId))/server/\(force ? "stop" : action)",
+            body: Data((force ? #"{"force":true}"# : "{}").utf8),
             timeout: AgentClient.actionTimeout,
             as: ServerAction.self
         )

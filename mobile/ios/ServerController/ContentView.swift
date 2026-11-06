@@ -651,12 +651,12 @@ struct ContentView: View {
     @ViewBuilder
     private func mods(_ content: ContentPages, _ kind: ContentKind, _ palette: Palette, now: Double) -> some View {
         let read = content.mods
-        let state = content.serverState
-        let changes = Content.changes(canManage: model.can(Permissions.MODS_MANAGE), serverState: state)
+        let label = content.serverLabel
+        let changes = Content.changes(canManage: model.can(Permissions.MODS_MANAGE), label: label, can: content.serverCan)
         let idle = content.busy == nil
         let strings = model.strings
 
-        changesCard(content, changes, state, palette)
+        changesCard(content, changes, label, palette)
         taskNote(content, palette)
         SaidRow(said: content.said, palette: palette)
 
@@ -783,7 +783,7 @@ struct ContentView: View {
 
     /// Why changes are off now, with Stop right here while the server runs.
     @ViewBuilder
-    private func changesCard(_ content: ContentPages, _ changes: Changes, _ state: String?, _ palette: Palette) -> some View {
+    private func changesCard(_ content: ContentPages, _ changes: Changes, _ label: String?, _ palette: Palette) -> some View {
         switch changes {
         case .ready:
             EmptyView()
@@ -796,7 +796,7 @@ struct ContentView: View {
             CardBox(palette: palette) {
                 Text(model.t("mobile.content.stop_first"))
                     .foregroundStyle(palette.textPrimary)
-                if Content.canStopHere(state, canControl: model.canControl) {
+                if Content.canStopHere(content.serverCan, canControl: model.canControl) {
                     let strings = model.strings
                     Presses(presses: [
                         Press(title: model.t(content.busy == "stop" ? "action.stopping" : "action.stop"), danger: true, enabled: content.busy == nil) {
@@ -810,7 +810,7 @@ struct ContentView: View {
                         },
                     ], palette: palette)
                 } else {
-                    Hint(text: model.t("mods.running_notice", ["state": model.t(Display.state(state).key)]), palette: palette)
+                    Hint(text: model.t("mods.running_notice", ["state": model.t(Display.state(label).key)]), palette: palette)
                 }
             }
         }
@@ -1582,7 +1582,7 @@ private struct VersionsSheet: View {
 
     var body: some View {
         let strings = model.strings
-        let canChange = Content.changes(canManage: model.can(Permissions.MODS_MANAGE), serverState: content.serverState) == .ready
+        let canChange = Content.changes(canManage: model.can(Permissions.MODS_MANAGE), label: content.serverLabel, can: content.serverCan) == .ready
         let read = content.versions?.versions ?? ask.versions
         NavigationStack {
             List {

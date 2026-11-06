@@ -39,24 +39,21 @@ public struct QuickAction: Equatable, Hashable, Sendable {
 /// a value the agent didn't measure reads "Unknown", never 0 or a guess, and
 /// nothing is shown as current when it came from an earlier read.
 public enum Display {
+    /// Keyed by the agent's label (agent/minecraft/state.py `controls`).
     private static let STATES: [String: StateWords] = [
-        States.ONLINE: StateWords(key: "state.online", tone: .success),
-        States.OFFLINE: StateWords(key: "state.offline", tone: .neutral),
-        States.STARTING: StateWords(key: "state.starting", tone: .warning, busy: true),
-        States.STOPPING: StateWords(key: "state.stopping", tone: .warning, busy: true),
-        States.RESTARTING: StateWords(key: "state.restarting", tone: .warning, busy: true),
-        // Crashed, with an automatic restart counting down.
-        States.RESTART_PENDING: StateWords(key: "state.crashed", tone: .danger),
-        States.CRASHED: StateWords(key: "state.crashed", tone: .danger),
-        States.UNKNOWN: StateWords(key: "state.unknown", tone: .neutral),
+        "online": StateWords(key: "state.online", tone: .success),
+        "not_answering": StateWords(key: "state.not_answering", tone: .danger),
+        "offline": StateWords(key: "state.offline", tone: .neutral),
+        "starting": StateWords(key: "state.starting", tone: .warning, busy: true),
+        "stopping": StateWords(key: "state.stopping", tone: .warning, busy: true),
+        "restarting": StateWords(key: "state.restarting", tone: .warning, busy: true),
+        "crashed": StateWords(key: "state.crashed", tone: .danger),
+        "unknown": StateWords(key: "state.unknown", tone: .neutral),
     ]
 
-    /// answering false: running but the game port doesn't answer (agent's watchdog).
-    public static func state(_ name: String?, answering: Bool? = nil) -> StateWords {
-        if name == States.ONLINE && answering == false {
-            return StateWords(key: "state.not_answering", tone: .danger)
-        }
-        if let name = name, let words = STATES[name] {
+    /// Rented servers send the panel's state (ONLINE), not a label: same words.
+    public static func state(_ label: String?) -> StateWords {
+        if let label = label, let words = STATES[label.lowercased()] {
             return words
         }
         return StateWords(key: "state.unknown", tone: .neutral)
@@ -96,12 +93,6 @@ public enum Display {
         return strings.t("hero.up_for", ["duration": duration(strings, uptime)])
     }
 
-    /// The buttons the server page shows for this state
-    /// (heroActions in overview.js). Starting asks nothing; stopping and
-    /// restarting ask first, because players are thrown off. Nothing is
-    /// offered while the agent is busy, or to an account that may not
-    /// control the server. A crash with a restart counting down offers no
-    /// Start: the agent starts it itself.
     /// The note about changes waiting for a restart, and the one button it
     /// offers: "Restart when nobody's on", or Cancel once that is set. Nil
     /// when nothing waits. No button when the account can't control the server.
@@ -119,19 +110,20 @@ public enum Display {
         return (strings.t("restart.waiting", ["what": what]), canControl ? later : nil)
     }
 
-    public static func actions(_ state: String?, canControl: Bool) -> [QuickAction] {
-        if !canControl { return [] }
-        switch state ?? "" {
-        case States.ONLINE:
-            return [
-                QuickAction(action: "restart", labelKey: "action.restart", confirm: true),
-                QuickAction(action: "stop", labelKey: "action.stop", confirm: true, danger: true),
-            ]
-        case States.OFFLINE, States.CRASHED:
-            return [QuickAction(action: "start", labelKey: "action.start", confirm: false)]
-        default:
-            return []
-        }
+    private static let ACTIONS = [
+        QuickAction(action: "restart", labelKey: "action.restart", confirm: true),
+        QuickAction(action: "stop", labelKey: "action.stop", confirm: true, danger: true),
+        // A server left running by a crashed agent: no console to save with.
+        QuickAction(action: "force_stop", labelKey: "action.force_stop", confirm: true, danger: true),
+        QuickAction(action: "start", labelKey: "action.start", confirm: false),
+    ]
+
+    /// The buttons the server page shows: the ones the agent says it takes
+    /// now (`can`), never worked out here. Starting asks nothing; stopping
+    /// and restarting ask first, because players are thrown off. Nothing is
+    /// offered to an account that may not control the server.
+    public static func actions(_ can: [String], canControl: Bool) -> [QuickAction] {
+        canControl ? ACTIONS.filter { can.contains($0.action) } : []
     }
 }
 

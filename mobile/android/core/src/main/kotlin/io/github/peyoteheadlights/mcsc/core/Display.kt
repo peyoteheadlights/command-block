@@ -14,25 +14,20 @@ data class QuickAction(val action: String, val labelKey: String, val confirm: Bo
  * nothing is shown as current when it came from an earlier read.
  */
 object Display {
+    /** Keyed by the agent's label (agent/minecraft/state.py `controls`). */
     private val STATES = mapOf(
-        States.ONLINE to StateWords("state.online", Tone.SUCCESS),
-        States.OFFLINE to StateWords("state.offline", Tone.NEUTRAL),
-        States.STARTING to StateWords("state.starting", Tone.WARNING, busy = true),
-        States.STOPPING to StateWords("state.stopping", Tone.WARNING, busy = true),
-        States.RESTARTING to StateWords("state.restarting", Tone.WARNING, busy = true),
-        // Crashed, with an automatic restart counting down.
-        States.RESTART_PENDING to StateWords("state.crashed", Tone.DANGER),
-        States.CRASHED to StateWords("state.crashed", Tone.DANGER),
-        States.UNKNOWN to StateWords("state.unknown", Tone.NEUTRAL),
+        "online" to StateWords("state.online", Tone.SUCCESS),
+        "not_answering" to StateWords("state.not_answering", Tone.DANGER),
+        "offline" to StateWords("state.offline", Tone.NEUTRAL),
+        "starting" to StateWords("state.starting", Tone.WARNING, busy = true),
+        "stopping" to StateWords("state.stopping", Tone.WARNING, busy = true),
+        "restarting" to StateWords("state.restarting", Tone.WARNING, busy = true),
+        "crashed" to StateWords("state.crashed", Tone.DANGER),
+        "unknown" to StateWords("state.unknown", Tone.NEUTRAL),
     )
 
-    /** [answering] false: running but the game port doesn't answer (agent's watchdog). */
-    fun state(name: String?, answering: Boolean? = null): StateWords =
-        if (name == States.ONLINE && answering == false) {
-            StateWords("state.not_answering", Tone.DANGER)
-        } else {
-            STATES[name] ?: STATES.getValue(States.UNKNOWN)
-        }
+    /** Rented servers send the panel's state (ONLINE), not a label: same words. */
+    fun state(label: String?): StateWords = STATES[label?.lowercase()] ?: STATES.getValue("unknown")
 
     /** "3d 4h", "2h 10m", "5m", "40s": duration in desktop/ui.py. */
     fun duration(strings: Strings, seconds: Double): String {
@@ -181,14 +176,14 @@ object Display {
         java.time.Instant.ofEpochMilli((ts * 1000).toLong()).atZone(zone).toLocalTime()
             .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
 
-    /**
-     * The buttons the server page shows for this state
-     * (heroActions in overview.js). Starting asks nothing; stopping and
-     * restarting ask first, because players are thrown off. Nothing is
-     * offered while the agent is busy, or to an account that may not
-     * control the server. A crash with a restart counting down offers no
-     * Start: the agent starts it itself.
-     */
+    private val ACTIONS = listOf(
+        QuickAction("restart", "action.restart", confirm = true),
+        QuickAction("stop", "action.stop", confirm = true, danger = true),
+        // A server left running by a crashed agent: no console to save with.
+        QuickAction("force_stop", "action.force_stop", confirm = true, danger = true),
+        QuickAction("start", "action.start", confirm = false),
+    )
+
     /**
      * The note about changes waiting for a restart, and the one button it
      * offers: "Restart when nobody's on", or Cancel once that is set. Null
@@ -206,15 +201,12 @@ object Display {
         return strings.t("restart.waiting", "what" to what) to later.takeIf { canControl }
     }
 
-    fun actions(state: String?, canControl: Boolean): List<QuickAction> {
-        if (!canControl) return emptyList()
-        return when (state) {
-            States.ONLINE -> listOf(
-                QuickAction("restart", "action.restart", confirm = true),
-                QuickAction("stop", "action.stop", confirm = true, danger = true),
-            )
-            States.OFFLINE, States.CRASHED -> listOf(QuickAction("start", "action.start", confirm = false))
-            else -> emptyList()
-        }
-    }
+    /**
+     * The buttons the server page shows: the ones the agent says it takes
+     * now ([can]), never worked out here. Starting asks nothing; stopping
+     * and restarting ask first, because players are thrown off. Nothing is
+     * offered to an account that may not control the server.
+     */
+    fun actions(can: List<String>, canControl: Boolean): List<QuickAction> =
+        if (!canControl) emptyList() else ACTIONS.filter { it.action in can }
 }

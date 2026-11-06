@@ -256,9 +256,8 @@ struct ServerRowView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let state = fresh ? row.state : States.UNKNOWN
         let players: Int? = fresh ? row.playersOnline : nil
-        let words = Display.state(state, answering: fresh ? row.answering?.ok : nil)
+        let words = Display.state(fresh ? row.label : "unknown")
         HStack(spacing: 12) {
             ColorBadge(hex: row.color, size: 16)
             VStack(alignment: .leading, spacing: 4) {

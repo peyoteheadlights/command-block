@@ -69,9 +69,14 @@ final class ContentPages {
     var updating: Mod? = nil
     var versions: VersionsAsk? = nil
 
-    /// The server's state as the list last said; Unknown when it couldn't be read.
-    var serverState: String? {
-        mods.problem != nil ? States.UNKNOWN : mods.value?.serverState
+    /// The agent's label as the list last said; Unknown when it couldn't be read.
+    var serverLabel: String? {
+        mods.problem != nil ? "unknown" : mods.value?.label
+    }
+
+    /// The buttons the agent takes now ("change" while mods may change).
+    var serverCan: [String] {
+        mods.problem != nil ? [] : mods.value?.can ?? []
     }
 
     func loadMods() async {

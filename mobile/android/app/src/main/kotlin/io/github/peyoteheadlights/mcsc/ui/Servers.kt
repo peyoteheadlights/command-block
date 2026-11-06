@@ -126,7 +126,7 @@ fun ServersScreen(
                             // Each server's box has its edge and buttons in its own color.
                             McscTheme(vm.shared, themeName(vm.theme), serverColor = row.color) {
                                 ServerCard(
-                                    if (ui.problem != null) row.copy(state = States.UNKNOWN, playersOnline = null) else row,
+                                    if (ui.problem != null) row.copy(state = States.UNKNOWN, label = "unknown", can = emptyList(), playersOnline = null) else row,
                                     arrange = if (!owner) null else { how ->
                                         when (how) {
                                             "group" -> grouping = row
@@ -228,7 +228,7 @@ private fun ServerCard(row: ServerRow, arrange: ((String) -> Unit)?, onClick: ()
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StateText(row.state, row.answering?.ok)
+            StateText(row.label)
             if (row.state == States.ONLINE) {
                 Text(
                     t("servers.players") + ": " + Display.players(LocalStrings.current, row.playersOnline, row.maxPlayers),

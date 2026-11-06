@@ -144,8 +144,12 @@ public struct ModList: Decodable, Equatable, Sendable {
     /// A mod needs one that sits on the other side.
     public var oddSetups: [OddSetup] = []
 
+    /// The agent's label and buttons ("change" while mods may change).
+    public var label: String = "unknown"
+    public var can: [String] = []
+
     enum CodingKeys: String, CodingKey {
-        case mods, fit, overlaps, modpack
+        case mods, label, can, fit, overlaps, modpack
         case playerOnly = "player_only"
         case playerOnlyOptions = "player_only_options"
         case oddSetups = "odd_setups"
@@ -154,13 +158,15 @@ public struct ModList: Decodable, Equatable, Sendable {
         case storedSeparately = "stored_separately"
     }
 
-    public init(mods: [Mod] = [], minecraftVersion: String? = nil, serverState: String = States.UNKNOWN, storedSeparately: Bool = false, fit: ModFit? = nil, overlaps: [Overlap] = []) {
+    public init(mods: [Mod] = [], minecraftVersion: String? = nil, serverState: String = States.UNKNOWN, storedSeparately: Bool = false, fit: ModFit? = nil, overlaps: [Overlap] = [], label: String = "unknown", can: [String] = []) {
         self.mods = mods
         self.minecraftVersion = minecraftVersion
         self.serverState = serverState
         self.storedSeparately = storedSeparately
         self.fit = fit
         self.overlaps = overlaps
+        self.label = label
+        self.can = can
     }
 
     public init(from decoder: Decoder) throws {
@@ -175,6 +181,8 @@ public struct ModList: Decodable, Equatable, Sendable {
         playerOnly = c.each(.playerOnly)
         playerOnlyOptions = c.value(.playerOnlyOptions, PlayerOnlyOptions())
         oddSetups = c.each(.oddSetups)
+        label = c.value(.label, "unknown")
+        can = c.value(.can, [String]())
     }
 }
 

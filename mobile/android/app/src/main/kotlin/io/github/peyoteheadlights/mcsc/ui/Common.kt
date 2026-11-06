@@ -397,8 +397,8 @@ fun ServerDot(color: String?) {
 
 /** The status mark: a dot in the state's color and its word. */
 @Composable
-fun StateText(state: String?, answering: Boolean? = null) {
-    val words = Display.state(state, answering)
+fun StateText(label: String?) {
+    val words = Display.state(label)
     val color = LocalColors.current.tone(words.tone)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(8.dp).background(color, CircleShape))

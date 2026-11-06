@@ -102,22 +102,24 @@ final class ContentTests: XCTestCase {
     // MARK: - Who may change what, and when
 
     func testOnlySomeoneAllowedSeesChangeButtonsAndTheyWorkOnlyWhileStopped() {
-        XCTAssertEqual(Content.changes(canManage: false, serverState: States.OFFLINE), .notAllowed)
-        XCTAssertEqual(Content.changes(canManage: true, serverState: States.OFFLINE), .ready)
-        XCTAssertEqual(Content.changes(canManage: true, serverState: States.CRASHED), .ready)
-        for state in [States.ONLINE, States.STARTING, States.STOPPING, States.RESTART_PENDING] {
-            XCTAssertEqual(Content.changes(canManage: true, serverState: state), .stopFirst, state)
+        // The agent says when changes are allowed ("change" in its list).
+        let off = ["start", "change"]
+        XCTAssertEqual(Content.changes(canManage: false, label: "offline", can: off), .notAllowed)
+        XCTAssertEqual(Content.changes(canManage: true, label: "offline", can: off), .ready)
+        XCTAssertEqual(Content.changes(canManage: true, label: "crashed", can: off), .ready)
+        for label in ["online", "not_answering", "starting", "stopping", "crashed"] {
+            XCTAssertEqual(Content.changes(canManage: true, label: label, can: ["stop"]), .stopFirst, label)
         }
         // A state not known is never taken to be stopped.
-        XCTAssertEqual(Content.changes(canManage: true, serverState: nil), .unknown)
-        XCTAssertEqual(Content.changes(canManage: true, serverState: States.UNKNOWN), .unknown)
+        XCTAssertEqual(Content.changes(canManage: true, label: nil, can: off), .unknown)
+        XCTAssertEqual(Content.changes(canManage: true, label: "unknown", can: []), .unknown)
         // Bedrock packs change while running too (a restart is offered after).
         XCTAssertEqual(Content.packChanges(canManage: true), .ready)
         XCTAssertEqual(Content.packChanges(canManage: false), .notAllowed)
         // "Stop the server first" offers Stop only while it would work.
-        XCTAssertTrue(Content.canStopHere(States.ONLINE, canControl: true))
-        XCTAssertFalse(Content.canStopHere(States.ONLINE, canControl: false))
-        XCTAssertFalse(Content.canStopHere(States.STOPPING, canControl: true))
+        XCTAssertTrue(Content.canStopHere(["stop", "restart"], canControl: true))
+        XCTAssertFalse(Content.canStopHere(["stop"], canControl: false))
+        XCTAssertFalse(Content.canStopHere([], canControl: true))
     }
 
     func testOnlyAKeptVersionThatIsThereAndNotInUseCanBeRolledBackTo() {

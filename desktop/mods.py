@@ -56,7 +56,6 @@ STATUS = {
 }
 DEPENDENCY = ("missing_dependency", "dependency_version")
 ATTENTION = ("missing", "incompatible", "disabled", "platform_incompatible")
-STOPPED = ("OFFLINE", "CRASHED")
 PACK_FILES = (".mcpack", ".mcaddon", ".mctemplate")
 SEARCH = 10  # results asked of Modrinth at a time
 ACTIONS = (
@@ -564,7 +563,7 @@ class ModsPage(SharePage):
     def can_change(self) -> bool:
         """Mods change only while the server is stopped, and only for an
         account allowed to; until /mods answers, the state isn't known."""
-        return self.may("mods.manage") and self.data.get("server_state") in STOPPED
+        return self.may("mods.manage") and "change" in (self.data.get("can") or [])
 
     def load(self) -> None:
         for set_words, key in self.wording:
@@ -631,11 +630,11 @@ class ModsPage(SharePage):
                 "mods.installed.one" if len(mods) == 1 else "mods.installed.other", count=len(mods)
             )
         )
-        state = data.get("server_state")
-        stopped = state in STOPPED
+        can = data.get("can") or []
         self.stop_words.setText(text("mobile.content.stop_first"))
-        self.stop_row.setVisible(not stopped and self.may("mods.manage"))
-        self.stop.setVisible(state == "ONLINE" and self.may("server.control"))
+        running = "stop" in can or "force_stop" in can
+        self.stop_row.setVisible(running and self.may("mods.manage"))
+        self.stop.setVisible("stop" in can and self.may("server.control"))
         others = [
             p["detail"] for p in data.get("problems") or [] if p.get("kind") not in DEPENDENCY
         ]

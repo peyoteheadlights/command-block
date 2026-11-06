@@ -93,6 +93,10 @@ data class ServerRow(
     val name: String,
     val color: String? = null,
     val state: String = "UNKNOWN",
+    /** What every app shows (a state.* word), worked out by the agent. */
+    val label: String = "unknown",
+    /** The buttons the agent takes now: start, stop, force_stop, restart, change. */
+    val can: List<String> = emptyList(),
     @SerialName("state_verified") val stateVerified: Boolean? = null,
     val uptime: Double? = null,
     @SerialName("players_online") val playersOnline: Int? = null,
@@ -192,6 +196,10 @@ data class ServerStatus(
     @SerialName("server_id") val serverId: String? = null,
     val name: String? = null,
     val state: String = "UNKNOWN",
+    /** What every app shows (a state.* word), worked out by the agent. */
+    val label: String = "unknown",
+    /** The buttons the agent takes now: start, stop, force_stop, restart, change. */
+    val can: List<String> = emptyList(),
     @SerialName("state_verified") val stateVerified: Boolean? = null,
     val uptime: Double? = null,
     @SerialName("minecraft_version") val minecraftVersion: String? = null,

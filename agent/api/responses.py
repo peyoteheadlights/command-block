@@ -1474,6 +1474,8 @@ class ModList(Open):
         None, description="null until the server has started once"
     )
     server_state: str
+    label: str | None = None
+    can: list[str] = Field(default_factory=list, description="'change' while mods may change")
     updates_checked_at: float | None = None
     stored_separately: bool = Field(
         False, description="This server's jars are copies: its drive can't link to the shared store"

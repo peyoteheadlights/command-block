@@ -85,7 +85,6 @@ import io.github.peyoteheadlights.mcsc.core.DeepScanOptions
 import io.github.peyoteheadlights.mcsc.core.DeepScanReport
 import io.github.peyoteheadlights.mcsc.core.JarScanWords
 import io.github.peyoteheadlights.mcsc.core.Permissions
-import io.github.peyoteheadlights.mcsc.core.States
 import io.github.peyoteheadlights.mcsc.core.StillFit
 import io.github.peyoteheadlights.mcsc.core.Tone
 import io.github.peyoteheadlights.mcsc.core.UpdateAll
@@ -95,11 +94,16 @@ import kotlinx.coroutines.withContext
 /** A question waiting for "yes": its title, words and button. */
 private data class ContentAsk(val title: String, val body: String, val confirm: String, val danger: Boolean, val run: () -> Unit)
 
-/** The server's state for these screens: Unknown after a failed read, never a guess. */
-private fun stateFor(vm: AppViewModel, serverId: String, failed: Boolean): String? {
+/** The agent's label and buttons for one server. */
+private data class Controls(val label: String?, val can: List<String>)
+
+/** The server's label and buttons for these screens: Unknown after a failed read, never a guess. */
+private fun controlsFor(vm: AppViewModel, serverId: String, failed: Boolean): Controls {
     val ui = vm.server[serverId]
-    if (failed || ui?.problem != null) return States.UNKNOWN
-    return ui?.status?.state ?: vm.servers.list.firstOrNull { it.id == serverId }?.state
+    if (failed || ui?.problem != null) return Controls("unknown", emptyList())
+    ui?.status?.let { return Controls(it.label, it.can) }
+    val row = vm.servers.list.firstOrNull { it.id == serverId } ?: return Controls(null, emptyList())
+    return Controls(row.label, row.can)
 }
 
 /**
@@ -179,12 +183,12 @@ private fun LazyListScope.vanillaList(vm: AppViewModel, content: ContentPages, o
 
 private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: ContentPages, kind: ContentKind, ask: (ContentAsk) -> Unit) {
     val read = content.mods
-    val state = stateFor(vm, serverId, read.problem != null)
-    val changes = Content.changes(vm.canDo(Permissions.MODS_MANAGE), state)
+    val controls = controlsFor(vm, serverId, read.problem != null)
+    val changes = Content.changes(vm.canDo(Permissions.MODS_MANAGE), controls.label, controls.can)
     val busy = content.busy
     val idle = busy == null
 
-    item { ChangesCard(vm, serverId, changes, state, ask) }
+    item { ChangesCard(vm, serverId, changes, controls, ask) }
     item { TaskNote(content, serverId) }
     item { SaidNote(content.said) }
 
@@ -564,7 +568,7 @@ private fun Choice(title: String, choices: List<Pair<String, String>>, picked: S
 
 /** Why changes are off now, with Stop right here while the server runs. */
 @Composable
-private fun ChangesCard(vm: AppViewModel, serverId: String, changes: Changes, state: String?, ask: (ContentAsk) -> Unit) {
+private fun ChangesCard(vm: AppViewModel, serverId: String, changes: Changes, controls: Controls, ask: (ContentAsk) -> Unit) {
     val colors = LocalColors.current
     val strings = vm.strings
     when (changes) {
@@ -573,7 +577,7 @@ private fun ChangesCard(vm: AppViewModel, serverId: String, changes: Changes, st
         Changes.UNKNOWN -> Note(t("mobile.content.state_unknown"), color = colors.warning, modifier = Modifier.padding(top = 8.dp))
         Changes.STOP_FIRST -> Card(Modifier.padding(top = 8.dp)) {
             Note(t("mobile.content.stop_first"), color = colors.text, modifier = Modifier.padding(top = 10.dp))
-            if (Content.canStopHere(state, vm.canControl())) {
+            if (Content.canStopHere(controls.can, vm.canControl())) {
                 val busy = vm.server[serverId]?.busyAction
                 Presses(
                     listOf(
@@ -585,7 +589,7 @@ private fun ChangesCard(vm: AppViewModel, serverId: String, changes: Changes, st
                     ),
                 )
             } else {
-                Note(t("mods.running_notice", "state" to t(Display.state(state).key)), color = colors.text2)
+                Note(t("mods.running_notice", "state" to t(Display.state(controls.label).key)), color = colors.text2)
             }
         }
     }
@@ -990,7 +994,8 @@ private fun Loading(read: Read<*>) {
 @Composable
 private fun VersionsDialog(vm: AppViewModel, content: ContentPages, v: VersionsAsk, ask: (ContentAsk) -> Unit) {
     val strings = vm.strings
-    val canChange = Content.changes(vm.canDo(Permissions.MODS_MANAGE), stateFor(vm, content.serverId, content.mods.problem != null)) == Changes.READY
+    val controls = controlsFor(vm, content.serverId, content.mods.problem != null)
+    val canChange = Content.changes(vm.canDo(Permissions.MODS_MANAGE), controls.label, controls.can) == Changes.READY
     Question(strings.t("mods.versions_title", "name" to v.mod.name), confirm = null, onConfirm = {}, onDismiss = content::closeVersions) {
         Loading(v.versions)
         val list = v.versions.value?.versions ?: return@Question

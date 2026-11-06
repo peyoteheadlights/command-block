@@ -49,14 +49,13 @@ public enum Content {
     }
 
     /// Which change buttons a mod or plugin row offers. Only someone with
-    /// mods.manage sees any; they work only while the server is stopped (or
-    /// crashed); a state not known is not guessed
-    /// to be stopped.
-    public static func changes(canManage: Bool, serverState: String?) -> Changes {
+    /// mods.manage sees any; they work only when the agent lists "change"
+    /// (the server is stopped and nothing else is changing it); a state not
+    /// known is not guessed to be stopped.
+    public static func changes(canManage: Bool, label: String?, can: [String]) -> Changes {
         if !canManage { return .notAllowed }
-        guard let state = serverState, state != States.UNKNOWN else { return .unknown }
-        if state == States.OFFLINE || state == States.CRASHED { return .ready }
-        return .stopFirst
+        guard let label = label, label != "unknown" else { return .unknown }
+        return can.contains("change") ? .ready : .stopFirst
     }
 
     /// Bedrock packs change while the server runs too; they take effect
@@ -66,8 +65,8 @@ public enum Content {
     }
 
     /// "Stop the server first" offers Stop only while Stop would work.
-    public static func canStopHere(_ serverState: String?, canControl: Bool) -> Bool {
-        canControl && serverState == States.ONLINE
+    public static func canStopHere(_ can: [String], canControl: Bool) -> Bool {
+        canControl && can.contains("stop")
     }
 
     public static func status(_ mod: Mod) -> StateWords {

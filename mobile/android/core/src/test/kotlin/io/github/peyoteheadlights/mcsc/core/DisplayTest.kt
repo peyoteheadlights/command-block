@@ -10,20 +10,20 @@ class DisplayTest {
     private val s = Strings(Shared.strings)
 
     @Test
-    fun `states read the same as in the other apps`() {
-        assertEquals("Online", s.t(Display.state("ONLINE").key))
-        assertEquals("Crashed", s.t(Display.state("RESTART_PENDING").key))
-        assertEquals("Unknown", s.t(Display.state("SOMETHING_NEW").key))
+    fun `the agent's label reads the same as in the other apps`() {
+        assertEquals("Online", s.t(Display.state("online").key))
+        assertEquals("Not answering", s.t(Display.state("not_answering").key))
+        assertEquals(Tone.DANGER, Display.state("not_answering").tone)
+        assertEquals("Crashed", s.t(Display.state("crashed").key))
+        assertEquals("Unknown", s.t(Display.state("something_new").key))
         assertEquals("Unknown", s.t(Display.state(null).key))
-        assertTrue(Display.state("STARTING").busy)
+        assertTrue(Display.state("starting").busy)
     }
 
     @Test
-    fun `a running server that doesn't answer never reads Online`() {
-        assertEquals("Not answering", s.t(Display.state("ONLINE", answering = false).key))
-        assertEquals(Tone.DANGER, Display.state("ONLINE", answering = false).tone)
-        assertEquals("Online", s.t(Display.state("ONLINE", answering = null).key))
-        assertEquals("Offline", s.t(Display.state("OFFLINE", answering = false).key))
+    fun `a rented server's panel state reads the same words`() {
+        assertEquals("Online", s.t(Display.state("ONLINE").key))
+        assertEquals("Offline", s.t(Display.state("OFFLINE").key))
     }
 
     @Test
@@ -48,16 +48,17 @@ class DisplayTest {
     }
 
     @Test
-    fun `starting asks nothing, stopping and restarting ask first`() {
-        assertEquals(listOf("start"), Display.actions("OFFLINE", true).map { it.action })
-        assertEquals(false, Display.actions("CRASHED", true).single().confirm)
-        val online = Display.actions("ONLINE", true)
+    fun `the buttons are the agent's list, starting asks nothing, the rest ask first`() {
+        assertEquals(listOf("start"), Display.actions(listOf("start", "change"), true).map { it.action })
+        assertEquals(false, Display.actions(listOf("start"), true).single().confirm)
+        val online = Display.actions(listOf("stop", "restart"), true)
         assertEquals(listOf("restart", "stop"), online.map { it.action })
         assertTrue(online.all { it.confirm })
-        for (busy in listOf("STARTING", "STOPPING", "RESTARTING", "RESTART_PENDING", "UNKNOWN")) {
-            assertEquals(busy, emptyList<QuickAction>(), Display.actions(busy, true))
-        }
-        assertEquals(emptyList<QuickAction>(), Display.actions("OFFLINE", canControl = false))
+        val left = Display.actions(listOf("force_stop"), true).single()
+        assertTrue(left.confirm && left.danger)
+        assertEquals("action.force_stop", left.labelKey)
+        assertEquals(emptyList<QuickAction>(), Display.actions(emptyList(), true))
+        assertEquals(emptyList<QuickAction>(), Display.actions(listOf("start"), canControl = false))
     }
 
     @Test

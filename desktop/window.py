@@ -68,7 +68,7 @@ from .overview import SimpleOverview, TechnicalOverview
 from .parts import Box, Status
 from .pc import WindowsPC
 from .rented import ConnectPanel, RentedRow, RentedScreen
-from .server_tab import BUSY, ServerScreen, facts, state_mark, state_words
+from .server_tab import ServerScreen, facts, main_action, state_mark, state_words
 from .shell import BinderTabs, Desk, Sheet
 from .tailscale_step import TailscaleStep
 from .top_view import TopView
@@ -236,9 +236,9 @@ class ServerRow(Box):
         under.addWidget(label(" · ".join(said), "sub"), 1)
         words.addLayout(under)
         line.addLayout(words, 1)
-        action = "stop" if state in ("ONLINE", *BUSY) else "start"
+        action, allowed = main_action(row)
         button = push(text(f"action.{action}"), "primary" if action == "start" else "")
-        button.setEnabled(state not in BUSY)
+        button.setEnabled(allowed)
         button.setAccessibleName(f"{text(f'action.{action}')} {row['name']}")
         if act is not None:
             button.clicked.connect(lambda: act(action))
@@ -1716,7 +1716,7 @@ class MainWindow(FramelessWindow):
     def update_tray(self) -> None:
         """The icon (red dot while a server is down after a crash) and its
         menu: each server with Start or Stop and Open, as this account may."""
-        down = [r["name"] for r in self.servers if r.get("state") in ("CRASHED", "RESTART_PENDING")]
+        down = [r["name"] for r in self.servers if r.get("label") == "crashed"]
         words = "\n".join([text("app.name")] + [text("desktop.tray.crashed", name=n) for n in down])
         if self.setup_unfinished:
             words += "\n" + text("desktop.tray.setup_unfinished")
@@ -1729,9 +1729,9 @@ class MainWindow(FramelessWindow):
         for row in self.servers if self.agent.token else []:
             server = menu.addMenu(f"{row['name']}: {state_words(row)}")
             if "server.control" in self.allowed.get(row["id"], []):
-                action = "stop" if row.get("state") in ("ONLINE", *BUSY) else "start"
+                action, allowed = main_action(row)
                 act = server.addAction(text(f"action.{action}"))
-                act.setEnabled(row.get("state") not in BUSY)
+                act.setEnabled(allowed)
                 act.triggered.connect(partial(self.server_action, row["id"], action))
             server.addAction(text("desktop.tray.open_server")).triggered.connect(
                 partial(self.go_to_server, row["id"])
@@ -1895,6 +1895,12 @@ class MainWindow(FramelessWindow):
             self.refresh()
             self.load_server_parts()
 
+        if action == "force_stop" and not self.confirm(
+            text("confirm.force_stop_title"),
+            text("confirm.force_stop_body"),
+            text("action.force_stop"),
+        ):
+            return
         self.run(lambda: self.agent.server_action(server_id, action), done, failed)
 
     def confirm(self, title: str, body: str, yes: str, no: str | None = None) -> bool:

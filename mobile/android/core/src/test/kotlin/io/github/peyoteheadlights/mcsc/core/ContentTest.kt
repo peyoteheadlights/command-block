@@ -135,22 +135,24 @@ class ContentTest {
     // ------------------------------------------------------------ who may change what, and when
     @Test
     fun `only someone allowed sees change buttons, and they work only while stopped`() {
-        assertEquals(Changes.NOT_ALLOWED, Content.changes(canManage = false, serverState = States.OFFLINE))
-        assertEquals(Changes.READY, Content.changes(canManage = true, serverState = States.OFFLINE))
-        assertEquals(Changes.READY, Content.changes(canManage = true, serverState = States.CRASHED))
-        for (state in listOf(States.ONLINE, States.STARTING, States.STOPPING, States.RESTART_PENDING)) {
-            assertEquals(state, Changes.STOP_FIRST, Content.changes(canManage = true, serverState = state))
+        // The agent says when changes are allowed ("change" in its list).
+        val off = listOf("start", "change")
+        assertEquals(Changes.NOT_ALLOWED, Content.changes(canManage = false, label = "offline", can = off))
+        assertEquals(Changes.READY, Content.changes(canManage = true, label = "offline", can = off))
+        assertEquals(Changes.READY, Content.changes(canManage = true, label = "crashed", can = off))
+        for (label in listOf("online", "not_answering", "starting", "stopping", "crashed")) {
+            assertEquals(label, Changes.STOP_FIRST, Content.changes(canManage = true, label = label, can = listOf("stop")))
         }
         // A state not known is never taken to be stopped.
-        assertEquals(Changes.UNKNOWN, Content.changes(canManage = true, serverState = null))
-        assertEquals(Changes.UNKNOWN, Content.changes(canManage = true, serverState = States.UNKNOWN))
+        assertEquals(Changes.UNKNOWN, Content.changes(canManage = true, label = null, can = off))
+        assertEquals(Changes.UNKNOWN, Content.changes(canManage = true, label = "unknown", can = emptyList()))
         // Bedrock packs change while running too (a restart is offered after).
         assertEquals(Changes.READY, Content.packChanges(canManage = true))
         assertEquals(Changes.NOT_ALLOWED, Content.packChanges(canManage = false))
         // "Stop the server first" offers Stop only while it would work.
-        assertTrue(Content.canStopHere(States.ONLINE, canControl = true))
-        assertFalse(Content.canStopHere(States.ONLINE, canControl = false))
-        assertFalse(Content.canStopHere(States.STOPPING, canControl = true))
+        assertTrue(Content.canStopHere(listOf("stop", "restart"), canControl = true))
+        assertFalse(Content.canStopHere(listOf("stop"), canControl = false))
+        assertFalse(Content.canStopHere(emptyList(), canControl = true))
     }
 
     @Test

@@ -81,7 +81,7 @@ struct ServerView: View {
     private func header(_ palette: Palette) -> some View {
         // Nothing old is shown as current: without a fresh read, Unknown.
         let state = status?.state ?? States.UNKNOWN
-        let words = Display.state(state, answering: status?.answering?.ok)
+        let words = Display.state(status?.label)
         return card(palette) {
             HStack(alignment: .center, spacing: 12) {
                 ColorBadge(hex: row?.color, size: 18)
@@ -137,7 +137,7 @@ struct ServerView: View {
 
     @ViewBuilder
     private func actions(_ palette: Palette) -> some View {
-        let available = Display.actions(status?.state, canControl: model.canControl)
+        let available = Display.actions(status?.can ?? [], canControl: model.canControl)
         if model.me != nil && !model.canControl {
             card(palette) {
                 Text(model.t("mobile.server.not_allowed"))
@@ -293,6 +293,7 @@ struct ServerView: View {
         switch pending?.action ?? "" {
         case "stop": return model.t("confirm.stop_title")
         case "restart": return model.t("confirm.restart_title")
+        case "force_stop": return model.t("confirm.force_stop_title")
         default: return ""
         }
     }
@@ -301,6 +302,7 @@ struct ServerView: View {
         switch action.action {
         case "stop": return model.t("confirm.stop_body")
         case "restart": return model.t("confirm.restart_body")
+        case "force_stop": return model.t("confirm.force_stop_body")
         default: return ""
         }
     }

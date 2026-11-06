@@ -257,6 +257,8 @@ class AgentClient:
         return self.call("GET", "/servers")["servers"]
 
     def server_action(self, server_id: str, action: str) -> dict:
+        if action == "force_stop":
+            return self.call("POST", f"/servers/{server_id}/server/stop", {"force": True})
         return self.call("POST", f"/servers/{server_id}/server/{action}", {})
 
     def preferences(self) -> dict:

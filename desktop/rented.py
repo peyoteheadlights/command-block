@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
 
 from .agent import AgentError
 from .parts import Box, Status
-from .server_tab import state_words
 from .theme import SHARED
 from .ui import label, push, refill, size
 from .words import text
@@ -51,6 +50,11 @@ DISCORD = {
 }
 STATUS_EVERY_MS = 10_000  # the agent asks the panel every 20 s; this reads its answer
 CONSOLE_EVERY_MS = 2_000
+
+
+def state_words(row: dict) -> str:
+    """The panel's state (ONLINE) in the same words as the agent's labels."""
+    return text(f"state.{(row.get('state') or 'unknown').lower()}")
 
 
 def state_line(row: dict) -> str:

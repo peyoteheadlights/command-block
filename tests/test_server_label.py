@@ -66,3 +66,23 @@ def test_status_and_servers_send_the_same_label_and_list(client):
     status, row = both()
     assert status["label"] == row["label"] == "not_answering"
     ctx.server.state = S.OFFLINE
+
+
+def test_the_desktop_sends_force_stop_as_a_forced_stop():
+    from desktop.agent import AgentClient
+
+    sent = []
+    agent = AgentClient.__new__(AgentClient)
+    agent.call = lambda *args: sent.append(args)  # type: ignore[method-assign]
+    agent.server_action("survival", "force_stop")
+    agent.server_action("survival", "stop")
+    assert sent == [
+        ("POST", "/servers/survival/server/stop", {"force": True}),
+        ("POST", "/servers/survival/server/stop", {}),
+    ]
+
+
+def test_the_mods_list_says_when_mods_may_change(client):
+    headers = auth(token_for(client))
+    mods = client.get("/api/mods", headers=headers).json()
+    assert mods["label"] == "offline" and "change" in mods["can"]

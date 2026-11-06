@@ -126,6 +126,7 @@ async def list_mods(principal: Principal = Depends(require(SERVER_VIEW)), ctx=De
         "fabric_loader": checks["fabric_loader"],
         "directory": str(ctx.config.mods_dir),
         "server_state": ctx.server.state.value,
+        **ctx.controls(),
         "updates_checked_at": ctx.db.get_setting("mod_updates_checked_at"),
         "needs_you": ctx.mods.needs_you(),
         "stored_separately": ctx.db.get_setting("mods_stored_separately") is True,

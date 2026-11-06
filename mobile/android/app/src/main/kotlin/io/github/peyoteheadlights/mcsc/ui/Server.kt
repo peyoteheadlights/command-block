@@ -42,6 +42,9 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
     val pages = vm.pages(serverId)
     // Not current after a failed read: Unknown, with when it was last read.
     val state = if (ui.problem != null) States.UNKNOWN else status?.state ?: row?.state
+    // The agent's label and buttons; after a failed read, Unknown and none.
+    val label = if (ui.problem != null) "unknown" else status?.label ?: row?.label
+    val can = if (ui.problem != null) emptyList() else status?.can ?: row?.can.orEmpty()
     val now = rememberNow()
     var asking by rememberSaveable { mutableStateOf<String?>(null) }
     val canEdit = vm.canDo(Permissions.SETTINGS_SERVER)
@@ -69,7 +72,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                     title = t("confirm.${action}_title"),
                     body = t("confirm.${action}_body"),
                     confirm = t("action.$action"),
-                    danger = action == "stop",
+                    danger = action == "stop" || action == "force_stop",
                     onConfirm = {
                         asking = null
                         vm.act(serverId, action)
@@ -84,7 +87,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
             Card(Modifier.padding(top = 8.dp)) {
                 // The status mark (a dot and its word), then for how long.
                 Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
-                    StateText(state, status?.answering?.ok)
+                    StateText(label)
                     Display.uptime(vm.strings, state, status?.uptime)?.let {
                         Text(it, color = colors.text2, style = MaterialTheme.typography.bodyMedium)
                     }
@@ -104,7 +107,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                     .joinToString(" ").takeIf { it.isNotBlank() }
                     ?.let { Note(it, color = colors.text2) }
                 Actions(
-                    Display.actions(state, vm.canControl()),
+                    Display.actions(can, vm.canControl()),
                     busy = ui.busyAction,
                     onAction = { action -> if (action.confirm) asking = action.action else vm.act(serverId, action.action) },
                 )
