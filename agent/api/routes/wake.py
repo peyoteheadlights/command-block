@@ -98,10 +98,15 @@ async def wake_helper(
 
 @router.delete("/wake/helper", response_model=WakeSetup)
 async def wake_helper_off(
-    request: Request, principal: Principal = Depends(require(PC_SETTINGS)), core=Depends(get_core)
+    request: Request,
+    mine: bool = False,
+    principal: Principal = Depends(require(PC_SETTINGS)),
+    core=Depends(get_core),
 ):
+    """Nobody helps wake the PC any more. ``mine``: only if the PC asking is
+    the one helping now."""
     audit(core, request, "wake_helper_removed")
-    return core.wake.remove_helper()
+    return core.wake.remove_helper(principal.token_hash if mine else None)
 
 
 @router.get("/wake/keys", response_model=WakeKeys)

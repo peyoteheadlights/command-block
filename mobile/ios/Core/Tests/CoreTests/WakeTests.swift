@@ -25,7 +25,7 @@ final class WakeTests: XCTestCase {
     func testWithAHelpingPCThePhoneAsksForItsOwnKeyOnce() async throws {
         StubAgent.json(withHelper)
         StubAgent.json("{\"key\": \"secret-key\"}")
-        StubAgent.json(withHelper.replacingOccurrences(of: "\"has_key\": false", with: "\"has_key\": true"))
+        StubAgent.json(withHelper.replacingOccurrences(of: "\"has_key\": false", with: "\"has_key\": true, \"key_hash\": \"85dbe15d75ef9308c7ae0f33c7a324cc6f4bf519a2ed2f3027bd33c140a4f9aa\""))
         let c = client()
         let kept = try await KeptWake.keep(c, before: nil)
         XCTAssertEqual(kept.key, "secret-key")
@@ -36,6 +36,16 @@ final class WakeTests: XCTestCase {
         XCTAssertEqual(StubAgent.requests.count, 3)
         XCTAssertTrue(kept.offered)
         XCTAssertEqual(kept.helperRequest, Data("CBWAKE1 secret-key".utf8))
+    }
+
+    func testAKeptKeyTheAgentNoLongerHasIsReplaced() async throws {
+        // A new key was made but its answer was lost: the agent has another one.
+        StubAgent.json(withHelper.replacingOccurrences(of: "\"has_key\": false", with: "\"has_key\": true, \"key_hash\": \"85dbe15d75ef9308c7ae0f33c7a324cc6f4bf519a2ed2f3027bd33c140a4f9aa\""))
+        StubAgent.json("{\"key\": \"newer-key\"}")
+        let kept = try await KeptWake.keep(client(), before: KeptWake(info: WakeInfo(), key: "lost-key"))
+        XCTAssertEqual(kept.key, "newer-key")
+        XCTAssertEqual(StubAgent.requests.count, 2)
+        XCTAssertEqual(KeptWake.keyHash("secret-key"), "85dbe15d75ef9308c7ae0f33c7a324cc6f4bf519a2ed2f3027bd33c140a4f9aa")
     }
 
     func testWithoutAHelpingPCOrRouterAnIPhoneHasNoWake() async throws {

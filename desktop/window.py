@@ -8,6 +8,7 @@ so a slow network never freezes the window.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -1593,7 +1594,10 @@ class MainWindow(FramelessWindow):
         def work() -> dict:
             info = agent.call("GET", "/wake")
             key = kept.get("key")
-            if info.get("helper") and not (info.get("has_key") and key):
+            # Kept only if it is the agent's: a new key whose answer was lost
+            # leaves an old one here that the helping PC no longer takes.
+            known = key and hashlib.sha256(key.encode()).hexdigest() == info.get("key_hash")
+            if info.get("helper") and not known:
                 key = agent.call("POST", "/wake/key")["key"]
             return {**info, "key": key if info.get("helper") else None}
 
@@ -1650,8 +1654,19 @@ class MainWindow(FramelessWindow):
         self.helper_timer.start()
         if self.agent.token:
             self.run(
-                lambda: self.agent.call("GET", "/wake/keys"), self.helper_synced, lambda _e: None
+                lambda: self.agent.call("GET", "/wake/keys"),
+                self.helper_synced,
+                self.helper_refused,
             )
+
+    def helper_refused(self, exc: AgentError) -> None:
+        """The agent's record says who helps: when it says this PC no longer
+        does (another PC took over, or Wake-on-LAN was turned off), this PC
+        stops listening and forgets its keys."""
+        if exc.status == 403:
+            self.pc.set_setting("help_wake", "")
+            self.pc.set_setting("help_wake_list", "")
+            self.sync_helper()
 
     def helper_synced(self, found: dict) -> None:
         self.pc.set_setting("help_wake_list", json.dumps(found))

@@ -1011,6 +1011,7 @@ class WakeDevice(Open):
     helper: dict[str, Any] | None = Field(None, description="The helping PC: address and port")
     router_url: str | None = Field(None, description="The router's wake page (https)")
     has_key: bool = Field(description="Whether this sign-in has a wake key")
+    key_hash: str | None = Field(None, description="SHA-256 of this sign-in's wake key")
 
 
 class WakeKey(Open):

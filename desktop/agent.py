@@ -37,7 +37,7 @@ class AgentError(Exception):
 
     problems: dict[str, str] = {}  # a form's reasons, by field, when the agent gave them
     line: int | None = None  # a refused settings file: the line it is about
-    status: int | None = None  # the agent's HTTP status, when it answered
+    status: int | None = None  # the agent's HTTP answer (403: not allowed), when it gave one
 
 
 class Unreachable(AgentError):

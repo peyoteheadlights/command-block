@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The alerts this device gets (GET /api/account/alerts): `own` false means
@@ -30,15 +31,19 @@ public struct WakeInfo: Codable, Equatable, Sendable {
     public var helper: WakeHelper?
     public var routerUrl: String?
     public var hasKey: Bool
+    /// SHA-256 of this sign-in's key on the agent, to check the kept one.
+    public var keyHash: String?
 
     enum CodingKeys: String, CodingKey {
         case on, pc, mac, broadcast, helper
         case routerUrl = "router_url"
         case hasKey = "has_key"
+        case keyHash = "key_hash"
     }
 
     public init(on: Bool = false, pc: String = "", mac: String? = nil, broadcast: String? = nil,
-                helper: WakeHelper? = nil, routerUrl: String? = nil, hasKey: Bool = false) {
+                helper: WakeHelper? = nil, routerUrl: String? = nil, hasKey: Bool = false,
+                keyHash: String? = nil) {
         self.on = on
         self.pc = pc
         self.mac = mac
@@ -46,6 +51,7 @@ public struct WakeInfo: Codable, Equatable, Sendable {
         self.helper = helper
         self.routerUrl = routerUrl
         self.hasKey = hasKey
+        self.keyHash = keyHash
     }
 
     public init(from decoder: Decoder) throws {
@@ -57,6 +63,7 @@ public struct WakeInfo: Codable, Equatable, Sendable {
         helper = try c.decodeIfPresent(WakeHelper.self, forKey: .helper)
         routerUrl = try c.decodeIfPresent(String.self, forKey: .routerUrl)
         hasKey = try c.decodeIfPresent(Bool.self, forKey: .hasKey) ?? false
+        keyHash = try c.decodeIfPresent(String.self, forKey: .keyHash)
     }
 }
 
@@ -96,12 +103,18 @@ public struct KeptWake: Codable, Equatable, Sendable {
     /// What the helping PC accepts (desktop/wake.py): "CBWAKE1 " and the key.
     public var helperRequest: Data? { key.map { Data(("CBWAKE1 " + $0).utf8) } }
 
+    /// SHA-256 of a wake key, as the agent keeps it.
+    static func keyHash(_ key: String) -> String {
+        SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// While the PC answers: what to keep, asking for this phone's own key
-    /// when there's a helping PC and the agent doesn't know one for it yet.
+    /// when there's a helping PC and the agent doesn't have the one kept here
+    /// (a new key whose answer was lost leaves an old one that no longer works).
     public static func keep(_ client: AgentClient, before: KeptWake?) async throws -> KeptWake {
         let info = try await client.wakeInfo()
         var key = before?.key
-        if info.helper != nil, !(info.hasKey && key != nil) {
+        if info.helper != nil, key.map(keyHash) != info.keyHash || key == nil {
             key = try await client.wakeKey()
         }
         return KeptWake(info: info, key: info.helper == nil ? nil : key)

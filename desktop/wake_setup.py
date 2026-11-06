@@ -109,7 +109,7 @@ def helper_card(page: PCSettings, info: dict) -> QFrame:
         if not on:
             window.pc.set_setting("help_wake", "")
             window.sync_helper()
-            page.call("DELETE", "/wake/helper", lambda _s: None)
+            page.call("DELETE", "/wake/helper?mine=true", lambda _s: None)  # never another PC
             return
 
         def untick(words: str) -> None:

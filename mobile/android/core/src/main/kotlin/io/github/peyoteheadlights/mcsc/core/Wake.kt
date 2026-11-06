@@ -3,6 +3,7 @@ package io.github.peyoteheadlights.mcsc.core
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.security.MessageDigest
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -16,6 +17,8 @@ data class WakeInfo(
     val helper: WakeHelper? = null,
     @SerialName("router_url") val routerUrl: String? = null,
     @SerialName("has_key") val hasKey: Boolean = false,
+    /** SHA-256 of this sign-in's key on the agent, to check the kept one. */
+    @SerialName("key_hash") val keyHash: String? = null,
 )
 
 @Serializable
@@ -58,12 +61,17 @@ object Wake {
 
     fun helperRequest(key: String): ByteArray = PREFIX + key.toByteArray()
 
+    /** SHA-256 of a wake key, as the agent keeps it. */
+    fun keyHash(key: String): String =
+        MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
+
     /** While the PC answers: what to keep, asking for this phone's own key
-     * when there's a helping PC and the agent doesn't know one for it yet. */
+     * when there's a helping PC and the agent doesn't have the one kept here
+     * (a new key whose answer was lost leaves an old one that no longer works). */
     suspend fun keep(client: AgentClient, before: KeptWake?): KeptWake {
         val info = client.wakeInfo()
         var key = before?.key
-        if (info.helper != null && !(info.hasKey && key != null)) key = client.wakeKey().key
+        if (info.helper != null && (key == null || keyHash(key) != info.keyHash)) key = client.wakeKey().key
         return KeptWake(info, key.takeIf { info.helper != null })
     }
 

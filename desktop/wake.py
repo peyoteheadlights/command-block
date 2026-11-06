@@ -92,7 +92,11 @@ class Helper:
                 except TimeoutError:
                     continue
                 except OSError:
-                    return  # stopped
+                    # Stopped, or the socket broke: either way it no longer
+                    # listens, so the next sync (window.sync_helper) starts it again.
+                    if self._sock is sock:
+                        self.stop()
+                    return
                 try:
                     self.request(data)
                 except (OSError, ValueError):
