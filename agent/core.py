@@ -140,6 +140,7 @@ class ServerContext:
             *memory.start_warnings(self),
         ]
         self.server.before_launch = self._before_launch
+        self.server.busy = self.busy
         self._update_task: asyncio.Task | None = None
         self._jar_scan_task: asyncio.Task | None = None
         self._stop_backup: asyncio.Task | None = None
@@ -224,6 +225,19 @@ class ServerContext:
     @property
     def color(self) -> str | None:
         return self.core.db.server_color(self.server_id)
+
+    def busy(self, job_id: str | None = None) -> str | None:
+        """What is changing this server's files right now, by name, or None.
+        Start, auto-sleep and Remove all ask this one question. ``job_id`` is
+        the asker's own job (a restore starting the server at its end)."""
+        if self.server.held_by:
+            return self.server.held_by
+        job = self.core.jobs.risky_job(self.server_id)
+        if job is not None and job.id != job_id:
+            return job.title
+        if self.backups.running:
+            return f"Backing up {self.name}"
+        return None
 
     def require_free(self) -> None:
         """Refuse (409) while another change holds this server."""
@@ -898,8 +912,9 @@ class AgentCore:
             ctx = self.get_server(server_id)
             if ctx.server.running:
                 raise ServerError(f"Stop {ctx.name} before removing it from the list")
-            if self.jobs.risky_job(server_id):
-                raise ServerError(f"Wait for {ctx.name}'s running job to finish first")
+            doing = ctx.busy()
+            if doing:
+                raise ServerError(f"Wait for '{doing}' to finish first")
             name, directory = ctx.name, str(ctx.config.server_dir)
             # Stop supervising first: the managers still read this server's
             # settings while they shut down.

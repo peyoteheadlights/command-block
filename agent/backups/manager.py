@@ -170,6 +170,10 @@ class BackupManager:
         self.changes = ChangeHistory(db, server.server_id, self)
 
     @property
+    def running(self) -> bool:
+        return self._running
+
+    @property
     def directory(self) -> Path:
         path = self.config.backup_dir
         path.mkdir(parents=True, exist_ok=True)

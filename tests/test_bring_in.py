@@ -266,3 +266,46 @@ def test_bringing_in_is_owner_only_over_the_api(multi_client, tmp_path):
     )
     assert started.status_code == 200, started.text
     assert started.json()["job"]["kind"] == "bring_in"
+
+
+async def test_a_server_being_brought_in_cant_start_until_it_is_in(core, tmp_path, monkeypatch):
+    from agent.backups.manager import BackupManager
+
+    folder = write(tmp_path / "old", {**LAYOUTS["paper"], "world/level.dat": b"x"})
+    seen = []
+    real = BackupManager.create
+
+    async def create(self, *args, **kwargs):
+        seen.append(self.server.preflight().problems)
+        return await real(self, *args, **kwargs)
+
+    monkeypatch.setattr(BackupManager, "create", create)
+    job = await bringin.bring_in(
+        core, path=str(folder), name="Old SMP", directory=str(tmp_path / "new"), user="admin"
+    )
+    assert (await finish(core, job)).state == SUCCEEDED
+    assert "Bringing in Old SMP" in seen[0][0]
+    assert core.get_server("old-smp").server.preflight().problems == []
+
+
+async def test_a_failed_bring_in_keeps_the_folder_of_a_server_it_cant_take_off(
+    core, tmp_path, monkeypatch
+):
+    from agent.backups.manager import BackupManager
+    from agent.minecraft.process import ServerError
+
+    folder = write(tmp_path / "old", {**LAYOUTS["paper"], "world/level.dat": b"x"})
+
+    async def create(self, *args, **kwargs):
+        raise RuntimeError("the disk is full")
+
+    async def remove_server(server_id, user="system"):
+        raise ServerError("Stop Old SMP before removing it from the list")
+
+    monkeypatch.setattr(BackupManager, "create", create)
+    monkeypatch.setattr(core, "remove_server", remove_server)
+    job = await bringin.bring_in(
+        core, path=str(folder), name="Old SMP", directory=str(tmp_path / "new"), user="admin"
+    )
+    assert (await finish(core, job)).state != SUCCEEDED
+    assert (tmp_path / "new" / "world" / "level.dat").is_file()

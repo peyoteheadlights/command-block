@@ -235,6 +235,19 @@ async def options(core: AgentCore, user: str = "") -> dict[str, Any]:
     }
 
 
+async def _take_off(core, server_id: str, folder: Path, existed: bool, user: str) -> None:
+    """Take a half-made server off the list, and delete the folder this app
+    made for it. A folder is only deleted once the server is off the list,
+    so a server that is still running never loses its files."""
+    try:
+        await core.remove_server(server_id, user=user)
+    except Exception:
+        log.exception("could not take the half-made server off the list; its folder is kept")
+        return
+    if not existed:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
 async def create_server(
     core: AgentCore,
     *,
@@ -373,6 +386,8 @@ async def create_server(
             if created_here and not existed:
                 shutil.rmtree(folder, ignore_errors=True)
             raise
+        # Nothing (a click, a schedule, a phone) starts it until it is made.
+        ctx.server.held_by = title
         try:
             result = await install_plan(ctx, plan, folder, job=job)
             if is_bedrock:
@@ -413,13 +428,11 @@ async def create_server(
         except Exception:
             # Leave nothing half-made: the server comes off the list and
             # the folder this app created goes with it.
-            try:
-                await core.remove_server(server_id, user=user)
-            except Exception:  # pragma: no cover - reported, never hidden
-                log.exception("could not take the half-created server off the list")
-            if not existed:
-                shutil.rmtree(folder, ignore_errors=True)
+            ctx.server.held_by = None
+            await _take_off(core, server_id, folder, existed, user)
             raise
+        finally:
+            ctx.server.held_by = None
         await ctx.bus.publish(
             Event(
                 type="server_created",

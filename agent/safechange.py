@@ -122,7 +122,7 @@ async def run_safe_change(
     if change.start_after:
         step("Starting the server")
         try:
-            await server.start(actor=user)
+            await server.start(actor=user, job_id=job.id if job else None)
             started = await server.wait_online()
         except ServerError as exc:
             await server.bus.publish(

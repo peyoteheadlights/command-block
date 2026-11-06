@@ -310,3 +310,96 @@ async def test_a_backup_cut_off_by_a_power_cut_is_cleared_by_the_next_one(backup
     result = await backups.create(user="tester")
     assert not left.exists()
     assert [p.name for p in config.backup_dir.iterdir()] == [result["name"]]
+
+
+# ------------------------------------------------------------ one busy answer
+@pytest.fixture
+async def core(tmp_path):
+    from agent.core import AgentCore
+
+    from .conftest import build_multi_config
+
+    core = AgentCore(build_multi_config(tmp_path))
+    yield core
+    await core.jobs.stop()
+    core.db.close()
+
+
+async def _while_a_job_runs(core, ctx, check):
+    import asyncio
+
+    gate = asyncio.Event()
+
+    async def work(job):
+        await gate.wait()
+
+    task = asyncio.create_task(
+        core.jobs.run("mods", "Installing Sodium", work, server_id=ctx.server_id, risky=True)
+    )
+    await asyncio.sleep(0.05)
+    try:
+        return await check()
+    finally:
+        gate.set()
+        await task
+
+
+async def test_start_waits_for_a_risky_job_and_names_it(core):
+    from agent.minecraft.process import ServerError
+
+    ctx = core.get_server("survival")
+
+    async def check():
+        with pytest.raises(ServerError, match="Installing Sodium"):
+            await ctx.server.start(actor="tester")
+
+    await _while_a_job_runs(core, ctx, check)
+    assert not ctx.server.running
+
+
+async def test_start_waits_for_a_backup_that_runs_without_a_job(core):
+    ctx = core.get_server("survival")
+    ctx.backups._running = True
+    try:
+        assert "Backing up" in " ".join(ctx.server.preflight().problems)
+    finally:
+        ctx.backups._running = False
+
+
+async def test_a_server_held_by_a_change_is_not_removed(core):
+    from agent.minecraft.process import ServerError
+
+    ctx = core.get_server("survival")
+    ctx.server.held_by = "Restoring x"
+    try:
+        with pytest.raises(ServerError, match="Restoring x"):
+            await core.remove_server("survival")
+    finally:
+        ctx.server.held_by = None
+
+
+async def test_autosleep_waits_while_a_backup_runs(core):
+    ctx = core.get_server("survival")
+    ctx.backups._running = True
+    try:
+        assert ctx.busy() is not None
+    finally:
+        ctx.backups._running = False
+    assert ctx.busy() is None
+
+
+async def test_restart_is_refused_before_the_stop_while_a_job_runs(core):
+    from agent.minecraft.process import ServerError
+
+    ctx = core.get_server("survival")
+    await ctx.server.start(actor="tester")
+    try:
+
+        async def check():
+            with pytest.raises(ServerError, match="Installing Sodium"):
+                await ctx.server.restart(actor="tester")
+            assert ctx.server.running
+
+        await _while_a_job_runs(core, ctx, check)
+    finally:
+        await ctx.server.stop()

@@ -147,7 +147,7 @@ class AutoSleep:
             return "waiting"
 
         # A change already running on this server owns it; sleeping can wait.
-        if server.held_by or self.ctx.core.jobs.risky_job(self.ctx.server_id):
+        if self.ctx.busy():
             return "waiting"
         # Far view is loading the world ahead tonight (agent/farview.py).
         if self.ctx.night_load.running:

@@ -46,7 +46,7 @@ from .security.paths import (
     zip_member_is_symlink,
 )
 from .servertypes import custom
-from .servertypes.create import default_memory_mb, new_server_id, write_eula
+from .servertypes.create import _take_off, default_memory_mb, new_server_id, write_eula
 from .servertypes.install import find_args_file, install_plan
 from .servertypes.versions import _neoforge_minecraft, make_plan
 
@@ -495,6 +495,8 @@ async def bring_in(
                     raise BringInError(f"It has no {server_type.name} start file to run.")
             ctx = await core.add_server(entry, user=user)
             registered_here = True
+            # Nothing (a click, a schedule, a phone) starts it until it is in.
+            ctx.server.held_by = title
             loader = found.loader
             if found.needs_install:
                 plan = await make_plan(server_type.id, found.minecraft or "", found.loader)
@@ -520,13 +522,14 @@ async def bring_in(
             )
         except BaseException:
             if registered_here:
-                try:
-                    await core.remove_server(server_id, user=user)
-                except Exception:  # pragma: no cover - reported, never hidden
-                    log.exception("could not take the half-brought-in server off the list")
-            if not existed:
+                ctx.server.held_by = None
+                await _take_off(core, server_id, folder, existed, user)
+            elif not existed:
                 shutil.rmtree(folder, ignore_errors=True)
             raise
+        finally:
+            if registered_here:
+                ctx.server.held_by = None
         core.db.audit(
             "server_bring_in",
             user=user,

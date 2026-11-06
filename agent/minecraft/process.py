@@ -147,6 +147,9 @@ class MinecraftServer:
         # change its files (a restore, for example): starting then would load
         # a half-changed world, so every start is refused until it clears.
         self.held_by: str | None = None
+        # What is changing this server's files (ServerContext.busy): a held
+        # change, a risky job or a backup. None here means only held_by.
+        self.busy: Callable[[str | None], str | None] | None = None
         self.maintenance = False
         # True when auto-sleep stopped this server because nobody was
         # playing, so the apps can say why it is off. Cleared on start.
@@ -345,11 +348,12 @@ class MinecraftServer:
             return f"The server file isn't there: {jar}"
         return None
 
-    def preflight(self) -> PreflightResult:
+    def preflight(self, job_id: str | None = None) -> PreflightResult:
         result = PreflightResult()
-        if self.held_by:
+        doing = self.busy(job_id) if self.busy else self.held_by
+        if doing:
             result.problems.append(
-                f"Wait for '{self.held_by}' to finish first. The server's files are being "
+                f"Wait for '{doing}' to finish first. The server's files are being "
                 "changed, so it cannot start until that is done."
             )
             return result
@@ -503,7 +507,9 @@ class MinecraftServer:
     # ------------------------------------------------------------------
     # start
     # ------------------------------------------------------------------
-    async def start(self, actor: str = "system", _from_pending: bool = False) -> dict[str, Any]:
+    async def start(
+        self, actor: str = "system", _from_pending: bool = False, job_id: str | None = None
+    ) -> dict[str, Any]:
         async with self._lock:
             if self.state in (ServerState.STARTING, ServerState.ONLINE, ServerState.STOPPING):
                 raise ServerError(
@@ -521,7 +527,7 @@ class MinecraftServer:
             self.restart_at = None
             self.restart_delay = None
             self.auto_restart_cancelled = False
-            pre = self.preflight()
+            pre = self.preflight(job_id)
             if not pre.ok:
                 await self._set_state(
                     ServerState.OFFLINE,
@@ -873,6 +879,11 @@ class MinecraftServer:
         await self.wait_exit(timeout=30)
 
     async def restart(self, actor: str = "system", delay: float = 0.0) -> dict[str, Any]:
+        doing = self.busy(None) if self.busy else None
+        if self.running and doing:
+            # Checked before the stop: the start after it would be refused,
+            # and the server left off.
+            raise ServerError(f"Wait for '{doing}' to finish first.")
         if self.running:
             await self._set_state(ServerState.RESTARTING, f"Restart requested by {actor}")
             await self.stop(actor=actor, reason=ExitReason.USER_STOP, restart=True)
