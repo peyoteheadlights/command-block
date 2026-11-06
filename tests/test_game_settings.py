@@ -188,6 +188,20 @@ def test_saving_keeps_a_copy_and_offers_undo(multi_client, multi):
     assert safety["kind"] == "safety"
 
 
+def test_undo_with_the_answers_change_id_leaves_a_newer_change_alone(multi_client, multi):
+    folder = multi.for_server("survival").server_dir
+    write(folder)
+    url = "/api/servers/survival/game-settings"
+    mine = multi_client.put(url, json={"values": {"difficulty": "hard"}}).json()
+    multi_client.put(url, json={"values": {"pvp": False}})  # someone else, since
+    undo = multi_client.post(
+        "/api/servers/survival/changes/undo", json={"change_id": mine["undo"]["change_id"]}
+    )
+    assert undo.status_code == 409, undo.text
+    text = (folder / "server.properties").read_text(encoding="utf-8")
+    assert "pvp=false" in text and "difficulty=hard" in text
+
+
 def test_a_port_another_server_uses_is_refused_by_name(multi_client, multi):
     folder = multi.for_server("survival").server_dir
     write(folder)

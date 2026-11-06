@@ -633,6 +633,9 @@ class Undo(Open):
     kind: str
     backup_id: int
     backup: str
+    change_id: int | None = Field(
+        None, description="Send it with /changes/undo, so only this change is undone"
+    )
 
 
 class Restored(Open):

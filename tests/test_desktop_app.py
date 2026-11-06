@@ -1703,3 +1703,25 @@ def test_slow_work_that_ends_after_another_server_opened_still_says_how_it_went(
     wait_for(qapp, lambda: len(told()) == 2)
     assert shown == []  # nothing about Survival lands on Creative's page
     assert sorted(told())[0].startswith("Finished")
+
+
+def test_a_fixs_undo_never_undoes_someone_elses_newer_change(qapp, agent_http, monkeypatch):
+    from desktop.fixes import run_fix
+
+    window = signed_in_on(qapp, agent_http, "Survival")
+    monkeypatch.setattr(window, "confirm", lambda *_a, **_k: True)
+    said: list = []
+    fix = {"kind": "game_settings", "values": {"view-distance": 6, "simulation-distance": 6}}
+    run_fix(window, "survival", fix, lambda words, undo=None: said.append((words, undo)))
+    wait_for(qapp, lambda: said)
+    words, undo = said[-1]
+    assert undo is not None, words
+    newer = agent_http.put(
+        "/api/servers/survival/game-settings",
+        headers=owner(agent_http),
+        json={"values": {"pvp": False}},
+    )
+    assert newer.status_code == 200, newer.text
+    undo()
+    wait_for(qapp, lambda: len(said) == 2)
+    assert "moved on" in said[-1][0]

@@ -1917,10 +1917,16 @@ class ModsPage(SharePage):
 
         def copied(result: dict) -> None:
             agent, sid = self.window_.agent, target["id"]
+            # Only this copy: if someone changed the target since, nothing is undone.
+            change_id = (result.get("undo") or {}).get("change_id")
             self.say(
                 text("desktop.mods.copy_done", count=len(result["copied"]), server=target["name"]),
-                lambda: self.window_.run(
-                    lambda: agent.on(sid, "POST", "/changes/undo", {}, slow=True),
+                None
+                if change_id is None
+                else lambda: self.window_.run(
+                    lambda: agent.on(
+                        sid, "POST", "/changes/undo", {"change_id": change_id}, slow=True
+                    ),
                     lambda _r: self.say(text("desktop.fix.undone")),
                     self.said,
                 ),

@@ -135,7 +135,12 @@ async def run_safe_change(
     return {
         **result,
         "safety_backup": safety,
-        "undo": {"kind": "restore_backup", "backup_id": safety["id"], "backup": safety["name"]}
+        "undo": {
+            "kind": "restore_backup",
+            "backup_id": safety["id"],
+            "backup": safety["name"],
+            "change_id": change_id,
+        }
         if safety and change.history == "push"
         else None,
         "change_id": change_id,
