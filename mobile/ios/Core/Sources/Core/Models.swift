@@ -166,9 +166,10 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
     public var content: String?
     public var edition: String?
     public var capabilities: Capabilities?
+    public var answering: Answering?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, color, state, uptime, content, edition, capabilities
+        case id, name, color, state, uptime, content, edition, capabilities, answering
         case stateVerified = "state_verified"
         case playersOnline = "players_online"
         case playersVerified = "players_verified"
@@ -191,7 +192,8 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         typeName: String? = nil,
         content: String? = nil,
         edition: String? = nil,
-        capabilities: Capabilities? = nil
+        capabilities: Capabilities? = nil,
+        answering: Answering? = nil
     ) {
         self.id = id
         self.name = name
@@ -207,6 +209,7 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         self.content = content
         self.edition = edition
         self.capabilities = capabilities
+        self.answering = answering
     }
 
     public init(from decoder: Decoder) throws {
@@ -225,6 +228,16 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         content = try? c.decodeIfPresent(String.self, forKey: .content)
         edition = try c.decodeIfPresent(String.self, forKey: .edition)
         capabilities = try c.decodeIfPresent(Capabilities.self, forKey: .capabilities)
+        answering = try? c.decodeIfPresent(Answering.self, forKey: .answering)
+    }
+}
+
+/// Does the server answer on its game port? ok is nil until checked.
+public struct Answering: Codable, Equatable, Sendable {
+    public var ok: Bool?
+
+    public init(ok: Bool? = nil) {
+        self.ok = ok
     }
 }
 
@@ -282,9 +295,10 @@ public struct ServerStatus: Codable, Equatable, Sendable {
     public var playersVerified: Bool?
     public var players: [OnlinePlayer]
     public var maxPlayers: Int?
+    public var answering: Answering?
 
     enum CodingKeys: String, CodingKey {
-        case name, state, uptime, players
+        case name, state, uptime, players, answering
         case serverId = "server_id"
         case stateVerified = "state_verified"
         case minecraftVersion = "minecraft_version"
@@ -305,7 +319,8 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         playersOnline: Int? = nil,
         playersVerified: Bool? = nil,
         players: [OnlinePlayer] = [],
-        maxPlayers: Int? = nil
+        maxPlayers: Int? = nil,
+        answering: Answering? = nil
     ) {
         self.serverId = serverId
         self.name = name
@@ -318,6 +333,7 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         self.playersVerified = playersVerified
         self.players = players
         self.maxPlayers = maxPlayers
+        self.answering = answering
     }
 
     public init(from decoder: Decoder) throws {
@@ -333,6 +349,7 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         playersVerified = try c.decodeIfPresent(Bool.self, forKey: .playersVerified)
         players = try c.decodeIfPresent([OnlinePlayer].self, forKey: .players) ?? []
         maxPlayers = try c.decodeIfPresent(Int.self, forKey: .maxPlayers)
+        answering = try? c.decodeIfPresent(Answering.self, forKey: .answering)
     }
 }
 

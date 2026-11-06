@@ -102,7 +102,12 @@ data class ServerRow(
     val content: String? = null,
     val edition: String? = null,
     val capabilities: Capabilities? = null,
+    val answering: Answering? = null,
 )
+
+/** Does the server answer on its game port? ok is null until checked. */
+@Serializable
+data class Answering(val ok: Boolean? = null)
 
 @Serializable
 data class ServerList(
@@ -133,6 +138,7 @@ data class ServerStatus(
     @SerialName("players_verified") val playersVerified: Boolean? = null,
     val players: List<OnlinePlayer> = emptyList(),
     @SerialName("max_players") val maxPlayers: Int? = null,
+    val answering: Answering? = null,
 )
 
 @Serializable

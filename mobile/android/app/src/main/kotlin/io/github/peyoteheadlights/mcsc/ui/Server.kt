@@ -74,7 +74,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
         item {
             val colors = LocalColors.current
             Card(Modifier.padding(top = 8.dp)) {
-                Item(t(Display.state(state).key), subtitle = Display.uptime(vm.strings, state, status?.uptime))
+                Item(t(Display.state(state, status?.answering?.ok).key), subtitle = Display.uptime(vm.strings, state, status?.uptime))
                 if (state == States.RESTART_PENDING) Note(t("mobile.server.restart_pending"))
                 listOfNotNull(status?.serverTypeName ?: row?.typeName, status?.minecraftVersion ?: row?.minecraftVersion)
                     .joinToString(" ").takeIf { it.isNotBlank() }

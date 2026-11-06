@@ -87,7 +87,7 @@ private fun ServerCard(row: ServerRow, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StateText(row.state)
+            StateText(row.state, row.answering?.ok)
             if (row.state == States.ONLINE) {
                 Text(
                     t("servers.players") + ": " + Display.players(LocalStrings.current, row.playersOnline, row.maxPlayers),

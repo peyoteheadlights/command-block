@@ -73,7 +73,7 @@ struct ServerView: View {
     private func header(_ palette: Palette) -> some View {
         // Nothing old is shown as current: without a fresh read, Unknown.
         let state = status?.state ?? States.UNKNOWN
-        let words = Display.state(state)
+        let words = Display.state(state, answering: status?.answering?.ok)
         return card(palette) {
             HStack(alignment: .center, spacing: 12) {
                 ColorBadge(hex: row?.color, size: 18)

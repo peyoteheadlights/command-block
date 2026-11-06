@@ -26,7 +26,13 @@ object Display {
         States.UNKNOWN to StateWords("state.unknown", Tone.NEUTRAL),
     )
 
-    fun state(name: String?): StateWords = STATES[name] ?: STATES.getValue(States.UNKNOWN)
+    /** [answering] false: running but the game port doesn't answer (agent's watchdog). */
+    fun state(name: String?, answering: Boolean? = null): StateWords =
+        if (name == States.ONLINE && answering == false) {
+            StateWords("state.not_answering", Tone.DANGER)
+        } else {
+            STATES[name] ?: STATES.getValue(States.UNKNOWN)
+        }
 
     /** "3d 4h", "2h 10m", "5m", "40s": duration in desktop/ui.py. */
     fun duration(strings: Strings, seconds: Double): String {

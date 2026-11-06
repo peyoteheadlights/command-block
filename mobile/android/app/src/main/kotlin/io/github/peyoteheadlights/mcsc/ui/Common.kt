@@ -230,8 +230,8 @@ fun ServerDot(color: String?) {
 }
 
 @Composable
-fun StateText(state: String?) {
-    val words = Display.state(state)
+fun StateText(state: String?, answering: Boolean? = null) {
+    val words = Display.state(state, answering)
     Text(
         t(words.key),
         color = LocalColors.current.tone(words.tone),

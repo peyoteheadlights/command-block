@@ -4,6 +4,15 @@ import XCTest
 final class DisplayTests: XCTestCase {
     private let s = Strings(Shared.strings)
 
+    func testARunningServerThatDoesNotAnswerNeverReadsOnline() throws {
+        XCTAssertEqual(s.t(Display.state("ONLINE", answering: false).key), "Not answering")
+        XCTAssertEqual(s.t(Display.state("ONLINE", answering: nil).key), "Online")
+        XCTAssertEqual(s.t(Display.state("OFFLINE", answering: false).key), "Offline")
+        let json = #"{"id": "s", "name": "S", "state": "ONLINE", "answering": {"ok": false, "checked_at": 1.0}}"#
+        let row = try JSONDecoder().decode(ServerRow.self, from: Data(json.utf8))
+        XCTAssertEqual(row.answering?.ok, false)
+    }
+
     func testStatesReadTheSameInEveryApp() {
         XCTAssertEqual(s.t(Display.state("ONLINE").key), "Online")
         XCTAssertEqual(s.t(Display.state("RESTART_PENDING").key), "Crashed")
