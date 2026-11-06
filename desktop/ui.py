@@ -258,12 +258,25 @@ class Page(QScrollArea):
         """Call one of this server's routes off the window's thread. An
         answer that comes back after another server was opened is dropped.
         What went wrong shows under the server's name, unless ``failed``.
-        ``slow`` for work the agent answers only once done (AgentClient.call)."""
-        sid, agent = self.row["id"], self.window_.agent
-        here = self.window_.still_on(sid)
-        self.window_.run(
+        ``slow`` for work the agent answers only once done (AgentClient.call);
+        if that work ends after another server was opened, a Windows alert
+        says how it went, as nothing on this page would."""
+        sid, window = self.row["id"], self.window_
+        name, agent = self.row.get("name") or sid, window.agent
+        tell = slow and method != "GET"
+
+        def answer(then: Callable[[Any], None], words: Callable[[Any], str]):
+            def got(result: Any) -> None:
+                if window.server_id == sid:
+                    then(result)
+                elif tell:
+                    window.pc.show_alert(name, words(result))
+
+            return got
+
+        window.run(
             lambda: agent.on(sid, method, path, body, slow),
-            here(done),
-            here(failed or self.window_.page_problem),
+            answer(done, lambda _r: text("desktop.finished_elsewhere")),
+            answer(failed or window.page_problem, str),
             always,
         )

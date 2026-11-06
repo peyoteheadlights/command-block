@@ -1672,3 +1672,34 @@ def test_an_unchecked_player_count_is_shown_as_unknown(qapp, agent_http):
     qapp.processEvents()
     assert panel.online_title.text() == "Online now (? of 20)"
     assert "Unknown" in shown_text(panel) and "Nobody" not in shown_text(panel)
+
+
+def test_opening_another_server_clears_the_last_ones_notes_undo_and_console(qapp, agent_http):
+    window = signed_in_on(qapp, agent_http, "Survival")
+    screen = window.server_screen
+    undone: list = []
+    mods = screen.page_widgets["Mods"]
+    mods.say("Turned off Survival's mod.", lambda: undone.append(True))
+    screen.simple_overview.fixed.say("Fixed on Survival.", lambda: undone.append(True))
+    console = screen.page_widgets["Console"]
+    console.lines = ["[Server thread/INFO]: Survival's line"]
+    window.open_server("creative")
+    qapp.processEvents()
+    assert not mods.note.isVisibleTo(window) and mods.note.then is None
+    assert screen.simple_overview.fixed.then is None
+    assert console.lines == []
+    assert not screen.header.undo.isVisibleTo(window)
+
+
+def test_slow_work_that_ends_after_another_server_opened_still_says_how_it_went(qapp, agent_http):
+    pc = FakePC()
+    window = signed_in_on(qapp, agent_http, "Survival", pc)
+    page = window.server_screen.page_widgets["Backups"]
+    shown: list = []
+    page.ask("POST", "/backups", shown.append, body={}, slow=True)
+    page.ask("POST", "/no-such-thing", shown.append, shown.append, slow=True)
+    window.open_server("creative")
+    told = lambda: [body for title, body in pc.alerts if title == "Survival"]  # noqa: E731
+    wait_for(qapp, lambda: len(told()) == 2)
+    assert shown == []  # nothing about Survival lands on Creative's page
+    assert sorted(told())[0].startswith("Finished")

@@ -2663,6 +2663,7 @@
 "desktop.fix.sure": ["How sure: {level}", "Confidence: {level}"],
 "desktop.fix.setup_refused": ["Windows didn't get permission to open Command Block setup. Try again and choose Yes when Windows asks.", "The UAC prompt was declined."],
 "desktop.fix.undone": ["Put back the way it was.", "Undone."],
+"desktop.finished_elsewhere": ["Finished. Open this server to see how it went.", "Finished; open the server for details."],
 "desktop.backups.restore_all": ["Restore everything", "Restore whole backup"],
 "desktop.backups.world_done": ["The world was put back. Undo puts it back to how it was just now.", "World restored. Undo reverts it."],
 "desktop.backups.import_done": ["World brought in. Undo puts the old one back.", "World imported. Undo reverts it."],

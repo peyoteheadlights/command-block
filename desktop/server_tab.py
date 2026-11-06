@@ -37,7 +37,7 @@ from .schedules import SchedulesPage
 from .settings import SettingsPage
 from .shell import PageList
 from .store import StorePage, store_tab
-from .ui import Page, clock, content_page, has_packs, label, push, refill
+from .ui import Note, Page, clock, content_page, has_packs, label, push, refill
 from .words import mode, text
 
 if TYPE_CHECKING:
@@ -501,16 +501,32 @@ class ServerScreen(QWidget):
             self.page.live(event)
 
     def show_row(self, row: dict) -> None:
-        changed = row.get("id") != self.row.get("id") or content_page(row) != content_page(self.row)
+        moved = row.get("id") != self.row.get("id")
+        changed = moved or content_page(row) != content_page(self.row)
         self.row = row
         self.simple_overview.row = self.technical_overview.row = row
         for widget in self.page_widgets.values():
             if isinstance(widget, Page):
                 widget.row = row
         self.header.show_row(row)
+        if moved:
+            self.forget()
         self.panel.show_words()
         if changed:
             self.build_tabs()
+
+    def forget(self) -> None:
+        """Another server was opened: nothing the last one showed stays,
+        above all not an Undo, which would act on this one."""
+        note: Note
+        for note in self.findChildren(Note):
+            note.say("")
+        self.header.show_changes({})
+        self.header.show_status({})
+        console = self.page_widgets["Console"]
+        if isinstance(console, ConsolePage):
+            console.lines = []
+            console.show_lines()
 
     def place_panel(self) -> None:
         wide = self.window().width() >= WIDE
