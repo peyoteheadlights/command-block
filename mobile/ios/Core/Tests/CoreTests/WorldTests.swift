@@ -496,6 +496,24 @@ final class WorldTests: XCTestCase {
         }
     }
 
+    func testSlowWorkWhoseConnectionDropsMayStillBeRunningOnThePC() async {
+        StubAgent.enqueue(StubAgent.Answer(status: 0, headers: [:], body: Data(), failure: URLError(.networkConnectionLost)))
+        do {
+            _ = try await client().backUp(serverId: "survival")
+            XCTFail("A dropped backup read as done")
+        } catch {
+            XCTAssertEqual(error as? AgentError, .stillWorking)
+        }
+        // A PC that is off is still unreachable.
+        StubAgent.enqueue(StubAgent.Answer(status: 0, headers: [:], body: Data(), failure: URLError(.cannotConnectToHost)))
+        do {
+            _ = try await client().backUp(serverId: "survival")
+            XCTFail("A backup on a PC that is off read as done")
+        } catch {
+            XCTAssertEqual(error as? AgentError, .unreachable)
+        }
+    }
+
     func testABackupThatIsntThereComesBackInTheAgentsWords() async {
         StubAgent.json("{\"detail\": \"That backup isn't on this server's list.\"}", status: 404)
         let out = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".zip")

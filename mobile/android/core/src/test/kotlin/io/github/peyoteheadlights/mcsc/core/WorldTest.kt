@@ -473,6 +473,21 @@ class WorldTest {
     }
 
     @Test
+    fun `slow work whose connection drops may still be running on the PC`() {
+        TestAgent().use { agent ->
+            agent.server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST))
+            assertThrows(AgentException.StillWorking::class.java) { runBlocking { client(agent).backUp("survival") } }
+        }
+    }
+
+    @Test
+    fun `slow work on a PC that is off is still unreachable`() {
+        val port = TestAgent().use { it.port }
+        val off = AgentClient(Pairing("localhost", port, null), { token }, systemTrust = TestAgent.trustingNothing())
+        assertThrows(AgentException.Unreachable::class.java) { runBlocking { off.backUp("survival") } }
+    }
+
+    @Test
     fun `a backup that isn't there comes back in the agent's words`() {
         TestAgent().use { agent ->
             agent.server.enqueue(agent.json("""{"detail": "That backup isn't on this server's list."}""", code = 404))

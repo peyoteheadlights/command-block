@@ -1616,7 +1616,11 @@ class AgentClient(
                 if (slow && e is java.net.SocketTimeoutException && waited >= TimeUnit.SECONDS.toNanos(slowSeconds) * 9 / 10) {
                     throw AgentException.StillWorking()
                 }
-                throw translate(e)
+                val failed = translate(e)
+                // The PC got the work and then the connection dropped (the
+                // phone slept, Wi-Fi changed): the job goes on there.
+                if (slow && failed is AgentException.Unreachable && !couldNotConnect(e)) throw AgentException.StillWorking()
+                throw failed
             }
             response.use { read(it, request, serializer, signedIn) }
         }
@@ -1661,6 +1665,11 @@ class AgentClient(
     }.getOrNull().orEmpty()
 
     internal fun translateFailure(e: IOException): AgentException = translate(e)
+
+    /** The PC never got the request: off, asleep, or no route to it. */
+    private fun couldNotConnect(e: IOException): Boolean =
+        e is java.net.ConnectException || e is java.net.UnknownHostException ||
+            e is java.net.NoRouteToHostException || e is java.net.SocketTimeoutException
 
     private fun translate(e: IOException): AgentException {
         var cause: Throwable? = e

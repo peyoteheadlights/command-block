@@ -309,6 +309,11 @@ public final class AgentClient: @unchecked Sendable {
                 && Date().timeIntervalSince(started) >= slowWait * 0.9 {
                 throw AgentError.stillWorking
             }
+            // The PC got the work and then the connection dropped (the phone
+            // slept, Wi-Fi changed): the job goes on there.
+            if slow && nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorNetworkConnectionLost {
+                throw AgentError.stillWorking
+            }
             throw translateFailure(error)
         }
         let data = result.0
