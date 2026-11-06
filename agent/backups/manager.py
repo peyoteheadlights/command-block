@@ -88,7 +88,7 @@ def _unique(path: Path) -> Path:
 def _unlink(path: Path) -> None:
     try:
         path.unlink(missing_ok=True)
-    except OSError:  # still open (Windows); the next backup removes it
+    except OSError:  # still open (Windows); removed at the next agent start
         log.warning("could not remove %s", path, exc_info=True)
 
 
@@ -172,6 +172,14 @@ class BackupManager:
     @property
     def running(self) -> bool:
         return self._running
+
+    def clear_parts(self) -> None:
+        """An archive is written as name.zip.part and renamed once whole, so
+        a half-written one never looks like a backup. At agent start (no
+        backup runs then, even in a backups folder shared with another
+        server) the ones a power cut or a cancel left are removed."""
+        for left in self.directory.glob("*.zip.part"):
+            _unlink(left)
 
     @property
     def directory(self) -> Path:
@@ -323,11 +331,6 @@ class BackupManager:
     ) -> dict[str, Any]:
         if self._running:
             raise BackupError("A backup is already running")
-        # An archive is written as name.zip.part and renamed once whole, so a
-        # half-written one never looks like a backup. One left by a power
-        # cut or a cancel is removed here.
-        for left in self.directory.glob("*.part"):
-            _unlink(left)
         if job:
             job.step("Finding the files to back up")
         sources = self._sources(includes)

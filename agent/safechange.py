@@ -339,7 +339,14 @@ async def recover(server: MinecraftServer) -> bool:
         )
         return True
     server.db.set_setting(UNFINISHED, None)
-    done = "The files from before it were put back." if moved else "Nothing had changed yet."
+    backup = record.get("backup")
+    if moved:
+        done = "The files from before it were put back."
+    elif backup:
+        # The change may have edited files in place; nothing says it didn't.
+        done = f"If the server doesn't look right, restore the backup {backup}."
+    else:
+        done = "It stopped before anything was changed."
     await server.bus.publish(
         Event(
             type="change_interrupted",

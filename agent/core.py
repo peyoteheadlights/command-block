@@ -334,6 +334,7 @@ class ServerContext:
         # A change cut off by a power cut is put back before anything can
         # start the server on half-moved files.
         self.backups.changes.settle(await safechange.recover(self.server))
+        await asyncio.to_thread(self.backups.clear_parts)
         # Establish facts before the apps can ask for them, so the first
         # status it sees is verified rather than assumed.
         self.server.verify_state()

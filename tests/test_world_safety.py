@@ -304,12 +304,12 @@ async def test_a_cancelled_backup_leaves_no_half_written_archive(backups, config
     assert list(config.backup_dir.iterdir()) == []
 
 
-async def test_a_backup_cut_off_by_a_power_cut_is_cleared_by_the_next_one(backups, config):
+async def test_a_backup_cut_off_by_a_power_cut_is_cleared_at_the_next_start(backups, config):
     left = config.backup_dir / "manual-20261106-120000.zip.part"
     left.write_bytes(b"half a zip")
-    result = await backups.create(user="tester")
-    assert not left.exists()
-    assert [p.name for p in config.backup_dir.iterdir()] == [result["name"]]
+    kept = await backups.create(user="tester")
+    backups.clear_parts()
+    assert [p.name for p in config.backup_dir.iterdir()] == [kept["name"]]
 
 
 # ------------------------------------------------------------ one busy answer
@@ -403,3 +403,16 @@ async def test_restart_is_refused_before_the_stop_while_a_job_runs(core):
         await _while_a_job_runs(core, ctx, check)
     finally:
         await ctx.server.stop()
+
+
+async def test_a_change_cut_off_after_its_backup_points_to_that_backup(backups, config):
+    backups.db.set_setting(
+        safechange.UNFINISHED,
+        {"title": "Changing game settings", "backup": "safety-1.zip", "moved": []},
+    )
+    seen = []
+    backups.server.bus.subscribe(seen.append)
+    assert await safechange.recover(backups.server) is True
+    assert "safety-1.zip" in seen[0].message
+    assert "put back" not in seen[0].message
+    assert safechange.unfinished(backups.db) is None
