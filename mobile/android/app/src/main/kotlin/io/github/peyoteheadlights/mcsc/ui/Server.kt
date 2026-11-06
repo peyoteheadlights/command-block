@@ -44,7 +44,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
     val state = if (ui.problem != null) States.UNKNOWN else status?.state ?: row?.state
     // The agent's label and buttons; after a failed read, Unknown and none.
     val label = if (ui.problem != null) "unknown" else status?.label ?: row?.label
-    val can = if (ui.problem != null) emptyList() else status?.can ?: row?.can.orEmpty()
+    val can = if (ui.problem != null) emptyList<String>() else status?.can ?: row?.can.orEmpty()
     val now = rememberNow()
     var asking by rememberSaveable { mutableStateOf<String?>(null) }
     val canEdit = vm.canDo(Permissions.SETTINGS_SERVER)

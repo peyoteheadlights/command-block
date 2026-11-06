@@ -632,8 +632,9 @@ class ModsPage(SharePage):
         )
         can = data.get("can") or []
         self.stop_words.setText(text("mobile.content.stop_first"))
-        running = "stop" in can or "force_stop" in can
-        self.stop_row.setVisible(running and self.may("mods.manage"))
+        # Off but busy (a restore, say) isn't "stop it first".
+        off = data.get("label") in ("offline", "crashed")
+        self.stop_row.setVisible("change" not in can and not off and self.may("mods.manage"))
         self.stop.setVisible("stop" in can and self.may("server.control"))
         others = [
             p["detail"] for p in data.get("problems") or [] if p.get("kind") not in DEPENDENCY
