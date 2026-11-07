@@ -336,6 +336,9 @@ def _create_with_logon(who, executable, args, flags, env, cwd, info):
         startup.hStdError = int(info.hStdError or 0)
     found = PROCESS_INFORMATION()
     account, password = who
+    desktop = _hidden_desktop(account)
+    if desktop:
+        startup.lpDesktop = desktop
     command_line = ctypes.create_unicode_buffer(args)
     advapi = ctypes.WinDLL("advapi32", use_last_error=True)  # type: ignore[attr-defined]
     ok = advapi.CreateProcessWithLogonW(
@@ -362,6 +365,64 @@ def _allow_agent(process: int) -> None:
     agent couldn't read its memory use or set its CPU cores by its id. Add
     the agent's own account to the process's access list (the handle
     Windows gave back has the rights to do that)."""
+    code = _add_to_access_list(process, 6, _AGENT_RIGHTS, "CURRENT_USER")  # SE_KERNEL_OBJECT
+    if code != 0:
+        log.warning("could not let the agent watch the server process: %s", code)
+
+
+# What the server account may do on the agent's hidden desktop: the same as
+# Microsoft's own sample for starting a program as another user. Without
+# it Windows can't set the program up and it stops with 0xC0000142.
+_STATION_RIGHTS = 0x037F  # WINSTA_ALL_ACCESS
+_DESKTOP_RIGHTS = 0x01FF  # DESKTOP_ALL_ACCESS
+_desktop_for: dict[str, str] = {}  # account -> "station\\desktop", granted once
+
+
+def _hidden_desktop(account: str) -> str | None:
+    """At boot the agent runs from a Task Scheduler task with nobody signed
+    in, on a hidden window station (not WinSta0). CreateProcessWithLogonW
+    doesn't give the new account access to that one (the boot test showed
+    0xC0000142), so here the server account is added to the agent's own
+    hidden station and desktop, once.
+    Returns "station\\desktop" to start the program on, or None when the
+    agent is on the normal WinSta0 (then Windows handles it)."""
+    if account in _desktop_for:
+        return _desktop_for[account]
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    user32.GetProcessWindowStation.restype = wintypes.HANDLE
+    user32.GetThreadDesktop.restype = wintypes.HANDLE
+
+    def name_of(handle: int) -> str:
+        buffer = ctypes.create_unicode_buffer(256)
+        needed = wintypes.DWORD()
+        ok = user32.GetUserObjectInformationW(
+            wintypes.HANDLE(handle), 2, buffer, ctypes.sizeof(buffer), ctypes.byref(needed)
+        )  # 2 = UOI_NAME
+        return buffer.value if ok else ""
+
+    station = user32.GetProcessWindowStation()
+    desktop = user32.GetThreadDesktop(kernel.GetCurrentThreadId())
+    station_name, desktop_name = name_of(station), name_of(desktop)
+    if not station_name or not desktop_name or station_name.lower() == "winsta0":
+        return None
+    for handle, rights in ((station, _STATION_RIGHTS), (desktop, _DESKTOP_RIGHTS)):
+        code = _add_to_access_list(handle, 7, rights, account)  # SE_WINDOW_OBJECT
+        if code != 0:
+            # The start below then fails with 0xC0000142 and the server log
+            # says the server stopped; this line says why.
+            log.warning("could not let %s use the hidden desktop: %s", account, code)
+            return None
+    _desktop_for[account] = f"{station_name}\\{desktop_name}"
+    return _desktop_for[account]
+
+
+def _add_to_access_list(handle: int, object_type: int, rights: int, who: str) -> int:
+    """Grant ``who`` (an account name, or CURRENT_USER) ``rights`` on a
+    Windows object. Returns Windows' error code, 0 when it worked."""
     import ctypes
     from ctypes import wintypes
 
@@ -384,29 +445,27 @@ def _allow_agent(process: int) -> None:
 
     advapi = ctypes.WinDLL("advapi32", use_last_error=True)  # type: ignore[attr-defined]
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
-    kernel_object, dacl_info = 6, 4  # SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION
+    dacl_info = 4  # DACL_SECURITY_INFORMATION
     old, descriptor, new = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
     code = advapi.GetSecurityInfo(
-        wintypes.HANDLE(process), kernel_object, dacl_info, None, None,
+        wintypes.HANDLE(handle), object_type, dacl_info, None, None,
         ctypes.byref(old), None, ctypes.byref(descriptor),
     )  # fmt: skip
     if code != 0:
-        log.warning("could not read the server process's access list: %s", code)
-        return
+        return int(code)
     try:
         entry = EXPLICIT_ACCESS()
-        entry.grfAccessPermissions = _AGENT_RIGHTS
+        entry.grfAccessPermissions = rights
         entry.grfAccessMode = 1  # GRANT_ACCESS
         entry.Trustee.TrusteeForm = 1  # TRUSTEE_IS_NAME
         entry.Trustee.TrusteeType = 1  # TRUSTEE_IS_USER
-        entry.Trustee.ptstrName = "CURRENT_USER"
+        entry.Trustee.ptstrName = who
         code = advapi.SetEntriesInAclW(1, ctypes.byref(entry), old, ctypes.byref(new))
         if code == 0:
             code = advapi.SetSecurityInfo(
-                wintypes.HANDLE(process), kernel_object, dacl_info, None, None, new, None
+                wintypes.HANDLE(handle), object_type, dacl_info, None, None, new, None
             )
-        if code != 0:
-            log.warning("could not let the agent watch the server process: %s", code)
+        return int(code)
     finally:
         if new:
             kernel.LocalFree(new)
