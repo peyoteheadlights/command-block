@@ -72,7 +72,10 @@ async def connect(port: int, src: str = "127.0.0.2"):
 
 
 async def ping(port: int, src: str = "127.0.0.2", before: bytes = b"") -> dict | None:
-    reader, writer = await connect(port, src)
+    try:
+        reader, writer = await connect(port, src)
+    except OSError:  # Windows can refuse for a moment while the port opens
+        return None
     try:
         writer.write(before + hello(1) + packet(0, b""))
         await writer.drain()
@@ -678,7 +681,7 @@ def test_turning_it_on_puts_the_server_behind_the_guard(agent):
     assert "prevent-proxy-connections=false" in props(agent)  # Vanilla fallback
     assert "--port" in ctx.server.launch_args
     assert ctx.server.detected_port == public
-    status = asyncio.run(ping(public))
+    status = wait_for(lambda: asyncio.run(ping(public)))
     assert status["description"]["text"] == "A fake server"
     assert asyncio.run(join(public, "Steve"))[0] == "in"
     data = agent.get(f"{BASE}/join-protection").json()
@@ -711,7 +714,7 @@ def test_a_stopped_guard_is_started_again_with_an_alert(agent):
     hub = ctx_of(agent).core.guard
     public = ctx_of(agent).core.ports.port_of(ctx_of(agent)).port
     hub.loop.call_soon_threadsafe(hub.loop.stop)
-    wait_for(lambda: alerts(agent, "join_protection_off"))
+    wait_for(lambda: alerts(agent, "join_protection_off"), seconds=40)  # slow on Windows CI
     assert json.loads(alerts(agent, "join_protection_off")[0]["data"])["why"] == "restarted"
     assert wait_for(lambda: asyncio.run(ping(public)))["players"]["online"] == 3
     stop(agent)

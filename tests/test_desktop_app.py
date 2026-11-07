@@ -477,11 +477,16 @@ def test_a_narrow_window_puts_the_right_panel_under_the_overview(qapp, agent_htt
             ),
         )
     except AssertionError:
-        # Only fails on Windows CI so far: say what the window really did.
+        # Only fails on Windows CI so far: say which parts keep the window wide.
+        widest = sorted(
+            (w.minimumSizeHint().width(), type(w).__name__, w.objectName())
+            for w in window.findChildren(QtWidgets.QWidget)
+            if w.isVisibleTo(window)
+        )[-12:]
         raise AssertionError(
             f"window {window.width()} wide (needs at least {window.minimumSizeHint().width()}), "
             f"panel visible {panel.isVisibleTo(window)} "
-            f"at x={panel.mapTo(window, panel.rect().topLeft()).x()}"
+            f"at x={panel.mapTo(window, panel.rect().topLeft()).x()}, widest parts {widest}"
         ) from None
 
 
