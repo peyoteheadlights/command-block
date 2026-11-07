@@ -38,6 +38,9 @@ SERVER_CONTROL = "server.control"  # start, stop, restart, save the world
 # Diagnose server: a test player joins (and a stopped server is started).
 # Owner only for now; moderators get it with the phone apps' part.
 SERVER_DIAGNOSE = "server.diagnose"
+# Sign in with Microsoft for Diagnose server's joins, and sign out. Owner only:
+# it is the owner's own game account.
+MICROSOFT_ACCOUNT = "microsoft.account"
 CONSOLE_SEND = "console.send"  # type commands into the Minecraft console
 PLAYERS_MANAGE = "players.manage"  # whitelist, kick, ban and unban
 # Making someone an op (or taking it away) is its own permission: an op can
@@ -86,6 +89,7 @@ ALL = frozenset(
         CONSOLE_READ,
         SERVER_CONTROL,
         SERVER_DIAGNOSE,
+        MICROSOFT_ACCOUNT,
         CONSOLE_SEND,
         PLAYERS_MANAGE,
         PLAYERS_OP,

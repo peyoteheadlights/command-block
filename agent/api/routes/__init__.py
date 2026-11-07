@@ -37,6 +37,7 @@ from . import (
     guides,
     helpdesk,
     jobs,
+    microsoft,
     modpacks,
     mods,
     pcs,
@@ -103,6 +104,7 @@ GLOBAL = (
     discord,
     pcs,
     rented,
+    microsoft,
 )
 MODULES = (*GLOBAL, *PER_SERVER)
 SERVER_PREFIX = "/servers/{server_id}"

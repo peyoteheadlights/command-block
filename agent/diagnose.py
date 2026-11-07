@@ -6,10 +6,12 @@ A stopped server is started (the click is the yes). Then the test player
 step it stopped at and why, becomes a line in the result. The result never
 says "healthy": it lists what was tried and what happened.
 
-So far one join: from this PC, on an offline-mode Java server, as the
-``CommandBlock`` test player. Online-mode and Bedrock joins need the owner's
-Microsoft account (next part), and the other ways in (LAN, Tailscale, the
-internet, playit) and the list of fixes come after that.
+The joins so far, all from this PC: an offline-mode server as the
+``CommandBlock`` test player; an online-mode Java server with the owner's
+Java account, a Bedrock server (and Bedrock players through Geyser) with the
+owner's Xbox account, after "Sign in with Microsoft" (agent/microsoft.py).
+The other ways in (LAN, Tailscale, the internet, playit) and the list of
+fixes come later.
 
 The last result is kept on the server (``ctx.diagnosis``) and updated while
 it runs, so the apps can show the list live.
@@ -20,9 +22,11 @@ from __future__ import annotations
 import asyncio
 import secrets
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from . import joinbot
+from .crossplay import USERNAME_PREFIX
 from .minecraft.playeractions import read_list
 from .minecraft.properties import PropertiesFile
 from .minecraft.state import ServerState
@@ -47,6 +51,18 @@ STEP_WORDS = {
 }
 # Kept a little after the test player leaves, so its "left" line is skipped too.
 LEAVE_GRACE = 5.0
+SIGN_IN_FIRST = "Not checked: this join needs your Microsoft account. Sign in with Microsoft first."
+
+
+@dataclass
+class Join:
+    """One way the test player joins: its heading, the game it speaks, the
+    port, and whether it uses the owner's Microsoft account."""
+
+    group: str
+    edition: str
+    port: int
+    microsoft: bool
 
 
 class Run:
@@ -60,6 +76,8 @@ class Run:
             "finished_at": None,
             "by": by,
             "lines": [],
+            # True when a join wasn't tried because nobody signed in with Microsoft.
+            "sign_in": False,
         }
         ctx.diagnosis = self.result
 
@@ -124,71 +142,152 @@ async def _get_online(ctx: ServerContext, run: Run, job: JobHandle) -> bool:
     return True
 
 
-async def _join_from_this_pc(ctx: ServerContext, run: Run, job: JobHandle) -> None:
-    group = f"Join from this PC as {TEST_PLAYER}"
+def joins(ctx: ServerContext) -> list[Join]:
+    """The joins this server gets, from its own settings."""
     port = ctx.core.ports.port_of(ctx).port
+    offline = online_mode(ctx) is False
+    if ctx.config.server_type.edition == "bedrock":
+        if offline:
+            return [Join(f"Join from this PC as {TEST_PLAYER}", "bedrock", port, False)]
+        return [Join("Join from this PC with your Xbox account", "bedrock", port, True)]
+    found = [
+        Join(f"Join from this PC as {TEST_PLAYER}", "java", port, False)
+        if offline
+        else Join("Join from this PC with your Java account", "java", port, True)
+    ]
+    geyser = ctx.core.ports.bedrock_port_of(ctx)
+    if geyser:  # crossplay is on
+        found.append(
+            Join("Join from this PC as a Bedrock player (Geyser)", "bedrock", geyser.port, True)
+        )
+    return found
+
+
+def _name(ctx: ServerContext, join: Join) -> str | None:
+    """The name the server sees for this join, or None when it isn't known."""
+    if not join.microsoft:
+        return TEST_PLAYER
+    names = ctx.core.microsoft.names()
+    if join.edition == "java":
+        return names["java"]
+    if names["gamertag"] and ctx.config.server_type.edition != "bedrock":
+        # Floodgate shows Bedrock players as ".Name", spaces made "_".
+        return USERNAME_PREFIX + names["gamertag"].replace(" ", "_")
+    return names["gamertag"]
+
+
+def owner_playing(ctx: ServerContext) -> str | None:
+    """The owner's name when they're on the server and a join would use
+    their account (it kicks them out for about a minute), else None."""
+    if ctx.core.microsoft.account() is None:
+        return None
+    online = {p["username"].lower() for p in ctx.players.online()}
+    for join in joins(ctx):
+        name = _name(ctx, join) if join.microsoft else None
+        if name and name.lower() in online:
+            return name
+    return None
+
+
+def _not_checked(ctx: ServerContext, join: Join) -> str | None:
+    """Why this join can't run, or None when it can."""
+    if not join.microsoft:
+        return None
+    if ctx.core.microsoft.account() is None:
+        return SIGN_IN_FIRST
+    if join.edition == "java" and not ctx.core.microsoft.names()["java"]:
+        return (
+            "Not checked: the Microsoft account you signed in with has no Minecraft: Java "
+            "Edition. Sign out and sign in with the one that has it."
+        )
+    return None
+
+
+async def _join(ctx: ServerContext, run: Run, job: JobHandle, join: Join) -> None:
     host = server_ip(ctx)
+    name = _name(ctx, join)
     added = False
-    ctx.players.ignored.add(TEST_PLAYER)
+    if name:
+        ctx.players.ignored.add(name)
     try:
-        if _whitelist_on(ctx) and not _on_whitelist(ctx, TEST_PLAYER):
+        if not join.microsoft and _whitelist_on(ctx) and not _on_whitelist(ctx, TEST_PLAYER):
             added = True
             await ctx.player_actions.send("whitelist_add", TEST_PLAYER, "")
-        await ctx.server.send_command(f"say {NOTICE}", internal=True)
-        job.step(f"Joining from this PC ({host}:{port})")
-        chat = f"Command Block test {secrets.token_hex(3)}"
-        steps = await joinbot.join(
+        job.step(f"{join.group} ({host}:{join.port})")
+        stopped: list[str] = []
+
+        def step(found: dict[str, Any]) -> None:
+            why = _why(found)
+            if str(found.get("error", "")).startswith("bedrock version"):
+                ok = None  # the test player's limit, not the server's problem
+            else:
+                ok = found["ok"]
+            run.line(join.group, STEP_WORDS[found["step"]], ok, why)
+            if found["ok"] is False:
+                stopped.append(found["step"])
+
+        await joinbot.join(
             host,
-            port,
-            TEST_PLAYER,
-            ctx.server.mc_version,  # None: the test player asks the server first
-            chat,
-            on_step=lambda s: run.line(group, STEP_WORDS[s["step"]], s["ok"], _why(s)),
+            join.port,
+            TEST_PLAYER if not join.microsoft else "owner",
+            # Java: None makes the test player ask the server first. Bedrock
+            # always asks (agent/joinbot.py has the versions it knows).
+            ctx.server.mc_version if join.edition == "java" else None,
+            f"Command Block test {secrets.token_hex(3)}",
+            on_step=step,
+            edition=join.edition,
+            account=ctx.core.microsoft.account() if join.microsoft else None,
+            on_account=ctx.core.microsoft.keep,
         )
-        if steps and steps[-1]["ok"] is False:
-            stopped = joinbot.STEPS.index(steps[-1]["step"])
-            for step in joinbot.STEPS[stopped + 1 :]:
-                run.line(group, STEP_WORDS[step], None, "Not tried: an earlier step failed.")
+        if stopped:
+            at = joinbot.STEPS.index(stopped[-1])
+            for later in joinbot.STEPS[at + 1 :]:
+                run.line(join.group, STEP_WORDS[later], None, "Not tried: an earlier step failed.")
     except joinbot.BotError as exc:
-        run.line(group, "Get the test player ready", False, str(exc))
+        run.line(join.group, "Get the test player ready", False, str(exc))
     finally:
         if added:
             await ctx.player_actions.send("whitelist_remove", TEST_PLAYER, "")
         await asyncio.sleep(LEAVE_GRACE)
-        ctx.players.ignored.discard(TEST_PLAYER)
+        if name:
+            ctx.players.ignored.discard(name)
 
 
 def _why(step: dict[str, Any]) -> str | None:
     if step.get("kick"):
         return f"The server said: {step['kick']}"
-    if step.get("error"):
+    error = str(step.get("error") or "")
+    if error.startswith("bedrock version"):
+        return (
+            f"Not checked: this server runs Bedrock {error[len('bedrock version') :].strip()}. "
+            "The test player only knows the newest Bedrock versions."
+        )
+    if error:
         return {
             "ECONNREFUSED": "Nothing answers on that port.",
             "ETIMEDOUT": "No answer from that address.",
-        }.get(step["error"], step["error"])
+            "Ping timed out": "No answer from that address.",
+            "signed out": "Your Microsoft sign-in ran out. Sign in with Microsoft again.",
+            "fetch failed": "Couldn't reach Microsoft's sign-in from this PC.",
+        }.get(error, error)
     return None
 
 
 async def run(out: Run, job: JobHandle) -> dict[str, Any]:
     ctx = out.ctx
     try:
-        edition = ctx.config.server_type.edition
-        if edition == "bedrock":
-            out.line(
-                "Joins",
-                "Join as a Bedrock player",
-                None,
-                "Not checked yet: Bedrock joins need your Xbox account.",
-            )
-        elif online_mode(ctx) is not False:
-            out.line(
-                "Joins",
-                "Join with your Minecraft account",
-                None,
-                "Not checked yet: online-mode servers need your Microsoft account.",
-            )
-        elif await _get_online(ctx, out, job):
-            await _join_from_this_pc(ctx, out, job)
+        planned = []
+        for join in joins(ctx):
+            why = _not_checked(ctx, join)
+            if why:
+                out.line(join.group, "Join", None, why)
+                out.result["sign_in"] = out.result["sign_in"] or why == SIGN_IN_FIRST
+            else:
+                planned.append(join)
+        if planned and await _get_online(ctx, out, job):
+            await ctx.server.send_command(f"say {NOTICE}", internal=True)
+            for join in planned:
+                await _join(ctx, out, job, join)
     finally:
         out.finish()
     return out.result

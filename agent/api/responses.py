@@ -2735,7 +2735,26 @@ class Diagnosis(Open):
     finished_at: float | None
     by: str | None
     lines: list[DiagnoseLine]
+    sign_in: bool = Field(
+        default=False, description="A join wasn't tried: nobody signed in with Microsoft yet"
+    )
 
 
 class DiagnoseStarted(Open):
-    job_id: str
+    job_id: str | None = Field(description="null when nothing started: see ask")
+    ask: str | None = Field(
+        default=None,
+        description="Not started: the owner is playing and a join would kick them out. "
+        "Ask this, then POST again with go_ahead",
+    )
+
+
+class MicrosoftStatus(Open):
+    signed_in: bool
+    java_name: str | None = Field(
+        description="Minecraft: Java Edition name, if the account has one"
+    )
+    gamertag: str | None = Field(description="Xbox gamertag, if it could be read")
+    code: str | None = Field(description="While signing in: the code to type on Microsoft's page")
+    url: str | None = Field(description="While signing in: where to type it")
+    error: str | None = Field(description="Why the last sign-in didn't finish")

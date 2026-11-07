@@ -451,6 +451,10 @@ class AgentCore:
         from .rented import RentedServers
 
         self.rented = RentedServers(self)
+        # The owner's Microsoft sign-in, for Diagnose server (agent/microsoft.py).
+        from .microsoft import Microsoft
+
+        self.microsoft = Microsoft(config.data_dir)
         self.discord: Any = None
         # The bot posts alerts in its alerts channel (and the webhook steps aside).
         self.notifier.bot = lambda: self.discord
@@ -712,6 +716,7 @@ class AgentCore:
             await ctx.stop()
         await self.guard.stop()
         await self.rented.stop()
+        self.microsoft.cancel()
         await self.pcs.stop()
         self.keepawake.stop()
         await self.notifier.stop()

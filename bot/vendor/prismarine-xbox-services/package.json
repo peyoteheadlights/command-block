@@ -1,0 +1,56 @@
+{
+  "name": "prismarine-xbox-services",
+  "version": "0.1.0",
+  "description": "Xbox and PlayFab services API for Node.js",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "mocha --reporter spec",
+    "pretest": "npm run lint && npm run typecheck",
+    "lint": "standard",
+    "fix": "standard --fix",
+    "typecheck": "tsc --noEmit --strict --target ES2022 --module commonjs --moduleResolution node test/types.ts"
+  },
+  "standard": {
+    "globals": ["WebSocket", "CloseEvent"]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PrismarineJS/prismarine-xbox-services.git"
+  },
+  "keywords": [
+    "xbox",
+    "playfab",
+    "minecraft",
+    "prismarine",
+    "rta"
+  ],
+  "author": "PrismarineJS",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/PrismarineJS/prismarine-xbox-services/issues"
+  },
+  "homepage": "https://github.com/PrismarineJS/prismarine-xbox-services#readme",
+  "devDependencies": {
+    "ws": "^8.18.0",
+    "standard": "^17.0.0",
+    "mocha": "^11.1.0",
+    "prismarine-xbox-services": "file:.",
+    "typescript": "^5.3.3",
+    "@types/node": "^24.0.0",
+    "prismarine-auth": "^3.1.1"
+  },
+  "files": [
+    "src/",
+    "types/",
+    "docs/",
+    "HISTORY.md"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "types": "types/index.d.ts",
+  "dependencies": {
+    "debug": "^4.3.4",
+    "json-bigint": "^1.0.0"
+  }
+}

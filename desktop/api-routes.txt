@@ -24,6 +24,9 @@ GET /api/servers/{server_id}/crashes
 POST /api/servers/{server_id}/server/restart
 POST /api/servers/{server_id}/server/diagnose
 GET /api/servers/{server_id}/server/diagnose
+GET /api/microsoft
+POST /api/microsoft/sign-in
+POST /api/microsoft/sign-out
 POST /api/servers/{server_id}/server/restart-now
 POST /api/servers/{server_id}/server/cancel-restart
 POST /api/servers/{server_id}/server/clear-crash-block

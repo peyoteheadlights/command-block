@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from ... import joinguard
 from ...minecraft.commands import CommandError, validate
@@ -190,18 +191,33 @@ async def server_restart(
     }
 
 
+class DiagnoseForm(BaseModel):
+    # The owner said yes to "a join kicks you out for about a minute".
+    go_ahead: bool = False
+
+
 @router.post("/server/diagnose", response_model=DiagnoseStarted)
 async def server_diagnose(
     request: Request,
+    form: DiagnoseForm | None = None,
     principal: Principal = Depends(require(SERVER_DIAGNOSE)),
     ctx=Depends(get_server),
 ):
     """Diagnose server: a test player joins and every step is listed. A
-    stopped server is started. Follow it with GET /server/diagnose."""
+    stopped server is started. Follow it with GET /server/diagnose. When the
+    owner is playing and a join uses their account, nothing starts and
+    ``ask`` says so; POST again with go_ahead."""
     from ... import diagnose
 
     if (ctx.diagnosis or {}).get("running"):
         raise HTTPException(status_code=409, detail="Diagnose server is already running.")
+    playing = diagnose.owner_playing(ctx)
+    if playing and not (form and form.go_ahead):
+        return {
+            "job_id": None,
+            "ask": f"You're playing on {ctx.name} as {playing}. The test joins with your "
+            "account, so it kicks you out for about a minute. Go ahead?",
+        }
     started = diagnose.Run(ctx, principal.user)  # running from now: a second click is refused
     job = ctx.core.jobs.start(
         "diagnose",

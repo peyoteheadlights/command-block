@@ -4,6 +4,7 @@
   "description": "The test player Command Block's Diagnose server joins with (agent/joinbot.py).",
   "license": "MIT",
   "dependencies": {
+    "bedrock-protocol": "3.61.0",
     "mineflayer": "4.39.0"
   }
 }

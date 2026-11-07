@@ -261,22 +261,42 @@ fails that test until it is added on purpose.
 
 ### Diagnose server's test player, after a click
 
-"Diagnose server" joins the server with a test player: Mineflayer (Node.js,
-MIT), run by the Node.js that ships with the app in `tools/diagnose`. The
-release build downloads node.exe and the npm packages pinned in
-`bot/package-lock.json` (`scripts/build_bot.py`), checks each against its
-pinned checksum (Node's SHA-256, npm's sha512), and unpacks them itself, so
-npm and package install scripts never run; nothing is downloaded when it runs.
+"Diagnose server" joins the server with a test player: Mineflayer (Java) and
+bedrock-protocol (Bedrock), Node.js libraries (MIT), run by the Node.js that
+ships with the app in `tools/diagnose`. The release build downloads node.exe
+and the npm packages pinned in `bot/package-lock.json`
+(`scripts/build_bot.py`), checks each against its pinned checksum (Node's
+SHA-256, npm's sha512), and unpacks them itself, so npm and package install
+scripts never run; nothing is downloaded when it runs. The one package npm
+takes from GitHub (prismarine-xbox-services, which has no checksum to check)
+is kept in `bot/vendor` instead, at the commit the lock file names.
 `agent/joinbot.py` is the only place that starts it, and only inside a run
-someone started with `server.diagnose` (owner only for now):
+someone started with `server.diagnose` (owner only for now), or a "Sign in
+with Microsoft" the owner clicked (`microsoft.account`, owner only):
 
-- the command is a list (`[node.exe, join.js, host, port, name, version,
-  chat line]`), never through a shell. Host and port come from the server's
-  own settings, the name is the fixed `CommandBlock`, the chat line is made by
-  the agent;
-- `stdin` is `DEVNULL`, only its JSON lines on stdout are read, and it is
-  killed after 4 minutes. It runs as the agent's user, joins only the
-  server's own address, and exits when the join is done.
+- the command is a list (`[node.exe, join.js]`), never through a shell. What
+  to do goes in on stdin as one JSON line, never on the command line (which
+  other programs on the PC can read). Host and port come from the server's own
+  settings, the name is the fixed `CommandBlock` or the owner's signed-in
+  account, the chat line is made by the agent;
+- only its JSON lines on stdout are read, and it is killed after 4 minutes
+  (15 minutes while a sign-in waits for its code to be typed). It runs as the
+  agent's user, joins only the server's own address, and exits when the join
+  is done.
+
+### The owner's Microsoft sign-in
+
+Online-mode Java servers and Bedrock servers can only be joined with a real
+account, so Diagnose server uses the owner's own, after they sign in once with
+a device code (`agent/microsoft.py`). The test player (prismarine-auth) talks
+to Microsoft directly. The tokens it gets back are kept only on this PC, in
+`microsoft.bin`, encrypted with DPAPI for the agent's Windows account like the
+panel and store keys, and handed to the test player on stdin for each join; it
+never writes them to disk itself. They are never sent to Firebase, Discord or
+the phones, and no API answer holds them (`GET /api/microsoft` gives only the
+Java name, the gamertag and, during a sign-in, the code to type). Sign out
+deletes the file. A join that would kick the owner out (they're playing as
+that account) asks first.
 
 ### Chunker world conversion, after a click
 

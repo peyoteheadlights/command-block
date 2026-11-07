@@ -26,9 +26,12 @@ version 3 (`licenses/LGPL-3.0.txt`, which builds on `licenses/GPL-3.0.txt`).
 ## Diagnose server's test player
 
 Diagnose server joins with Mineflayer (https://github.com/PrismarineJS/mineflayer,
-MIT License) and the other npm packages pinned in `bot/package-lock.json`
-(MIT, BSD, Apache 2.0, ISC and CC0; each package's own license file ships
-with it in `tools/diagnose/node_modules`). They run on Node.js for Windows
+MIT License) and bedrock-protocol (https://github.com/PrismarineJS/bedrock-protocol,
+MIT License), and the other npm packages pinned in `bot/package-lock.json`
+(MIT, BSD, Apache 2.0, ISC, 0BSD, Unlicense, CC0, and MPL 2.0 for
+mediabunny, shipped unchanged as its own source; each package's own license
+file ships with it in `tools/diagnose/node_modules`). prismarine-xbox-services
+(MIT) is kept unchanged in `bot/vendor` at the commit the lock file names. They run on Node.js for Windows
 (https://nodejs.org, MIT License; its `LICENSE` file, which also lists the
 licenses of the libraries inside node.exe, ships as `tools/diagnose/LICENSE`).
 
