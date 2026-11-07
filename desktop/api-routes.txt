@@ -22,6 +22,8 @@ POST /api/servers/{server_id}/schedules/{schedule_id}/run
 GET /api/servers/{server_id}/quests/events
 GET /api/servers/{server_id}/crashes
 POST /api/servers/{server_id}/server/restart
+POST /api/servers/{server_id}/server/diagnose
+GET /api/servers/{server_id}/server/diagnose
 POST /api/servers/{server_id}/server/restart-now
 POST /api/servers/{server_id}/server/cancel-restart
 POST /api/servers/{server_id}/server/clear-crash-block

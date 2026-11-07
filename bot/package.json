@@ -1,0 +1,9 @@
+{
+  "name": "command-block-test-player",
+  "private": true,
+  "description": "The test player Command Block's Diagnose server joins with (agent/joinbot.py).",
+  "license": "MIT",
+  "dependencies": {
+    "mineflayer": "4.39.0"
+  }
+}

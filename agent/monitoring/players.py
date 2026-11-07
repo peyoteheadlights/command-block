@@ -40,6 +40,9 @@ class PlayerTracker:
         self.verified_source: str | None = None
         # Bedrock: the count from a "list" header, until its names line.
         self._list_expected: int | None = None
+        # Diagnose server's test player while it's in: not a player, so no
+        # join message, quest, player hours or alert (agent/diagnose.py).
+        self.ignored: set[str] = set()
 
     # ------------------------------------------------------------------
     async def handle_signals(self, sig, line) -> None:
@@ -60,9 +63,9 @@ class PlayerTracker:
         if sig.player_uuid:
             name, uuid = sig.player_uuid
             self._pending_uuid[name] = uuid
-        if sig.player_joined:
+        if sig.player_joined and sig.player_joined not in self.ignored:
             await self.player_joined(sig.player_joined)
-        if sig.player_left:
+        if sig.player_left and sig.player_left not in self.ignored:
             await self.player_left(sig.player_left)
         if sig.player_list:
             online, _max, names = sig.player_list
@@ -196,6 +199,7 @@ class PlayerTracker:
         """Align stored state with an authoritative /list reply."""
         self.mark_verified("/list reply from the server")
         current = {p["username"] for p in self.online()}
+        usernames = [n for n in usernames if n not in self.ignored]
         for name in usernames:
             if name not in current:
                 await self.player_joined(name)

@@ -23,6 +23,15 @@ version 3 (`licenses/LGPL-3.0.txt`, which builds on `licenses/GPL-3.0.txt`).
   HarfBuzz and libpng), listed with their licenses at
   https://doc.qt.io/qt-6.8/licenses-used-in-qt.html.
 
+## Diagnose server's test player
+
+Diagnose server joins with Mineflayer (https://github.com/PrismarineJS/mineflayer,
+MIT License) and the other npm packages pinned in `bot/package-lock.json`
+(MIT, BSD, Apache 2.0, ISC and CC0; each package's own license file ships
+with it in `tools/diagnose/node_modules`). They run on Node.js for Windows
+(https://nodejs.org, MIT License; its `LICENSE` file, which also lists the
+licenses of the libraries inside node.exe, ships as `tools/diagnose/LICENSE`).
+
 ## Chunker
 
 Making a Java copy of a Bedrock world (or the other way round) uses

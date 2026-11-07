@@ -126,6 +126,8 @@ class Header(QFrame):
         self.undo.clicked.connect(lambda: window.move_change("undo"))
         self.restart = QPushButton(text("action.restart"))
         self.restart.clicked.connect(lambda: window.server_action(self.row["id"], "restart"))
+        self.diagnose = QPushButton(text("action.diagnose"))
+        self.diagnose.clicked.connect(self.open_diagnose)
         self.main = QPushButton()
         self.main.setProperty("kind", "primary")
         self.main.setProperty("big", True)
@@ -137,7 +139,7 @@ class Header(QFrame):
         self.redo = self.menu.addAction("")
         self.redo.triggered.connect(lambda: window.move_change("redo"))
         self.more.setMenu(self.menu)
-        for widget in (self.undo, self.restart, self.main, self.more):
+        for widget in (self.undo, self.diagnose, self.restart, self.main, self.more):
             top.addWidget(widget)
         column.addLayout(top)
         self.chips = QHBoxLayout()
@@ -171,6 +173,11 @@ class Header(QFrame):
         self.show_notice()
         outer.addLayout(column, 1)
 
+    def open_diagnose(self) -> None:
+        from .diagnose import DiagnoseWindow
+
+        DiagnoseWindow(self.window_, self.row["id"], self.row["name"]).show()
+
     def start_or_stop(self) -> None:
         running = self.row.get("state") in ("ONLINE", *BUSY)
         self.window_.server_action(self.row["id"], "stop" if running else "start")
@@ -191,6 +198,7 @@ class Header(QFrame):
         control = self.window_.may(row["id"], "server.control")
         self.main.setVisible(control)
         self.restart.setVisible(state == "ONLINE" and control)
+        self.diagnose.setVisible(self.window_.may(row["id"], "server.diagnose"))
         self.more.setAccessibleName(text("desktop.more"))
         while self.chips.count():
             old = self.chips.takeAt(0).widget()

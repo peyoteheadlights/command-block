@@ -104,6 +104,11 @@ ALLOWED_HOSTS = frozenset(
         "pkgs.tailscale.com",
         # Tebex's Game Server API, read only, for the Store (agent/store.py).
         "plugin.tebex.io",
+        # Node.js and npm's packages for Diagnose server's test player, only
+        # when the installer is built (agent/joinbot.py prepare), each
+        # checked against a pinned checksum.
+        "nodejs.org",
+        "registry.npmjs.org",
     }
 )
 
@@ -133,6 +138,7 @@ SHARED_HOST_PATHS = {
     "edge.forgecdn.net": ("/files/",),
     "mediafilez.forgecdn.net": ("/files/",),
     "plugin.tebex.io": ("/information", "/packages"),
+    "nodejs.org": ("/dist/",),
 }
 # One more repo whose release list and release files may be read, while an
 # add-on from a GitHub link is read or updated (see allow_releases).

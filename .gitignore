@@ -66,3 +66,6 @@ mobile/ios/*.xcodeproj/
 xcuserdata/
 DerivedData/
 .build/
+
+# Diagnose server's test player: downloaded into the data folder, not kept here.
+bot/node_modules/

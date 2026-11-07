@@ -2716,3 +2716,26 @@ class StoreView(Open):
 
 class StoreChecked(StoreView):
     remind: list[str] = Field(description="Packages the app didn't make, seen for the first time")
+
+
+class DiagnoseLine(Open):
+    group: str = Field(
+        description="What the line belongs to, e.g. 'Join from this PC as CommandBlock'"
+    )
+    what: str
+    ok: bool | None = Field(
+        description="True worked, False failed, null not checked (detail says why)"
+    )
+    detail: str | None
+
+
+class Diagnosis(Open):
+    running: bool
+    started_at: float | None
+    finished_at: float | None
+    by: str | None
+    lines: list[DiagnoseLine]
+
+
+class DiagnoseStarted(Open):
+    job_id: str

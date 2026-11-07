@@ -306,6 +306,7 @@ def test_only_the_documented_places_start_a_program():
         "process.py",  # launching Minecraft itself
         "install.py",  # the Forge/NeoForge/Quilt installer (documented exception)
         "chunker.py",  # Chunker world conversion, after a click (documented exception)
+        "joinbot.py",  # Diagnose server's test player, after a click (documented exception)
         "serveruser.py",  # icacls: the separate Windows user's folder rights
         "java.py",  # asking the installed Java for its version
         "tailscale.py",  # asking Tailscale for this PC's address

@@ -259,6 +259,25 @@ install.py` is the only place that does it, and the rules are:
 list of every file in the agent that starts a program at all: a new one
 fails that test until it is added on purpose.
 
+### Diagnose server's test player, after a click
+
+"Diagnose server" joins the server with a test player: Mineflayer (Node.js,
+MIT), run by the Node.js that ships with the app in `tools/diagnose`. The
+release build downloads node.exe and the npm packages pinned in
+`bot/package-lock.json` (`scripts/build_bot.py`), checks each against its
+pinned checksum (Node's SHA-256, npm's sha512), and unpacks them itself, so
+npm and package install scripts never run; nothing is downloaded when it runs.
+`agent/joinbot.py` is the only place that starts it, and only inside a run
+someone started with `server.diagnose` (owner only for now):
+
+- the command is a list (`[node.exe, join.js, host, port, name, version,
+  chat line]`), never through a shell. Host and port come from the server's
+  own settings, the name is the fixed `CommandBlock`, the chat line is made by
+  the agent;
+- `stdin` is `DEVNULL`, only its JSON lines on stdout are read, and it is
+  killed after 4 minutes. It runs as the agent's user, joins only the
+  server's own address, and exits when the join is done.
+
 ### Chunker world conversion, after a click
 
 Making a Java copy of a Bedrock server (or a Bedrock copy of a Java one)

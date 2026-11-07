@@ -35,6 +35,9 @@ ACCOUNT = "account.self"  # sign out, rotate or read one's own session
 SERVER_VIEW = "server.view"  # state, players online, performance, backups list
 CONSOLE_READ = "console.read"  # the console, chat log, Activity and crashes
 SERVER_CONTROL = "server.control"  # start, stop, restart, save the world
+# Diagnose server: a test player joins (and a stopped server is started).
+# Owner only for now; moderators get it with the phone apps' part.
+SERVER_DIAGNOSE = "server.diagnose"
 CONSOLE_SEND = "console.send"  # type commands into the Minecraft console
 PLAYERS_MANAGE = "players.manage"  # whitelist, kick, ban and unban
 # Making someone an op (or taking it away) is its own permission: an op can
@@ -82,6 +85,7 @@ ALL = frozenset(
         SERVER_VIEW,
         CONSOLE_READ,
         SERVER_CONTROL,
+        SERVER_DIAGNOSE,
         CONSOLE_SEND,
         PLAYERS_MANAGE,
         PLAYERS_OP,

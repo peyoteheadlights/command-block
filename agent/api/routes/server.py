@@ -16,6 +16,7 @@ from ...security.auth import Principal
 from ...security.permissions import (
     CONSOLE_SEND,
     SERVER_CONTROL,
+    SERVER_DIAGNOSE,
     SERVER_VIEW,
     SETTINGS_SERVER,
     require,
@@ -27,6 +28,8 @@ from ..responses import (
     CommandCheck,
     CommandSent,
     CrashBlockCleared,
+    DiagnoseStarted,
+    Diagnosis,
     Performance,
     Requested,
     ServerAction,
@@ -185,6 +188,38 @@ async def server_restart(
         "state": ctx.server.state.value,
         "startup_confirmed": ctx.server.startup_confirmed,
     }
+
+
+@router.post("/server/diagnose", response_model=DiagnoseStarted)
+async def server_diagnose(
+    request: Request,
+    principal: Principal = Depends(require(SERVER_DIAGNOSE)),
+    ctx=Depends(get_server),
+):
+    """Diagnose server: a test player joins and every step is listed. A
+    stopped server is started. Follow it with GET /server/diagnose."""
+    from ... import diagnose
+
+    if (ctx.diagnosis or {}).get("running"):
+        raise HTTPException(status_code=409, detail="Diagnose server is already running.")
+    started = diagnose.Run(ctx, principal.user)  # running from now: a second click is refused
+    job = ctx.core.jobs.start(
+        "diagnose",
+        f"Diagnosing {ctx.name}",
+        lambda handle: diagnose.run(started, handle),
+        server_id=ctx.server_id,
+        user=principal.user,
+    )
+    audit(ctx, request, "server_diagnose")
+    return {"job_id": job.id}
+
+
+@router.get("/server/diagnose", response_model=Diagnosis | None)
+async def server_diagnosis(
+    principal: Principal = Depends(require(SERVER_DIAGNOSE)), ctx=Depends(get_server)
+):
+    """The last Diagnose server result, or the one running (its lines so far)."""
+    return ctx.diagnosis
 
 
 @router.post("/server/restart-now", response_model=ServerAction)

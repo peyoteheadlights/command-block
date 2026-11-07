@@ -26,6 +26,9 @@ datas = [
     (str(ROOT / "licenses"), "licenses"),
     # Chunker's command-line jar, built from source by scripts/build_chunker.py.
     (str(ROOT / "build" / "tools" / "chunker-cli.jar"), "tools"),
+    # Diagnose server's test player: node.exe, join.js and its packages, put
+    # in build/tools/diagnose by scripts/build_bot.py (agent/joinbot.py).
+    (str(ROOT / "build" / "tools" / "diagnose"), "tools/diagnose"),
     (str(ROOT / "CHANGELOG.md"), "."),
 ]
 # uvicorn picks its loop, protocol and lifespan parts by name at run time.

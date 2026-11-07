@@ -102,6 +102,8 @@ class ServerContext:
         self.spam = watchers.ChatSpam(self)
         # Online and really answering, or online and stuck.
         self.answering = AnswerWatch(self)
+        # Diagnose server's last (or running) result (agent/diagnose.py).
+        self.diagnosis: dict[str, Any] | None = None
 
         self.server.signal_hook = self._console_signals
         self.server.crash_hook = self.crashes.collect

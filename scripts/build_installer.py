@@ -143,6 +143,9 @@ def main(argv: list[str] | None = None) -> int:
         import build_chunker  # the same folder
 
         build_chunker.main()  # Chunker's jar, which app.spec ships in tools/
+        import build_bot  # the same folder
+
+        build_bot.main()  # Diagnose server's test player, shipped in tools/diagnose
         shutil.rmtree(PROGRAM, ignore_errors=True)
         pyinstaller(ROOT / "packaging" / "app.spec")
     archive, _ = make_payload(PROGRAM, PAYLOAD)
