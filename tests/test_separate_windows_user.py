@@ -1,15 +1,15 @@
 """Servers run as the separate Windows user (CommandBlockServer).
 
 The agent side is driven with a fake "start as another account" (it records
-the call, then starts the fake Minecraft server normally) and a fake folder
-rights call, so no real Windows account is needed. The installer side uses
+the call, then starts the fake Minecraft server normally), a fake starter
+service and a fake folder rights call, so no real Windows account is needed. The installer side uses
 the installer tests' fake Windows. The real Windows calls are tried in
 tests/windows/test_separate_user_live.py."""
 
 from __future__ import annotations
 
 import asyncio
-import json
+import os
 from pathlib import Path
 
 import pytest
@@ -27,13 +27,19 @@ class Windows:
         self.started: list[dict] = []
         self.granted: list[tuple[Path, str]] = []
         self.removed: list[Path] = []
+        self.starter: Exception | None = None  # what the fake service answers
         monkeypatch.setattr(serveruser, "launch_as", self.launch_as)
+        monkeypatch.setattr(serveruser, "wait_for_starter", self.wait_for_starter)
         monkeypatch.setattr(serveruser, "grant", self.grant)
         monkeypatch.setattr(serveruser, "remove_grant", self.remove_grant)
 
-    async def launch_as(self, account, password, cmd, cwd, popen):
-        self.started.append({"account": account, "password": password, "cmd": cmd, "cwd": cwd})
+    async def launch_as(self, cmd, cwd, popen):
+        self.started.append({"cmd": cmd, "cwd": cwd})
         return await asyncio.create_subprocess_exec(*cmd, cwd=str(cwd), **popen)
+
+    def wait_for_starter(self):
+        if self.starter:
+            raise self.starter
 
     def grant(self, folder, rights="M"):
         self.granted.append((Path(folder), rights))
@@ -63,10 +69,8 @@ async def core(tmp_path):
         agent.db.close()
 
 
-def turn_on(config, password="s3cret-Password!"):
+def turn_on(config):
     config.set("security.separate_windows_user", True)
-    serveruser.write_password(serveruser.secret_path(config), password)
-    return password
 
 
 # ------------------------------------------------------------------ agent
@@ -78,13 +82,11 @@ async def test_off_starts_the_server_as_the_owner(core, windows):
 
 
 async def test_on_starts_the_server_as_the_separate_user_with_its_folder_opened(core, windows):
-    password = turn_on(core.config)
+    turn_on(core.config)
     ctx = core.servers["survival"]
     await ctx.server.start()
     assert await ctx.server.wait_online(20)
     [started] = windows.started
-    assert started["account"] == "CommandBlockServer"
-    assert started["password"] == password
     assert started["cwd"] == ctx.config.server_dir
     assert (ctx.config.server_dir, "M") in windows.granted
     # Console, stop: as before.
@@ -92,10 +94,11 @@ async def test_on_starts_the_server_as_the_separate_user_with_its_folder_opened(
     assert not ctx.server.running
 
 
-async def test_a_missing_password_refuses_to_start_and_never_starts_as_the_owner(
+async def test_a_missing_starter_service_refuses_to_start_and_never_starts_as_the_owner(
     core, windows, monkeypatch
 ):
-    core.config.set("security.separate_windows_user", True)  # no password file
+    turn_on(core.config)
+    windows.starter = serveruser.ServerUserMissing(serveruser.NOT_RUNNING)
     real = asyncio.create_subprocess_exec
     owner_starts = []
 
@@ -114,7 +117,7 @@ async def test_a_missing_password_refuses_to_start_and_never_starts_as_the_owner
 async def test_windows_refusing_the_account_reads_as_missing(core, monkeypatch, windows):
     turn_on(core.config)
 
-    async def refused(account, password, cmd, cwd, popen):
+    async def refused(cmd, cwd, popen):
         raise serveruser.ServerUserMissing("Windows error 1326")
 
     monkeypatch.setattr(serveruser, "launch_as", refused)
@@ -150,7 +153,12 @@ async def test_chunker_and_the_forge_installer_go_the_same_way(core, windows, tm
     assert "create_subprocess_exec" not in inspect.getsource(install.run_installer)
 
 
-def test_settings_turn_on_needs_a_working_account(multi_client, multi, windows):
+def test_settings_turn_on_needs_a_working_account(multi_client, multi, windows, monkeypatch):
+    monkeypatch.setattr(serveruser, "IS_WINDOWS", True)
+    monkeypatch.setattr(serveruser, "account_exists", lambda name=serveruser.ACCOUNT: True)
+    monkeypatch.setattr(
+        serveruser, "ask", fake_ask(serveruser.ServerUserMissing("Windows error 1326"))
+    )
     answer = multi_client.post("/api/settings/separate-windows-user", json={"on": True})
     assert answer.status_code == 409
     assert "Repair" in answer.json()["detail"]
@@ -160,7 +168,7 @@ def test_settings_turn_on_needs_a_working_account(multi_client, multi, windows):
 def test_settings_turn_on_and_off(multi_client, multi, windows, monkeypatch):
     monkeypatch.setattr(serveruser, "account_exists", lambda name=serveruser.ACCOUNT: True)
     monkeypatch.setattr(serveruser, "IS_WINDOWS", True)
-    monkeypatch.setattr(serveruser, "read_password", lambda path: "pw")
+    monkeypatch.setattr(serveruser, "ask", fake_ask(None))
     state = multi_client.get("/api/settings/separate-windows-user").json()
     assert state | {"restarting": []} == {
         "restarting": [],
@@ -223,25 +231,72 @@ def test_only_a_real_java_folder_is_opened(tmp_path):
     assert serveruser.java_home("no-such-java") is None
 
 
+def fake_ask(problem):
+    def ask(request):
+        assert request == {"do": "ping"}
+        if problem:
+            raise problem
+        return {"ok": True}
+
+    return ask
+
+
 def test_settings_status_says_what_is_broken(multi_client, multi, monkeypatch):
+    def problem():
+        return multi_client.get("/api/settings/separate-windows-user").json()["problem"]
+
     monkeypatch.setattr(serveruser, "IS_WINDOWS", True)
     monkeypatch.setattr(serveruser, "account_exists", lambda name=serveruser.ACCOUNT: False)
-    monkeypatch.setattr(serveruser, "read_password", lambda path: "pw")
-    assert multi_client.get("/api/settings/separate-windows-user").json()["problem"] == "account"
+    assert problem() == "account"
+    monkeypatch.setattr(serveruser, "account_exists", lambda name=serveruser.ACCOUNT: True)
+    not_running = serveruser.ServerUserMissing(serveruser.NOT_RUNNING)
+    monkeypatch.setattr(serveruser, "ask", fake_ask(not_running))
+    assert problem() == "service"
+    wrong = serveruser.ServerUserMissing("Windows error 1326")
+    monkeypatch.setattr(serveruser, "ask", fake_ask(wrong))
+    assert problem() == "password"
 
 
-def test_the_password_file_is_written_and_read_back(tmp_path):
-    path = tmp_path / "server-user.bin"
-    serveruser.write_password(path, "Abc-123")
-    assert serveruser.read_password(path) == "Abc-123"
-    with pytest.raises(serveruser.ServerUserMissing):
-        serveruser.read_password(tmp_path / "nothing.bin")
+# ------------------------------------------------------------------ starter service
+def test_the_starter_settings_are_written_and_read_back(tmp_path):
+    from agent import starter
+
+    path = tmp_path / "starter.json"
+    starter.write_settings(path, "Abc-123", "S-1-5-21-1-2-3-1001")
+    assert starter.read_settings(path) == ("Abc-123", "S-1-5-21-1-2-3-1001")
+    # The account id goes into an access list, so only a real SID is taken.
+    with pytest.raises(ValueError):
+        starter.write_settings(path, "Abc-123", "S-1-5-21)(A;;GA;;;WD")
 
 
-def test_the_password_never_reaches_the_api_or_status(tmp_path):
-    config = build_multi_config(tmp_path)
-    turn_on(config, "Never-Show-Me-123")
-    assert "Never-Show-Me-123" not in json.dumps(serveruser.status(config))
+def test_the_starter_checks_every_request():
+    from agent.starter import check_request
+
+    good = {
+        "do": "start",
+        "command_line": '"C:\\Java\\bin\\java.exe" -jar server.jar',
+        "cwd": "/srv/survival" if os.name != "nt" else "C:\\srv",
+        "application": None,
+        "flags": 0x08000000 | 0x100 | 0x200,  # NO_WINDOW and REALTIME are dropped
+        "handles": [4, 8, 8],
+    }
+    checked = check_request(good)
+    assert checked["flags"] == 0x200
+    assert check_request({"do": "ping", "extra": 1}) == {"do": "ping"}
+    for bad in (
+        [],
+        {"do": "run-as-system"},
+        {**good, "cwd": "relative"},
+        {**good, "command_line": ""},
+        {**good, "command_line": "java\0x"},
+        {**good, "application": "java.exe"},
+        {**good, "flags": True},
+        {**good, "handles": [1, 2]},
+        {**good, "handles": [1, 2, -3]},
+        {**good, "handles": [1, 2, "3"]},
+    ):
+        with pytest.raises(ValueError):
+            check_request(bad)
 
 
 # ------------------------------------------------------------------ desktop app

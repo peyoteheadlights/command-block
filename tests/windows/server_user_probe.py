@@ -1,7 +1,7 @@
-"""Run by the live test's Task Scheduler task (S4U, like the agent at boot):
-can it read the DPAPI-saved password and start a program as the separate
-Windows user? Writes the answer as JSON. Arguments: account, password file,
-answer file."""
+"""Run by the live test's Task Scheduler task (S4U, like the agent at boot
+with nobody signed in): can the agent start a program as the separate
+Windows user through the starter service? Writes the answer as JSON.
+Arguments: the service's pipe, the answer file."""
 
 import asyncio
 import json
@@ -15,42 +15,29 @@ from agent import serveruser
 from agent.winproc import NO_WINDOW
 
 
-async def probe(account: str, secret: Path) -> dict:
-    answer: dict = {}
-    try:
-        password = serveruser.read_password(secret)
-        answer["dpapi"] = "works"
-    except serveruser.ServerUserMissing as exc:
-        answer["dpapi"] = f"refused: {exc.detail}"
-        return answer
+async def probe() -> dict:
     system32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
-    try:
-        process = await serveruser.launch_as(
-            account,
-            password,
-            [str(system32 / "whoami.exe")],
-            system32,
-            {"stdout": asyncio.subprocess.PIPE, "stderr": asyncio.subprocess.PIPE,
-             "creationflags": NO_WINDOW},
-        )  # fmt: skip
-        out, err = await process.communicate()
-        answer["run_as"] = "works: " + out.decode(errors="replace").strip()
-        # If it printed nothing, the exit code says why (for example
-        # 0xC0000142: Windows couldn't set the program up in this session).
-        answer["exit_code"] = hex((process.returncode or 0) & 0xFFFFFFFF)
-        answer["stderr"] = err.decode(errors="replace").strip()
-        answer["desktop"] = dict(serveruser.desktop_note)
-    except (OSError, serveruser.ServerUserMissing) as exc:
-        answer["run_as"] = f"refused: {exc!r} winerror={getattr(exc, 'winerror', None)}"
-    return answer
+    process = await serveruser.launch_as(
+        [str(system32 / "whoami.exe")],
+        system32,
+        {"stdout": asyncio.subprocess.PIPE, "stderr": asyncio.subprocess.PIPE,
+         "creationflags": NO_WINDOW},
+    )  # fmt: skip
+    out, err = await process.communicate()
+    return {
+        "run_as": out.decode(errors="replace").strip(),
+        # If it printed nothing, the exit code says why.
+        "exit_code": hex((process.returncode or 0) & 0xFFFFFFFF),
+        "stderr": err.decode(errors="replace").strip(),
+    }
 
 
 def main() -> None:
-    account, secret, out = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
+    serveruser.PIPE, out = sys.argv[1], Path(sys.argv[2])
     try:
-        answer = asyncio.run(probe(account, secret))
+        answer = asyncio.run(probe())
     except Exception as exc:  # the test wants any answer, never silence
-        answer = {"crashed": repr(exc)}
+        answer = {"crashed": repr(exc), "winerror": getattr(exc, "winerror", None)}
     out.write_text(json.dumps(answer), encoding="utf-8")
 
 

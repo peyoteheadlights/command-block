@@ -5,43 +5,47 @@ owner, a harmful mod could read the owner's files and Command Block's keys.
 With ``security.separate_windows_user`` on, every outside program the agent
 starts (Java for a server, Chunker, the Forge installer) goes through
 ``start()`` here and runs as one hidden local account instead. The installer
-makes that account and saves its password encrypted for the owner's account
-(DPAPI); see installer/serveruser.py and ADR 0007.
+makes that account and the small starter service that starts programs as
+it (agent/starter.py, installer/serveruser.py, ADR 0007).
 
-There is no fallback: when the setting is on and the account or its password
-is missing or broken, ``start()`` raises ``ServerUserMissing`` and nothing
-runs. Starting the server as the owner instead would quietly drop the
-protection.
+There is no fallback: when the setting is on and the account or the
+service is missing or broken, ``start()`` raises ``ServerUserMissing`` and
+nothing runs. Starting the server as the owner instead would quietly drop
+the protection.
 
-How Windows is asked: ``CreateProcessWithLogonW`` is the one call that lets
-a normal (not Administrator) program start another program as a different
-account. Python's ``subprocess`` doesn't offer it, so on Windows the call
+How Windows is asked: the agent can't start a program as another account
+at boot (nobody signed in), so it asks the starter service over its named
+pipe. Python's ``subprocess`` doesn't know that way, so on Windows the call
 Python makes inside ``subprocess.Popen`` (``_winapi.CreateProcess``) is
-wrapped once: while ``start()`` has a password in ``_as_user`` it uses
-CreateProcessWithLogonW with the same pipes, otherwise it does exactly what
-it did before. ``_as_user`` is a ContextVar, so only the asyncio task that
-called ``start()`` sees it (like a ThreadLocal in Java, per task).
+wrapped once: while ``start()`` has set ``_via_starter`` it asks the service
+with the same console pipes, otherwise it does exactly what it did before.
+``_via_starter`` is a ContextVar, so only the asyncio task that called
+``start()`` sees it (like a ThreadLocal in Java, per task).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextvars
+import json
 import logging
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
+from .starter import ACCOUNT, pipe_name
+
 log = logging.getLogger("msc.serveruser")
 
-ACCOUNT = "CommandBlockServer"
-SECRET_FILE = "server-user.bin"  # in the agent's data folder
+PIPE = pipe_name()  # the live test points this at its own copy of the service
 MISSING = (
     "The separate Windows user is missing, so the server wasn't started. "
     "Open Settings and select Repair."
 )
+NOT_RUNNING = "the starter service isn't running"
 # Windows' answers that mean the account or its password is gone or broken.
 LOGON_ERRORS = {1317, 1326, 1327, 1330, 1331, 1385, 1907, 1909}
 IS_WINDOWS = os.name == "nt"
@@ -61,54 +65,13 @@ def is_on(config: Any) -> bool:
     return bool(config.security.separate_windows_user)
 
 
-def secret_path(config: Any) -> Path:
-    """In the agent's own data folder: a server's config (ServerConfig)
-    points data_dir at that server's folder, so the shared one is asked."""
-    return Path(getattr(config, "root", config).data_dir) / SECRET_FILE
-
-
-# ------------------------------------------------------------------ password
-def read_password(path: Path) -> str:
-    """The account's password, decrypted. ServerUserMissing when there's no
-    file or it can't be decrypted (another account's DPAPI, a damaged file)."""
-    try:
-        raw = path.read_bytes()
-        if IS_WINDOWS:
-            from .security.records import _dpapi
-
-            raw = _dpapi(raw, protect=False)
-        password = raw.decode("utf-8")
-    except (OSError, ValueError) as exc:
-        raise ServerUserMissing(f"password file: {type(exc).__name__}") from None
-    if not password:
-        raise ServerUserMissing("password file is empty")
-    return password
-
-
-def write_password(path: Path, password: str) -> None:
-    """Save it encrypted for this Windows account, readable only by it,
-    SYSTEM and Administrators. The installer calls this."""
-    from .security.certs import _restrict_file
-
-    raw = password.encode("utf-8")
-    if IS_WINDOWS:
-        from .security.records import _dpapi
-
-        raw = _dpapi(raw, protect=True)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_bytes(raw)
-    _restrict_file(tmp)
-    tmp.replace(path)
-
-
 def account_exists(name: str = ACCOUNT) -> bool:
     if not IS_WINDOWS:
         return False
     import ctypes
 
     buffer = ctypes.c_void_p()
-    netapi = ctypes.windll.netapi32  # type: ignore[attr-defined]
+    netapi = ctypes.windll.netapi32
     code = netapi.NetUserGetInfo(None, name, 0, ctypes.byref(buffer))
     if buffer:
         netapi.NetApiBufferFree(buffer)
@@ -116,18 +79,21 @@ def account_exists(name: str = ACCOUNT) -> bool:
 
 
 def status(config: Any) -> dict[str, Any]:
-    """What Settings shows: is it on, and does the account work."""
+    """What Settings shows: is it on, and does the account work (the
+    service signs in as it to answer)."""
     on = is_on(config)
     problem = None
-    if IS_WINDOWS:
-        try:
-            read_password(secret_path(config))
-            if not account_exists():
-                problem = "account"
-        except ServerUserMissing:
-            problem = "password"
-    else:
+    if not IS_WINDOWS:
         problem = "windows_only"
+    elif not account_exists():
+        problem = "account"
+    else:
+        try:
+            ask({"do": "ping"})
+        except ServerUserMissing as exc:
+            problem = "service" if exc.detail == NOT_RUNNING else "password"
+        except OSError:
+            problem = "service"
     return {
         "on": on,
         "ok": problem is None,
@@ -197,10 +163,7 @@ def java_home(java: str) -> Path | None:
 
 
 # ------------------------------------------------------------------ starting
-# Holds [account, password] only while one start runs; emptied right after,
-# so the tasks asyncio makes during the start (which copy this context) keep
-# neither the password nor the switch.
-_as_user: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar("as_user", default=None)
+_via_starter: contextvars.ContextVar[bool] = contextvars.ContextVar("via_starter", default=False)
 
 
 async def start(
@@ -216,7 +179,8 @@ async def start(
     the folders the program may change (its working folder is always one)."""
     if not is_on(config):
         return await asyncio.create_subprocess_exec(*cmd, cwd=str(cwd), **popen)
-    password = read_password(secret_path(config))
+    # At boot the agent can be up before Windows has started the service.
+    await asyncio.to_thread(wait_for_starter)
     folders = [Path(cwd), *(writable or [])]
     for folder in folders:
         await asyncio.to_thread(grant, folder)
@@ -229,29 +193,104 @@ async def start(
             # Administrators; if it really can't be read, the start below
             # fails and says so.
             log.info("java folder not granted: %s", exc)
-    return await launch_as(ACCOUNT, password, cmd, cwd, popen)
+    return await launch_as(cmd, cwd, popen)
 
 
-async def launch_as(
-    account: str, password: str, cmd: list[str], cwd: Path, popen: dict[str, Any]
-) -> asyncio.subprocess.Process:
-    """The one place that asks Windows to start a program as another
-    account. Tests replace it with a recorder."""
+async def launch_as(cmd: list[str], cwd: Path, popen: dict[str, Any]) -> asyncio.subprocess.Process:
+    """The one place that starts a program as the account (through the
+    starter service). Tests replace it with a recorder."""
     if not IS_WINDOWS:
         raise ServerUserMissing("only on Windows")
     _install_hook()
-    holder = [account, password]
-    token = _as_user.set(holder)
+    token = _via_starter.set(True)
     try:
         return await asyncio.create_subprocess_exec(*cmd, cwd=str(cwd), **popen)
-    except OSError as exc:
-        code = getattr(exc, "winerror", None)
-        if code in LOGON_ERRORS:
-            raise ServerUserMissing(f"Windows error {code}") from None
-        raise
     finally:
-        holder.clear()
-        _as_user.reset(token)
+        _via_starter.reset(token)
+
+
+def wait_for_starter(seconds: float = 30) -> None:
+    """Ask the service if it's there and can sign in as the account; while
+    it isn't running yet, ask again for up to ``seconds``."""
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            ask({"do": "ping"})
+            return
+        except ServerUserMissing as exc:
+            if exc.detail != NOT_RUNNING or time.monotonic() > deadline:
+                raise
+        time.sleep(1)
+
+
+# ------------------------------------------------------------------ the service's pipe
+# What the agent opens the pipe with: read, write, message mode, read who
+# made it. And "identification only", so whoever is on the other end can
+# see which account asks but can never act as it.
+_PIPE_RIGHTS = 0x0001 | 0x0002 | 0x0100 | 0x00020000 | 0x00100000
+_IDENTIFY_ONLY = 0x00100000 | 0x00010000  # SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION
+
+
+def ask(request: dict[str, Any]) -> dict[str, Any]:
+    """One request to the starter service, its answer back. ServerUserMissing
+    when the service isn't there or can't sign in as the account."""
+    if not IS_WINDOWS:
+        raise ServerUserMissing("only on Windows")
+    import _winapi
+
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            pipe = _winapi.CreateFile(
+                PIPE, _PIPE_RIGHTS, 0, _winapi.NULL, _winapi.OPEN_EXISTING, _IDENTIFY_ONLY,
+                _winapi.NULL,
+            )  # fmt: skip
+            break
+        except OSError as exc:
+            if exc.winerror == 231 and time.monotonic() < deadline:  # busy with another start
+                time.sleep(0.2)
+                continue
+            if exc.winerror in (2, 231):
+                raise ServerUserMissing(NOT_RUNNING) from None
+            raise
+    try:
+        if not _made_by_system(pipe):
+            # Someone else's program made a pipe with the service's name.
+            log.warning("the starter pipe wasn't made by SYSTEM; not using it")
+            raise ServerUserMissing(NOT_RUNNING)
+        _winapi.SetNamedPipeHandleState(pipe, _winapi.PIPE_READMODE_MESSAGE, None, None)
+        _winapi.WriteFile(pipe, json.dumps(request).encode("utf-8"))
+        data, _ = _winapi.ReadFile(pipe, 65536)
+    finally:
+        _winapi.CloseHandle(pipe)
+    answer = json.loads(data)
+    if answer.get("ok"):
+        return dict(answer)
+    code = answer.get("winerror")
+    if code in LOGON_ERRORS:
+        raise ServerUserMissing(f"Windows error {code}")
+    raise OSError(0, f"The starter service said: {answer.get('error')}", None, code)
+
+
+def _made_by_system(pipe: int) -> bool:
+    """Is the pipe's owner SYSTEM? Only SYSTEM (or an Administrator) can
+    make an object owned by SYSTEM."""
+    import ctypes
+    from ctypes import wintypes
+
+    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    owner, descriptor = ctypes.c_void_p(), ctypes.c_void_p()
+    code = advapi.GetSecurityInfo(
+        wintypes.HANDLE(pipe), 6, 0x1, ctypes.byref(owner), None, None, None,
+        ctypes.byref(descriptor),
+    )  # SE_KERNEL_OBJECT, OWNER_SECURITY_INFORMATION  # fmt: skip
+    if code != 0:
+        return False
+    try:
+        return bool(advapi.IsWellKnownSid(owner, 22))  # WinLocalSystemSid
+    finally:
+        kernel.LocalFree(descriptor)
 
 
 # ------------------------------------------------------------------ Windows calls
@@ -264,226 +303,36 @@ def _install_hook() -> None:
         return
     import _winapi
 
-    original = _winapi.CreateProcess  # type: ignore[attr-defined]
+    original = _winapi.CreateProcess
 
     def create_process(executable, args, proc_attrs, thread_attrs, inherit, flags, env, cwd, info):
-        who = _as_user.get()
-        if not who:
+        if not _via_starter.get():
             return original(
                 executable, args, proc_attrs, thread_attrs, inherit, flags, env, cwd, info
             )
-        return _create_with_logon(who, executable, args, flags, env, cwd, info)
+        return _create_via_starter(executable, args, flags, env, cwd, info)
 
-    _winapi.CreateProcess = create_process  # type: ignore[attr-defined]
+    _winapi.CreateProcess = create_process
     _hooked = True
 
 
-# Flags CreateProcessWithLogonW takes. CREATE_NO_WINDOW isn't one of them, so
-# the console it gets is hidden with SW_HIDE instead.
-_ALLOWED_FLAGS = 0x00000004 | 0x00000010 | 0x00000200 | 0x00000400 | 0x04000000 | 0x0000FFE0
-_STARTF_USESHOWWINDOW = 0x1
-_STARTF_USESTDHANDLES = 0x100
-_LOGON_WITH_PROFILE = 0x1
-# What the agent's own account may do to the server's process: stop it, set
-# its CPU cores, read its memory and CPU use, wait for it.
-_AGENT_RIGHTS = 0x0001 | 0x0010 | 0x0200 | 0x0400 | 0x1000 | 0x00100000
-
-
-def _create_with_logon(who, executable, args, flags, env, cwd, info):
-    import ctypes
-    from ctypes import wintypes
-
+def _create_via_starter(executable, args, flags, env, cwd, info):
+    """What Popen expects back from CreateProcess: (process handle, thread
+    handle, process id, thread id). The service puts both handles into this
+    process, with only the rights the agent needs."""
     if env is not None:
         raise ValueError("A program started as the separate Windows user gets its own settings")
-
-    class STARTUPINFOW(ctypes.Structure):
-        _fields_ = [
-            ("cb", wintypes.DWORD),
-            ("lpReserved", wintypes.LPWSTR),
-            ("lpDesktop", wintypes.LPWSTR),
-            ("lpTitle", wintypes.LPWSTR),
-            ("dwX", wintypes.DWORD),
-            ("dwY", wintypes.DWORD),
-            ("dwXSize", wintypes.DWORD),
-            ("dwYSize", wintypes.DWORD),
-            ("dwXCountChars", wintypes.DWORD),
-            ("dwYCountChars", wintypes.DWORD),
-            ("dwFillAttribute", wintypes.DWORD),
-            ("dwFlags", wintypes.DWORD),
-            ("wShowWindow", wintypes.WORD),
-            ("cbReserved2", wintypes.WORD),
-            ("lpReserved2", ctypes.c_void_p),
-            ("hStdInput", wintypes.HANDLE),
-            ("hStdOutput", wintypes.HANDLE),
-            ("hStdError", wintypes.HANDLE),
-        ]
-
-    class PROCESS_INFORMATION(ctypes.Structure):
-        _fields_ = [
-            ("hProcess", wintypes.HANDLE),
-            ("hThread", wintypes.HANDLE),
-            ("dwProcessId", wintypes.DWORD),
-            ("dwThreadId", wintypes.DWORD),
-        ]
-
-    startup = STARTUPINFOW()
-    startup.cb = ctypes.sizeof(startup)
-    startup.dwFlags = (info.dwFlags if info else 0) | _STARTF_USESHOWWINDOW
-    startup.wShowWindow = 0  # SW_HIDE
-    if info and info.dwFlags & _STARTF_USESTDHANDLES:
-        startup.hStdInput = int(info.hStdInput or 0)
-        startup.hStdOutput = int(info.hStdOutput or 0)
-        startup.hStdError = int(info.hStdError or 0)
-    found = PROCESS_INFORMATION()
-    account, password = who
-    desktop = _hidden_desktop(account)
-    if desktop:
-        startup.lpDesktop = desktop
-    command_line = ctypes.create_unicode_buffer(args)
-    advapi = ctypes.WinDLL("advapi32", use_last_error=True)  # type: ignore[attr-defined]
-    ok = advapi.CreateProcessWithLogonW(
-        wintypes.LPCWSTR(account),
-        wintypes.LPCWSTR("."),
-        wintypes.LPCWSTR(password),
-        wintypes.DWORD(_LOGON_WITH_PROFILE),
-        wintypes.LPCWSTR(executable) if executable else None,
-        command_line,
-        wintypes.DWORD(flags & _ALLOWED_FLAGS),
-        None,
-        wintypes.LPCWSTR(cwd) if cwd else None,
-        ctypes.byref(startup),
-        ctypes.byref(found),
+    handles = [0, 0, 0]
+    if info and info.dwFlags & 0x100:  # STARTF_USESTDHANDLES
+        handles = [int(h or 0) for h in (info.hStdInput, info.hStdOutput, info.hStdError)]
+    answer = ask(
+        {
+            "do": "start",
+            "application": executable,
+            "command_line": args,
+            "cwd": cwd,
+            "flags": flags,
+            "handles": handles,
+        }
     )
-    if not ok:
-        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
-    _allow_agent(found.hProcess)
-    return found.hProcess, found.hThread, found.dwProcessId, found.dwThreadId
-
-
-def _allow_agent(process: int) -> None:
-    """The new process belongs to the other account, so by default the
-    agent couldn't read its memory use or set its CPU cores by its id. Add
-    the agent's own account to the process's access list (the handle
-    Windows gave back has the rights to do that)."""
-    code = _add_to_access_list(process, 6, _AGENT_RIGHTS, "CURRENT_USER")  # SE_KERNEL_OBJECT
-    if code != 0:
-        log.warning("could not let the agent watch the server process: %s", code)
-
-
-# What the server account may do on the agent's hidden desktop: the same as
-# Microsoft's own sample for starting a program as another user. Without
-# it Windows can't set the program up and it stops with 0xC0000142.
-_STATION_RIGHTS = 0x037F  # WINSTA_ALL_ACCESS
-_DESKTOP_RIGHTS = 0x01FF  # DESKTOP_ALL_ACCESS
-_desktop_for: dict[str, str] = {}  # account -> "station\\desktop", granted once
-desktop_note: dict[str, Any] = {}  # what the last try found, for the boot test
-
-
-def _hidden_desktop(account: str) -> str | None:
-    """At boot the agent runs from a Task Scheduler task with nobody signed
-    in, on a hidden window station (not WinSta0). CreateProcessWithLogonW
-    doesn't give the new account access to that one (the boot test showed
-    0xC0000142), so here the server account is added to the agent's own
-    hidden station and desktop, once.
-    Returns "station\\desktop" to start the program on, or None when the
-    agent is on the normal WinSta0 (then Windows handles it)."""
-    if account in _desktop_for:
-        return _desktop_for[account]
-    import ctypes
-    from ctypes import wintypes
-
-    user32 = ctypes.WinDLL("user32", use_last_error=True)  # type: ignore[attr-defined]
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
-    user32.GetProcessWindowStation.restype = wintypes.HANDLE
-    user32.GetThreadDesktop.restype = wintypes.HANDLE
-
-    def name_of(handle: int) -> str:
-        buffer = ctypes.create_unicode_buffer(256)
-        needed = wintypes.DWORD()
-        ok = user32.GetUserObjectInformationW(
-            wintypes.HANDLE(handle), 2, buffer, ctypes.sizeof(buffer), ctypes.byref(needed)
-        )  # 2 = UOI_NAME
-        return buffer.value if ok else ""
-
-    station = user32.GetProcessWindowStation()
-    desktop = user32.GetThreadDesktop(kernel.GetCurrentThreadId())
-    station_name, desktop_name = name_of(station), name_of(desktop)
-    desktop_note["names"] = f"{station_name}\\{desktop_name}"
-    if not station_name or not desktop_name or station_name.lower() == "winsta0":
-        return None
-    # The handles above can't change access lists, so open both again by
-    # name asking for that right (READ_CONTROL | WRITE_DAC).
-    change = 0x00020000 | 0x00040000
-    user32.OpenWindowStationW.restype = wintypes.HANDLE
-    user32.OpenDesktopW.restype = wintypes.HANDLE
-    opened = [
-        (user32.OpenWindowStationW(station_name, False, change), _STATION_RIGHTS, "station"),
-        (user32.OpenDesktopW(desktop_name, 0, False, change), _DESKTOP_RIGHTS, "desktop"),
-    ]
-    try:
-        for handle, rights, what in opened:
-            code = _add_to_access_list(handle, 7, rights, account) if handle else -1
-            desktop_note[what] = code if handle else "could not open it"
-            if code != 0:
-                # The start below then stops with 0xC0000142; this says why.
-                log.warning("could not let %s use the hidden %s: %s", account, what, code)
-                return None
-    finally:
-        for handle, _, what in opened:
-            if handle:
-                close = user32.CloseWindowStation if what == "station" else user32.CloseDesktop
-                close(wintypes.HANDLE(handle))
-    _desktop_for[account] = f"{station_name}\\{desktop_name}"
-    return _desktop_for[account]
-
-
-def _add_to_access_list(handle: int, object_type: int, rights: int, who: str) -> int:
-    """Grant ``who`` (an account name, or CURRENT_USER) ``rights`` on a
-    Windows object. Returns Windows' error code, 0 when it worked."""
-    import ctypes
-    from ctypes import wintypes
-
-    class TRUSTEE(ctypes.Structure):
-        _fields_ = [
-            ("pMultipleTrustee", ctypes.c_void_p),
-            ("MultipleTrusteeOperation", ctypes.c_int),
-            ("TrusteeForm", ctypes.c_int),
-            ("TrusteeType", ctypes.c_int),
-            ("ptstrName", wintypes.LPWSTR),
-        ]
-
-    class EXPLICIT_ACCESS(ctypes.Structure):
-        _fields_ = [
-            ("grfAccessPermissions", wintypes.DWORD),
-            ("grfAccessMode", ctypes.c_int),
-            ("grfInheritance", wintypes.DWORD),
-            ("Trustee", TRUSTEE),
-        ]
-
-    advapi = ctypes.WinDLL("advapi32", use_last_error=True)  # type: ignore[attr-defined]
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
-    dacl_info = 4  # DACL_SECURITY_INFORMATION
-    old, descriptor, new = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
-    code = advapi.GetSecurityInfo(
-        wintypes.HANDLE(handle), object_type, dacl_info, None, None,
-        ctypes.byref(old), None, ctypes.byref(descriptor),
-    )  # fmt: skip
-    if code != 0:
-        return int(code)
-    try:
-        entry = EXPLICIT_ACCESS()
-        entry.grfAccessPermissions = rights
-        entry.grfAccessMode = 1  # GRANT_ACCESS
-        entry.Trustee.TrusteeForm = 1  # TRUSTEE_IS_NAME
-        entry.Trustee.TrusteeType = 1  # TRUSTEE_IS_USER
-        entry.Trustee.ptstrName = who
-        code = advapi.SetEntriesInAclW(1, ctypes.byref(entry), old, ctypes.byref(new))
-        if code == 0:
-            code = advapi.SetSecurityInfo(
-                wintypes.HANDLE(handle), object_type, dacl_info, None, None, new, None
-            )
-        return int(code)
-    finally:
-        if new:
-            kernel.LocalFree(new)
-        kernel.LocalFree(descriptor)
+    return answer["process"], answer["thread"], answer["pid"], answer["tid"]

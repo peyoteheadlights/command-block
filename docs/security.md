@@ -292,32 +292,69 @@ plugin can't read the owner's files, the app's data folder or its keys
 (ADR 0007). `agent/serveruser.py` `start()` is the one place that starts
 them, and:
 
-- it uses `CreateProcessWithLogonW` (the only call a normal program can use
-  to start a program as another account), with the same pipes as before.
-  Python's own process call is wrapped only while `start()` runs, for that
-  one asyncio task; every other program the app starts is unchanged;
-- when the setting is on and the account or its password is missing or
-  refused, nothing starts and the app says "The separate Windows user is
-  missing" with Repair. There is no code path that falls back to the owner;
+- it asks the starter service (below) over its named pipe, with the same
+  console pipes as before. Python's own process call is wrapped only while
+  `start()` runs, for that one asyncio task; every other program the app
+  starts is unchanged;
+- when the setting is on and the account, its password or the service is
+  missing or refused, nothing starts and the app says "The separate
+  Windows user is missing" with Repair. There is no code path that falls back to the owner;
 - before a start it gives the account change rights (`icacls ... /grant
   CommandBlockServer:(OI)(CI)M`) on that program's own folder only (the
   server folder, or Chunker's work folder), and read-and-run on the Java
   folder. Backups, the data folder and the owner's profile get nothing.
   The agent owns those folders, so this needs no Administrator;
-- the started process's access list is widened for the agent's own account
-  only (stop, CPU cores, reading memory and CPU use).
+- the started process's access list gives the agent's own account only
+  what it uses (stop, CPU cores, reading memory and CPU use).
+
+The starter service (`agent/starter.py`, `CommandBlockStarter`, runs
+`mcsc.exe starter-service` as SYSTEM). At boot the agent runs from a task
+with nobody signed in, and from there Windows can't set up a program
+started with `CreateProcessWithLogonW` (it stops with 0xC0000142), so a
+small service does the starting (the fallback ADR 0007 planned). The agent
+itself keeps the owner's normal rights. The service:
+
+- only answers on `\\.\pipe\CommandBlockStarter`, made with
+  `FILE_FLAG_FIRST_PIPE_INSTANCE` and `PIPE_REJECT_REMOTE_CLIENTS`, owned by
+  SYSTEM, open to SYSTEM and the owner's account only (the account the
+  installer ran as, which the startup task runs the agent as). It checks the
+  asking process's account again before reading the request, so
+  `CommandBlockServer` (a harmful mod) can't use it. The agent opens the pipe
+  "identification only" (so the other end can't act as the owner) and
+  checks it's owned by SYSTEM before sending anything;
+- only ever signs in as `CommandBlockServer` (the name is in the code, not
+  the request), with the password only it can read. Nothing in the request
+  picks the account, the environment or which of its own handles the
+  program gets: only the three console pipe ends, copied from the asking
+  process itself, are passed on (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`).
+  Requests are checked (`check_request`): full paths, no NUL characters,
+  normal priority classes only (never realtime);
+- starts the program on a window station and desktop of its own
+  (`CommandBlockServers\Default`) that only SYSTEM and the account may use,
+  never on SYSTEM's shared service desktop;
+- hands the agent a process handle with only the agent's rights, and stops
+  the program again if it can't;
+- costs nothing while it waits (one blocked thread), and is stopped while
+  an update replaces the program folder.
+
+Not checked on purpose: which program is started. The owner could run any
+program as themselves anyway, and the account has fewer rights than the
+owner, so a list of allowed programs would protect nothing.
 
 The installer (Administrator) makes the account with Windows' own calls
 (`NetUserAdd`, `LsaAddAccountRights`; no program is run, so the password is
 never on a command line): password never expires, Remote Desktop and
 network sign-in are denied, and it is left off the sign-in screen. A
-keyboard sign-in stays allowed only because `CreateProcessWithLogonW` needs
-that kind of sign-in; nobody knows the password. The password is 40 random
-characters, saved DPAPI-encrypted for the owner's account in the data folder
-(`server-user.bin`, owner, SYSTEM and Administrators only), and never
-logged, printed or sent by the API. Settings' Turn on, Repair and Turn off
-run `mcsc server-user on|repair|off` as Administrator (Windows asks); Turn
-off and removing the app delete the account and its profile folder.
+keyboard sign-in stays allowed because the starter service signs in that
+way (`LogonUserW`, interactive); nobody knows the password. The password is
+40 random characters, saved only for the starter service:
+`Program Files\Command Block Starter\starter.json` (SYSTEM and
+Administrators only, encrypted with DPAPI for this PC), never in the data
+folder, and never logged, printed or sent by the API. The agent never has
+it. Settings' Turn on, Repair and Turn off run `mcsc server-user
+on|repair|off` as Administrator (Windows asks); Repair also restarts the
+service so it reads the new password. Turn off and removing the app delete
+the service, its folder, the account and its profile folder.
 
 ### Updating the app itself
 

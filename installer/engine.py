@@ -262,7 +262,8 @@ class Engine:
         self.stopped_servers: list[str] = []
         self.agent_stopped = False
         self.certificate_renewed = False
-        self.server_user_dir: Path | None = None  # set once step_server_user made it
+        self.server_user_made = False  # set once step_server_user made it
+        self.starter_stopped = False  # the starter service, stopped to replace its files
         self.notes: list[str] = []
         self._plan()
 
@@ -609,6 +610,8 @@ class Engine:
         (incoming / appinfo.INSTALL_RECORD).write_text(json.dumps(record, indent=2), "utf-8")
         if target.exists():
             self.system.close_app()
+            # The starter service runs mcsc.exe from this folder.
+            self.starter_stopped = self.system.stop_starter()
             previous = target.with_name(target.name + ".previous")
             shutil.rmtree(previous, ignore_errors=True)
             try:
@@ -622,6 +625,8 @@ class Engine:
             self.previous_program = previous
         incoming.rename(target)
         self.new_program_created = True
+        if self.starter_stopped:
+            self.system.start_starter()
         self.log.write("program_copied", files=copied.files, bytes=copied.bytes, to=str(target))
         return None
 
@@ -858,14 +863,14 @@ class Engine:
             return "Your settings were already here, so their choice is kept."
         config = Config.load(self.config_path, self.env_path)
         try:
-            serveruser.make(self.system, config.data_dir)
+            serveruser.make(self.system, self.c.program_dir)
         except (SystemError_, OSError) as exc:
             self.log.write("server_user_failed", error=str(exc))
             return (
                 "The separate Windows user couldn't be made, so servers run as you for "
                 "now. Turn it on in Settings."
             )
-        self.server_user_dir = config.data_dir
+        self.server_user_made = True
         config.set("security.separate_windows_user", True)
         config.save(self.config_path)
         return None
@@ -1097,6 +1102,9 @@ class Engine:
                 if self.previous_program and self.previous_program.exists():
                     self.previous_program.rename(self.c.program_dir)
                     actions.append("put the previous program back")
+            if self.starter_stopped:
+                self.system.start_starter()
+                actions.append("started the starter service again")
             if self.point is not None:
                 if self.c.action == MIGRATE:
                     for path in self.created_settings:
@@ -1106,10 +1114,10 @@ class Engine:
                 else:
                     restorepoint.restore(self.point)
                     actions.append("put your settings and database back")
-            if self.server_user_dir is not None:
+            if self.server_user_made:
                 from . import serveruser
 
-                serveruser.remove(self.system, self.server_user_dir)
+                serveruser.remove(self.system)
                 actions.append("removed the separate Windows user it had made")
             if self.previous_launch and self.previous_launch.get("command"):
                 launch = {

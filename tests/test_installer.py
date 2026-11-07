@@ -18,7 +18,6 @@ from pathlib import Path
 import pytest
 
 from agent import datafolder
-from agent import serveruser as agent_serveruser
 from agent.config import SECRET_ENV_KEYS
 from agent.security.auth import hash_password
 from installer import detect, engine, fileops, layout, restorepoint, uninstall
@@ -132,6 +131,29 @@ class FakeSystem:
 
     def remove_server_user(self, name):
         self.calls.append(("remove_server_user", name))
+
+    starter_running = False
+
+    def current_user_sid(self):
+        return "S-1-5-21-1-2-3-1001"
+
+    def install_starter(self, program_dir, password, agent_user):
+        self.calls.append(("install_starter", str(program_dir), agent_user))
+        self.starter_password = password
+        self.starter_running = True
+
+    def remove_starter(self):
+        self.calls.append(("remove_starter",))
+        self.starter_running = False
+
+    def stop_starter(self):
+        self.calls.append(("stop_starter",))
+        was, self.starter_running = self.starter_running, False
+        return was
+
+    def start_starter(self):
+        self.calls.append(("start_starter",))
+        self.starter_running = True
 
     def remove_startup(self):
         self.calls.append(("remove_startup",))
@@ -1376,11 +1398,11 @@ def test_a_new_install_makes_the_separate_user_and_turns_it_on(tmp_path, places,
     assert system.called("make_server_user") == [("make_server_user", "CommandBlockServer")]
     config = (places["data"] / "config" / "config.yaml").read_text()
     assert "separate_windows_user: true" in config
-    from agent.config import Config
-
-    settings = places["data"] / "config"
-    saved = Config.load(settings / "config.yaml", settings / ".env").data_dir / "server-user.bin"
-    assert agent_serveruser.read_password(saved) == system.server_user_password
+    # The starter service gets the same password, for the installing account.
+    assert system.called("install_starter") == [
+        ("install_starter", str(places["program"]), "S-1-5-21-1-2-3-1001")
+    ]
+    assert system.starter_password == system.server_user_password
     # The password is never in the install log.
     logs = "".join(p.read_text() for p in (places["data"] / "logs").rglob("*") if p.is_file())
     assert system.server_user_password not in logs
@@ -1437,18 +1459,50 @@ def installed_settings(tmp_path, monkeypatch) -> Path:
 
 
 def test_turn_on_repair_and_turn_off_from_the_command(tmp_path, monkeypatch, capsys):
-    data = installed_settings(tmp_path, monkeypatch)
+    installed_settings(tmp_path, monkeypatch)
     system = FakeSystem()
     assert serveruser_setup.main(["on"], system) == 0
-    first = agent_serveruser.read_password(data / "server-user.bin")
+    first = system.starter_password
+    assert first == system.server_user_password
     assert serveruser_setup.main(["repair"], system) == 0
-    assert agent_serveruser.read_password(data / "server-user.bin") != first  # a new password
+    assert system.starter_password != first  # a new password, and the service told
+    assert system.starter_password == system.server_user_password
     assert len(system.called("make_server_user")) == 2
+    assert len(system.called("install_starter")) == 2
     assert serveruser_setup.main(["off"], system) == 0
     assert system.called("remove_server_user") == [("remove_server_user", "CommandBlockServer")]
-    assert not (data / "server-user.bin").exists()
+    assert system.called("remove_starter") == [("remove_starter",)]
     printed = capsys.readouterr()
     assert first not in printed.out + printed.err
+
+
+def test_a_starter_service_that_fails_leaves_no_account(tmp_path, monkeypatch):
+    from installer.system import SystemError_
+
+    installed_settings(tmp_path, monkeypatch)
+    system = FakeSystem()
+
+    def refuse(program_dir, password, agent_user):
+        raise SystemError_("The starter service didn't start.")
+
+    system.install_starter = refuse
+    assert serveruser_setup.main(["on"], system) == 1
+    assert system.called("remove_server_user") == [("remove_server_user", "CommandBlockServer")]
+
+
+def test_an_update_stops_the_starter_service_while_its_files_are_replaced(places, program_files):
+    found = make_installer_copy(places)
+    system = FakeSystem()
+    system.running = True
+    system.starter_running = True
+    choices = Choices(
+        action=engine.UPDATE, program_dir=places["program"], data_root=places["data"], found=found
+    )
+    _, result, _ = run_engine(choices, program_files, system)
+    assert result.ok, result.message + result.details
+    names = [c[0] for c in system.calls]
+    assert names.index("stop_starter") < names.index("start_starter")
+    assert system.starter_running
 
 
 def test_the_command_needs_administrator_and_a_known_word(tmp_path, monkeypatch):
@@ -1469,11 +1523,10 @@ def test_the_command_needs_administrator_and_a_known_word(tmp_path, monkeypatch)
 def test_removing_the_app_removes_the_separate_user(places):
     make_installer_copy(places)
     system = FakeSystem()
-    (places["data"] / "server-user.bin").write_bytes(b"x")
     result = uninstall.uninstall(places["program"], places["data"], system=system)
     assert ("remove_server_user", "CommandBlockServer") in system.calls
+    assert ("remove_starter",) in system.calls
     assert "removed the separate Windows user" in result["done"]
-    assert not (places["data"] / "server-user.bin").exists()
 
 
 def test_a_failed_install_removes_the_separate_user_it_made(tmp_path, places, program_files):
@@ -1496,3 +1549,4 @@ def test_a_failed_install_removes_the_separate_user_it_made(tmp_path, places, pr
     if not system.called("remove_server_user"):
         eng.roll_back()  # when the run leaves it to the setup window's button
     assert ("remove_server_user", "CommandBlockServer") in system.calls
+    assert ("remove_starter",) in system.calls

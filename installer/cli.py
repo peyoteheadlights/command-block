@@ -14,6 +14,7 @@ shortcut opens the desktop app (``CommandBlock.exe``) instead.
     mcsc setup ...             the installer's screens (setup.exe runs this)
     mcsc apply-update          run by the update task only (see docs/security.md)
     mcsc server-user on|repair|off   the separate Windows user (Administrator)
+    mcsc starter-service       run by Windows only: starts servers as that user
     mcsc version
 """
 
@@ -60,6 +61,10 @@ def cli_entry(argv: list[str] | None = None) -> int:
         from . import serveruser
 
         return serveruser.main(rest)
+    if command == "starter-service":
+        from agent import starter
+
+        return starter.run_service(rest)
     if command == "version":
         from agent import API_VERSION, __version__
 

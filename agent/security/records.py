@@ -48,9 +48,10 @@ def canonical(body: dict[str, Any]) -> str:
 
 
 # ------------------------------------------------------------------ the keys
-def _dpapi(data: bytes, protect: bool) -> bytes:
+def _dpapi(data: bytes, protect: bool, machine: bool = False) -> bytes:
     """Windows' DPAPI: only the same Windows account on the same PC can
-    decrypt what it encrypted."""
+    decrypt what it encrypted. ``machine``: any account on this PC can, so
+    the file's access list is what protects it (the starter service)."""
     import ctypes
     from ctypes import wintypes
 
@@ -64,7 +65,13 @@ def _dpapi(data: bytes, protect: bool) -> bytes:
     no_prompt = 0x1  # CRYPTPROTECT_UI_FORBIDDEN
     if protect:
         done = crypt32.CryptProtectData(
-            ctypes.byref(given), "Command Block", None, None, None, no_prompt, ctypes.byref(out)
+            ctypes.byref(given),
+            "Command Block",
+            None,
+            None,
+            None,
+            no_prompt | (0x4 if machine else 0),  # CRYPTPROTECT_LOCAL_MACHINE
+            ctypes.byref(out),
         )
     else:
         done = crypt32.CryptUnprotectData(

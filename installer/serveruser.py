@@ -5,15 +5,16 @@ read the owner's files (agent/serveruser.py, ADR 0007). Making an account
 needs Administrator, which the desktop app never has, so this is the
 installer's job:
 
-* a new install makes it (Engine.step_server_user),
+* a new install makes it and the starter service (Engine.step_server_user),
 * ``mcsc server-user on`` and ``mcsc server-user repair`` make it, or give
   it a new password when it's there already (Settings: Turn on, Repair),
 * ``mcsc server-user off`` and uninstalling remove it (Settings: Turn off).
 
 The desktop app starts ``mcsc server-user ...`` as Administrator (Windows
 asks first), waits for it, then tells the agent. The password is made here,
-handed only to Windows and to the encrypted file, and never printed,
-logged or shown.
+handed only to Windows and to the starter service's encrypted file (which
+only SYSTEM and Administrators can open), and never printed, logged or
+shown. The agent never has it.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ import string
 import sys
 from pathlib import Path
 
-from agent.serveruser import ACCOUNT, SECRET_FILE, write_password
+from agent.starter import ACCOUNT
 
 from .system import System, SystemError_
 
@@ -43,22 +44,28 @@ def new_password() -> str:
             return password
 
 
-def make(system: System, data_dir: Path) -> None:
-    """Make the account (or give it a new password), then save the password
-    encrypted for this Windows account in the agent's data folder."""
+def make(system: System, program_dir: Path) -> None:
+    """Make the account (or give it a new password), then set up the
+    starter service with that password, for the account running this (the
+    owner's: the agent runs as it). Repair runs this again: the service is
+    restarted so it reads the new password."""
     password = new_password()
     system.make_server_user(ACCOUNT, password)
-    write_password(Path(data_dir) / SECRET_FILE, password)
+    try:
+        system.install_starter(program_dir, password, system.current_user_sid())
+    except (SystemError_, OSError):
+        # No account left behind that nothing can use.
+        system.remove_server_user(ACCOUNT)
+        raise
 
 
-def remove(system: System, data_dir: Path) -> None:
+def remove(system: System) -> None:
+    system.remove_starter()
     system.remove_server_user(ACCOUNT)
-    (Path(data_dir) / SECRET_FILE).unlink(missing_ok=True)
 
 
 def main(argv: list[str], system: System | None = None) -> int:
     from agent import appinfo
-    from agent.config import Config, ConfigError
 
     system = system or System()
     if len(argv) not in (1, 2) or argv[0] not in ("on", "repair", "off"):
@@ -72,21 +79,20 @@ def main(argv: list[str], system: System | None = None) -> int:
         and len(argv) == 2
         and argv[1].lower() != os.environ.get("USERNAME", "").lower()
     ):
-        # The password is saved for the Windows account this runs as. When a
-        # different administrator said Yes at Windows' prompt, the owner's
-        # app couldn't read it, so nothing is made.
+        # The starter service only takes requests from the account this runs
+        # as. When a different administrator said Yes at Windows' prompt,
+        # the owner's app couldn't use it, so nothing is made.
         print(
             "Windows asked another account's permission. Sign in to Windows with an "
             "administrator account that runs Command Block, then try again."
         )
         return NOT_THE_OWNER
     try:
-        config = Config.load(appinfo.default_config_path())
         if argv[0] == "off":
-            remove(system, config.data_dir)
+            remove(system)
         else:
-            make(system, config.data_dir)
-    except (SystemError_, OSError, ConfigError) as exc:
+            make(system, appinfo.program_dir())
+    except (SystemError_, OSError) as exc:
         print(f"The separate Windows user couldn't be changed: {exc}", file=sys.stderr)
         return 1
     return 0

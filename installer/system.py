@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from agent import appinfo
+from agent import appinfo, starter
 
 from . import autostart, bootstrap, layout
 
@@ -582,6 +582,96 @@ class System:
                 "The separate Windows user couldn't be removed.", f"NetUserDel answered {code}"
             )
         self._hide_from_sign_in(name, hide=False)
+
+    # ------------------------------------------------------------ the starter service
+    # agent/starter.py: runs as SYSTEM and starts programs as the separate
+    # Windows user. Windows' own sc.exe adds, starts, stops and removes it.
+    def current_user_sid(self) -> str:
+        """The account this runs as, the one the startup task runs the agent
+        as (autostart.current_user)."""
+        sid = _sid_text(autostart.current_user()) if IS_WINDOWS else None
+        if not sid:
+            raise SystemError_("Windows couldn't say which account this is.")
+        return sid
+
+    def install_starter(self, program_dir: Path, password: str, agent_user: str) -> None:
+        exe = Path(program_dir) / appinfo.CLI_EXE
+        program_files = layout.default_program_dir().parent
+        if not exe.is_file() or not exe.resolve().is_relative_to(program_files.resolve()):
+            # SYSTEM must only ever run a program that only Administrators
+            # can change.
+            raise SystemError_(
+                "The starter service needs the app installed in Program Files.", str(exe)
+            )
+        self.install_service(
+            starter.SERVICE, f'"{exe}" starter-service', starter.settings_path(),
+            password, agent_user,
+        )  # fmt: skip
+
+    def install_service(
+        self, name: str, command: str, settings: Path, password: str, agent_user: str
+    ) -> None:
+        """Write the settings into a folder locked to SYSTEM and
+        Administrators, then add (or change) the service and (re)start it so
+        it reads them. The live test uses this with its own name."""
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        code, out, err = self.run([
+            "icacls", str(settings.parent), "/inheritance:r", "/grant:r",
+            "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F",
+        ])  # fmt: skip
+        if code != 0:
+            raise SystemError_("The starter service's folder couldn't be locked.", out + err)
+        starter.write_settings(settings, password, agent_user)
+        create = ["binPath=", command, "start=", "auto"]
+        code, out, err = self.run(
+            ["sc.exe", "create", name, *create, "DisplayName=", "Command Block server starter"]
+        )
+        if code == 1073:  # it's there already (Repair): point it at this copy
+            code, out, err = self.run(["sc.exe", "config", name, *create])
+        if code != 0:
+            raise SystemError_("Windows didn't add the starter service.", f"sc {code}: {out}{err}")
+        self.run(["sc.exe", "description", name,
+                  "Starts Command Block's Minecraft servers as the separate Windows user."])  # fmt: skip
+        self.run(["sc.exe", "failure", name, "reset=", "86400", "actions=", "restart/5000"])
+        self.stop_starter(name)
+        self.start_starter(name)
+
+    def start_starter(self, name: str = starter.SERVICE) -> None:
+        """Start it and wait until it runs; it stops at once when it can't
+        read its settings, and that's an error here."""
+        self.run(["sc.exe", "start", name])
+        state = self._service_state(name, ("RUNNING", "STOPPED"))
+        if "RUNNING" not in state:
+            raise SystemError_("The starter service didn't start.", state.strip()[-300:])
+
+    def stop_starter(self, name: str = starter.SERVICE) -> bool:
+        """Stop it and wait until Windows lets go of its files. True when it
+        was running."""
+        code, _, _ = self.run(["sc.exe", "stop", name])
+        if code != 0:  # 1062 not running, 1060 not there
+            return False
+        self._service_state(name, ("STOPPED",))
+        return True
+
+    def remove_starter(self, name: str = starter.SERVICE, settings: Path | None = None) -> None:
+        self.stop_starter(name)
+        code, out, err = self.run(["sc.exe", "delete", name])
+        if code not in (0, 1060, 1072):  # 1060 not there, 1072 already going
+            raise SystemError_("Windows didn't remove the starter service.", f"sc {code}: {err}")
+        import shutil
+
+        shutil.rmtree((settings or starter.settings_path()).parent, ignore_errors=True)
+
+    def _service_state(self, name: str, wanted: tuple[str, ...], seconds: float = 30) -> str:
+        deadline = time.monotonic() + seconds
+        while True:
+            code, out, _ = self.run(["sc.exe", "query", name])
+            if code == 1060:  # not there
+                return out
+            state = next((line for line in out.splitlines() if "STATE" in line), "")
+            if any(w in state for w in wanted) or time.monotonic() > deadline:
+                return out
+            time.sleep(0.5)
 
     @staticmethod
     def _hide_from_sign_in(name: str, hide: bool) -> None:
