@@ -9,7 +9,7 @@ import math
 import time
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -366,7 +366,7 @@ class ServerScreen(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(band)
-        body = QHBoxLayout(band)
+        body = self.body = QHBoxLayout(band)
         body.setContentsMargins(14, 14, 14, 14)
         body.setSpacing(14)
         center = QVBoxLayout()
@@ -520,6 +520,14 @@ class ServerScreen(QWidget):
         self.panel.setFixedWidth(260) if wide else self.panel.setMaximumWidth(16777215)
         if not wide:
             self.panel.setMinimumWidth(0)
+
+    def minimumSizeHint(self) -> QSize:
+        # The side panel only stays while the window is wide, so it must not
+        # keep the window from getting narrow enough to move it under.
+        hint = super().minimumSizeHint()
+        if self.side.indexOf(self.panel) >= 0:
+            hint.setWidth(hint.width() - self.panel.width() - self.body.spacing())
+        return hint
 
     def resizeEvent(self, event) -> None:
         self.place_panel()
