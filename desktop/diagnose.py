@@ -10,7 +10,9 @@ What only the owner can do (a router port) is listed under "Do it yourself".
 
 At the top: the owner's Microsoft account, which online-mode and Bedrock
 joins use, with Sign in with Microsoft (a code to type on Microsoft's page,
-agent/microsoft.py) or Sign out.
+agent/microsoft.py) or Sign out. On a mod server the window first asks
+whether to run the join with all mods too (agent/fullmods.py); when yes,
+HeadlessMC's own sign-in shows under it.
 """
 
 from __future__ import annotations
@@ -39,27 +41,13 @@ class DiagnoseWindow(QDialog):
         self.setWindowTitle(text("diagnose.title", name=name))
         self.setMinimumWidth(520)
         column = QVBoxLayout(self)
-        account = QHBoxLayout()
-        self.account = label("", "sub")
-        self.account.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        account.addWidget(self.account, 1)
-        self.open_page = push(text("microsoft.open_page"), "plain")
-        self.open_page.clicked.connect(self.open_microsoft)
-        self.copy_code = push(text("microsoft.copy_code"), "plain")
-        self.copy_code.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.code or ""))
-        self.sign_in = push(text("microsoft.sign_in"))
-        self.sign_in.clicked.connect(self.start_sign_in)
-        self.sign_out = push(text("microsoft.sign_out"), "plain")
-        self.sign_out.clicked.connect(self.do_sign_out)
-        for button in (self.open_page, self.copy_code, self.sign_in, self.sign_out):
-            button.hide()
-            account.addWidget(button)
-        column.addLayout(account)
-        self.code: str | None = None
-        self.url = ""
-        self.signing = QTimer(self)
-        self.signing.setInterval(2000)
-        self.signing.timeout.connect(self.ask_account)
+        self.microsoft = AccountRow(self, "/microsoft", "microsoft", self.signed_in)
+        column.addLayout(self.microsoft.row)
+        # HeadlessMC's own sign-in, shown once the join with all mods is on.
+        self.headlessmc = AccountRow(self, "/headlessmc", "headlessmc", self.signed_in)
+        column.addLayout(self.headlessmc.row)
+        self.go_ahead = False
+        self.mods: bool | None = None
         self.status = label(text("diagnose.starting"), "sub")
         column.addWidget(self.status)
         self.list = QVBoxLayout()
@@ -85,15 +73,16 @@ class DiagnoseWindow(QDialog):
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.ask)
-        self.ask_account()
+        self.microsoft.ask()
         self.start()
 
-    def start(self, go_ahead: bool = False) -> None:
+    def start(self) -> None:
         self.again.hide()
         self.status.setText(text("diagnose.starting"))
         agent, sid = self.window_.agent, self.server_id
+        form = {"go_ahead": self.go_ahead, "mods": self.mods}
         self.window_.run(
-            lambda: agent.call("POST", f"/servers/{sid}/server/diagnose", {"go_ahead": go_ahead}),
+            lambda: agent.call("POST", f"/servers/{sid}/server/diagnose", form),
             self.started,
             self.failed,
         )
@@ -111,69 +100,30 @@ class DiagnoseWindow(QDialog):
         )
 
     def started(self, answer: dict) -> None:
+        if answer.get("ask_mods"):
+            # A mod server: the join with all mods is long, so it asks first.
+            self.mods = self.window_.confirm(
+                text("action.diagnose"), answer["ask_mods"], text("diagnose.mods_yes")
+            )
+            if self.mods:
+                self.headlessmc.ask()
+            self.start()
+            return
         if not answer.get("ask"):
             self.timer.start()
             return
         # The owner is playing, and a join with their account kicks them out.
         if self.window_.confirm(text("action.diagnose"), answer["ask"], text("diagnose.go_ahead")):
-            self.start(go_ahead=True)
+            self.go_ahead = True
+            self.start()
         else:
             self.status.setText(text("diagnose.not_started"))
             self.again.show()
 
-    # ---------------------------------------------------- Microsoft account
-    def ask_account(self) -> None:
-        agent = self.window_.agent
-        self.window_.run(
-            lambda: agent.call("GET", "/microsoft"), self.show_account, self.no_account
-        )
-
-    def no_account(self, _exc: AgentError) -> None:
-        self.signing.stop()
-        for widget in (self.account, self.open_page, self.copy_code, self.sign_in, self.sign_out):
-            widget.hide()
-
-    def show_account(self, status: dict) -> None:
-        self.code, self.url = status.get("code"), status.get("url") or ""
-        waiting = bool(self.code) and not status.get("signed_in")
-        if status.get("signed_in"):
-            names = [n for n in (status.get("java_name"), status.get("gamertag")) if n]
-            words = text("microsoft.signed_in", names=", ".join(names) or "?")
-        elif waiting:
-            words = text("microsoft.type_code", url=self.url, code=self.code)
-        else:
-            words = status.get("error") or text("microsoft.signed_out")
-        self.account.setText(words)
-        self.account.show()
-        self.sign_out.setVisible(bool(status.get("signed_in")))
-        self.sign_in.setVisible(not status.get("signed_in") and not waiting)
-        self.open_page.setVisible(waiting)
-        self.copy_code.setVisible(waiting)
-        if waiting:
-            self.signing.start()
-        else:
-            if self.signing.isActive() and status.get("signed_in"):
-                self.start()  # the joins that waited for the sign-in
-            self.signing.stop()
-
-    def start_sign_in(self) -> None:
-        self.sign_in.setEnabled(False)
-        self.account.setText(text("microsoft.asking"))
-        agent = self.window_.agent
-        self.window_.run(
-            lambda: agent.call("POST", "/microsoft/sign-in", {}),
-            self.show_account,
-            lambda exc: self.account.setText(str(exc)),
-            lambda: self.sign_in.setEnabled(True),
-        )
-
-    def open_microsoft(self) -> None:
-        if self.url.startswith("https://"):
-            QDesktopServices.openUrl(QUrl(self.url))
-
-    def do_sign_out(self) -> None:
-        agent = self.window_.agent
-        self.window_.run(lambda: agent.call("POST", "/microsoft/sign-out", {}), self.show_account)
+    def signed_in(self) -> None:
+        """A sign-in just finished: run the joins that waited for it."""
+        if not self.timer.isActive():
+            self.start()
 
     def ask(self) -> None:
         agent, sid = self.window_.agent, self.server_id
@@ -189,6 +139,8 @@ class DiagnoseWindow(QDialog):
     def show_result(self, result: dict | None) -> None:
         if not result:
             return
+        if result.get("mods") and not self.headlessmc.account.isVisible():
+            self.headlessmc.ask()
         while self.list.count():
             old = self.list.takeAt(0).widget()
             if old is not None:
@@ -235,5 +187,88 @@ class DiagnoseWindow(QDialog):
 
     def closeEvent(self, event) -> None:
         self.timer.stop()
-        self.signing.stop()
+        self.microsoft.signing.stop()
+        self.headlessmc.signing.stop()
         super().closeEvent(event)
+
+
+class AccountRow:
+    """One sign-in at the top of the window: the owner's Microsoft account
+    (``/microsoft``, the test player's joins) or HeadlessMC's
+    (``/headlessmc``, the join with all mods). Sign in shows a code to type
+    on Microsoft's page; the row asks every 2 seconds until it's done."""
+
+    def __init__(self, dialog: DiagnoseWindow, path: str, words: str, done) -> None:
+        self.dialog, self.path, self.words, self.done = dialog, path, words, done
+        self.row = QHBoxLayout()
+        self.account = label("", "sub")
+        self.account.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.row.addWidget(self.account, 1)
+        self.open_page = push(text("microsoft.open_page"), "plain")
+        self.open_page.clicked.connect(self.open)
+        self.copy_code = push(text("microsoft.copy_code"), "plain")
+        self.copy_code.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.code or ""))
+        self.sign_in = push(text(f"{words}.sign_in"))
+        self.sign_in.clicked.connect(self.start_sign_in)
+        self.sign_out = push(text("microsoft.sign_out"), "plain")
+        self.sign_out.clicked.connect(self.do_sign_out)
+        self.account.hide()
+        for button in (self.open_page, self.copy_code, self.sign_in, self.sign_out):
+            button.hide()
+            self.row.addWidget(button)
+        self.code: str | None = None
+        self.url = ""
+        self.signing = QTimer(dialog)
+        self.signing.setInterval(2000)
+        self.signing.timeout.connect(self.ask)
+
+    def ask(self) -> None:
+        agent = self.dialog.window_.agent
+        self.dialog.window_.run(lambda: agent.call("GET", self.path), self.show, self.hide)
+
+    def hide(self, _exc: AgentError) -> None:
+        self.signing.stop()
+        for widget in (self.account, self.open_page, self.copy_code, self.sign_in, self.sign_out):
+            widget.hide()
+
+    def show(self, status: dict) -> None:
+        self.code, self.url = status.get("code"), status.get("url") or ""
+        waiting = bool(self.url) and not status.get("signed_in")
+        if status.get("signed_in"):
+            names = [status.get(n) for n in ("java_name", "gamertag", "name") if status.get(n)]
+            words = text(f"{self.words}.signed_in", names=", ".join(names) or "?")
+        elif waiting:
+            words = text(f"{self.words}.type_code", url=self.url, code=self.code or "")
+        else:
+            words = status.get("error") or text(f"{self.words}.signed_out")
+        self.account.setText(words)
+        self.account.show()
+        self.sign_out.setVisible(bool(status.get("signed_in")))
+        self.sign_in.setVisible(not status.get("signed_in") and not waiting)
+        self.open_page.setVisible(waiting)
+        self.copy_code.setVisible(waiting and bool(self.code))
+        if waiting:
+            self.signing.start()
+        else:
+            if self.signing.isActive() and status.get("signed_in"):
+                self.done()
+            self.signing.stop()
+
+    def start_sign_in(self) -> None:
+        self.sign_in.setEnabled(False)
+        self.account.setText(text(f"{self.words}.asking"))
+        agent = self.dialog.window_.agent
+        self.dialog.window_.run(
+            lambda: agent.call("POST", f"{self.path}/sign-in", {}),
+            self.show,
+            lambda exc: self.account.setText(str(exc)),
+            lambda: self.sign_in.setEnabled(True),
+        )
+
+    def open(self) -> None:
+        if self.url.startswith("https://"):
+            QDesktopServices.openUrl(QUrl(self.url))
+
+    def do_sign_out(self) -> None:
+        agent = self.dialog.window_.agent
+        self.dialog.window_.run(lambda: agent.call("POST", f"{self.path}/sign-out", {}), self.show)

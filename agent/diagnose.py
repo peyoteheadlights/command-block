@@ -11,7 +11,9 @@ The joins so far, all from this PC: an offline-mode server as the
 Java account, a Bedrock server (and Bedrock players through Geyser) with the
 owner's Xbox account, after "Sign in with Microsoft" (agent/microsoft.py).
 Then the other ways in (home network, Tailscale, the internet, playit) are
-asked whether the game port answers (agent/waysin.py).
+asked whether the game port answers (agent/waysin.py). On a mod server,
+when the owner said yes, the real game joins with all its mods
+(agent/fullmods.py).
 
 After the joins, the changes that may fix what failed are offered
 (agent/diagnosefix.py). Applying them runs the joins again as the next
@@ -73,8 +75,15 @@ class Join:
 class Run:
     """One Diagnose run's list, shared live through ``ctx.diagnosis``."""
 
-    def __init__(self, ctx: ServerContext, by: str, before: dict[str, Any] | None = None):
-        """``before``: the round this one follows, after its changes were picked."""
+    def __init__(
+        self,
+        ctx: ServerContext,
+        by: str,
+        before: dict[str, Any] | None = None,
+        mods: bool = False,
+    ):
+        """``before``: the round this one follows, after its changes were
+        picked. ``mods``: the owner said yes to the join with all mods."""
         self.ctx = ctx
         self.result: dict[str, Any] = {
             "running": True,
@@ -93,6 +102,10 @@ class Run:
             "tried": list(before["tried"]) if before else [],
             # What only the owner can do (a router port), one line each.
             "steps": [],
+            # The join with all mods runs (agent/fullmods.py), every round.
+            "mods": before.get("mods", False) if before else mods,
+            # True when it wasn't tried: nobody signed in to HeadlessMC.
+            "sign_in_mods": False,
         }
         ctx.diagnosis = self.result
 
@@ -306,7 +319,7 @@ def _why(step: dict[str, Any]) -> str | None:
 async def run(out: Run, job: JobHandle, fixes: list | None = None) -> dict[str, Any]:
     """One round: make the picked ``fixes`` (agent/diagnosefix.py) if any,
     join, then put back what didn't help and offer what's new."""
-    from . import diagnosefix, waysin
+    from . import diagnosefix, fullmods, waysin
 
     ctx = out.ctx
     try:
@@ -320,7 +333,7 @@ async def run(out: Run, job: JobHandle, fixes: list | None = None) -> dict[str, 
                 out.result["sign_in"] = out.result["sign_in"] or why == SIGN_IN_FIRST
             else:
                 planned.append(join)
-        if planned:
+        if planned or out.result["mods"]:
             online = await _get_online(ctx, out, job)
             if online:
                 await ctx.server.send_command(f"say {NOTICE}", internal=True)
@@ -330,6 +343,8 @@ async def run(out: Run, job: JobHandle, fixes: list | None = None) -> dict[str, 
             online = ctx.server.state == ServerState.ONLINE
         if online:
             await waysin.check(out, job)
+        if online and out.result["mods"]:
+            await fullmods.check(out, job)
         await diagnosefix.review(out, fixes or [])
     finally:
         out.finish()

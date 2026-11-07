@@ -455,6 +455,10 @@ class AgentCore:
         from .microsoft import Microsoft
 
         self.microsoft = Microsoft(config.data_dir)
+        # HeadlessMC and its own sign-in, for the join with all mods (agent/headlessmc.py).
+        from .headlessmc import HeadlessMc
+
+        self.headlessmc = HeadlessMc(config.data_dir)
         self.discord: Any = None
         # The bot posts alerts in its alerts channel (and the webhook steps aside).
         self.notifier.bot = lambda: self.discord
@@ -717,6 +721,7 @@ class AgentCore:
         await self.guard.stop()
         await self.rented.stop()
         self.microsoft.cancel()
+        self.headlessmc.cancel()
         await self.pcs.stop()
         self.keepawake.stop()
         await self.notifier.stop()

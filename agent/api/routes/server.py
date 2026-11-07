@@ -195,6 +195,8 @@ async def server_restart(
 class DiagnoseForm(BaseModel):
     # The owner said yes to "a join kicks you out for about a minute".
     go_ahead: bool = False
+    # The join with all mods: yes or no. Not given on a mod server: ask_mods.
+    mods: bool | None = None
 
 
 @router.post("/server/diagnose", response_model=DiagnoseStarted)
@@ -207,8 +209,9 @@ async def server_diagnose(
     """Diagnose server: a test player joins and every step is listed. A
     stopped server is started. Follow it with GET /server/diagnose. When the
     owner is playing and a join uses their account, nothing starts and
-    ``ask`` says so; POST again with go_ahead."""
-    from ... import diagnose
+    ``ask`` says so; POST again with go_ahead. On a mod server ``ask_mods``
+    asks about the join with all mods first; POST again with mods."""
+    from ... import diagnose, fullmods
 
     if (ctx.diagnosis or {}).get("running"):
         raise HTTPException(status_code=409, detail="Diagnose server is already running.")
@@ -219,7 +222,10 @@ async def server_diagnose(
             "ask": f"You're playing on {ctx.name} as {playing}. The test joins with your "
             "account, so it kicks you out for about a minute. Go ahead?",
         }
-    started = diagnose.Run(ctx, principal.user)  # running from now: a second click is refused
+    if (form is None or form.mods is None) and fullmods.wanted(ctx):
+        return {"job_id": None, "ask_mods": fullmods.ASK}
+    # running from now: a second click is refused
+    started = diagnose.Run(ctx, principal.user, mods=bool(form and form.mods))
     job = ctx.core.jobs.start(
         "diagnose",
         f"Diagnosing {ctx.name}",

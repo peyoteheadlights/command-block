@@ -15,7 +15,8 @@ change already tried in this run is never offered again. Nothing here
 deletes a world, a mod or a backup.
 
 The ways in (agent/waysin.py) add Tailscale back on and the firewall rule;
-broken mods (part 5) add their own changes here.
+the join with all mods (agent/fullmods.py) adds another version of the mod
+the game won't start with, or turning it off.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from . import diagnose, firewall, memory, tailscale, waysin
+from . import diagnose, firewall, fullmods, memory, tailscale, waysin
 from .minecraft.playeractions import REASON_RE, read_list
 from .minecraft.state import ServerState
 from .safechange import SafeChange, SafeChangeError, run_safe_change
@@ -95,6 +96,10 @@ def find(ctx: ServerContext, result: dict[str, Any]) -> list[Fix]:
         if line["group"] == waysin.TAILSCALE and line["detail"] == waysin.SWITCHED_OFF:
             found["tailscale"] = _tailscale()
     found.update(_firewall(ctx, result["lines"], result["tried"]))
+    for line in fullmods.broken_lines(result):
+        fix = _mod(ctx, line, result["by"])
+        if fix:
+            found[fix.key] = fix
     return sorted(found.values(), key=lambda fix: not fix.safe)
 
 
@@ -224,6 +229,68 @@ def _rule(key: str, name: str, protocol: str, port: int, group: str) -> Fix:
     )
 
 
+def _mod(ctx: ServerContext, line: dict[str, Any], by: str) -> Fix | None:
+    """The other version the game started with (safe), or turning the mod
+    off (risky). Both need the server stopped; it is started again after."""
+    from .mods.jarinfo import DISABLED_SUFFIX
+
+    try:
+        mod = ctx.mods.find(line["broken"])
+    except Exception:
+        return None  # changed by hand since: nothing to offer
+    name = line.get("name") or mod.mod_id
+    user = f"Diagnose server ({by})"
+    if line.get("version_id"):
+        kept: dict[str, Any] = {}
+
+        async def update() -> None:
+            done = await ctx.mods.update(mod.filename, user, line["version_id"])
+            kept.update(done)
+
+        async def back() -> None:
+            await ctx.mods.rollback(mod.mod_id, kept["rollback_archive"], user)
+
+        return Fix(
+            f"mod {mod.mod_id}",
+            f"Change {name} to version {line['version']}",
+            f"The game won't start with {name} {mod.version}, but it does with "
+            f"{line['version']}. Players need the same version.",
+            True,
+            fullmods.GROUP,
+            lambda: _stopped(ctx, update),
+            lambda: _stopped(ctx, back),
+            ("mods",),
+        )
+
+    async def turn(on: bool) -> None:
+        filename = mod.filename if not on else mod.filename + DISABLED_SUFFIX
+        await ctx.mods.set_enabled(filename, on, user)
+
+    return Fix(
+        f"mod {mod.mod_id}",
+        f"Turn off {name}",
+        f"The game won't start with {name}, and no other version of it helped. "
+        "Turning it off takes it out of the game for everyone; it isn't deleted.",
+        False,
+        fullmods.GROUP,
+        lambda: _stopped(ctx, lambda: turn(False)),
+        lambda: _stopped(ctx, lambda: turn(True)),
+        ("mods",),
+    )
+
+
+async def _stopped(ctx: ServerContext, change: Callable[[], Awaitable[Any]]) -> None:
+    """Mods change only while the server is stopped; it starts again after."""
+    running = ctx.server.running
+    if running:
+        await ctx.server.stop(actor=f"Diagnose server ({TITLE})")
+    try:
+        await change()
+    finally:
+        if running:
+            await ctx.server.start(actor=f"Diagnose server ({TITLE})")
+
+
 def _eula(ctx: ServerContext) -> Fix:
     folder = ctx.config.server_dir
 
@@ -317,7 +384,7 @@ async def make(out: diagnose.Run, fixes: list[Fix], job: JobHandle) -> bool:
     False when they couldn't be made (and nothing was left half done)."""
     ctx = out.ctx
     folder = ctx.config.server_dir
-    files = sorted({f for fix in fixes for f in fix.files if (folder / f).is_file()})
+    files = sorted({f for fix in fixes for f in fix.files if (folder / f).exists()})
 
     async def change(handle: JobHandle | None) -> dict[str, Any]:
         # A restart last: the other changes take effect with it.

@@ -35,6 +35,11 @@ file ships with it in `tools/diagnose/node_modules`). prismarine-xbox-services
 (https://nodejs.org, MIT License; its `LICENSE` file, which also lists the
 licenses of the libraries inside node.exe, ships as `tools/diagnose/LICENSE`).
 
+The join with all mods runs the Minecraft game through HeadlessMC
+(https://github.com/headlesshq/headlessmc, MIT License). It isn't shipped:
+it is downloaded (checked against a pinned checksum) only when the owner
+says yes to the join with all mods or signs in for it.
+
 ## Chunker
 
 Making a Java copy of a Bedrock world (or the other way round) uses

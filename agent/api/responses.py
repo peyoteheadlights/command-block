@@ -2765,6 +2765,11 @@ class Diagnosis(Open):
         description="Offered, waiting for POST /server/diagnose/changes (Safe ones first)",
     )
     done: list[DiagnoseDone] = Field(default_factory=list)
+    mods: bool = Field(default=False, description="The join with all mods runs, every round")
+    sign_in_mods: bool = Field(
+        default=False,
+        description="The join with all mods wasn't tried: nobody signed in to HeadlessMC yet",
+    )
 
 
 class DiagnoseStarted(Open):
@@ -2773,6 +2778,10 @@ class DiagnoseStarted(Open):
         default=None,
         description="Not started: the owner is playing and a join would kick them out. "
         "Ask this, then POST again with go_ahead",
+    )
+    ask_mods: str | None = Field(
+        default=None,
+        description="Not started: a mod server. Ask this, then POST again with mods true or false",
     )
 
 
@@ -2784,4 +2793,12 @@ class MicrosoftStatus(Open):
     gamertag: str | None = Field(description="Xbox gamertag, if it could be read")
     code: str | None = Field(description="While signing in: the code to type on Microsoft's page")
     url: str | None = Field(description="While signing in: where to type it")
+    error: str | None = Field(description="Why the last sign-in didn't finish")
+
+
+class HeadlessMcStatus(Open):
+    signed_in: bool
+    name: str | None = Field(description="The Minecraft name HeadlessMC signed in with")
+    code: str | None = Field(description="While signing in: the code to type on Microsoft's page")
+    url: str | None = Field(description="While signing in: the page to open (holds the code)")
     error: str | None = Field(description="Why the last sign-in didn't finish")

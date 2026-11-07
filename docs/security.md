@@ -323,6 +323,25 @@ runs `System32\netsh.exe` with a fixed argument list as Administrator
 server's id, protocol and port, so nothing typed reaches it. Router ports
 aren't opened (UPnP comes later): the list says which port to forward.
 
+The join with all mods (`agent/fullmods.py`) runs the real Minecraft game
+through HeadlessMC (MIT, `agent/headlessmc.py`), only after the owner said
+yes in a Diagnose they started (house rule 2's Diagnose exception). Its
+Windows launcher is downloaded from HeadlessMC's GitHub releases at a pinned
+version, checked against a pinned SHA-256; GitHub's paths stay closed to it
+outside that one download. It downloads the game, its mod loader and Java
+itself. The command is a list, never a shell; the version, the loader and
+the address come from the server's own settings. Everything it keeps is
+inside `headlessmc/` in the agent's data folder (its XDG folders point
+there), and the game it starts is stopped with it when a try ends. Its
+Microsoft sign-in is HeadlessMC's own (Mark's pick): HeadlessMC keeps it in
+its own file in that folder, not encrypted by us; Sign out deletes it. Only
+its name and the sign-in page reach the apps (`GET /api/headlessmc`,
+`microsoft.account`, owner only). The two changes it offers, another version
+of the mod the game won't start with (safe, from the site the mod came from
+through the normal update, checksum included) or turning that mod off
+(risky), stop the server while they're made and go through the safe-change
+routine with a backup of the mods folder. Nothing is deleted.
+
 ### Chunker world conversion, after a click
 
 Making a Java copy of a Bedrock server (or a Bedrock copy of a Java one)

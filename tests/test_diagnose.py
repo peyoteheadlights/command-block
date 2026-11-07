@@ -555,15 +555,13 @@ def test_the_desktop_app_signs_in_with_microsoft(qapp, agent_http, monkeypatch, 
     dialog.show()
     # Online mode and nobody signed in: nothing is joined, the button is there.
     wait_for(qapp, lambda: "Done." in dialog.status.text(), timeout=30)
-    assert dialog.sign_in.isVisible()
-    monkeypatch.setattr(
-        dialog, "start", lambda go_ahead=False: None
-    )  # the join itself is tested above
-    dialog.sign_in.click()
-    wait_for(qapp, lambda: "Steve" in dialog.account.text(), timeout=30)
-    assert dialog.sign_out.isVisible() and not dialog.sign_in.isVisible()
-    dialog.sign_out.click()
-    wait_for(qapp, lambda: dialog.sign_in.isVisible(), timeout=30)
+    assert dialog.microsoft.sign_in.isVisible()
+    monkeypatch.setattr(dialog, "start", lambda: None)  # the join itself is tested above
+    dialog.microsoft.sign_in.click()
+    wait_for(qapp, lambda: "Steve" in dialog.microsoft.account.text(), timeout=30)
+    assert dialog.microsoft.sign_out.isVisible() and not dialog.microsoft.sign_in.isVisible()
+    dialog.microsoft.sign_out.click()
+    wait_for(qapp, lambda: dialog.microsoft.sign_in.isVisible(), timeout=30)
     dialog.close()
     window.close()
 
