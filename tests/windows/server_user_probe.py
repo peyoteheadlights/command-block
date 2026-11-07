@@ -30,10 +30,15 @@ async def probe(account: str, secret: Path) -> dict:
             password,
             [str(system32 / "whoami.exe")],
             system32,
-            {"stdout": asyncio.subprocess.PIPE, "creationflags": NO_WINDOW},
-        )
-        out, _ = await process.communicate()
+            {"stdout": asyncio.subprocess.PIPE, "stderr": asyncio.subprocess.PIPE,
+             "creationflags": NO_WINDOW},
+        )  # fmt: skip
+        out, err = await process.communicate()
         answer["run_as"] = "works: " + out.decode(errors="replace").strip()
+        # If it printed nothing, the exit code says why (for example
+        # 0xC0000142: Windows couldn't set the program up in this session).
+        answer["exit_code"] = hex((process.returncode or 0) & 0xFFFFFFFF)
+        answer["stderr"] = err.decode(errors="replace").strip()
     except (OSError, serveruser.ServerUserMissing) as exc:
         answer["run_as"] = f"refused: {exc!r} winerror={getattr(exc, 'winerror', None)}"
     return answer
