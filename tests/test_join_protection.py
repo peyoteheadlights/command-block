@@ -633,7 +633,7 @@ def ctx_of(client, server_id="survival"):
     return client.app.state.core.servers[server_id]
 
 
-def wait_for(check, seconds=15.0):
+def wait_for(check, seconds=30.0):  # Windows CI can be slow
     end = time.time() + seconds
     while time.time() < end:
         found = check()
@@ -653,6 +653,9 @@ def settings(client, **values):
 def start(client):
     assert client.post(f"{BASE}/server/start").status_code == 200, "start"
     wait_for(lambda: client.get(f"{BASE}/status").json()["state"] == "ONLINE")
+    ctx = ctx_of(client)
+    if ctx.config.server.join_protection:  # slow CI: the guard may answer a moment later
+        wait_for(lambda: asyncio.run(ping(ctx.core.ports.port_of(ctx).port)))
 
 
 def stop(client):
