@@ -300,6 +300,21 @@ def no_shipped_suggestions(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def no_real_sites(monkeypatch):
+    """Downloads and site lists never reach the real internet in a test
+    (on CI they could: a search then got real CurseForge results). A test
+    that needs a site sets its own fake transport over this one."""
+    import httpx
+
+    from agent import downloads
+
+    def offline(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no internet in tests", request=request)
+
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(offline))
+
+
+@pytest.fixture(autouse=True)
 def fresh_curseforge_sign_in(monkeypatch):
     """Each test signs in to the CurseForge relay afresh, with its own pace."""
     from agent.mods import curseforge
