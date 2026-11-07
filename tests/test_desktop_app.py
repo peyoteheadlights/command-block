@@ -469,10 +469,20 @@ def test_a_narrow_window_puts_the_right_panel_under_the_overview(qapp, agent_htt
         lambda: panel.isVisibleTo(window) and panel.mapTo(window, panel.rect().topLeft()).x() > 900,
     )
     window.resize(900, 800)
-    wait_for(
-        qapp,
-        lambda: panel.isVisibleTo(window) and panel.mapTo(window, panel.rect().topLeft()).x() < 100,
-    )
+    try:
+        wait_for(
+            qapp,
+            lambda: (
+                panel.isVisibleTo(window) and panel.mapTo(window, panel.rect().topLeft()).x() < 100
+            ),
+        )
+    except AssertionError:
+        # Only fails on Windows CI so far: say what the window really did.
+        raise AssertionError(
+            f"window {window.width()} wide (needs at least {window.minimumSizeHint().width()}), "
+            f"panel visible {panel.isVisibleTo(window)} "
+            f"at x={panel.mapTo(window, panel.rect().topLeft()).x()}"
+        ) from None
 
 
 def test_every_control_has_a_name_and_can_be_reached_with_tab(qapp, agent_http):
