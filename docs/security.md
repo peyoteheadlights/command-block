@@ -308,6 +308,21 @@ touch, one Undo), the joins run again, and a change that didn't help is put
 back. A change tried once is never offered again in that run. Nothing
 deletes a world, a mod or a backup.
 
+The other ways in (`agent/waysin.py`) only ask whether the game port answers:
+from this PC on its home network and Tailscale addresses, from the owner's
+other PC (Your PCs, `POST /api/sync/ping`, sync key only, home network and
+Tailscale addresses only, never a name), and from the internet through
+mcsrvstat.us for the address the owner typed. Two more changes come from
+them: "Turn Tailscale back on" (safe; `tailscale up` with the desktop app's
+flags, only when Tailscale is signed in but switched off, `tailscale down`
+puts it back) and "Let port N through Windows Firewall" (risky; only when the
+port answers on this PC but not from outside, and no rule of ours is there).
+The firewall rule is house rule 2's Diagnose exception: `agent/firewall.py`
+runs `System32\netsh.exe` with a fixed argument list as Administrator
+(Windows asks first; No means not made), and the rule's name is made from the
+server's id, protocol and port, so nothing typed reaches it. Router ports
+aren't opened (UPnP comes later): the list says which port to forward.
+
 ### Chunker world conversion, after a click
 
 Making a Java copy of a Bedrock server (or a Bedrock copy of a Java one)

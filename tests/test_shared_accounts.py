@@ -476,3 +476,33 @@ async def test_a_database_other_accounts_can_open_is_an_alert(tmp_path, monkeypa
     assert told.count("database_shared") == 1
     await agent.jobs.stop()
     agent.db.close()
+
+
+# ------------------------------------------------------------------ Diagnose server
+def test_another_pc_pings_a_home_address_for_diagnose(pcs, monkeypatch):
+    import asyncio
+
+    from agent.monitoring import answering
+    from agent.yourpcs import PcError
+
+    asked: list = []
+
+    def ping(protocol, host, port):
+        asked.append((protocol, host, port))
+        return {"connected": True, "answer": {"version": "1.21"}}
+
+    monkeypatch.setattr(answering, "ping", ping)
+    a, b = pcs("a"), pcs("b")
+    join(b, a, a.sign_in())
+    peer = next(p for p in b.core.pcs.peers() if p["key"] == a.core.pcs.pc)
+    found = asyncio.run(b.core.pcs.ping_from(peer, "tcp", "192.168.1.5", 25565))
+    assert found == {"connected": True, "answer": {"version": "1.21"}}
+    with pytest.raises(PcError, match="400"):  # this PC itself, or the internet: refused
+        asyncio.run(b.core.pcs.ping_from(peer, "tcp", "127.0.0.1", 25565))
+    with httpx.Client(verify=False) as raw:  # no sync key: refused
+        answer = raw.post(
+            f"https://127.0.0.1:{a.port}/api/sync/ping",
+            json={"protocol": "tcp", "host": "192.168.1.5", "port": 25565},
+        )
+    assert answer.status_code == 403
+    assert asked == [("tcp", "192.168.1.5", 25565)]

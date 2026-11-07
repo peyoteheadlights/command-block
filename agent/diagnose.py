@@ -10,7 +10,8 @@ The joins so far, all from this PC: an offline-mode server as the
 ``CommandBlock`` test player; an online-mode Java server with the owner's
 Java account, a Bedrock server (and Bedrock players through Geyser) with the
 owner's Xbox account, after "Sign in with Microsoft" (agent/microsoft.py).
-The other ways in (LAN, Tailscale, the internet, playit) come later.
+Then the other ways in (home network, Tailscale, the internet, playit) are
+asked whether the game port answers (agent/waysin.py).
 
 After the joins, the changes that may fix what failed are offered
 (agent/diagnosefix.py). Applying them runs the joins again as the next
@@ -90,6 +91,8 @@ class Run:
             "done": list(before["done"]) if before else [],
             # Keys of changes already picked or denied: never offered again.
             "tried": list(before["tried"]) if before else [],
+            # What only the owner can do (a router port), one line each.
+            "steps": [],
         }
         ctx.diagnosis = self.result
 
@@ -303,7 +306,7 @@ def _why(step: dict[str, Any]) -> str | None:
 async def run(out: Run, job: JobHandle, fixes: list | None = None) -> dict[str, Any]:
     """One round: make the picked ``fixes`` (agent/diagnosefix.py) if any,
     join, then put back what didn't help and offer what's new."""
-    from . import diagnosefix
+    from . import diagnosefix, waysin
 
     ctx = out.ctx
     try:
@@ -317,10 +320,16 @@ async def run(out: Run, job: JobHandle, fixes: list | None = None) -> dict[str, 
                 out.result["sign_in"] = out.result["sign_in"] or why == SIGN_IN_FIRST
             else:
                 planned.append(join)
-        if planned and await _get_online(ctx, out, job):
-            await ctx.server.send_command(f"say {NOTICE}", internal=True)
-            for join in planned:
-                await _join(ctx, out, job, join)
+        if planned:
+            online = await _get_online(ctx, out, job)
+            if online:
+                await ctx.server.send_command(f"say {NOTICE}", internal=True)
+                for join in planned:
+                    await _join(ctx, out, job, join)
+        else:
+            online = ctx.server.state == ServerState.ONLINE
+        if online:
+            await waysin.check(out, job)
         await diagnosefix.review(out, fixes or [])
     finally:
         out.finish()

@@ -101,6 +101,25 @@ def tailscale_status() -> dict[str, Any]:
     return result
 
 
+def switch(on: bool) -> None:
+    """Turn Tailscale on (``up``, signed in already) or off (``down``) on
+    this PC. Only Diagnose server's "Turn Tailscale back on", after a click.
+    Same flags as the desktop app's Connect Tailscale, so ``up`` doesn't
+    refuse over changed settings."""
+    binary = tailscale_binary()
+    if not binary:
+        raise RuntimeError("The tailscale command was not found on this machine")
+    command = [binary, "up", "--unattended", "--timeout=30s"] if on else [binary, "down"]
+    try:
+        proc = subprocess.run(
+            [*command], capture_output=True, text=True, timeout=45, creationflags=NO_WINDOW
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"tailscale {command[1]} failed: {exc}") from exc
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "tailscale said no").strip()[:300])
+
+
 def connection_status() -> dict[str, Any]:
     """Report Tailscale state from an actual source.
 

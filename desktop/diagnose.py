@@ -6,6 +6,7 @@ asks for it once a second while the run lasts, then stops asking.
 When the run finds changes that may fix what failed, they are listed Safe
 and Risky with Apply all, Apply safe and Deny all (agent/diagnosefix.py).
 Applying runs the joins again; the list then also says what each change did.
+What only the owner can do (a router port) is listed under "Do it yourself".
 
 At the top: the owner's Microsoft account, which online-mode and Bedrock
 joins use, with Sign in with Microsoft (a code to type on Microsoft's page,
@@ -207,6 +208,10 @@ class DiagnoseWindow(QDialog):
         for done in result.get("done") or []:
             mark = "✓" if done["outcome"] == "kept" else "–"
             self.add(label(f"{mark}  {done['title']}\n     {done['detail']}", "muted"))
+        if result.get("steps"):
+            self.add(label(text("diagnose.yourself"), name="h2"))
+        for step in result.get("steps") or []:
+            self.add(label(f"•  {step}"))
         changes = [] if result.get("running") else result.get("changes") or []
         for safe in (True, False):
             group = [c for c in changes if c["safe"] is safe]

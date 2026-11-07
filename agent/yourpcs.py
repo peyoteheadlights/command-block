@@ -393,6 +393,21 @@ class YourPCs:
         state["pulled"] = int(found.get("seq") or 0)
         self._reached(pc)
 
+    async def ping_from(
+        self, peer: dict[str, Any], protocol: str, host: str, port: int
+    ) -> dict[str, Any]:
+        """Ask another of the owner's PCs whether a game port answers from
+        there (Diagnose server's outside check)."""
+        answer = await self._call(
+            peer["body"],
+            "POST",
+            "/api/sync/ping",
+            {"protocol": protocol, "host": host, "port": port},
+        )
+        if answer.status_code != 200:
+            raise PcError(f"answered {answer.status_code}")
+        return answer.json()
+
     # -- answering another PC -----------------------------------------------
     def check_peer(self, pc: str, key: str) -> dict[str, Any]:
         """The calling PC's record, when its sync key is right."""

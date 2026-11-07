@@ -173,6 +173,17 @@ def test_diagnose_is_owner_only_for_now():
     assert SERVER_DIAGNOSE not in SERVER_PERMISSIONS
 
 
+@pytest.fixture(autouse=True)
+def no_other_ways_in(monkeypatch):
+    """The other ways in have their own tests (tests/test_waysin.py)."""
+    from agent import waysin
+
+    async def nothing(out, job):
+        return None
+
+    monkeypatch.setattr(waysin, "check", nothing)
+
+
 @pytest.fixture
 async def core(tmp_path):
     agent = AgentCore(build_multi_config(tmp_path))
@@ -744,5 +755,9 @@ def test_the_desktop_app_offers_the_changes_and_applies_them(
     wait_for(qapp, lambda: dialog.again.isVisible(), timeout=60)
     assert "✓  Leave" in shown_text(dialog)
     assert not dialog.picks["all"].isVisible()
+    # What only the owner can do (agent/waysin.py's router step) is listed too.
+    step = "On your router, forward TCP port 25565 to 192.168.1.5."
+    dialog.show_result({"running": False, "lines": [], "steps": [step]})
+    assert "Do it yourself" in shown_text(dialog) and step in shown_text(dialog)
     dialog.close()
     window.close()

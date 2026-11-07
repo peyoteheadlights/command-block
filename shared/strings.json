@@ -132,6 +132,7 @@
 "diagnose.safe": ["Safe changes", "Safe"],
 "diagnose.risky": ["Risky changes", "Risky (owner only)"],
 "diagnose.made": ["Changes", "Changes (done)"],
+"diagnose.yourself": ["Do it yourself", "Manual steps"],
 "diagnose.apply_all": ["Apply all", "Apply all (pick=all)"],
 "diagnose.apply_safe": ["Apply safe", "Apply safe (pick=safe)"],
 "diagnose.apply_none": ["Deny all", "Deny all (pick=none)"],

@@ -14,18 +14,19 @@ A change is only offered for a problem this run saw (house rule 1), and a
 change already tried in this run is never offered again. Nothing here
 deletes a world, a mod or a backup.
 
-The ways in from outside the PC (part 4) and broken mods (part 5) add their
-own changes here.
+The ways in (agent/waysin.py) add Tailscale back on and the firewall rule;
+broken mods (part 5) add their own changes here.
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from . import diagnose, memory
+from . import diagnose, firewall, memory, tailscale, waysin
 from .minecraft.playeractions import REASON_RE, read_list
 from .minecraft.state import ServerState
 from .safechange import SafeChange, SafeChangeError, run_safe_change
@@ -90,6 +91,10 @@ def find(ctx: ServerContext, result: dict[str, Any]) -> list[Fix]:
             found[f"whitelist {name}"] = _whitelist(ctx, name, join.group)
         elif name and BANNED.search(detail) and ctx.config.server_type.dialect == "java":
             found[f"unban {name}"] = _unban(ctx, name, join.group)
+    for line in failed:
+        if line["group"] == waysin.TAILSCALE and line["detail"] == waysin.SWITCHED_OFF:
+            found["tailscale"] = _tailscale()
+    found.update(_firewall(ctx, result["lines"], result["tried"]))
     return sorted(found.values(), key=lambda fix: not fix.safe)
 
 
@@ -150,6 +155,72 @@ def _more_memory(ctx: ServerContext, since: float) -> Fix | None:
         diagnose.SERVER_GROUP,
         lambda: put(memory.with_limit(before, more)),
         lambda: put(before),
+    )
+
+
+def _tailscale() -> Fix:
+    async def switch(on: bool) -> None:
+        await asyncio.to_thread(tailscale.switch, on)
+
+    return Fix(
+        "tailscale",
+        "Turn Tailscale back on",
+        waysin.SWITCHED_OFF,
+        True,
+        waysin.TAILSCALE,
+        lambda: switch(True),
+        lambda: switch(False),
+    )
+
+
+def _firewall(ctx: ServerContext, lines: list[dict[str, Any]], tried: list[str]) -> dict[str, Fix]:
+    """Let a port through Windows Firewall, when it answers on this PC but
+    not from outside (the other PC or the internet; playit comes in through
+    its own program, so not playit). A rule of ours that is there already
+    isn't offered, unless this run made it (then it's being checked)."""
+    here = {(x["protocol"], x["port"]) for x in lines if x.get("outside") is False and x["ok"]}
+    found: dict[str, Fix] = {}
+    if not firewall.IS_WINDOWS:
+        return found
+    for line in lines:
+        where = (line.get("protocol"), line.get("port"))
+        if (
+            not line.get("outside")
+            or line["ok"] is not False
+            or line["detail"] != waysin.NO_ANSWER
+            or line["group"] == waysin.PLAYIT
+            or where not in here
+        ):
+            continue
+        protocol = "udp" if where[0] == "raknet" else "tcp"
+        port = int(line["port"])
+        key = f"firewall {protocol} {port}"
+        if key in found:
+            continue
+        name = firewall.rule_name(ctx.server_id, protocol, port)
+        if key not in tried and firewall.has_rule(name):
+            continue
+        found[key] = _rule(key, name, protocol, port, line["group"])
+    return found
+
+
+def _rule(key: str, name: str, protocol: str, port: int, group: str) -> Fix:
+    async def do() -> None:
+        await asyncio.to_thread(firewall.add, name, protocol, port)
+
+    async def undo() -> None:
+        await asyncio.to_thread(firewall.remove, name)
+
+    return Fix(
+        key,
+        f"Let port {port} ({protocol.upper()}) through Windows Firewall",
+        "The server answers on this PC but not from outside it, so the Windows Firewall "
+        "may be blocking it. Windows asks for permission first. Undo doesn't take the "
+        "rule away; Diagnose does when it didn't help.",
+        False,
+        group,
+        do,
+        undo,
     )
 
 

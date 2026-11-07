@@ -109,6 +109,9 @@ ALLOWED_HOSTS = frozenset(
         # checked against a pinned checksum.
         "nodejs.org",
         "registry.npmjs.org",
+        # mcsrvstat.us pings the address the owner typed, from the internet,
+        # for Diagnose server (agent/waysin.py). Read only.
+        "api.mcsrvstat.us",
     }
 )
 

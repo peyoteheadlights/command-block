@@ -2691,6 +2691,11 @@ class SyncTaken(Open):
     taken: int
 
 
+class SyncPing(Open):
+    connected: bool | None = Field(description="TCP took the connection; null for UDP")
+    answer: dict[str, Any] | None = Field(description="The server's own reply, null for none")
+
+
 class SyncHello(Open):
     pc: str
     signing_key: str
