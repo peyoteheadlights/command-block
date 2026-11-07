@@ -317,6 +317,7 @@ def pinned_context(host: str, port: int, fingerprint: str, timeout: float = 5) -
     pairing link's pin, used by the desktop app and by one PC calling
     another. OSError when the PC can't be reached."""
     probe = ssl.create_default_context()
+    probe.minimum_version = ssl.TLSVersion.TLSv1_2
     probe.check_hostname = False
     probe.verify_mode = ssl.CERT_NONE
     with socket.create_connection((host, port), timeout=timeout) as raw:
@@ -327,6 +328,7 @@ def pinned_context(host: str, port: int, fingerprint: str, timeout: float = 5) -
     if not der or hashlib.sha256(der).hexdigest() != fingerprint.lower():
         raise WrongCertificate(f"{host}:{port} has another certificate")
     context = ssl.create_default_context(cadata=ssl.DER_cert_to_PEM_cert(der))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.check_hostname = False
     # The pinned certificate is the only trust anchor; it is checked exactly.
     context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
