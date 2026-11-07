@@ -10,7 +10,10 @@ joins run again. A change whose problem is still there after that didn't
 help, so it is put back. ``find()`` then looks again: a round that finds
 nothing new ends it.
 
-A change is only offered for a problem this run saw (house rule 1), and a
+Most problems are found through the known problems list
+(agent/knownproblems.py): a pattern in a join's line, the console or the
+newest crash, and the change it points at. A change is only offered for a
+problem this run saw (house rule 1), and a
 change already tried in this run is never offered again. Nothing here
 deletes a world, a mod or a backup.
 
@@ -22,12 +25,12 @@ the game won't start with, or turning it off.
 from __future__ import annotations
 
 import asyncio
-import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from . import diagnose, firewall, fullmods, memory, tailscale, waysin
+from . import diagnose, firewall, fullmods, knownproblems, memory, tailscale, waysin
+from .knownproblems import Problem
 from .minecraft.playeractions import REASON_RE, read_list
 from .minecraft.state import ServerState
 from .safechange import SafeChange, SafeChangeError, run_safe_change
@@ -38,11 +41,6 @@ if TYPE_CHECKING:
     from .jobs import JobHandle
 
 TITLE = "Diagnose changes"
-# Java "You are not white-listed on this server!", Bedrock "You are not
-# invited to this server" / disconnectionScreen.notAllowed.
-NOT_LISTED = re.compile(r"white-?listed|not invited|notAllowed|allowlist", re.IGNORECASE)
-BANNED = re.compile(r"\bbanned\b", re.IGNORECASE)
-NO_ANSWER = ("Nothing answers on that port.", "No answer from that address.")
 
 
 @dataclass
@@ -72,26 +70,9 @@ def find(ctx: ServerContext, result: dict[str, Any]) -> list[Fix]:
     if any(line["group"] == diagnose.SERVER_GROUP for line in failed):
         if ctx.server.eula_required or ctx.server.eula_not_accepted():
             found["eula"] = _eula(ctx)
-        more = _more_memory(ctx, result["started_at"])
-        if more:
-            found["memory"] = more
-    joins = {join.group: join for join in diagnose.joins(ctx)}
-    for line in failed:
-        join = joins.get(line["group"])
-        detail = line.get("detail") or ""
-        if join is None:
-            continue
-        if (
-            line["what"] == diagnose.STEP_WORDS["connect"]
-            and detail in NO_ANSWER
-            and ctx.server.state == ServerState.ONLINE
-        ):
-            found["restart"] = _restart(ctx, join.group)
-        name = diagnose.player_name(ctx, join) if join.microsoft else None
-        if name and NOT_LISTED.search(detail):
-            found[f"whitelist {name}"] = _whitelist(ctx, name, join.group)
-        elif name and BANNED.search(detail) and ctx.config.server_type.dialect == "java":
-            found[f"unban {name}"] = _unban(ctx, name, join.group)
+    for _problem, fix in known(ctx, result):
+        if fix and fix.key not in found:
+            found[fix.key] = fix
     for line in failed:
         if line["group"] == waysin.TAILSCALE and line["detail"] == waysin.SWITCHED_OFF:
             found["tailscale"] = _tailscale()
@@ -101,6 +82,38 @@ def find(ctx: ServerContext, result: dict[str, Any]) -> list[Fix]:
         if fix:
             found[fix.key] = fix
     return sorted(found.values(), key=lambda fix: not fix.safe)
+
+
+def known(ctx: ServerContext, result: dict[str, Any]) -> list[tuple[Problem, Fix | None]]:
+    """The known problems this run saw (agent/knownproblems.py), each with
+    the change it points at when that change can be made here."""
+    joins = {join.group: join for join in diagnose.joins(ctx)}
+    found: list[tuple[Problem, Fix | None]] = []
+    for problem, line in knownproblems.matches(ctx, result, set(joins)):
+        fix = None
+        group = line["group"] if line else diagnose.SERVER_GROUP
+        join = joins.get(group)
+        name = diagnose.player_name(ctx, join) if join and join.microsoft else None
+        if problem.change == "restart" and ctx.server.state == ServerState.ONLINE:
+            if line is None or line["what"] == diagnose.STEP_WORDS["connect"]:
+                fix = _restart(ctx, group)
+        elif problem.change == "eula" and (
+            ctx.server.eula_required or ctx.server.eula_not_accepted()
+        ):
+            fix = _eula(ctx)
+        elif problem.change == "memory":
+            fix = _more_memory(ctx, result["started_at"])
+        elif problem.change == "whitelist" and name:
+            fix = _whitelist(ctx, name, group)
+        elif (
+            problem.change == "unban"
+            and name
+            and ctx.config.server_type.dialect == "java"
+            and not any(f and f.key == f"whitelist {name}" for _p, f in found)
+        ):
+            fix = _unban(ctx, name, group)
+        found.append((problem, fix))
+    return found
 
 
 # ------------------------------------------------------------- the changes
@@ -363,6 +376,17 @@ def _unban(ctx: ServerContext, name: str, group: str) -> Fix:
 def offer(ctx: ServerContext, result: dict[str, Any]) -> None:
     """Put the changes this run found, minus the ones tried, on the result."""
     result["changes"] = [fix.view() for fix in find(ctx, result) if fix.key not in result["tried"]]
+    # What Diagnose recognised, one line each: what it found, the link, and
+    # the change offered for it (or none).
+    result["known"] = [
+        {
+            "id": problem.id,
+            "say": problem.say,
+            "link": problem.link or None,
+            "change": fix.title if fix and fix.key not in result["tried"] else None,
+        }
+        for problem, fix in known(ctx, result)
+    ]
 
 
 def picked(ctx: ServerContext, result: dict[str, Any], pick: str) -> list[Fix]:

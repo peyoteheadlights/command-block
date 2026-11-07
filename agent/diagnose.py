@@ -85,6 +85,7 @@ class Run:
         """``before``: the round this one follows, after its changes were
         picked. ``mods``: the owner said yes to the join with all mods."""
         self.ctx = ctx
+        last = ctx.server.console.tail(1)
         self.result: dict[str, Any] = {
             "running": True,
             "started_at": time.time(),
@@ -106,6 +107,11 @@ class Run:
             "mods": before.get("mods", False) if before else mods,
             # True when it wasn't tried: nobody signed in to HeadlessMC.
             "sign_in_mods": False,
+            # The console's newest line before this round: the known
+            # problems (agent/knownproblems.py) read the lines after it.
+            "console_seq": last[0].seq if last else 0,
+            # The known problems this round saw, set with the changes.
+            "known": [],
         }
         ctx.diagnosis = self.result
 

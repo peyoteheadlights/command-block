@@ -857,7 +857,11 @@ key, separate from the update key, and refused as a whole if the
 signature, serial (it only goes up), size (256 KB), shape or any link
 (https only) is wrong. It can only add warnings, known bad file hashes
 (installs of those are refused) and newer Java rows; links in it are shown,
-never fetched. Until the real data key exists the built-in key is a test key
+never fetched. Its known problems for Diagnose server
+(`agent/knownproblems.py`) are a short pattern (200 characters, must
+compile, only ever searched with, on text cut to 2000 characters), a plain
+sentence and the name of a change the app already has; data can't add a
+new kind of change, and each change still checks the server and asks first. Until the real data key exists the built-in key is a test key
 whose private half was never kept, so every copy refuses every file and
 says "Couldn't check for safety notes".
 

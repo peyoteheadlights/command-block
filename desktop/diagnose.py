@@ -155,6 +155,15 @@ class DiagnoseWindow(QDialog):
                 words += f"\n     {line['detail']}"
             kind = "problem" if line["ok"] is False else ("muted" if line["ok"] is None else "")
             self.add(label(words, kind))
+        if result.get("known"):
+            self.add(label(text("diagnose.known"), name="h2"))
+        for problem in result.get("known") or []:
+            words = f"•  {problem['say']}"
+            if problem.get("change"):
+                words += "\n     " + text("diagnose.known_change").format(change=problem["change"])
+            if problem.get("link"):
+                words += f"\n     {problem['link']}"
+            self.add(label(words))
         if result.get("done"):
             self.add(label(text("diagnose.made"), name="h2"))
         for done in result.get("done") or []:
