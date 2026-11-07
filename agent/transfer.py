@@ -54,6 +54,17 @@ SKIP_FOLDERS = {"logs", "crash-reports", "debug", ".fabric", "cache"}
 SKIP_FILES = {"session.lock"}
 # server.properties values that are passwords.
 SECRET_PROPERTIES = ("rcon.password", "management-server-secret")
+# Settings that belong to this PC itself (agent/yourpcs.py, records.py).
+PC_OWN_SETTINGS = {
+    "pc_id",
+    "records_adopted",
+    "records_key_remade",
+    "owner_env_seen",
+    "pcs_state",
+    "pcs_joins",
+    "pcs_join_codes",
+    "pcs_joining",
+}
 # Database tables carried over, with the columns that identify a row.
 DATA_TABLES = (
     "servers",
@@ -282,6 +293,9 @@ def export(
     data: dict[str, Any] = {}
     for table in DATA_TABLES:
         data[table] = db.query(f"SELECT * FROM {table}")
+    # This PC's own id and its link to the owner's other PCs stay behind: the
+    # new PC signs the accounts again as itself (agent/security/records.py).
+    data["settings"] = [r for r in data["settings"] if r["key"] not in PC_OWN_SETTINGS]
     data["accounts"] = db.query(f"SELECT {', '.join(ACCOUNT_COLUMNS)} FROM accounts")
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
         zf.writestr("config.yaml", _config_yaml(config))
@@ -495,6 +509,8 @@ def import_all(
         data = json.loads(zf.read("data.json"))
         for table in DATA_TABLES:
             for row in data.get(table, []):
+                if table == "settings" and row.get("key") in PC_OWN_SETTINGS:
+                    continue  # an export made before these were left out
                 if table == "servers" and row.get("id") in moved:
                     row = {**row, "directory": moved[row["id"]]}
                 _insert(
@@ -533,6 +549,9 @@ def import_all(
                 continue  # without secrets, helpers are added again with new passwords
             _insert(db, "accounts", {**row, "password_hash": password_hash}, drop=())
             helpers += 1
+        if helpers:
+            # The agent signs them as this PC's at its next start.
+            db.execute("DELETE FROM settings WHERE key = 'records_adopted'")
         if hidden:
             for sub in hidden.get("push_subscriptions", []):
                 _insert(db, "push_subscriptions", sub, drop=())

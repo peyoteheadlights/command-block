@@ -140,6 +140,9 @@ def main(argv: list[str] | None = None) -> int:
     BUILD.mkdir(exist_ok=True)
     (BUILD / "version-info.txt").write_text(version_info(ver), encoding="utf-8")
     if not args.payload_only:
+        import build_chunker  # the same folder
+
+        build_chunker.main()  # Chunker's jar, which app.spec ships in tools/
         shutil.rmtree(PROGRAM, ignore_errors=True)
         pyinstaller(ROOT / "packaging" / "app.spec")
     archive, _ = make_payload(PROGRAM, PAYLOAD)

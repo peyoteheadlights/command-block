@@ -5,7 +5,9 @@ Bedrock servers listen on a UDP port (a Bedrock server on two: server-port
 for IPv4, 19132 by default, and server-portv6, 19133). This module:
 
   * reads each server's real game port from its server.properties
-  * knows each server's Bedrock (Geyser) UDP port when crossplay is on
+  * knows each server's Bedrock (Geyser) UDP port when crossplay is on,
+    and the web port of a live map add-on (agent/suggestions.py MAPS),
+    which is only for Tailscale: nothing here opens a router port
   * checks whether a port is really free on this machine by trying to bind
     it, as TCP or as UDP, whichever that port is for
   * suggests a port that no configured server uses and nothing else holds
@@ -29,6 +31,16 @@ MINECRAFT_DEFAULT_PORT = 25565
 # What Minecraft Bedrock tries first, and Geyser's own default.
 BEDROCK_DEFAULT_PORT = 19132
 SUGGEST_RANGE = 200
+
+
+def address(host: str, port: int | None, default: int = MINECRAFT_DEFAULT_PORT) -> str:
+    """The address players type: the host, with ":port" when the port isn't
+    the default (Minecraft only fills in 25565 by itself). The one place
+    that builds a join address, for the desktop app's Server address card
+    and Discord's /ip and status message."""
+    if not host or not port or port == default or ":" in host:
+        return host
+    return f"{host}:{port}"
 
 
 @dataclass(frozen=True)
@@ -132,13 +144,17 @@ class PortManager:
 
     def claimed(self, ctx: ServerContext) -> list[GamePort]:
         """Every port this server uses: its game port, a Bedrock server's
-        IPv6 port, and Geyser's port when crossplay is on."""
+        IPv6 port, Geyser's port when crossplay is on, and a live map's."""
+        from .suggestions import map_ports
+
         found = [self.port_of(ctx)]
         if ctx.config.server_type.edition == "bedrock":
             found.append(bedrock_v6_port(ctx.config.server_dir))
         geyser = self.bedrock_port_of(ctx)
         if geyser:
             found.append(geyser)
+        if ctx.config.server_type.has_content:
+            found += [GamePort(m["port"], "tcp", m["source"]) for m in map_ports(ctx) if m["port"]]
         return found
 
     def bedrock_port_of(self, ctx: ServerContext) -> GamePort | None:
@@ -210,6 +226,12 @@ class PortManager:
                         f"Port {port} is already used by the running server "
                         f"'{other.name}'. Change server-port in this server's "
                         "server.properties, or stop the other server first."
+                    )
+                elif protocol == "tcp":
+                    problems.append(
+                        f"This server's live map would use port {port}, which the running "
+                        f"server '{other.name}' already uses. Change the port in the map's "
+                        "settings file, or stop the other server first."
                     )
                 else:
                     problems.append(

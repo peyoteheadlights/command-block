@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "id": "geyser",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "Geyser-Spigot"
+    ],
+    "modrinth": "geyser",
+    "hangar": "GeyserMC/Geyser"
+  },
+  "versions": ">=2.0.0 <3",
+  "title": "Geyser",
+  "what": "Lets Bedrock players (phones, consoles, Windows Bedrock) join this Java server.",
+  "steps": [
+    "Bedrock players connect to this PC's address on Geyser's own port (19132 unless changed), not the Java port.",
+    "Install Floodgate too, so Bedrock players don't need a Java account.",
+    "Reload kicks everyone who is on, so do it when nobody is playing."
+  ],
+  "source": "https://geysermc.org/wiki/geyser/commands/",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "list",
+      "label": "Who is on from Bedrock",
+      "command": "geyser list"
+    },
+    {
+      "id": "version",
+      "label": "Show the version",
+      "command": "geyser version"
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "geyser reload",
+      "changes_world": true,
+      "warning": "Everyone who is on gets kicked."
+    }
+  ]
+}

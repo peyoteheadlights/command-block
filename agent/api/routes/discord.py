@@ -11,6 +11,7 @@ import binascii
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ... import store
 from ...discord import layout
 from ...security import permissions as P
 from ...security.auth import AuthError, Principal
@@ -34,13 +35,27 @@ OFF = {"token_set": False, "state": "off"}
 
 
 def status_of(core) -> dict:
-    return core.discord.status() if core.discord is not None else OFF
+    if core.discord is not None:
+        if not core.discord.rest_only:
+            core.botpc.save_settings()  # a change here reaches the other PCs at once
+        return core.discord.status()
+    return {**OFF, "bot_pc": core.botpc.status()}
 
 
 def bot_of(core):
-    if core.discord is None or core.discord.gateway.state != "connected":
+    bot = core.discord
+    if bot is not None and bot.rest_only:
+        name = core.botpc.name_of(core.botpc.bot_pc())
+        raise HTTPException(status_code=409, detail=f"The bot runs on {name}: change it there.")
+    if bot is None or not bot.connected:
         raise HTTPException(status_code=409, detail="The bot has to be connected first.")
-    return core.discord
+    return bot
+
+
+def known(core, server_id: str) -> None:
+    """A server on this PC, or one on another PC the bot can reach."""
+    if server_id not in core.servers and server_id not in core.botpc.remote():
+        raise HTTPException(status_code=404, detail=f"There is no server with the id '{server_id}'")
 
 
 async def discord_call(work):
@@ -63,6 +78,57 @@ def guild_of(bot, guild_id: str) -> str:
 async def discord_status(
     principal: Principal = Depends(require(DISCORD_MANAGE)), core=Depends(get_core)
 ):
+    bot_pc = core.botpc.bot_pc()
+    if bot_pc and bot_pc != core.botpc.me:
+        await core.botpc.ping(bot_pc)  # "Bot offline: <PC> is off" is never a guess
+    return status_of(core)
+
+
+@router.post("/bot-pc", response_model=DiscordStatus)
+async def run_bot_here(
+    request: Request,
+    principal: Principal = Depends(require(DISCORD_MANAGE)),
+    core=Depends(get_core),
+):
+    """ "Run the bot on this PC instead": the same token and settings; the
+    old Bot PC stops its bot as soon as it hears."""
+    from ...yourpcs import PcError
+
+    try:
+        core.botpc.run_here()
+    except PcError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await core.botpc.update()
+    audit(core, request, "discord_bot_pc", target=core.pcs.name())
+    return status_of(core)
+
+
+@router.put("/bot-links/{pc}", response_model=DiscordStatus)
+async def add_bot_link(
+    pc: str,
+    request: Request,
+    principal: Principal = Depends(require(DISCORD_MANAGE)),
+    core=Depends(get_core),
+):
+    bot_of(core)
+    if pc not in {p["key"] for p in core.pcs.peers()}:
+        raise HTTPException(status_code=404, detail="That PC isn't in Your PCs.")
+    core.botpc.add_link(pc)
+    audit(core, request, "discord_bot_link", target=core.botpc.name_of(pc), detail="added")
+    return status_of(core)
+
+
+@router.delete("/bot-links/{pc}", response_model=DiscordStatus)
+async def remove_bot_link(
+    pc: str,
+    request: Request,
+    principal: Principal = Depends(require(DISCORD_MANAGE)),
+    core=Depends(get_core),
+):
+    """ "Remove bot link": Discord can't reach that PC's servers any more."""
+    bot_of(core)
+    core.botpc.remove_link(pc)
+    audit(core, request, "discord_bot_link", target=core.botpc.name_of(pc), detail="removed")
     return status_of(core)
 
 
@@ -133,11 +199,8 @@ async def set_up(
     core=Depends(get_core),
 ):
     bot = bot_of(core)
-    unknown = [sid for sid in payload.servers if sid not in core.servers]
-    if unknown:
-        raise HTTPException(
-            status_code=404, detail=f"There is no server with the id '{unknown[0]}'"
-        )
+    for sid in payload.servers:
+        known(core, sid)
     made = await discord_call(bot.set_up(guild_of(bot, guild_id), payload.servers))
     audit(core, request, "discord_setup", target=guild_id, detail=", ".join(made["made"]))
     return {"made": made["made"], "status": status_of(core)}
@@ -155,10 +218,8 @@ async def tie_channel(
     guild_of(bot, guild_id)
     if payload.kind in (*layout.SERVER_CHANNELS, *layout.OPT_IN_CHANNELS) and not payload.server_id:
         raise HTTPException(status_code=400, detail="Pick the Minecraft server for this channel.")
-    if payload.server_id and payload.server_id not in core.servers:
-        raise HTTPException(
-            status_code=404, detail=f"There is no server with the id '{payload.server_id}'"
-        )
+    if payload.server_id:
+        known(core, payload.server_id)
     layout.tie(core.db, guild_id, payload.kind, payload.server_id, payload.channel_id)
     audit(core, request, "discord_channel", target=f"{payload.kind}:{payload.server_id}")
     await discord_call(bot.refresh(guild_id))
@@ -209,8 +270,7 @@ async def grant_role(
     if not role_id.isdigit():
         raise HTTPException(status_code=404, detail="There's no such Discord role.")
     for sid, wanted in payload.grants.items():
-        if sid not in core.servers:
-            raise HTTPException(status_code=404, detail=f"There is no server with the id '{sid}'")
+        known(core, sid)
         if set(wanted) - SERVER_PERMISSIONS:
             raise HTTPException(status_code=400, detail="A Discord role can't be given that.")
     for sid, wanted in payload.grants.items():
@@ -272,6 +332,24 @@ async def set_levels(
             if refused:
                 raise HTTPException(status_code=400, detail=refused)
         layout.set_level_roles(core.db, guild_id, wanted)
+    if payload.store_roles is not None:
+        ranks = {r["id"] for r in store.RANKS}
+        pairs = {r.rank: r.role_id for r in payload.store_roles}
+        if set(pairs) - ranks or len(pairs) != len(payload.store_roles):
+            raise HTTPException(status_code=400, detail="Each Store rank only once.")
+        found = {
+            r["id"]: r
+            for r in await discord_call(bot.rest.request("GET", f"/guilds/{guild_id}/roles"))
+        }
+        ours = layout.our_roles(core.db, guild_id)
+        for role_id in pairs.values():
+            if role_id not in found:
+                raise HTTPException(status_code=404, detail="There's no such Discord role.")
+            refused = layout.level_role_refused(guild_id, found[role_id], ours, "a Store rank role")
+            if refused:
+                raise HTTPException(status_code=400, detail=refused)
+        layout.set_store_roles(core.db, guild_id, pairs)
+        bot.resync_store()
     # Saved before waiting on Discord, so all of it is saved at once.
     layout.set_level_settings(
         core.db, guild_id, announce=payload.announce, leaderboard_day=payload.leaderboard_day
@@ -291,10 +369,9 @@ async def set_address(
     core=Depends(get_core),
 ):
     """The address /ip and the status message show for a server (empty: none)."""
-    if payload.server_id not in core.servers:
-        raise HTTPException(
-            status_code=404, detail=f"There is no server with the id '{payload.server_id}'"
-        )
+    if core.discord is not None and core.discord.rest_only:
+        bot_of(core)  # the Bot PC's setting
+    known(core, payload.server_id)
     layout.set_address(core.db, payload.server_id, payload.address)
     audit(core, request, "discord_address", target=payload.server_id)
     return status_of(core)

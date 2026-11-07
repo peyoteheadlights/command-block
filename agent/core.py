@@ -19,7 +19,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from . import __version__, colors, memory, supportask
+from . import __version__, colors, memory, protection, supportask, watchers
 from .autosleep import AutoSleep
 from .backups.manager import BackupManager
 from .config import ConfigError
@@ -29,6 +29,7 @@ from .discord.links import Links
 from .events import AGENT_SCOPE, Event, EventBus, ServerBus
 from .game_events import GameEvents
 from .jobs import JobConflict, JobHandle, JobTracker
+from .joinguard import GuardHub
 from .keepawake import KeepAwake
 from .minecraft.chat import ChatLog, parse_chat
 from .minecraft.crash import CrashReporter
@@ -38,11 +39,13 @@ from .mods.manager import ModManager
 from .monitoring.metrics import MetricsMonitor
 from .monitoring.players import PlayerTracker
 from .monitoring.tps import TpsMonitor
+from .notes import SafetyNotes
 from .notifications.dispatcher import Notifier
 from .ports import PortManager
 from .quests import Quests
 from .scheduler.scheduler import Scheduler
 from .security.auth import AuthManager
+from .softwarecheck import SoftwareCheck
 from .startrequests import StartRequests
 from .tailscale_watch import TailscaleWatch
 from .updates import Updater
@@ -95,16 +98,43 @@ class ServerContext:
         # a server nobody is playing on (off unless this server turns it on).
         self.chat = ChatLog()
         self.autosleep = AutoSleep(self)
+        self.spam = watchers.ChatSpam(self)
 
         self.server.signal_hook = self._console_signals
         self.server.crash_hook = self.crashes.collect
         self.server.maintenance = core.config.maintenance.enabled
         self.server.start_guard = lambda: core.ports.start_conflicts(self)
         self.server.start_warnings = lambda: [
-            *core.ports.start_warnings(self),
+            # The guard holding the port isn't "another program".
+            *([] if core.guard.holds(self) else core.ports.start_warnings(self)),
             *memory.start_warnings(self),
         ]
+        self.server.before_launch = self._before_launch
         self._update_task: asyncio.Task | None = None
+        self._stop_backup: asyncio.Task | None = None
+
+    async def _before_launch(self) -> list[str]:
+        """As the server starts: a Test server's builds are copied in (a
+        failed copy is said in the console, and the start goes on), then
+        Join protection picks the start arguments."""
+        from . import testserver
+
+        try:
+            copied = await asyncio.to_thread(testserver.copy_builds, self)
+            if copied:
+                self.server._emit_console(
+                    f"[agent] copied from the build folder: {', '.join(copied)}"
+                )
+        except Exception as exc:
+            self.server._emit_console(f"[agent] build folder not copied: {exc}")
+            await self.bus.publish(
+                Event(
+                    type="build_copy_failed",
+                    level="warn",
+                    message=f"Build folder not copied: {exc}",
+                )
+            )
+        return await self.core.guard.before_launch(self)
 
     def _whitelist_addon(self, kind: str):
         addon = whitelist_addon(self)
@@ -114,9 +144,12 @@ class ServerContext:
         await self.players.handle_signals(sig, line)
         await self.player_actions.handle(sig, line)
         await self.core.whitelist.heard(self, line)
+        await watchers.heard(self, line)
         said = parse_chat(line)
         if said and said[0] == "player" and self.core.links.hear(self, said[1] or "", said[2]):
             return  # a link code: kept out of the chat log, so never bridged to Discord
+        if said and said[0] == "player":
+            await self.spam.heard(said[1] or "", said[2])
         message = self.chat.add(line)
         if message is not None:
             # Not stored in the database: chat is as chatty as the console
@@ -164,6 +197,54 @@ class ServerContext:
                 await self.players.clear_online()
             except Exception:  # pragma: no cover
                 log.exception("could not clear the online player list")
+        try:
+            if event.type == "player_joined":
+                self.core.guard.note_peak(self)
+            if event.type == "server_started":
+                await watchers.compare(self)
+                await protection.router_open(self)
+            elif event.type in ("server_stopped", "server_crashed"):
+                watchers.remember(self)
+                await protection.router_close(self)
+                if event.type == "server_stopped" and self.backup_on_stop(event):
+                    self._stop_backup = asyncio.create_task(self._backup_after_stop())
+            elif event.type == "backup_restored":
+                watchers.remember(self)
+        except Exception:  # pragma: no cover - reported, never stops the server's events
+            log.exception("the Protection card's start/stop work failed")
+
+    def backup_on_stop(self, event: Event) -> bool:
+        """Back up now? Only when it's on, after a planned stop that isn't
+        a restart, a restore or a stop for a backup (the server is held or
+        a job runs on it then), and only if someone joined since the last
+        backup."""
+        if not self.config.backups.on_stop:
+            return False
+        if event.data.get("reason") not in ("user_stop", "scheduled_stop"):
+            return False
+        if event.data.get("restart") or self.server.held_by:
+            return False
+        if self.core.jobs.risky_job(self.server_id):
+            return False
+        last = self.core.db.query_one(
+            "SELECT MAX(created_at) AS at FROM backups WHERE server_id = ? AND status = 'ok'",
+            (self.server_id,),
+        )
+        since = (last or {}).get("at") or 0
+        return bool(
+            self.core.db.query_one(
+                "SELECT 1 FROM player_sessions WHERE server_id = ? AND joined_at > ? LIMIT 1",
+                (self.server_id, since),
+            )
+        )
+
+    async def _backup_after_stop(self) -> None:
+        try:
+            await self.backups.create(
+                name="after-stop", kind="scheduled", note="When the server stopped"
+            )
+        except Exception as exc:  # the backup's own failure alert has gone out
+            log.warning("backup after stop failed: %s", exc)
 
     async def start(self) -> None:
         # Establish facts before the apps can ask for them, so the first
@@ -174,7 +255,9 @@ class ServerContext:
         if self.server.state.value == "OFFLINE":
             # Nothing is running, so "nobody is online" is a verified fact.
             await self.players.clear_online()
-        self.metrics.start(player_source=self.players.online)
+        self.metrics.start(
+            player_source=lambda: self.players.online() if self.players.verified else None
+        )
         self.tps.start()
         self.scheduler.seed_defaults()
         self.scheduler.start()
@@ -204,7 +287,7 @@ class ServerContext:
         await asyncio.sleep(60)
         while True:
             try:
-                updates = await self.mods.check_updates()
+                updates = await self.mods.check_updates(background=True)
                 if updates:
                     await self.bus.publish(
                         Event(
@@ -267,6 +350,13 @@ class ServerContext:
             # add-ons the way this type names them (mods or plugins).
             "type": status["server_type"],
             "type_name": status["server_type_name"],
+            # The owner's own jar: never checked or updated by the app.
+            "custom_jar": self.config.server.custom_jar,
+            # A Test server: the apps show a Test badge, Simple mode hides it.
+            "test": self.config.server.test,
+            # Who it's for (first run's question): the Store tab is only on
+            # "community" servers (agent/store.py).
+            "played_by": self.config.server.played_by,
             "content": self.config.server_type.content,
             # Java or Bedrock, and what this type can and can't do, so the
             # pages show "not applicable" instead of a control that does
@@ -280,6 +370,8 @@ class ServerContext:
                 "bans": self.config.server_type.bans,
                 "addons": self.config.server_type.addons,
                 "mods": bool(self.config.server_type.content_folder),
+                "hangar": bool(self.config.server_type.hangar_platform),
+                "curseforge": bool(self.mods.curseforge.loaders),
             },
             "crossplay": bool(self.config.server.crossplay),
             "game_port": self.core.ports.port_of(self).to_dict(),
@@ -298,6 +390,14 @@ class AgentCore:
         self.db = Database(config.database_path)
         self.events = EventWriter(self.db)
         self.auth = AuthManager(config, self.db, self.bus)
+        # The owner's other PCs, sharing one account (agent/yourpcs.py).
+        from .yourpcs import YourPCs
+
+        self.pcs = YourPCs(self)
+        from .discord.botpc import BotPC
+
+        # Which of the PCs runs the Discord bot (agent/discord/botpc.py).
+        self.botpc = BotPC(self)
         self.jobs = JobTracker(self.db, self.bus)
         self.jobs.mark_interrupted()
         self.ports = PortManager(self)
@@ -305,9 +405,16 @@ class AgentCore:
         from .servertypes import bedrock
 
         bedrock.configure(config.data_dir)
+        # The last good answer from each official site (agent/savedlists.py).
+        from . import savedlists
+        from .servertypes import versions
+
+        savedlists.configure(config.data_dir)
+        versions.load_java()
         self.servers: dict[str, ServerContext] = {}
         self.notifier = Notifier(config, self.bus, self.db, servers=self.servers)
         self.notifier.can_see = self.auth.may_see_alert
+        self.notifier.pc_label = self.pcs.label
         for server_id in config.server_ids:
             self.servers[server_id] = ServerContext(self, server_id)
 
@@ -315,9 +422,15 @@ class AgentCore:
         self.keepawake = KeepAwake(self)
         # Looks for a newer version of the app (agent/updates.py).
         self.updates = Updater(self)
+        # The signed notes file (agent/notes.py) and the daily look for newer
+        # server software (agent/softwarecheck.py).
+        self.notes = SafetyNotes(self)
+        self.software = SoftwareCheck(self)
         # Moves the agent onto Tailscale and checks it every minute after.
         self.tailscale = TailscaleWatch(self)
         self.wake = Wake(self)
+        # Join protection and "Start when someone joins" (agent/joinguard.py).
+        self.guard = GuardHub(self)
         # Linked accounts work without the bot (the apps list and remove
         # them); the bot itself only exists while a token is set.
         self.links = Links(self.db)
@@ -325,6 +438,10 @@ class AgentCore:
         self.quests = Quests(self)
         self.game_events = GameEvents(self)
         self.whitelist = Whitelist(self)
+        # Servers on a host's Pterodactyl panel (agent/rented.py).
+        from .rented import RentedServers
+
+        self.rented = RentedServers(self)
         self.discord: Any = None
         # The bot posts alerts in its alerts channel (and the webhook steps aside).
         self.notifier.bot = lambda: self.discord
@@ -352,6 +469,16 @@ class AgentCore:
     @property
     def default(self) -> ServerContext:
         return self.servers[self.config.default_server_id]
+
+    @property
+    def discord_servers(self) -> dict[str, ServerContext]:
+        """The servers the Discord bot knows: every one but Test servers."""
+        return {sid: ctx for sid, ctx in self.servers.items() if not ctx.config.server.test}
+
+    def server_names(self) -> dict[str, str]:
+        """Every server a moderator can be given, id -> name: this PC's and
+        the rented ones (agent/rented.py)."""
+        return {**{sid: ctx.name for sid, ctx in self.servers.items()}, **self.rented.names()}
 
     def get_server(self, server_id: str) -> ServerContext:
         ctx = self.servers.get(server_id)
@@ -422,13 +549,19 @@ class AgentCore:
     async def start(self) -> None:
         for ctx in list(self.servers.values()):
             await ctx.start()
+        self.rented.start()
         self._cert_task = asyncio.create_task(self._certificate_watch_loop(), name="cert-watch")
         await self.bus.publish(
             Event(type="agent_started", level="success", message="Server agent started")
         )
         await self.updates.start()
+        self.notes.start()
+        self.software.start()
         self.tailscale.start()
         self.wake.start()
+        self.guard.start()
+        self.pcs.start()
+        await self._check_database_access()
         self.game_events.start()
         self.start_discord()
         # After the bot, so a request that ran out while the agent was off
@@ -437,25 +570,56 @@ class AgentCore:
         for ctx in list(self.servers.values()):
             await ctx.autostart()
 
+    async def _check_database_access(self, windows: bool = os.name == "nt") -> None:
+        """The database holds every password hash: only the agent's Windows
+        account (and SYSTEM, Administrators) may open it. The installer sets
+        that; this says so when it isn't true any more."""
+        from .security.certs import folder_access
+
+        if not windows:
+            return  # Windows only, like the installer that sets it
+        status, detail = await asyncio.to_thread(folder_access, self.config.database_path)
+        if status == "shared":
+            await self.bus.publish(
+                Event(
+                    type="database_shared",
+                    level="error",
+                    message="Other Windows accounts on this PC can open Command Block's "
+                    f"account database. {detail}.",
+                    data={"path": str(self.config.database_path)},
+                )
+            )
+
     def start_discord(self) -> None:
         """Start the bot when a token is set. Without one the Discord client
-        isn't even imported (weak mini PCs come first)."""
+        isn't even imported (weak mini PCs come first). With several PCs,
+        once this PC has heard which one is the Bot PC."""
         token = self.config.discord_bot_token
-        if token and self.discord is None:
+        if self.pcs.joined():
+            self.botpc.update_soon()
+        elif token and self.discord is None:
             from .discord.bot import Bot
 
             self.discord = Bot(self, token)
             self.discord.start()
 
-    async def set_discord_token(self, token: str | None) -> None:
-        """Save a new bot token in .env (or remove it), then reconnect."""
+    async def save_discord_token(self, token: str) -> None:
         from installer.setup_tool import write_env_value
 
         from .appinfo import default_env_path
 
         path = self.config.env_path or default_env_path()
-        await asyncio.to_thread(write_env_value, path, "MCSC_DISCORD_BOT_TOKEN", token or "")
-        os.environ["MCSC_DISCORD_BOT_TOKEN"] = token or ""
+        await asyncio.to_thread(write_env_value, path, "MCSC_DISCORD_BOT_TOKEN", token)
+        os.environ["MCSC_DISCORD_BOT_TOKEN"] = token
+
+    async def set_discord_token(self, token: str | None) -> None:
+        """Save a new bot token in .env (or remove it), then reconnect. With
+        several PCs this PC becomes the Bot PC (or the bot stops on all)."""
+        await self.save_discord_token(token or "")
+        if self.pcs.joined():
+            self.botpc.set_token(token or "")
+            await self.botpc.update()
+            return
         if self.discord is not None:
             await self.discord.stop()
             self.discord = None
@@ -524,6 +688,8 @@ class AgentCore:
         if self._cert_task:
             self._cert_task.cancel()
         await self.updates.stop()
+        await self.notes.stop()
+        await self.software.stop()
         self.tailscale.stop()
         self.wake.stop()
         if self.discord is not None:
@@ -535,6 +701,9 @@ class AgentCore:
         await self.jobs.stop()
         for ctx in list(self.servers.values()):
             await ctx.stop()
+        await self.guard.stop()
+        await self.rented.stop()
+        await self.pcs.stop()
         self.keepawake.stop()
         await self.notifier.stop()
         await self.events.stop()

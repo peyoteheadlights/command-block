@@ -78,6 +78,9 @@ class Choices:
     password: str | None = None
     start_with_pc: bool = True
     allow_devices: bool = True
+    # One firewall rule per Minecraft server port instead of Windows' broad
+    # "allow Java on every port" rule.
+    server_ports_only: bool = True
     import_file: Path | None = None
     import_to: Path | None = None
     import_passphrase: str | None = None
@@ -107,6 +110,7 @@ class Choices:
             "password_given": bool(self.password),
             "start_with_pc": self.start_with_pc,
             "allow_devices": self.allow_devices,
+            "server_ports_only": self.server_ports_only,
             "import_file": str(self.import_file) if self.import_file else None,
             "install_java": self.install_java,
             "java_path": self.java_path,
@@ -258,6 +262,8 @@ class Engine:
         self.stopped_servers: list[str] = []
         self.agent_stopped = False
         self.certificate_renewed = False
+        self.server_user_made = False  # set once step_server_user made it
+        self.starter_stopped = False  # the starter service, stopped to replace its files
         self.notes: list[str] = []
         self._plan()
 
@@ -304,6 +310,8 @@ class Engine:
             (self.existing and c.java_servers) or (c.action == INSTALL and not c.servers)
         ):
             add("java_servers", "Pointing your servers at the new Java", 1)
+        if c.action == INSTALL:
+            add("server_user", "Making the separate Windows user for your servers", 2)
         add("password", "Saving your password", 2)
         add("certificate", "Setting up secure connection", 5)
         add("firewall", "Letting your phone and other devices connect", 3)
@@ -331,6 +339,7 @@ class Engine:
             ("java", self.step_java),
             ("servers", self.step_servers),
             ("java_servers", self.step_java_servers),
+            ("server_user", self.step_server_user),
             ("password", self.step_password),
             ("certificate", self.step_certificate),
             ("firewall", self.step_firewall),
@@ -601,6 +610,8 @@ class Engine:
         (incoming / appinfo.INSTALL_RECORD).write_text(json.dumps(record, indent=2), "utf-8")
         if target.exists():
             self.system.close_app()
+            # The starter service runs mcsc.exe from this folder.
+            self.starter_stopped = self.system.stop_starter()
             previous = target.with_name(target.name + ".previous")
             shutil.rmtree(previous, ignore_errors=True)
             try:
@@ -614,6 +625,8 @@ class Engine:
             self.previous_program = previous
         incoming.rename(target)
         self.new_program_created = True
+        if self.starter_stopped:
+            self.system.start_starter()
         self.log.write("program_copied", files=copied.files, bytes=copied.bytes, to=str(target))
         return None
 
@@ -838,14 +851,36 @@ class Engine:
         self.log.write("java_servers", servers=changed, java=java)
         return None
 
+    def step_server_user(self) -> str | None:
+        """New installs run servers as the separate Windows user
+        (installer/serveruser.py). An install over settings that were
+        already there keeps their choice, like an update does."""
+        from agent.config import Config
+
+        from . import serveruser
+
+        if self.config_path not in self.created_settings:
+            return "Your settings were already here, so their choice is kept."
+        config = Config.load(self.config_path, self.env_path)
+        try:
+            serveruser.make(self.system, self.c.program_dir)
+        except (SystemError_, OSError) as exc:
+            self.log.write("server_user_failed", error=str(exc))
+            return (
+                "The separate Windows user couldn't be made, so servers run as you for "
+                "now. Turn it on in Settings."
+            )
+        self.server_user_made = True
+        config.set("security.separate_windows_user", True)
+        config.save(self.config_path)
+        return None
+
     def step_password(self) -> str | None:
-        from agent.security.auth import hash_password
+        from agent.security.auth import hash_password, is_password_hash
 
         from .setup_tool import read_env, step_secrets, write_env_value
 
-        has_password = (
-            read_env(self.env_path).get("MCSC_ADMIN_PASSWORD_HASH", "").startswith("pbkdf2")
-        )
+        has_password = is_password_hash(read_env(self.env_path).get("MCSC_ADMIN_PASSWORD_HASH", ""))
         if has_password and not (self.c.action == INSTALL and self.c.password):
             step_secrets(self._setup_context())  # adds an API token if one is missing
             return "Your existing password is kept."
@@ -892,17 +927,48 @@ class Engine:
         return None if step.status == "OK" else step.detail
 
     def step_firewall(self) -> str | None:
+        from agent.config import Config
+
+        script = Path(__file__).resolve().parent / "firewall.ps1"
+        config = Config.load(self.config_path, self.env_path)
+        if self.c.server_ports_only:
+            self.server_port_rules(config, script)
         if not self.c.allow_devices:
             if self.c.action == INSTALL:
                 return "Skipped: only this PC can reach the agent."
             return "Left as it was."
         port, _, _ = self._settings()
-        from agent.config import Config
-
-        redirect = Config.load(self.config_path, self.env_path).tls.http_redirect_port
-        script = Path(__file__).resolve().parent / "firewall.ps1"
-        self.system.firewall(script, port, redirect)
+        self.system.firewall(script, port, config.tls.http_redirect_port)
         return None
+
+    def server_port_rules(self, config, script: Path) -> None:
+        """Every server's game ports (Java TCP, Bedrock and Geyser UDP), one
+        rule each. Only an offer: if Windows refuses, the install goes on and
+        the note says so."""
+        from agent.ports import bedrock_v6_port, game_port
+
+        ports: set[tuple[str, int]] = set()
+        for server_id in config.server_ids:
+            server = config.for_server(server_id)
+            kind = server.server_type
+            found = game_port(server.server_dir, None, kind.game_protocol, kind.default_port)
+            ports.add((found.protocol, found.port))
+            if kind.edition == "bedrock":
+                ports.add(("udp", bedrock_v6_port(server.server_dir).port))
+            if server.server.crossplay and server.server.bedrock_port:
+                ports.add(("udp", int(server.server.bedrock_port)))
+        if not ports:
+            return
+        try:
+            self.system.server_ports(script, sorted(ports))
+        except SystemError_ as exc:
+            self.log.write("server_ports_failed", error=str(exc), details=exc.details)
+            self.notes.append(
+                "Windows didn't let the installer add one rule per server port, so the firewall "
+                "was left as it was."
+            )
+            return
+        self.log.write("server_ports", ports=[f"{p}:{n}" for p, n in sorted(ports)])
 
     def step_startup(self) -> str | None:
         self.previous_launch = self.previous_launch or self.system.previous_startup_launch()
@@ -1036,6 +1102,9 @@ class Engine:
                 if self.previous_program and self.previous_program.exists():
                     self.previous_program.rename(self.c.program_dir)
                     actions.append("put the previous program back")
+            if self.starter_stopped:
+                self.system.start_starter()
+                actions.append("started the starter service again")
             if self.point is not None:
                 if self.c.action == MIGRATE:
                     for path in self.created_settings:
@@ -1045,6 +1114,11 @@ class Engine:
                 else:
                     restorepoint.restore(self.point)
                     actions.append("put your settings and database back")
+            if self.server_user_made:
+                from . import serveruser
+
+                serveruser.remove(self.system)
+                actions.append("removed the separate Windows user it had made")
             if self.previous_launch and self.previous_launch.get("command"):
                 launch = {
                     k: self.previous_launch[k]

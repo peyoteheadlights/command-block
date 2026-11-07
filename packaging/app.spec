@@ -14,11 +14,18 @@ ICON = str(ROOT / "desktop" / "images" / "app.ico")
 datas = [
     (str(ROOT / "desktop" / "images"), "desktop/images"),
     (str(ROOT / "shared"), "shared"),
+    # The notes file as it was at release: its add-on suggestions are used
+    # until a signed one is fetched (agent/notes.py load_shipped).
+    (str(ROOT / "data" / "catalog.json"), "data"),
+    # The add-on guides, one file each (agent/guides.py).
+    (str(ROOT / "data" / "guides"), "data/guides"),
     (str(ROOT / "installer" / "firewall.ps1"), "installer"),
     (str(ROOT / "config" / "config.example.yaml"), "config"),
     (str(ROOT / "LICENSE"), "."),
     (str(ROOT / "THIRD-PARTY-NOTICES.md"), "."),
     (str(ROOT / "licenses"), "licenses"),
+    # Chunker's command-line jar, built from source by scripts/build_chunker.py.
+    (str(ROOT / "build" / "tools" / "chunker-cli.jar"), "tools"),
     (str(ROOT / "CHANGELOG.md"), "."),
 ]
 # uvicorn picks its loop, protocol and lifespan parts by name at run time.

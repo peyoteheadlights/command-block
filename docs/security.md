@@ -13,12 +13,14 @@
 
 ## Authentication
 
-- Passwords are stored as PBKDF2-HMAC-SHA256 with 600,000 rounds (OWASP's
-  Password Storage Cheat Sheet figure) and a per-install salt. The password
-  itself never touches disk, logs, or the database. Each stored hash records
-  its own round count, so a password saved with the older 240,000 rounds
-  still works and is re-hashed with 600,000 the next time that person signs
-  in (the owner's in `.env`, a helper's in the database).
+- Passwords are stored as scrypt with N=2^15, r=8, p=3 (one of OWASP's
+  Password Storage Cheat Sheet settings: 32 MiB, about 0.23 s on a 4-core
+  test machine, so under a second on a weak mini PC) and a per-password
+  salt. The password itself never touches disk, logs, or the database. Each
+  stored hash records how it was made, so a PBKDF2 hash from before still
+  works and is re-made with scrypt the next time that person signs in. A
+  hash asking for more than N=2^17 is refused, so a hash from another PC
+  can't make this one run out of memory.
 - Signing in returns a random 256-bit session token; only its SHA-256 is
   stored, so a stolen database yields no usable tokens.
 - Sessions expire after 12 hours by default, and can be rotated or revoked.
@@ -54,8 +56,69 @@
 - The owner's password can't be changed over the network. It is reset on
   the PC with `python -m installer.reset_password`, which asks twice, writes
   only the hash to `.env`, never shows or logs the password, and deletes
-  every session. A running agent notices `.env` changed and uses the new
-  hash at once. `tests/test_helpers.py` checks no route reaches it.
+  every session on that PC. A running agent notices `.env` changed and
+  uses the new hash at once. `tests/test_helpers.py` checks no route
+  reaches it.
+
+## Shared accounts (Your PCs)
+
+An owner with several PCs has one account on all of them (`agent/yourpcs.py`,
+`agent/security/records.py`). There is no cloud and no main PC: each PC
+keeps a full copy and sends changes straight to the others.
+
+- **Where the owner lives.** The owner's name and hash move from `.env`
+  into the database at the first start, next to the moderators. `.env`
+  keeps the first-run value; a new hash there (the reset tool, the
+  installer run again) counts as a reset on that PC.
+- **Signed records.** The owner, each moderator, each PC's permissions for
+  that moderator, each sign-in and each PC are rows of `sync_records`, each
+  signed with HMAC-SHA256. The key is shared by the joined PCs and kept in
+  `account-keys.bin` in the data folder, encrypted with DPAPI for the
+  agent's Windows account. A row that fails its check is never used (the
+  sign-in it was for is refused) and the owner gets an alert. A moderator or
+  sign-in row in the ordinary tables must match its signed record. When
+  the key file can't be opened (the data folder moved to another account or
+  PC), a new key is made, the rows are signed again and the owner is told:
+  anything able to delete that file can already run as the agent.
+- **The database file** is in the private data folder. On Windows the
+  agent checks at each start that no shared group (Users, Everyone, ...)
+  can open it, and alerts when one can.
+- **Joining.** PC A's join link is its pairing link plus a random code
+  that works once, for 10 minutes (only its SHA-256 is kept). The new PC
+  checks A's certificate against the link's fingerprint before sending
+  anything, then sends the code, the owner's name and password (counted and
+  locked out like a sign-in), its own address and certificate fingerprint,
+  and its sync key. A only takes it in when an owner device that was signed
+  in **before** the request presses Allow, so someone who just learned the
+  password can't join their own PC. Every owner device is alerted.
+- **Syncing.** PCs call each other's normal HTTPS port, pinned to the
+  certificate in the other PC's record, with a header naming the PC and its
+  sync key (a random 32-byte key; the others keep only its SHA-256). The
+  `/api/sync/*` routes take nothing else. Newest wins by a hybrid logical
+  clock. A removed moderator, sign-in or PC stays removed. Each PC's
+  permissions for a moderator are only ever written by that PC.
+- **Removing a PC** puts a "removed" marker on its record: every PC that
+  hears refuses its sync key (410) at once, and the removed PC goes back to
+  its own owner account with a new key.
+- **A reset on a joined PC** works on that PC only. The other PCs show it
+  and take it only when an owner device signed in to one of them before the
+  reset confirms it. Then every owner sign-in made before the change ends.
+- **Sign out everywhere** ends every sign-in on every PC.
+- **The Discord bot across PCs** (`agent/discord/botpc.py`). The Bot PC's
+  token is in a signed record, encrypted (AES-GCM) with a key made from the
+  account's signing key, so it can only be read on the owner's PCs; it goes
+  only PC to PC over the pinned connection, and no route sends it back.
+  A **Bot link** is a random 32-byte key per PC made by the Bot PC, kept in
+  its `account-keys.bin`; the other PC keeps only its SHA-256. The other PC
+  takes a Bot link call only from the PC its record names as the Bot PC,
+  still in Your PCs, and only what Discord can do
+  (`permissions.BOT_LINK_CALLS`: a slash command or button from the bot's
+  own list, a chat line, someone leaving Discord, unlinking an account, the
+  leaderboard's numbers). It is never a sign-in: the API refuses it. A
+  passed-on command is checked on that PC against the Discord member's
+  roles, like one from Discord itself. Each PC's own news for the bot (its
+  servers, Levels XP, linked names, wake key) is only ever written by that
+  PC.
 
 ## Secrets
 
@@ -68,6 +131,23 @@ The Discord bot's token is pasted in the desktop app and written straight to
 of kind `discord` built from their Discord roles' grants, checked by the same
 `permissions.check` as every route. It never holds a moderator's account
 extras or anything owner-only (see [discord.md](discord.md)).
+
+A rented server's Pterodactyl client API key (`agent/rented.py`) is saved
+in `rented-keys.bin` in the data folder, encrypted with DPAPI for the
+agent's Windows account and readable only by SYSTEM, Administrators and
+that account, like the separate Windows user's password. It's sent only
+to that panel, as a bearer token, and dropped on any redirect. No route
+answers with it, and it's never logged. Remove key deletes it. The app
+asks for a client key, never the panel password or the Application (admin)
+API, and points out when the key belongs to the main panel account rather
+than a limited sub-user.
+
+A Tebex store's Game Server secret key (`agent/store.py`) is saved the
+same way, in `store-keys.bin`. It's sent only to Tebex's Game Server API
+(`plugin.tebex.io`, the `/information` and `/packages` reads), in the
+`X-Tebex-Secret` header, dropped on any redirect, and written into the
+Tebex plugin's own `config.yml`, where the plugin reads it. No route
+answers with it, it's never logged, and moderators can't reach the store.
 
 Two files leave the PC on purpose, and both are built to hold no secrets
 unless asked:
@@ -179,6 +259,103 @@ install.py` is the only place that does it, and the rules are:
 list of every file in the agent that starts a program at all: a new one
 fails that test until it is added on purpose.
 
+### Chunker world conversion, after a click
+
+Making a Java copy of a Bedrock server (or a Bedrock copy of a Java one)
+runs Chunker (Hive Games, MIT, github.com/HiveGamesOSS/Chunker), the
+open-source world converter. The release build builds its command-line jar
+from source at a pinned tag and commit (`scripts/build_chunker.py`) and ships
+it as `tools/chunker-cli.jar`; nothing is downloaded when it runs.
+`agent/servertypes/chunker.py` is the only place that runs it, and only
+after the owner's click (`servers.manage`, which no moderator can have):
+
+- the command is a list (`[java, -Xmx<size>, "-jar", <shipped jar>, "-i",
+  <folder>, "-o", <folder>, "-f", <format>]`), never a string, never through
+  a shell. Both folders are made by this app inside its own data folder. The
+  format is built from a version checked against the pinned Chunker's own
+  list of versions, so nothing from a request reaches it as text;
+- Chunker reads a copy of the world, so the original server is only read,
+  and the result becomes a new server, which is removed again if anything
+  fails;
+- `stdin` is `DEVNULL`, output is captured into the original server's
+  `install-log` folder, it gets a memory limit of a quarter of the PC's
+  memory (1 to 4 GB), and it is killed after 3 hours. A run that doesn't
+  leave a `level.dat` is an error with the log's path, even when Chunker
+  exits with 0.
+
+### The separate Windows user
+
+With "Run servers as a separate Windows user" on (the default for new
+installs), Minecraft, Chunker and the loader installer run as the hidden
+local account `CommandBlockServer` instead of the owner, so a harmful mod or
+plugin can't read the owner's files, the app's data folder or its keys
+(ADR 0007). `agent/serveruser.py` `start()` is the one place that starts
+them, and:
+
+- it asks the starter service (below) over its named pipe, with the same
+  console pipes as before. Python's own process call is wrapped only while
+  `start()` runs, for that one asyncio task; every other program the app
+  starts is unchanged;
+- when the setting is on and the account, its password or the service is
+  missing or refused, nothing starts and the app says "The separate
+  Windows user is missing" with Repair. There is no code path that falls back to the owner;
+- before a start it gives the account change rights (`icacls ... /grant
+  CommandBlockServer:(OI)(CI)M`) on that program's own folder only (the
+  server folder, or Chunker's work folder), and read-and-run on the Java
+  folder. Backups, the data folder and the owner's profile get nothing.
+  The agent owns those folders, so this needs no Administrator;
+- the started process's access list gives the agent's own account only
+  what it uses (stop, CPU cores, reading memory and CPU use).
+
+The starter service (`agent/starter.py`, `CommandBlockStarter`, runs
+`mcsc.exe starter-service` as SYSTEM). At boot the agent runs from a task
+with nobody signed in, and from there Windows can't set up a program
+started with `CreateProcessWithLogonW` (it stops with 0xC0000142), so a
+small service does the starting (the fallback ADR 0007 planned). The agent
+itself keeps the owner's normal rights. The service:
+
+- only answers on `\\.\pipe\CommandBlockStarter`, made with
+  `FILE_FLAG_FIRST_PIPE_INSTANCE` and `PIPE_REJECT_REMOTE_CLIENTS`, owned by
+  SYSTEM, open to SYSTEM and the owner's account only (the account the
+  installer ran as, which the startup task runs the agent as). It checks the
+  asking process's account again before reading the request, so
+  `CommandBlockServer` (a harmful mod) can't use it. The agent opens the pipe
+  "identification only" (so the other end can't act as the owner) and
+  checks it's owned by SYSTEM before sending anything;
+- only ever signs in as `CommandBlockServer` (the name is in the code, not
+  the request), with the password only it can read. Nothing in the request
+  picks the account, the environment or which of its own handles the
+  program gets: only the three console pipe ends, copied from the asking
+  process itself, are passed on (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`).
+  Requests are checked (`check_request`): full paths, no NUL characters,
+  normal priority classes only (never realtime);
+- starts the program on a window station and desktop of its own
+  (`CommandBlockServers\Default`) that only SYSTEM and the account may use,
+  never on SYSTEM's shared service desktop;
+- hands the agent a process handle with only the agent's rights, and stops
+  the program again if it can't;
+- costs nothing while it waits (one blocked thread), and is stopped while
+  an update replaces the program folder.
+
+Not checked on purpose: which program is started. The owner could run any
+program as themselves anyway, and the account has fewer rights than the
+owner, so a list of allowed programs would protect nothing.
+
+The installer (Administrator) makes the account with Windows' own calls
+(`NetUserAdd`, `LsaAddAccountRights`; no program is run, so the password is
+never on a command line): password never expires, Remote Desktop and
+network sign-in are denied, and it is left off the sign-in screen. A
+keyboard sign-in stays allowed because the starter service signs in that
+way (`LogonUserW`, interactive); nobody knows the password. The password is
+40 random characters, saved only for the starter service:
+`Program Files\Command Block Starter\starter.json` (SYSTEM and
+Administrators only, encrypted with DPAPI for this PC), never in the data
+folder, and never logged, printed or sent by the API. The agent never has
+it. Settings' Turn on, Repair and Turn off run `mcsc server-user
+on|repair|off` as Administrator (Windows asks); Repair also restarts the
+service so it reads the new password. Turn off and removing the app delete
+the service, its folder, the account and its profile folder.
+
 ### Updating the app itself
 
 The second exception. The desktop app shows "Version X is out" and, for the
@@ -261,7 +438,9 @@ command isolation test covering it):
   Restart button, with the same permission.
 - Opens links in the browser, only `https://` ones: a link can come from
   the agent, maybe on someone else's PC, and on Windows a path there would
-  run a program.
+  run a program. The one exception is a live map add-on's page, which is
+  plain `http://` and is opened only at a Tailscale address
+  (100.64.0.0/10). The app never opens a router port for a map.
 - When the agent isn't running, turns its startup task back on and runs it
   (`schtasks /Change ... /ENABLE` and `/Run`, fixed argument lists).
 - In the Tailscale step, after a click: downloads, checks and installs
@@ -358,6 +537,27 @@ exception). The rules:
   apps (it isn't in `SETTABLE_PREFIXES`);
 - `tests/test_command_isolation.py` checks the command's shape and that a
   name other than Mojang's, or a path outside the folder, is refused.
+
+### The owner's own server jar, and servers brought in
+
+In Technical mode the owner can pick their own server jar (a fork they
+trust) and say which type it's based on (`agent/servertypes/custom.py`).
+It is copied into the server's folder and launched the same way as any
+server jar (`java -jar <jar>`), only after the owner's own click on Start.
+Only the owner can set or replace one: those routes need `servers.manage`,
+which no moderator can be given. The app never downloads, checks or
+updates it: the record says `custom_jar: true`, the version check and the
+newer-version notice skip it, a version change is refused, and it is never
+shown as checked. A jar on the safety notes' bad-file list is refused.
+
+"Bring a server in" (`agent/bringin.py`) copies a server folder or zip into
+a new folder; the original is never changed. Its start scripts are read as
+text to find the loader and are never run; a zip passes the zip-slip check,
+may hold no links and must fit on the disk. A Forge or NeoForge pack that
+ships only its installer gets the official installer from the loader's
+Maven (the loader installer exception above), never the one in the zip. An
+unknown kind comes in only as the owner's own jar, with the same warning
+and tick.
 
 #### The signing key
 
@@ -516,11 +716,20 @@ Everything the agent downloads (server software, loader installers, mods
 and plugins, Geyser and Floodgate) goes through `agent/downloads.py`, which:
 
 - allows HTTPS only, to an allow-list of hosts (Mojang, FabricMC, QuiltMC,
-  Forge, NeoForged, PaperMC, PurpurMC, Modrinth, GeyserMC). On hosts that
-  serve other people's files or other pages (GitHub; Mojang's Bedrock
-  hosts), only the listed paths are allowed (`GITHUB_PATHS`, `BEDROCK_PATHS`). The host is
+  Forge, NeoForged, PaperMC, PurpurMC, Modrinth, Hangar, CurseForge's file
+  servers and our CurseForge relay, GeyserMC). On hosts that serve other
+  people's files or other pages (GitHub; Mojang's Bedrock hosts; Hangar;
+  Google's sign-in hosts; the relay; CurseForge's file servers), only the
+  listed paths are allowed (`GITHUB_PATHS`, `SHARED_HOST_PATHS`). One more GitHub repo's release list and files are allowed
+  only while an add-on from a pasted link to it is read, added or updated
+  (`downloads.allow_releases`); any other pasted link is never fetched. The host is
   re-checked on every redirect hop, and redirects are followed by hand
   rather than by the HTTP client, so a redirect can't leave the list;
+- allows a rented server's Pterodactyl panel only after the owner ticked
+  "Let Command Block talk to this panel", only inside that panel's own
+  calls (`downloads.allow_panel`), only HTTPS on port 443, and only its
+  client API (`/api/client`). The console uses the `wss://` address the
+  panel gives with a short-lived token;
 - caps the size of a list (20 MB) and of a file (300 MB), and stops reading
   rather than filling the disk;
 - writes to `<name>.part` and renames it into place only after the file has
@@ -531,18 +740,48 @@ and plugins, Geyser and Floodgate) goes through `agent/downloads.py`, which:
 Where a source publishes no checksum (the Fabric launcher jar is one), the
 file is recorded as **unverified** and the apps say so, rather than
 the result being presented as checked (see `docs/honesty.md`). Mod downloads
-additionally refuse anything Modrinth hasn't published a checksum for.
+additionally refuse anything Modrinth or Hangar hasn't published a checksum
+for. A plugin Hangar only links to on another site is shown as a link, never
+downloaded. A file from a GitHub release is checked against the SHA-256
+GitHub lists when there is one, and like a dropped file it is shown as "Not
+checked by Modrinth".
+
+CurseForge is reached only through our relay, which holds CurseForge's key
+(the app never has one) and allows five read-only calls. The agent's
+anonymous Firebase sign-in token goes only to the relay: it is dropped from
+any redirect. CurseForge files are checked against CurseForge's sha1 and
+shown as "Checked (sha1)"; a file CurseForge flags as malware is refused
+even when dropped in by hand, and a mod whose author keeps it from other
+apps is never downloaded from a made-up link.
 
 Modpack mods are stricter still: each one must be on `cdn.modrinth.com`
+(a CurseForge pack's: on CurseForge's file servers, with CurseForge's sha1)
 and must come with a SHA-512 in the pack; anything else blocks the import
 before a single file is downloaded. Each file is checked against that
 SHA-512 (`allow_unverified=False`), and a mismatch stops the import: a new
 server is removed again, and an existing one is put back from the backup
 taken first.
 
+Version lists (never files) are kept as saved copies in the data folder
+(`agent/savedlists.py`), written only after the answer was read correctly.
+When a site is down the saved list is shown with its age; a file picked
+from it is still downloaded from the official site and checked as above.
+
+The signed notes file (`data/catalog.json`, published as `catalog.json` on
+the `data` pre-release, `agent/notes.py`) is read at start and once a day,
+from this repo's release path only. It is signed with its own Ed25519 data
+key, separate from the update key, and refused as a whole if the
+signature, serial (it only goes up), size (256 KB), shape or any link
+(https only) is wrong. It can only add warnings, known bad file hashes
+(installs of those are refused) and newer Java rows; links in it are shown,
+never fetched. Until the real data key exists the built-in key is a test key
+whose private half was never kept, so every copy refuses every file and
+says "Couldn't check for safety notes".
+
 Nothing downloaded is executed by the agent, with the documented exceptions
-under Command injection: the loader installer, Mojang's Bedrock server
-program, and an update of this app, which runs only after its signature and
+under Command injection: the loader installer, Chunker (shipped with the
+app, never downloaded), Mojang's Bedrock server program, the owner's own server jar (picked by the owner, never
+downloaded), and an update of this app, which runs only after its signature and
 checksum check out.
 
 Bedrock add-ons (`.mcpack`, `.mcaddon`, `.mctemplate`) are only unpacked,
@@ -565,6 +804,57 @@ administrator (one UAC prompt). The step also runs `tailscale up
 opens a sign-in page on `login.tailscale.com` (`desktop/pc.py`). The agent
 moves onto the Tailscale address only once `tailscale status` says it is
 connected (`agent/tailscale_watch.py`).
+
+## The Protection card
+
+Each server's Overview has a Protection card. It only reports what it read
+from the server's own files (server.properties, the player lists, Paper's
+YAML files, the Java options) and never says a server is "safe": a line it
+can't check says it doesn't know (the router port until the app opens it
+itself). Each one-click fix goes through the same safe change as Game
+settings (backup, change, check, one Undo) and needs its own permission,
+checked on the server (`agent/protection.py`, `FIXES`). The Log4Shell fix
+downloads Mojang's settings file with its SHA-1 and adds the launch flag to
+the Java options, where it can be taken off.
+
+Two watchers send alerts (`agent/watchers.py`): ops, whitelist or ban
+changes made outside the app (a bracketed console line such as
+"[Steve: Made Bob a server operator]", or a file edited while the server was
+off), and the chat spam rule (several new names saying the same line turn
+the whitelist on with Minecraft's own command). The failed sign-in alert
+counts the tries from the same rows the lockout reads.
+
+Help has a read-only fractureiser check (Technical, owner only): it looks for
+the known files, startup entries and Run key values and lists what it
+checked. It deletes nothing, and finding nothing isn't a clean bill.
+
+## Join protection
+
+Join protection (`agent/joinguard.py`, off by default, Java only) moves the
+server to 127.0.0.1 on a private port for that run (`server-ip` in
+server.properties and `--port` on the start line, both put back when it
+starts without it) and listens on the server's own port in a thread of the
+agent. It reads only the handshake, a server list ping or Login Start
+(each packet at most 8 KB, all of it within 5 seconds), then copies bytes
+both ways without reading them. It never sees passwords or the game.
+
+- Limits per address (IPv6 per /64), automatic blocks (1 hour doubling to
+  24 hours) and blocks the owner adds are checked before anything is read.
+- A PROXY header is believed only from this PC (127.0.0.1 or ::1, where
+  playit's agent connects from). The guard sends one to the server only
+  when the type's add-on and its setting are on disk, since a server that
+  doesn't expect one turns every player away.
+- Without the add-on the server sees every player as 127.0.0.1, so
+  `prevent-proxy-connections` is off for that run and `ban-ip` from the
+  app's console becomes a guard block (a server ban on 127.0.0.1 would shut
+  everyone out). An operator's in-game `/ban-ip` still reaches the server:
+  a hand check.
+- It fails open: a check that throws lets that player in, a stopped guard
+  thread is started again within seconds, and a port it can't take means
+  the server starts direct. Each sends a "Join protection stepped aside"
+  alert.
+- "Start when someone joins" uses the same listener while auto-sleep has
+  stopped a server; a login starts it once through the normal start path.
 
 ## Web surface
 

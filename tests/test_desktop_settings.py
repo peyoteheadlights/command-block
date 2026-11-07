@@ -136,13 +136,23 @@ def test_changing_the_version_is_checked_first(qapp, agent_http, monkeypatch):
     assert "The version is only known once this server starts" in shown_text(version)
     button(version, "Make the change").click()
     assert not button(version, "Make the change").isEnabled()  # until the list is open
-    button(version, "Change the kind or version").click()
+    button(version, "Change the version").click()
     combos = version.findChildren(QtWidgets.QComboBox)
-    wait_for(qapp, lambda: combos[1].count() > 0, 20)
+    wait_for(qapp, lambda: combos[0].count() > 0, 20)
     button(version, "Make the change").click()
     assert "Press Check first" in shown_text(version)
     button(version, "Check first").click()
     wait_for(qapp, lambda: "After the change: Fabric" in shown_text(version), 20)
+
+
+def test_change_server_type_is_its_own_card_and_never_guesses_the_version(qapp, agent_http):
+    _window, page = settings_page(qapp, agent_http)
+    wait_for(qapp, lambda: "Start the server once" in shown_text(page), 20)
+    card = card_of(page, "Change server type")
+    assert "Your world, settings and Minecraft version stay" in shown_text(card)
+    assert not [
+        b for b in card.findChildren(QtWidgets.QPushButton) if b.text() == "Stop and change"
+    ]
 
 
 def test_bedrock_players_says_what_the_server_still_needs(qapp, agent_http):
@@ -153,9 +163,13 @@ def test_bedrock_players_says_what_the_server_still_needs(qapp, agent_http):
 
 def test_a_bedrock_server_has_no_bedrock_players_section(qapp, agent_http):
     window, page = settings_page(qapp, agent_http)
-    window.server_screen.row = {**window.server_screen.row, "edition": "bedrock"}
-    page.row = window.server_screen.row
-    page.load()
+    # The fake server is Java. Every refresh of the server list shows the
+    # agent's row again (and rebuilds the pages when it changes), so keep
+    # this server Bedrock for the window's whole life, then open Settings anew.
+    shown = window.server_screen.show_row
+    window.server_screen.show_row = lambda row: shown({**row, "edition": "bedrock"})
+    window.server_screen.show_row(window.server_screen.row)
+    page = open_page(qapp, window, "Settings")
     assert not button(page, "Server settings").isHidden()
     assert all(
         b.isHidden()
@@ -203,3 +217,64 @@ def test_a_moderator_sees_settings_they_cant_change_greyed_out(qapp, agent_http)
     assert not card_of(page, "When it crashes").isEnabled()
     assert card_of(page, "Game settings").isEnabled()
     assert "Duplicate this server" not in shown_text(page)
+
+
+def test_update_bedrock_by_itself_is_an_owner_switch_off_by_default(qapp, agent_http):
+    window, page = settings_page(qapp, agent_http)
+    # The fake server is Java. Every refresh of the server list shows the
+    # agent's row again (and rebuilds the pages when it changes), so keep
+    # this server Bedrock for the window's whole life, then open Settings anew.
+    shown = window.server_screen.show_row
+    window.server_screen.show_row = lambda row: shown({**row, "edition": "bedrock"})
+    window.server_screen.show_row(window.server_screen.row)
+    page = open_page(qapp, window, "Settings")
+    words = "Update Bedrock by itself"
+    wait_for(qapp, lambda: words in [b.text() for b in page.findChildren(QtWidgets.QCheckBox)])
+    frame = card_of(page, "Bedrock updates")
+    switch = next(b for b in frame.findChildren(QtWidgets.QCheckBox) if b.text() == words)
+    assert not switch.isChecked()
+    switch.setChecked(True)
+    button(frame, "Save").click()
+    core = core_of(agent_http)
+    wait_for(qapp, lambda: core.servers["survival"].config.server.bedrock_auto_update)
+
+
+def test_the_version_picker_says_how_old_a_saved_list_is(qapp, agent_http, monkeypatch):
+    from .test_keeping_current import sources
+
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(sources()))
+    agent_http.get("/api/server-types/fabric/versions", headers=owner(agent_http))  # saved
+    monkeypatch.setattr(
+        downloads, "TRANSPORT", httpx.MockTransport(sources(down=("meta.fabricmc.net",)))
+    )
+    _window, page = settings_page(qapp, agent_http)
+    wait_for(
+        qapp,
+        lambda: (
+            "Change the version" in [b.text() for b in page.findChildren(QtWidgets.QPushButton)]
+        ),
+    )
+    version = card_of(page, "Kind and version")
+    button(version, "Change the version").click()
+    wait_for(qapp, lambda: "ago, couldn't reach Fabric." in shown_text(version), 20)
+
+
+def test_join_protection_is_one_switch_and_saves(qapp, agent_http):
+    _window, page = settings_page(qapp, agent_http)
+    join = card_of(page, "Join protection")
+    # The fake servers run from a start command, which can't take --port.
+    assert "started with its own start command" in shown_text(join)
+    assert "Blocked addresses" not in shown_text(join)  # Technical only
+    [switch] = [
+        b for b in join.findChildren(QtWidgets.QCheckBox) if b.text() == "Turn on Join protection"
+    ]
+    switch.setChecked(True)
+    button(join, "Save").click()
+    headers = owner(agent_http)
+    wait_for(
+        qapp,
+        lambda: agent_http.get("/api/servers/survival/settings", headers=headers).json()["server"][
+            "join_protection"
+        ],
+        20,
+    )

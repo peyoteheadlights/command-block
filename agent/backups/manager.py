@@ -38,6 +38,7 @@ from ..security.paths import (
     is_inside,
     safe_existing,
     safe_filename,
+    safe_join,
     zip_member_is_symlink,
 )
 from . import offsite
@@ -72,6 +73,8 @@ def label(row: dict[str, Any]) -> str | None:
     """How the Backups list names a backup made before a change: by what it
     came before ("Before changing game settings"). Older backups' notes said
     "Automatic safety copy before: ..." and read the same way."""
+    if row.get("kind") == "season":
+        return f"Old season, kept forever ({row.get('note') or 'season'})"
     if row.get("kind") != "safety":
         return None
     note = (row.get("note") or "").strip()
@@ -80,6 +83,19 @@ def label(row: dict[str, Any]) -> str | None:
         return "Before a change"
     rest = note[at + len("before") :].lstrip(": ").strip()
     return f"Before {rest}" if rest else "Before a change"
+
+
+def in_scope(member: str, only: set[str]) -> bool:
+    """Whether an archive member is one of ``only`` or inside one of them.
+    An entry is a top-level name ("world") or a path ("plugins/a/b.yml")."""
+    return any(member == e or member.startswith(e.rstrip("/") + "/") for e in only)
+
+
+def single_files(row: dict[str, Any]) -> set[str] | None:
+    """What a backup of single files inside folders puts back: just those
+    files, never the whole folder they are in. None for any other backup."""
+    includes = {p for p in (row.get("includes") or "").split(",") if p}
+    return includes if any("/" in p for p in includes) else None
 
 
 class BackupManager:
@@ -125,8 +141,14 @@ class BackupManager:
         base = self.config.server_dir
         found = []
         for name in includes:
-            safe_filename(name)  # no traversal in include lists either
-            path = base / name
+            # No traversal in include lists either. A name may be a path
+            # inside the folder ("plugins/Chunky/config.yml"): one settings
+            # file backed up on its own.
+            if "/" in name:
+                path = safe_join(base, *name.split("/"))
+            else:
+                safe_filename(name)
+                path = base / name
             if path.exists():
                 found.append(path)
         return found
@@ -160,10 +182,13 @@ class BackupManager:
         return files
 
     def _zip_sync(
-        self, target: Path, files: list[Path], base: Path, progress=None, extra=None
+        self, target: Path, files: list[Path], base: Path, progress=None, extra=None, empty=()
     ) -> tuple[int, int]:
         """Write the archive. ``extra`` is (file, name in the archive) pairs
-        held outside ``base``: a Bedrock world copied while the server ran."""
+        held outside ``base``: a Bedrock world copied while the server ran.
+        ``empty`` are included folders with no files: each gets a folder
+        entry, so a restore puts it back empty (Undo of adding the first
+        mods to an empty mods folder takes them away again)."""
         compression = (
             zipfile.ZIP_DEFLATED
             if self.config.backups.compression != "store"
@@ -171,6 +196,8 @@ class BackupManager:
         )
         written = 0
         with zipfile.ZipFile(target, "w", compression=compression, allowZip64=True) as zf:
+            for folder in empty:
+                zf.writestr(f"{folder.relative_to(base).as_posix()}/", b"")
             for full in files:
                 try:
                     zf.write(full, full.relative_to(base))
@@ -248,7 +275,7 @@ class BackupManager:
 
         # What the backup holds, recorded by top-level name (a Bedrock
         # world copied under hold still counts as "worlds").
-        included = ",".join(p.name for p in sources)
+        included = ",".join(p.relative_to(self.config.server_dir).as_posix() for p in sources)
         self._running = True
         started = time.time()
         await self.bus.publish(Event(type="backup_started", message=f"Backup started: {base_name}"))
@@ -295,6 +322,8 @@ class BackupManager:
                     log.warning("could not flush the world before backup", exc_info=True)
 
             members = await asyncio.to_thread(self._collect, sources)
+            used = {m.relative_to(self.config.server_dir).parts[0] for m in members}
+            empty = [s for s in sources if s.is_dir() and s.name not in used]
             if job:
                 job.step("Writing the backup", total=len(members) + len(extra), unit="files")
             files, size = await asyncio.to_thread(
@@ -304,6 +333,7 @@ class BackupManager:
                 self.config.server_dir,
                 job.advance if job else None,
                 extra,
+                empty,
             )
             if job:
                 job.step("Checking the backup")
@@ -431,6 +461,15 @@ class BackupManager:
                 reason = f"unexpected error: {exc}"
         if reason is None:
             offsite.record(self.db, row_id, offsite.OK, str(destination), None)
+            row = self.db.server_row(self.server.server_id) or {}
+            about = {
+                "name": self.config.server.name,
+                # The owner's own jar isn't in a backup, so it can't come back.
+                "type": "custom" if self.config.server.custom_jar else self.config.server.type,
+                "minecraft": self.server.mc_version,
+                "loader": row.get("loader"),
+            }
+            await asyncio.to_thread(offsite.write_about, root, self.server.server_id, about)
             return {"state": "ok", "path": str(destination)}
         offsite.record(self.db, row_id, offsite.FAILED, None, reason)
         await self.bus.publish(
@@ -482,7 +521,7 @@ class BackupManager:
         try:
             with zipfile.ZipFile(path) as zf:
                 names = zf.namelist()
-                if not names:
+                if all(name.endswith("/") for name in names):
                     return {"ok": False, "reason": "the archive contains no files"}
                 damaged = zf.testzip()
             if damaged:
@@ -591,6 +630,8 @@ class BackupManager:
             raise BackupError(f"This backup did not verify: {check['reason']}")
         path = Path(row["path"])
         base = self.config.server_dir
+        if only is None:
+            only = single_files(row)
 
         async def change(job: JobHandle | None) -> dict[str, Any]:
             replaced = await asyncio.to_thread(self._extract, path, base, only)
@@ -667,13 +708,17 @@ class BackupManager:
         own. Only the safe-change routine uses this, to undo a failed change
         from the safety backup it has just taken."""
         row = self.get(backup_id)
-        return await asyncio.to_thread(self._extract, Path(row["path"]), self.config.server_dir)
+        return await asyncio.to_thread(
+            self._extract, Path(row["path"]), self.config.server_dir, single_files(row)
+        )
 
     def _extract(self, path: Path, base: Path, only: set[str] | None = None) -> list[str]:
         """Move the archive's top-level folders aside, then extract it. If
         anything fails, what was moved aside is put back. With ``only``,
-        just those top-level entries are touched."""
+        just those entries are touched: top-level names, or single files
+        inside a folder, which are moved aside on their own."""
         replaced: list[str] = []
+        moved: list[tuple[Path, Path]] = []
         try:
             with zipfile.ZipFile(path) as zf:
                 members = zf.namelist()
@@ -681,24 +726,30 @@ class BackupManager:
                 for info in zf.infolist():
                     check_archive_member(base, info.filename, zip_member_is_symlink(info))
                 if only is not None:
-                    members = [m for m in members if m.split("/")[0] in only]
+                    members = [m for m in members if in_scope(m, only)]
                     if not members:
                         raise BackupError("This backup holds none of the folders to put back.")
-                tops = {m.split("/")[0] for m in members if m.split("/")[0]}
-                for top in tops:
-                    live = base / top
+                # What is moved aside whole: the top-level folders, or an
+                # entry of ``only`` that is a path inside one (one file).
+                files = [e for e in only or () if "/" in e]
+
+                def unit(member: str) -> str:
+                    return next((e for e in files if in_scope(member, {e})), member.split("/")[0])
+
+                for unit_name in sorted({unit(m) for m in members} - {""}):
+                    live = base / unit_name
                     if live.exists():
-                        retired = _unique(base / f"{top}.replaced-{time.strftime('%Y%m%d-%H%M%S')}")
+                        stamp = time.strftime("%Y%m%d-%H%M%S")
+                        retired = _unique(live.with_name(f"{live.name}.replaced-{stamp}"))
                         shutil.move(str(live), str(retired))
+                        moved.append((live, retired))
                         replaced.append(str(retired))
                 zf.extractall(base, members=members)
         except Exception as exc:
             # put back whatever was moved aside
-            for moved in replaced:
-                original = Path(moved)
-                name = original.name.split(".replaced-")[0]
-                if original.exists() and not (base / name).exists():
-                    shutil.move(str(original), str(base / name))
+            for live, retired in moved:
+                if retired.exists() and not live.exists():
+                    shutil.move(str(retired), str(live))
             raise BackupError(
                 f"Restore failed and the previous files were put back: {exc}"
             ) from exc
@@ -717,7 +768,7 @@ class BackupManager:
             with zipfile.ZipFile(archive) as zf:
                 entries = [i for i in zf.infolist() if not i.is_dir()]
             if only is not None:
-                entries = [i for i in entries if i.filename.split("/")[0] in only]
+                entries = [i for i in entries if in_scope(i.filename, only)]
         except (zipfile.BadZipFile, OSError) as exc:
             return False, f"the archive could not be re-opened to check the result: {exc}"
         if not entries:
@@ -742,7 +793,8 @@ class BackupManager:
     # ------------------------------------------------------------------
     async def apply_retention(self) -> dict[str, Any]:
         """Keep N daily, weekly and monthly backups. Safety backups are kept
-        for 14 days regardless; manual backups are never auto-deleted."""
+        for 14 days regardless; manual and season backups are never
+        auto-deleted."""
         keep_daily = self.config.backups.keep_daily
         keep_weekly = self.config.backups.keep_weekly
         keep_monthly = self.config.backups.keep_monthly
@@ -751,7 +803,7 @@ class BackupManager:
         keep: set[int] = set()
         buckets: dict[str, dict[str, dict]] = {"daily": {}, "weekly": {}, "monthly": {}}
         for row in sorted(rows, key=lambda r: r["created_at"], reverse=True):
-            if row["kind"] == "manual":
+            if row["kind"] in ("manual", "season"):
                 keep.add(row["id"])
                 continue
             if row["kind"] == "safety":

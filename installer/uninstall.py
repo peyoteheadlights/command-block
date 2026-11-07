@@ -23,7 +23,7 @@ from typing import Any
 
 from agent import appinfo
 
-from . import layout
+from . import layout, serveruser
 from .bootstrap import UPDATE_FOLDER_SUFFIX
 from .installlog import InstallLog
 from .system import System
@@ -78,6 +78,10 @@ def uninstall(
             ("Installed apps entry", system.remove_uninstall_entry),
             ("Windows alerts entry", system.remove_alerts_entry),
             ("firewall rules", lambda: _remove_firewall(system, port)),
+            (
+                "separate Windows user",
+                lambda: serveruser.remove(system),
+            ),
         )
     for name, action in removals:
         try:

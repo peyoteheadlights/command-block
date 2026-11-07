@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "id": "coreprotect",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "CoreProtect"
+    ],
+    "modrinth": "coreprotect",
+    "hangar": "CORE/CoreProtect"
+  },
+  "versions": ">=21.0 <25",
+  "title": "CoreProtect",
+  "what": "Remembers who placed or broke every block, so you can see who griefed and put it back.",
+  "steps": [
+    "In the game, /co inspect (or /co i) turns on the inspector: click a block to see its history.",
+    "Look up a player to see what they changed, then roll it back if it was griefing.",
+    "A rollback can be taken back with Undo the last rollback.",
+    "The history grows over time; Delete old history keeps the database small."
+  ],
+  "source": "https://github.com/PlayPro/CoreProtect/blob/master/docs/commands.md",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "lookup",
+      "label": "What did a player change?",
+      "command": "co lookup u:{player} t:{hours}h r:#global",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        },
+        {
+          "id": "hours",
+          "kind": "number",
+          "label": "Hours back",
+          "min": 1,
+          "max": 720,
+          "default": 24
+        }
+      ]
+    },
+    {
+      "id": "rollback",
+      "label": "Roll back a player's changes",
+      "command": "co rollback u:{player} t:{hours}h r:#global",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        },
+        {
+          "id": "hours",
+          "kind": "number",
+          "label": "Hours back",
+          "min": 1,
+          "max": 720,
+          "default": 24
+        }
+      ],
+      "changes_world": true,
+      "warning": "Blocks in the whole world go back to how they were. Undo the last rollback takes it back."
+    },
+    {
+      "id": "undo",
+      "label": "Undo the last rollback",
+      "command": "co undo",
+      "changes_world": true,
+      "warning": "This puts the rolled-back blocks back."
+    },
+    {
+      "id": "status",
+      "label": "Show its status",
+      "command": "co status"
+    },
+    {
+      "id": "purge",
+      "label": "Delete old history",
+      "command": "co purge t:{days}d",
+      "fields": [
+        {
+          "id": "days",
+          "kind": "number",
+          "label": "Keep the last days",
+          "min": 7,
+          "max": 365,
+          "default": 30
+        }
+      ],
+      "changes_world": true,
+      "warning": "Older history is deleted for good, so it can't be looked up or rolled back."
+    }
+  ]
+}

@@ -271,6 +271,7 @@ class SetupWindow(QWidget):
             "servers": [],
             "start_with_pc": True,
             "allow_devices": True,
+            "server_ports_only": True,
             "install_java": None,
         }
         self.path = "new"  # new | none | import | update
@@ -966,6 +967,13 @@ class SetupWindow(QWidget):
                     t("allow_devices_sub"),
                     self.answers["allow_devices"],
                     set_answer("allow_devices"),
+                    self.tokens,
+                ),
+                Switch(
+                    t("server_ports_only"),
+                    t("server_ports_only_sub"),
+                    self.answers["server_ports_only"],
+                    set_answer("server_ports_only"),
                     self.tokens,
                 ),
                 advanced,

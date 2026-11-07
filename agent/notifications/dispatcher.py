@@ -41,6 +41,10 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "server_started": ("server_started", 0x3BA55D, "{server} is online"),
     "server_stopped": ("server_stopped", 0x9AA0A6, "{server} stopped"),
     "server_crashed": ("server_crashed", 0xED4245, "{server} crashed"),
+    # A rented server on a host's panel (agent/rented.py).
+    "rented_started": ("server_started", 0x3BA55D, "{server} is online"),
+    "rented_stopped": ("server_stopped", 0x9AA0A6, "{server} stopped"),
+    "rented_unreachable": ("server_crashed", 0xED4245, "{server}: the host's panel didn't answer"),
     "server_restarted": ("server_restarted", 0x5865F2, "{server} restarted"),
     "server_recovered": ("server_recovered", 0x3BA55D, "{server} recovered"),
     "crash_loop": ("server_crashed", 0xED4245, "{server}: automatic restart disabled"),
@@ -90,6 +94,7 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "server_added": ("servers_changed", 0x5865F2, "Server added: {server}"),
     "server_removed": ("servers_changed", 0x9AA0A6, "Server removed: {server}"),
     "server_duplicated": ("servers_changed", 0x5865F2, "Server copied: {server}"),
+    "new_season": ("servers_changed", 0x5865F2, "{server}: a new season started"),
     "game_settings_changed": (
         "game_settings_changed",
         0x5865F2,
@@ -132,6 +137,22 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
         "{server}: a player tried to join from a new address",
     ),
     "player_report": ("reports", 0xED4245, "{server}: a player was reported"),
+    "server_software_available": ("server_software", 0x5865F2, "{server}: newer server software"),
+    "ops_changed": ("ops_changed", 0xED4245, "{server}: operators changed outside the app"),
+    "lists_changed": ("lists_changed", 0xFAA61A, "{server}: player list changed outside the app"),
+    "chat_spam": ("chat_spam", 0xED4245, "{server}: chat spam from new names"),
+    "join_protection_off": ("join_protection", 0xFAA61A, "{server}: Join protection stepped aside"),
+    "launch_mode_ended": ("join_protection", 0x5865F2, "{server}: Launch mode ended"),
+    # Your PCs (agent/yourpcs.py) and the account records' safety checks.
+    "pc_join_request": ("your_pcs", 0xFAA61A, "A PC asks to join your account"),
+    "pc_joined": ("your_pcs", 0xFAA61A, "A PC joined your account"),
+    "pc_join_ran_out": ("your_pcs", 0x9AA0A6, "Joining your account ran out"),
+    "pc_removed": ("your_pcs", 0xFAA61A, "A PC was removed from your account"),
+    "owner_password_changed": ("your_pcs", 0xFAA61A, "The owner password was changed"),
+    "owner_password_reset": ("your_pcs", 0xFAA61A, "The owner password was reset on a PC"),
+    "moderator_renamed": ("your_pcs", 0xFAA61A, "Two moderators had one name"),
+    "records_tampered": ("your_pcs", 0xED4245, "An account record failed its safety check"),
+    "database_shared": ("your_pcs", 0xED4245, "Other accounts can open the account database"),
 }
 
 
@@ -186,8 +207,19 @@ ALERT_PAGES = {
     "whitelist_form": "players",
     "new_address": "players",
     "player_report": "players",
+    "server_software_available": "overview",
+    "ops_changed": "players",
+    "lists_changed": "players",
+    "chat_spam": "players",
+    "pc_join_request": "your-pcs",
+    "pc_joined": "your-pcs",
+    "pc_removed": "your-pcs",
+    "owner_password_reset": "your-pcs",
+    "moderator_renamed": "helpers",
+    "records_tampered": "security",
+    "database_shared": "security",
 }
-APP_PAGES = {"security", "helpers", "app-settings", "discord"}
+APP_PAGES = {"security", "helpers", "app-settings", "discord", "your-pcs"}
 
 # How many alerts the agent keeps for the phone app to read.
 APP_ALERTS_KEPT = 200
@@ -237,6 +269,8 @@ class Notifier:
         # Whether an account may see a server's alerts (user, server id);
         # set by AgentCore from the accounts. None: everyone sees everything.
         self.can_see: Callable[[str, str | None], bool] | None = None
+        # This PC's name once it shares its accounts (agent/yourpcs.py).
+        self.pc_label: Callable[[], str | None] = lambda: None
         # The Discord bot, when there is one (set by AgentCore).
         self.bot: Callable[[], Any] | None = None
 
@@ -324,7 +358,10 @@ class Notifier:
         colour, title = EVENT_MAP.get(event.type, (event.type, 0x5865F2, event.type))[1:]
         if event.type == "server_crashed" and (event.data or {}).get("reason") == "startup_failure":
             title = "{server} failed to start"
-        return colour, title.replace("{server}", self.server_name(event))
+        title = title.replace("{server}", self.server_name(event))
+        pc = self.pc_label()
+        # With several PCs, every alert says which one it came from.
+        return colour, f"{pc}: {title}" if pc else title
 
     # ------------------------------------------------------------------
     def _fields(self, event: Event) -> list[dict[str, Any]]:
@@ -543,6 +580,7 @@ class Notifier:
         _, event_title = self.title(event)
         return {
             "title": title or event_title,
+            "pc": self.pc_label(),  # which of the owner's PCs, once there are several
             "body": (event.message or event_title)[:300],
             "event": event.type,
             "level": event.level,
@@ -632,6 +670,8 @@ class Notifier:
         """Event bus subscriber. Queues the alert and returns at once; never raises."""
         try:
             if event.type not in EVENT_MAP or not self.anyone_wants(event.type):
+                return
+            if event.data.get("quiet"):  # in the app's feed only
                 return
             min_interval = self.config.notifications.min_interval_seconds
             key = (event.server_id, event.type)

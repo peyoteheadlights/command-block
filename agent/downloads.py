@@ -1,8 +1,9 @@
 """The safe downloader: one module for every file and list the app fetches.
 
 Rules, the same for every source (Mojang, Fabric, Quilt, Forge, NeoForge,
-Paper, Purpur, Modrinth, GeyserMC, Adoptium's Java, and this app's own
-GitHub releases):
+Paper, Purpur, Leaf, Modrinth, Hangar, CurseForge's files and our CurseForge
+relay, GeyserMC, Adoptium's Java, this app's own GitHub releases and the
+one release an owner added an add-on from):
 
   * HTTPS only, and only from the official hosts in ALLOWED_HOSTS. A
     redirect is followed only to another allowed host.
@@ -25,7 +26,9 @@ import asyncio
 import hashlib
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -64,10 +67,23 @@ ALLOWED_HOSTS = frozenset(
         "api.papermc.io",
         # Purpur
         "api.purpurmc.org",
+        # Leaf (a Paper fork)
+        "api.leafmc.one",
         # Modrinth
         "api.modrinth.com",
         "cdn.modrinth.com",
         "cdn-raw.modrinth.com",
+        # Hangar (PaperMC's plugin site): its API and the files it points to.
+        "hangar.papermc.io",
+        "hangarcdn.papermc.io",
+        # CurseForge: only through our relay (agent/mods/curseforge.py), with
+        # Firebase's anonymous sign-in, and its file servers. Only the paths
+        # in SHARED_HOST_PATHS.
+        "europe-west1-command-block-d4526.cloudfunctions.net",
+        "identitytoolkit.googleapis.com",
+        "securetoken.googleapis.com",
+        "edge.forgecdn.net",
+        "mediafilez.forgecdn.net",
         # GeyserMC
         "download.geysermc.org",
         # Eclipse Temurin (Adoptium's Java), for the installer only
@@ -86,6 +102,8 @@ ALLOWED_HOSTS = frozenset(
         "minecraft.azureedge.net",
         # Tailscale's Windows setup, for the desktop app's Tailscale step.
         "pkgs.tailscale.com",
+        # Tebex's Game Server API, read only, for the Store (agent/store.py).
+        "plugin.tebex.io",
     }
 )
 
@@ -97,15 +115,32 @@ GITHUB_PATHS = {
     "api.github.com": (f"/repos/{REPO}/releases",),
     "github.com": (f"/{REPO}/releases/download/", "/adoptium/"),
 }
-# The same for Mojang's Bedrock hosts and Tailscale's package site, which
+# The same for Mojang's Bedrock hosts, Tailscale's package site, Hangar,
+# Google's sign-in and Firebase hosts and CurseForge's file servers, which
 # also serve web pages and other files: only the links list, the Bedrock
-# server zips and Tailscale's Windows setup.
-BEDROCK_PATHS = {
+# server zips, Tailscale's Windows setup, Hangar's API and its plugin files,
+# the relay, the two sign-in calls, CurseForge's mod files and Tebex's two reads.
+SHARED_HOST_PATHS = {
     "net-secondary.web.minecraft-services.net": ("/api/v1.0/download/links",),
     "www.minecraft.net": ("/bedrockdedicatedserver/",),
     "minecraft.azureedge.net": ("/bin-win/", "/bin-linux/"),
     "pkgs.tailscale.com": ("/stable/tailscale-setup-",),
+    "hangar.papermc.io": ("/api/v1/",),
+    "hangarcdn.papermc.io": ("/plugins/",),
+    "europe-west1-command-block-d4526.cloudfunctions.net": ("/curseforge/",),
+    "identitytoolkit.googleapis.com": ("/v1/accounts:signUp",),
+    "securetoken.googleapis.com": ("/v1/token",),
+    "edge.forgecdn.net": ("/files/",),
+    "mediafilez.forgecdn.net": ("/files/",),
+    "plugin.tebex.io": ("/information", "/packages"),
 }
+# One more repo whose release list and release files may be read, while an
+# add-on from a GitHub link is read or updated (see allow_releases).
+_link_repo: ContextVar[str | None] = ContextVar("link_repo", default=None)
+# A rented server's Pterodactyl panel, which the owner allowed by clicking
+# Connect: only its client API, only inside one panel call (agent/rented.py).
+_panel_host: ContextVar[str | None] = ContextVar("panel_host", default=None)
+PANEL_PATH = "/api/client"
 
 MAX_LIST_BYTES = 20 * 1024 * 1024  # a version list or API answer
 MAX_FILE_BYTES = 300 * 1024 * 1024  # one server jar, installer or mod
@@ -121,6 +156,32 @@ TRANSPORT: httpx.AsyncBaseTransport | None = None
 class DownloadError(RuntimeError):
     """A download or list could not be fetched or did not check out. The
     message is written for the person reading it."""
+
+    status: int | None = None  # the site's answer code, when it sent one
+
+
+class DownloadNotFound(DownloadError):
+    """The site answered 404: it doesn't have that (an answer, not an outage)."""
+
+
+@contextmanager
+def allow_releases(repo: str) -> Iterator[None]:
+    """Inside the block, ``owner/repo``'s releases may be read from GitHub too."""
+    token = _link_repo.set(repo)
+    try:
+        yield
+    finally:
+        _link_repo.reset(token)
+
+
+@contextmanager
+def allow_panel(host: str) -> Iterator[None]:
+    """Inside the block, ``host``'s Pterodactyl client API may be called."""
+    token = _panel_host.set(host.lower())
+    try:
+        yield
+    finally:
+        _panel_host.reset(token)
 
 
 @dataclass(frozen=True)
@@ -174,19 +235,29 @@ def check_url(url: str) -> str:
     if parsed.scheme != "https":
         raise DownloadError("Only secure (https) downloads are allowed.")
     host = (parsed.hostname or "").lower()
+    if host and host == _panel_host.get():
+        if parsed.username or parsed.password or parsed.port not in (None, 443):
+            raise DownloadError("That panel address isn't allowed.")
+        if parsed.path != PANEL_PATH and not parsed.path.startswith(PANEL_PATH + "/"):
+            raise DownloadError(f"Only the panel's client API can be called on {host}.")
+        return url
     if host not in ALLOWED_HOSTS:
         raise DownloadError(
             f"Downloads from {host or 'that address'} aren't allowed. "
-            "Only official Minecraft, mod loader, Modrinth, Java, Tailscale and this app's own sites are."
+            "Only official Minecraft, mod loader, Modrinth, Hangar, CurseForge, Java, "
+            "Tailscale and this app's own sites are."
         )
     if parsed.username or parsed.password or parsed.port not in (None, 443):
         raise DownloadError("That download address isn't allowed.")
     prefixes = GITHUB_PATHS.get(host)
+    repo = _link_repo.get()
+    if prefixes is not None and repo:
+        prefixes = (*prefixes, f"/repos/{repo}/releases", f"/{repo}/releases/download/")
     if prefixes is not None and not any(parsed.path.startswith(p) for p in prefixes):
         raise DownloadError(
             "Only this app's own releases and Temurin's files can be downloaded from GitHub."
         )
-    prefixes = BEDROCK_PATHS.get(host)
+    prefixes = SHARED_HOST_PATHS.get(host)
     if prefixes is not None and not any(parsed.path.startswith(p) for p in prefixes):
         raise DownloadError(f"That file can't be downloaded from {host}.")
     return url
@@ -218,12 +289,18 @@ def _plain_status(status: int, host: str) -> str:
 
 
 async def _send(
-    client: httpx.AsyncClient, url: str, stream: bool = False
+    client: httpx.AsyncClient,
+    url: str,
+    stream: bool = False,
+    headers: dict | None = None,
+    method: str = "GET",
+    content: bytes | None = None,
 ) -> tuple[httpx.Response, str]:
-    """GET ``url``, following up to five redirects between allowed hosts."""
+    """GET (or POST ``content`` to) ``url``, following up to five redirects
+    between allowed hosts. A sign-in token never follows a redirect."""
     for _ in range(6):
         check_url(url)
-        request = client.build_request("GET", url)
+        request = client.build_request(method, url, headers=headers, content=content)
         try:
             response = await client.send(request, stream=stream)
         except httpx.TimeoutException as exc:
@@ -232,36 +309,66 @@ async def _send(
             raise DownloadError(
                 f"Couldn't reach {source_name(url)}. Check the PC's internet connection."
             ) from exc
-        if response.is_redirect:
+        if response.has_redirect_location:
             location = response.headers.get("location", "")
             await response.aclose()
             url = urljoin(url, location)
+            headers = {
+                k: v
+                for k, v in (headers or {}).items()
+                if k.lower() not in ("authorization", "x-tebex-secret")
+            }
+            method, content = "GET", None
             continue
-        if response.status_code >= 400:
+        # 304: unchanged since the ETag asked with (fetch_if_changed).
+        if response.status_code >= 300 and response.status_code != 304:
             await response.aclose()
-            raise DownloadError(_plain_status(response.status_code, source_name(url)))
+            error = DownloadNotFound if response.status_code == 404 else DownloadError
+            failed = error(_plain_status(response.status_code, source_name(url)))
+            failed.status = response.status_code
+            raise failed
         return response, url
     raise DownloadError(
         f"{source_name(url)} kept sending the download somewhere else, so it was stopped."
     )
 
 
-async def fetch_bytes(url: str, max_bytes: int = MAX_LIST_BYTES) -> bytes:
+async def _read(response: httpx.Response, final: str, max_bytes: int) -> bytes:
+    try:
+        data = bytearray()
+        async for chunk in response.aiter_bytes():
+            data.extend(chunk)
+            if len(data) > max_bytes:
+                raise DownloadError(f"{source_name(final)} sent more data than expected.")
+        return bytes(data)
+    finally:
+        await response.aclose()
+
+
+async def fetch_bytes(url: str, max_bytes: int = MAX_LIST_BYTES, **request: Any) -> bytes:
+    """``request``: ``headers``, ``method`` and ``content``, as _send takes them."""
     async with _client() as client:
-        response, final = await _send(client, url, stream=True)
-        try:
-            data = bytearray()
-            async for chunk in response.aiter_bytes():
-                data.extend(chunk)
-                if len(data) > max_bytes:
-                    raise DownloadError(f"{source_name(final)} sent more data than expected.")
-            return bytes(data)
-        finally:
+        response, final = await _send(client, url, stream=True, **request)
+        return await _read(response, final, max_bytes)
+
+
+async def fetch_if_changed(
+    url: str, etag: str | None, max_bytes: int = MAX_LIST_BYTES
+) -> tuple[bytes | None, str | None]:
+    """(the answer, its ETag), or (None, etag) when the site says nothing
+    changed since the answer with that ETag."""
+    async with _client() as client:
+        headers = {"If-None-Match": etag} if etag else None
+        response, final = await _send(client, url, stream=True, headers=headers)
+        if response.status_code == 304:
             await response.aclose()
+            return None, etag
+        new_etag = response.headers.get("etag")
+        return await _read(response, final, max_bytes), new_etag
 
 
-async def fetch_json(url: str, max_bytes: int = MAX_LIST_BYTES) -> Any:
-    data = await fetch_bytes(url, max_bytes)
+async def fetch_json(url: str, max_bytes: int = MAX_LIST_BYTES, **request: Any) -> Any:
+    data = await fetch_bytes(url, max_bytes, **request)
     try:
         import json
 

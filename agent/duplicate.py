@@ -33,6 +33,7 @@ import logging
 import os
 import shutil
 import time
+import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -42,7 +43,12 @@ from .events import Event
 from .jobs import Job
 from .minecraft import properties
 from .safechange import SafeChange, SafeChangeError, run_safe_change
-from .security.paths import check_archive_member, check_new_server_folder, is_inside
+from .security.paths import (
+    check_archive_member,
+    check_new_server_folder,
+    is_inside,
+    zip_member_is_symlink,
+)
 from .servertypes.create import new_server_id
 from .servertypes.install import INSTALL_LOG, PREVIOUS
 
@@ -168,6 +174,22 @@ def _prepare_properties(target: Path, port: int, name: str, world: str) -> None:
     edited.write(path)
 
 
+def _put_season(path: Path, target: Path) -> None:
+    """An old season's backup over the fresh copy: each folder or file the
+    backup holds (world, settings, add-ons) replaces the copy's own."""
+    with zipfile.ZipFile(path) as zf:
+        infos = zf.infolist()
+        for info in infos:
+            check_archive_member(target, info.filename, zip_member_is_symlink(info))
+        for unit in {i.filename.split("/")[0] for i in infos} - {""}:
+            old = check_archive_member(target, unit)
+            if old.is_dir():
+                shutil.rmtree(old)
+            elif old.exists():
+                old.unlink()
+        zf.extractall(target)
+
+
 def _entry_for_copy(ctx: ServerContext, folder: Path) -> dict[str, Any]:
     """The source's config entry, for the copy. A folder setting written as
     a full path (mods, mod backups, mod trash, backups) would point the copy
@@ -227,9 +249,21 @@ async def start_duplicate(
     directory: str,
     world: str,
     user: str = "system",
+    test: bool = False,
+    season_backup: int | None = None,
 ) -> Job:
-    """Check the request, then copy in the background as a job."""
+    """Check the request, then copy in the background as a job. With
+    ``season_backup`` the copy opens that old season: the backup's world,
+    settings and add-ons replace the copy's."""
     name, folder = check_request(core, ctx, name, directory, world)
+    season: Path | None = None
+    if season_backup is not None:
+        row = ctx.backups.get(season_backup)
+        if row["kind"] != "season" or row["status"] != "ok":
+            raise DuplicateError("That backup isn't a season backup this app can open.")
+        if not ctx.backups.verify(season_backup)["ok"]:
+            raise DuplicateError("That season's backup didn't pass its check, so it wasn't used.")
+        season, world = Path(row["path"]), "fresh"
     port = core.ports.suggest()
     if port is None:
         raise DuplicateError("No free port was found for the new server.")
@@ -294,9 +328,15 @@ async def start_duplicate(
         try:
             outcome = await run_safe_change(ctx.server, ctx.backups, plan, job=job, user=user)
             job.step("Setting up the new server")
-            await asyncio.to_thread(_prepare_properties, folder, port, name, world)
+            if season is not None:
+                await asyncio.to_thread(_put_season, season, folder)
+            await asyncio.to_thread(
+                _prepare_properties, folder, port, name, "copy" if season else world
+            )
             entry = _entry_for_copy(ctx, folder)
             entry.update(id=new_id, name=name, directory=str(folder), port=port)
+            if test:
+                entry["test"] = True
             if bedrock:
                 entry["bedrock_port"] = bedrock
             new_ctx = await core.add_server(entry, user=user)

@@ -305,6 +305,8 @@ def test_only_the_documented_places_start_a_program():
     allowed = {
         "process.py",  # launching Minecraft itself
         "install.py",  # the Forge/NeoForge/Quilt installer (documented exception)
+        "chunker.py",  # Chunker world conversion, after a click (documented exception)
+        "serveruser.py",  # icacls: the separate Windows user's folder rights
         "java.py",  # asking the installed Java for its version
         "tailscale.py",  # asking Tailscale for this PC's address
         "certs.py",  # making this app's own HTTPS certificate
@@ -333,15 +335,31 @@ def test_the_installer_is_run_as_an_argument_list_with_no_shell():
     assert "command = installer_command(java, installer, plan)" in source
     builder = inspect.getsource(install.installer_command)
     assert "check_version(" in builder and "installer_args" in builder
-    assert "*command," in source
+    assert "serveruser.start(" in source and "command," in source
     assert "shell" not in source
     # the working directory is fixed to the server's own folder, and the
     # installer gets no input of its own
-    assert "cwd=str(directory)" in source
+    assert "cwd=directory," in source
     assert "stdin=asyncio.subprocess.DEVNULL" in source
     # its output is captured into the install log, not left on a console
     assert "stdout=asyncio.subprocess.PIPE" in source
     assert "log_file.write_text" in source
+
+
+def test_chunker_is_run_as_an_argument_list_with_no_shell():
+    from agent.api.routes import servertypes as routes
+    from agent.servertypes import chunker
+
+    source = inspect.getsource(chunker.run)
+    assert "argv = command(java, JAR, source, output, fmt)" in source
+    assert "serveruser.start(" in source and "argv," in source and "shell" not in source
+    assert "stdin=asyncio.subprocess.DEVNULL" in source
+    assert "stdout=asyncio.subprocess.PIPE" in source and "log_file.write_text" in source
+    # The format only ever comes from a version checked against Chunker's list.
+    assert "fmt = output_format(target.edition, minecraft)" in inspect.getsource(chunker.convert)
+    assert "chunker_module.run" not in inspect.getsource(routes)
+    text = (Path(__file__).resolve().parent.parent / "docs" / "security.md").read_text("utf-8")
+    assert "Chunker world conversion, after a click" in text
 
 
 def test_the_installer_file_name_is_never_taken_from_a_request():
@@ -511,3 +529,72 @@ def test_whitelist_add_ons_only_get_their_fixed_commands():
         "[IPWL SECURITY] Blocked Alex from 1.2.3.4 op Alex: IP mismatch",
     ):
         assert not any(p.match(line) for p in whitelist.IP_ADDONS[0].refused)
+
+
+def test_nothing_from_the_notes_file_is_run_or_downloaded():
+    """The signed notes file only adds warnings and blocks: its links are
+    shown for the person to click, never fetched, and nothing in it reaches
+    a program or the console (agent/notes.py)."""
+    from agent import notes
+
+    source = Path(notes.__file__).read_text(encoding="utf-8")
+    for forbidden in ("send_command", "subprocess", "os.system", "eval(", "exec(", "download("):
+        assert forbidden not in source, forbidden
+    # The only addresses it reads are its own two fixed files.
+    assert source.count("downloads.fetch") == 2
+    assert "NOTES_URL" in source and "SIGNATURE_URL" in source
+
+
+def test_nothing_added_from_another_site_a_file_or_a_link_is_run():
+    """Hangar, GitHub links and dropped files only write files the server
+    reads; a link Hangar gives for a plugin hosted elsewhere is shown,
+    never fetched."""
+    from agent.mods import addfrom, curseforge, github, hangar
+
+    for module in (addfrom, curseforge, github, hangar):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        for forbidden in (
+            "send_command",
+            "subprocess",
+            "os.system",
+            "eval(",
+            "exec(",
+            "os.startfile",
+        ):
+            assert forbidden not in source, (module.__name__, forbidden)
+    source = Path(hangar.__file__).read_text(encoding="utf-8")
+    assert "externalUrl" in source and "FileSpec(\n            url=str(url)" in source
+
+
+def test_the_app_never_holds_a_curseforge_key_or_asks_curseforge_itself():
+    """CurseForge is reached only through our relay, which holds the key."""
+    from agent import config, downloads
+    from agent.mods import curseforge
+
+    source = Path(curseforge.__file__).read_text(encoding="utf-8").lower()
+    assert "x-api-key" not in source and "api.curseforge.com" not in source
+    assert "api.curseforge.com" not in downloads.ALLOWED_HOSTS
+    relay = config.ModSettings().curseforge_relay
+    assert relay.startswith("https://") and "cloudfunctions.net/curseforge" in relay
+
+
+def test_a_brought_in_servers_start_scripts_are_only_read_never_run():
+    """Bring a server in reads a pack's start scripts as text to find its
+    loader; nothing in the folder or zip is run, and the owner's own jar is
+    only copied (it runs like any server jar, after the owner's Start)."""
+    from agent import bringin
+    from agent.servertypes import custom
+
+    for module in (bringin, custom):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        for forbidden in (
+            "subprocess",
+            "os.system",
+            "os.startfile",
+            "send_command",
+            "run_installer",
+        ):
+            assert forbidden not in source, (module.__name__, forbidden)
+    # The only installer is the official one the plan downloads.
+    source = Path(bringin.__file__).read_text(encoding="utf-8")
+    assert "make_plan(" in source and "install_plan(" in source

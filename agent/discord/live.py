@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..ports import MINECRAFT_DEFAULT_PORT, address
+
 if TYPE_CHECKING:
     from ..core import ServerContext
 
@@ -75,18 +77,17 @@ def ip(ctx: ServerContext, shared: str | None, info: dict[str, Any]) -> str:
     side = java or info.get("bedrock") or {}
     port = side.get("port")
     edition = "Java" if java else "Bedrock"
+    # Minecraft Java fills in 25565 itself; Bedrock players always type the port.
+    default = MINECRAFT_DEFAULT_PORT if java else 0
     if shared:
-        lines = [f"Join {ctx.name} ({edition}): `{shared}`"]
-        if port and ":" not in shared and not side.get("default_port", True):
-            lines.append(f"Port: `{port}`")
-        return "\n".join(lines)
+        return f"Join {ctx.name} ({edition}): `{address(shared, port, default)}`"
     lines = [f"Ways to join {ctx.name} ({edition}) the agent can see:"]
     home = [a["address"] for a in side.get("local") or [] if not a.get("virtual")]
     if home:
-        lines.append(f"On the owner's home network: `{home[0]}:{port}`")
+        lines.append(f"On the owner's home network: `{address(home[0], port, default)}`")
     tailscale = (side.get("tailscale") or {}).get("address") or side.get("address")
     if tailscale:
-        lines.append(f"On the owner's Tailscale: `{tailscale}:{port}`")
+        lines.append(f"On the owner's Tailscale: `{address(tailscale, port, default)}`")
     lines.append(
         "From the internet: the owner hasn't added an address to share yet. Ask them for it."
     )
@@ -119,25 +120,33 @@ def status_message(ctx: ServerContext, shared: str | None) -> str:
     return "\n".join(lines)[:2000]
 
 
-def presence(servers: list[ServerContext]) -> str | None:
+def seen(ctx: ServerContext) -> dict[str, Any]:
+    """What the presence line needs from one server on this PC (another
+    PC's come from its bot_news, with no player count)."""
+    state = ctx.server.state.value
+    count = len(ctx.players.online()) if state == "ONLINE" and ctx.players.verified else None
+    return {"name": ctx.name, "state": state, "players": count}
+
+
+def presence(servers: list[dict[str, Any]]) -> str | None:
     """The line under the bot's name. One server: "3 playing on Survival";
     several: "Survival 3 · Creative offline"."""
     if not servers:
         return None
     if len(servers) == 1:
-        ctx = servers[0]
-        state = ctx.server.state.value
-        if state == "ONLINE" and ctx.players.verified:
-            return f"{len(ctx.players.online())} playing on {ctx.name}"
-        if state == "ONLINE":
-            return f"{ctx.name} is online"
-        return f"{ctx.name} is {state_words(state)}"
+        s = servers[0]
+        if s["state"] == "ONLINE" and s.get("players") is not None:
+            return f"{s['players']} playing on {s['name']}"
+        if s["state"] == "ONLINE":
+            return f"{s['name']} is online"
+        return f"{s['name']} is {state_words(s['state'])}"
     parts = []
-    for ctx in servers:
-        state = ctx.server.state.value
-        if state == "ONLINE":
-            count = len(ctx.players.online()) if ctx.players.verified else "?"
-            parts.append(f"{ctx.name} {count}")
+    for s in servers:
+        if s["state"] == "ONLINE":
+            count = s.get("players")
+            parts.append(f"{s['name']} {'?' if count is None else count}")
         else:
-            parts.append(f"{ctx.name} {'offline' if state in ('OFFLINE', 'CRASHED') else '...'}")
+            parts.append(
+                f"{s['name']} {'offline' if s['state'] in ('OFFLINE', 'CRASHED') else '...'}"
+            )
     return " · ".join(parts)[:128]

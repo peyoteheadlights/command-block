@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "id": "worldedit",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "WorldEdit"
+    ],
+    "modrinth": "worldedit",
+    "hangar": "EngineHub/WorldEdit"
+  },
+  "versions": ">=7.2.0 <8",
+  "title": "WorldEdit",
+  "what": "Build tools for operators: fill, copy, paste and undo big areas in seconds.",
+  "steps": [
+    "In the game, type //wand to get a wooden axe. Left-click one corner, right-click the other.",
+    "//set stone fills the area, //copy and //paste copy it, //undo takes the last change back.",
+    "Big edits can freeze a small server for a moment, so try small areas first.",
+    "Only players can select areas, so the buttons here are for checking the plugin."
+  ],
+  "source": "https://worldedit.enginehub.org/en/latest/commands/",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "version",
+      "label": "Show the version",
+      "command": "worldedit version"
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "worldedit reload"
+    }
+  ]
+}

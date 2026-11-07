@@ -28,11 +28,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from agent.ports import address
+
 from .fixes import get_help, run_fix, sure
 from .graphs import Graph
 from .theme import SHARED
 from .ui import Note, clock, content_page, label, push, refill
-from .words import text
+from .words import mode, text
 
 if TYPE_CHECKING:
     from .window import MainWindow
@@ -129,6 +131,98 @@ class AskCard(QWidget):
         window.run(lambda: window.agent.answer_support_ask(answer), window.show_ask)
 
 
+class ProtectionCard(QWidget):
+    """How the server is set up, read by the agent from its own files
+    (agent/protection.py), worst first, each problem with its one-click fix.
+    On the Overview in both modes; Technical shows the extra read-outs."""
+
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__()
+        self.window_ = window
+        self.sid = ""
+        frame, layout = card(text("protect.title"))
+        self.rows = QVBoxLayout()
+        layout.addLayout(self.rows)
+        self.note = Note()
+        layout.addWidget(self.note)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(frame)
+        self.hide()
+
+    def load(self, sid: str) -> None:
+        self.sid = sid
+        here = self.window_.still_on(sid)
+        self.window_.run(
+            lambda: self.window_.agent.protection(sid), here(self.show_lines), self.gone
+        )
+
+    def gone(self, _exc: Exception | None = None) -> None:
+        self.hide()
+
+    def show_lines(self, data: dict) -> None:
+        rows: list[QWidget] = []
+        for line in data.get("lines") or []:
+            if line.get("technical") and not mode["technical"]:
+                continue
+            values = line.get("values") or {}
+            row = QWidget()
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 4, 0, 4)
+            strong = line["level"] in ("worst", "problem")
+            h.addWidget(label(text(line["words"], **values), "step" if strong else "sub"), 1)
+            if line.get("fix"):
+                fix = push(
+                    text(f"protect.fix.{line['fix']}", **values), "primary" if strong else ""
+                )
+                fix.clicked.connect(lambda _=False, f=line["fix"], v=values: self.fix(f, v))
+                h.addWidget(fix)
+            for addon in line.get("addons") or []:
+                add = push(text("desktop.protect.add", name=addon["name"]))
+                if addon.get("small"):
+                    add.setToolTip(text("desktop.protect.small", name=addon["name"]))
+                add.clicked.connect(lambda _=False, a=addon: self.add(a))
+                h.addWidget(add)
+            if line.get("link"):
+                go = push(text("desktop.protect.open_link"), "plain")
+                go.clicked.connect(lambda _=False, u=line["link"]: self.window_.pc.open_link(u))
+                h.addWidget(go)
+            rows.append(row)
+        refill(self.rows, rows)
+        self.setVisible(bool(rows))
+
+    def fix(self, fix: str, values: dict) -> None:
+        window, sid = self.window_, self.sid
+        if fix == "stop_and_close" and not window.confirm(
+            text("protect.title"),
+            text("desktop.protect.sure_stop"),
+            text("protect.fix.stop_and_close"),
+        ):
+            return
+        port = values.get("suggested") if fix == "change_port" else None
+
+        def done(result: dict) -> None:
+            if fix == "stop_and_close":
+                words = text("desktop.protect.stopped")
+            elif fix == "change_port":
+                words = text("desktop.protect.port_changed", port=port)
+            else:
+                words = text("desktop.protect.done")
+            undo = (lambda: window.move_change("undo")) if result.get("undo") else None
+            self.note.say(words, undo)
+            self.load(sid)
+
+        window.run(
+            lambda: window.agent.protection_fix(sid, fix, port),
+            done,
+            lambda exc: self.note.say(str(exc)),
+        )
+
+    def add(self, addon: dict) -> None:
+        """The add-on's normal install, with its version check and Undo."""
+        self.window_.install_addon(addon["project"])
+
+
 class SimpleOverview(QWidget):
     def __init__(self, window: MainWindow) -> None:
         super().__init__()
@@ -158,6 +252,8 @@ class SimpleOverview(QWidget):
 
         self.ask = AskCard(window)
         column.addWidget(self.ask)
+        self.protection = ProtectionCard(window)
+        column.addWidget(self.protection)
 
         self.grid = grid = QGridLayout()
         grid.setSpacing(12)
@@ -347,9 +443,10 @@ class SimpleOverview(QWidget):
     def show_address(self, join: dict) -> None:
         java = join.get("java") or {}
         tailscale = java.get("tailscale") or {}
-        host = (tailscale.get("dns_name") or "").rstrip(".") or tailscale.get("address")
-        if host and java.get("port") and not java.get("default_port"):
-            host = f"{host}:{java['port']}"
+        host = java.get("shared") or address(
+            (tailscale.get("dns_name") or "").rstrip(".") or tailscale.get("address") or "",
+            java.get("port"),
+        )
         self.address.setText(host or "")
         self.address.setVisible(bool(host))
         self.copy.setVisible(bool(host))
@@ -416,6 +513,8 @@ class TechnicalOverview(QWidget):
         column.setSpacing(12)
         self.ask = AskCard(window)
         column.addWidget(self.ask)
+        self.protection = ProtectionCard(window)
+        column.addWidget(self.protection)
         graphs, layout = card(text("page.performance", technical=True))
         row = QHBoxLayout()
         layout.addLayout(row)

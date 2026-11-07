@@ -234,8 +234,10 @@ FIELDS: tuple[Field, ...] = (
     Field("max-players", "int", "20", minimum=1, maximum=10000),
     Field("level-seed", "seed", "", max_length=100),
     Field("white-list", "bool", "false"),
+    Field("online-mode", "bool", "true"),
     Field("pvp", "bool", "true"),
     Field("view-distance", "int", "10", minimum=3, maximum=32),
+    Field("simulation-distance", "int", "10", minimum=3, maximum=32),
     Field("motd", "text", "A Minecraft Server"),
     Field("server-port", "port", "25565", minimum=1024, maximum=65535),
 )

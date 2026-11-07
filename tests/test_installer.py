@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import string
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,8 @@ import pytest
 from agent import datafolder
 from agent.config import SECRET_ENV_KEYS
 from agent.security.auth import hash_password
-from installer import detect, engine, fileops, layout, restorepoint
+from installer import detect, engine, fileops, layout, restorepoint, uninstall
+from installer import serveruser as serveruser_setup
 from installer.engine import Choices, Engine
 from installer.progress import Progress
 
@@ -90,6 +92,9 @@ class FakeSystem:
     def firewall(self, script, port, redirect_port, remove=False):
         self.calls.append(("firewall", port))
 
+    def server_ports(self, script, ports):
+        self.calls.append(("server_ports", tuple(ports)))
+
     def register_updater_task(self, program_dir):
         self.calls.append(("updater_task", str(program_dir)))
 
@@ -119,6 +124,36 @@ class FakeSystem:
 
     def install_msi(self, command):
         self.calls.append(("msi", command))
+
+    def make_server_user(self, name, password):
+        self.calls.append(("make_server_user", name))
+        self.server_user_password = password
+
+    def remove_server_user(self, name):
+        self.calls.append(("remove_server_user", name))
+
+    starter_running = False
+
+    def current_user_sid(self):
+        return "S-1-5-21-1-2-3-1001"
+
+    def install_starter(self, program_dir, password, agent_user):
+        self.calls.append(("install_starter", str(program_dir), agent_user))
+        self.starter_password = password
+        self.starter_running = True
+
+    def remove_starter(self):
+        self.calls.append(("remove_starter",))
+        self.starter_running = False
+
+    def stop_starter(self):
+        self.calls.append(("stop_starter",))
+        was, self.starter_running = self.starter_running, False
+        return was
+
+    def start_starter(self):
+        self.calls.append(("start_starter",))
+        self.starter_running = True
 
     def remove_startup(self):
         self.calls.append(("remove_startup",))
@@ -706,13 +741,48 @@ def test_a_new_install_sets_everything_up(tmp_path, places, program_files):
     _, result, _ = run_engine(choices, program_files, system)
     assert result.ok, result.message + result.details
     env = (places["data"] / "config" / ".env").read_text()
-    assert "MCSC_ADMIN_PASSWORD_HASH=pbkdf2_sha256$" in env
+    assert "MCSC_ADMIN_PASSWORD_HASH=scrypt$" in env
     assert PASSWORD not in env
     config = (places["data"] / "config" / "config.yaml").read_text()
     assert str(server) in config and "path\\to" not in config
     assert system.called("firewall") and system.called("shortcuts")
+    # One rule for the server's own port in place of "allow Java everywhere".
+    assert ("server_ports", (("tcp", 25565),)) in system.calls
     assert system.called("register_startup")[-1][2] == "boot"
     assert ("api", "PUT", "/servers/survival/color", {"color": "teal"}) in system.calls
+
+
+def test_server_port_rules_are_an_offer_that_never_stops_the_install(
+    tmp_path, places, program_files
+):
+    from installer.system import SystemError_
+
+    server = make_server(tmp_path)
+    (server / "server.properties").write_text("server-port=25570\n", encoding="utf-8")
+    system = FakeSystem()
+
+    def refuse(script, ports):
+        system.calls.append(("server_ports", tuple(ports)))
+        raise SystemError_("Windows said no.", "firewall.ps1 exited 1")
+
+    system.server_ports = refuse
+    choices = Choices(
+        action=engine.INSTALL,
+        program_dir=places["program"],
+        data_root=places["data"],
+        servers=[{"folder": str(server), "name": "Survival"}],
+        password=PASSWORD,
+    )
+    eng, result, _ = run_engine(choices, program_files, system)
+    assert result.ok, result.message + result.details
+    assert ("server_ports", (("tcp", 25570),)) in system.calls
+    assert any("one rule per server port" in note for note in eng.notes)
+    assert system.called("firewall"), "the agent's own rule is still made"
+
+    kept = FakeSystem()
+    choices.server_ports_only = False
+    run_engine(choices, program_files, kept)
+    assert not kept.called("server_ports")
 
 
 def test_a_new_install_with_no_server_yet_keeps_the_java_for_the_first_one(places, program_files):
@@ -1298,3 +1368,185 @@ def test_open_command_block_signs_the_app_in_once_as_the_person(
     data_dir = Config.load(w.engine.config_path, w.engine.env_path).data_dir  # the agent's
     stored = (data_dir / ONE_TIME_FILE).read_text()
     assert code and code not in stored
+
+
+# ====================================================================
+# the separate Windows user (installer/serveruser.py)
+# ====================================================================
+def test_a_new_password_is_long_random_and_complex():
+    seen = {serveruser_setup.new_password() for _ in range(50)}
+    assert len(seen) == 50
+    for password in seen:
+        assert len(password) == 40
+        assert any(c in string.ascii_uppercase for c in password)
+        assert any(c in string.digits for c in password)
+
+
+def test_a_new_install_makes_the_separate_user_and_turns_it_on(tmp_path, places, program_files):
+    server = make_server(tmp_path)
+    system = FakeSystem()
+    system.running = True
+    choices = Choices(
+        action=engine.INSTALL,
+        program_dir=places["program"],
+        data_root=places["data"],
+        servers=[{"folder": str(server), "name": "Survival"}],
+        password=PASSWORD,
+    )
+    _, result, _ = run_engine(choices, program_files, system)
+    assert result.ok, result.message + result.details
+    assert system.called("make_server_user") == [("make_server_user", "CommandBlockServer")]
+    config = (places["data"] / "config" / "config.yaml").read_text()
+    assert "separate_windows_user: true" in config
+    # The starter service gets the same password, for the installing account.
+    assert system.called("install_starter") == [
+        ("install_starter", str(places["program"]), "S-1-5-21-1-2-3-1001")
+    ]
+    assert system.starter_password == system.server_user_password
+    # The password is never in the install log.
+    logs = "".join(p.read_text() for p in (places["data"] / "logs").rglob("*") if p.is_file())
+    assert system.server_user_password not in logs
+
+
+def test_a_failed_account_leaves_servers_running_as_the_owner_and_says_so(
+    tmp_path, places, program_files
+):
+    from installer.system import SystemError_
+
+    system = FakeSystem()
+    system.running = True
+
+    def refuse(name, password):
+        raise SystemError_("The separate Windows user couldn't be made.", "NetUserAdd 5")
+
+    system.make_server_user = refuse
+    choices = Choices(
+        action=engine.INSTALL,
+        program_dir=places["program"],
+        data_root=places["data"],
+        password=PASSWORD,
+    )
+    eng, result, _ = run_engine(choices, program_files, system)
+    assert result.ok
+    assert eng.progress.step("server_user").state == "skipped"
+    assert "Turn it on in Settings" in eng.progress.step("server_user").message
+    assert "separate_windows_user: false" in (places["data"] / "config" / "config.yaml").read_text()
+
+
+def test_an_update_keeps_the_choice_and_makes_no_account(places, program_files):
+    found = make_installer_copy(places)
+    system = FakeSystem()
+    system.running = True
+    choices = Choices(
+        action=engine.UPDATE,
+        program_dir=places["program"],
+        data_root=places["data"],
+        found=found,
+    )
+    _, result, _ = run_engine(choices, program_files, system)
+    assert result.ok, result.message + result.details
+    assert system.called("make_server_user") == []
+
+
+def installed_settings(tmp_path, monkeypatch) -> Path:
+    data = tmp_path / "data"
+    (data / "config").mkdir(parents=True)
+    path = data / "config" / "config.yaml"
+    path.write_text(f"paths:\n  data_dir: '{data}'\n", encoding="utf-8")
+    monkeypatch.setattr("agent.appinfo.default_config_path", lambda: path)
+    monkeypatch.setattr("agent.appinfo.default_env_path", lambda: data / "config" / ".env")
+    return data
+
+
+def test_turn_on_repair_and_turn_off_from_the_command(tmp_path, monkeypatch, capsys):
+    installed_settings(tmp_path, monkeypatch)
+    system = FakeSystem()
+    assert serveruser_setup.main(["on"], system) == 0
+    first = system.starter_password
+    assert first == system.server_user_password
+    assert serveruser_setup.main(["repair"], system) == 0
+    assert system.starter_password != first  # a new password, and the service told
+    assert system.starter_password == system.server_user_password
+    assert len(system.called("make_server_user")) == 2
+    assert len(system.called("install_starter")) == 2
+    assert serveruser_setup.main(["off"], system) == 0
+    assert system.called("remove_server_user") == [("remove_server_user", "CommandBlockServer")]
+    assert system.called("remove_starter") == [("remove_starter",)]
+    printed = capsys.readouterr()
+    assert first not in printed.out + printed.err
+
+
+def test_a_starter_service_that_fails_leaves_no_account(tmp_path, monkeypatch):
+    from installer.system import SystemError_
+
+    installed_settings(tmp_path, monkeypatch)
+    system = FakeSystem()
+
+    def refuse(program_dir, password, agent_user):
+        raise SystemError_("The starter service didn't start.")
+
+    system.install_starter = refuse
+    assert serveruser_setup.main(["on"], system) == 1
+    assert system.called("remove_server_user") == [("remove_server_user", "CommandBlockServer")]
+
+
+def test_an_update_stops_the_starter_service_while_its_files_are_replaced(places, program_files):
+    found = make_installer_copy(places)
+    system = FakeSystem()
+    system.running = True
+    system.starter_running = True
+    choices = Choices(
+        action=engine.UPDATE, program_dir=places["program"], data_root=places["data"], found=found
+    )
+    _, result, _ = run_engine(choices, program_files, system)
+    assert result.ok, result.message + result.details
+    names = [c[0] for c in system.calls]
+    assert names.index("stop_starter") < names.index("start_starter")
+    assert system.starter_running
+
+
+def test_the_command_needs_administrator_and_a_known_word(tmp_path, monkeypatch):
+    installed_settings(tmp_path, monkeypatch)
+    system = FakeSystem()
+    assert serveruser_setup.main(["sideways"], system) == 2
+    system.is_admin = lambda: False
+    assert serveruser_setup.main(["on"], system) == 5
+    system.is_admin = lambda: True
+    # Another administrator said Yes at Windows' prompt: the owner's app
+    # couldn't read a password saved for that account, so nothing is made.
+    monkeypatch.setenv("USERNAME", "Admin")
+    assert serveruser_setup.main(["on", "Mark"], system) == serveruser_setup.NOT_THE_OWNER
+    assert system.called("make_server_user") == []
+    assert serveruser_setup.main(["on", "admin"], system) == 0
+
+
+def test_removing_the_app_removes_the_separate_user(places):
+    make_installer_copy(places)
+    system = FakeSystem()
+    result = uninstall.uninstall(places["program"], places["data"], system=system)
+    assert ("remove_server_user", "CommandBlockServer") in system.calls
+    assert ("remove_starter",) in system.calls
+    assert "removed the separate Windows user" in result["done"]
+
+
+def test_a_failed_install_removes_the_separate_user_it_made(tmp_path, places, program_files):
+    system = FakeSystem()
+    system.running = True
+    choices = Choices(
+        action=engine.INSTALL,
+        program_dir=places["program"],
+        data_root=places["data"],
+        password=PASSWORD,
+    )
+    eng = Engine(choices, program_files, system=system, version="1.2.0")
+
+    def broken():
+        raise engine.StepFailed("The certificate couldn't be made.", "test")
+
+    eng.step_certificate = broken
+    result = eng.run()
+    assert not result.ok
+    if not system.called("remove_server_user"):
+        eng.roll_back()  # when the run leaves it to the setup window's button
+    assert ("remove_server_user", "CommandBlockServer") in system.calls
+    assert ("remove_starter",) in system.calls

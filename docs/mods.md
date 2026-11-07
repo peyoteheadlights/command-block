@@ -84,6 +84,75 @@ rules are in `docs/security.md`. On top of them, for mods:
 - A file with no published checksum is refused rather than trusted
 - 300 MB ceiling per file
 
+## Hangar, files and links
+
+On Paper and Purpur servers the search also asks **Hangar**, PaperMC's own
+plugin site, and each result says which site it's from. Hangar plugins
+install, update and join Update all like Modrinth ones, with these rules
+(`agent/mods/hangar.py`):
+
+- only public projects, for the PAPER platform and this Minecraft version
+- the SHA-256 Hangar published is checked, and files come only from
+  `hangarcdn.papermc.io`
+- required plugins on Hangar are added with a version that fits; one Hangar
+  only links to on another site is shown as a link; optional ones are listed
+- only the Release channel is installed by default and offered as an update
+- at most 20 requests every 5 seconds, as Hangar asks
+- Modrinth publishes SHA-512 and SHA-1, Hangar SHA-256, so a plugin on both
+  can show twice in a search. Installing the same file twice is refused by its
+  hash.
+
+**Add a file** (or drop one on the window) takes a mod or plugin `.jar` or a
+datapack `.zip`. The file is read first: a mod for another loader, a resource
+pack or a zip with its `pack.mcmeta` in a folder is refused with the reason.
+Datapacks go into the world's `datapacks` folder. A jar Modrinth or Hangar
+lists (looked up by its hash) is treated as theirs; anything else shows
+"Not checked by Modrinth" and is never updated by Update all.
+
+**Add from a link** reads GitHub release links only (`agent/mods/github.py`):
+you pick one of the release's `.jar` or `.zip` files, and updates come from
+the repo's newest full release when it has one file named like yours. Any
+other link (Planet Minecraft, SpigotMC, a creator's site) says "Download it
+in your browser and drop the file here".
+
+Each add is one change with a backup of the folder it writes to and one
+Undo, except into an empty folder, which has nothing to put back (Remove
+takes it out).
+
+## CurseForge
+
+On Fabric, Quilt, Forge and NeoForge servers the search also asks
+**CurseForge** (`agent/mods/curseforge.py`). CurseForge's API needs a key;
+the app never holds one and never asks you for one. It goes through our own
+relay instead, a small Firebase function that holds the key and allows only
+five read-only calls (search, a mod, a mod's files, a file's download link,
+fingerprints). The agent signs in to it anonymously once; the refresh token
+is kept in `.env` with the other secrets.
+
+- results are sorted by popularity, then the name you typed is put first
+  ("lithium" finds Lithium, not a look-alike), and only mods with a file for
+  this server's loader and Minecraft version are shown
+- only files CurseForge marks approved or released are offered
+- files come only from `edge.forgecdn.net` / `mediafilez.forgecdn.net` and
+  are checked against the **sha1** CurseForge publishes (it publishes no
+  SHA-512). That is a weaker check than Modrinth's, so the apps say
+  "Checked (sha1)"
+- required mods are added too
+- an author can keep other apps from downloading a mod. Such a mod gets
+  **Open on CurseForge** and is listed under **Needs you** on the Mods page;
+  the rest of an install goes ahead. Drop the file you downloaded on the
+  window: it's matched by its CurseForge fingerprint (MurmurHash2 of the
+  file without whitespace bytes), never by its name
+- jars already in the folder that the app didn't add are looked up by
+  fingerprint once, all in one call, when you press Check or open Update
+  all; a match counts only when its sha1 matches too
+- the 12-hour update check leaves CurseForge out; it's asked only when you
+  search, add, press Check or open Update all
+- nothing CurseForge answers is saved. An installed mod's record keeps only
+  its project and file id
+- when the relay is down, over its limit or turned off, the page says
+  "CurseForge isn't available right now" and Modrinth keeps working
+
 ## Why the server must be stopped
 
 Installing, removing, enabling, disabling and updating all require the server
@@ -148,9 +217,18 @@ The page says this too, because it matters:
 
 ## Modpacks
 
-A Modrinth modpack (`.mrpack`) can become a new server (the **+** tab,
+A Modrinth modpack (`.mrpack`) or a CurseForge modpack (its `.zip`, or one
+found with **Find on CurseForge**) can become a new server (the **+** tab,
 **From a modpack**) or be imported into the open server (Mods page,
 **Import a modpack**).
+
+A CurseForge pack lists only each mod's project and file in its
+`manifest.json`. When it's read, each one is asked of CurseForge through the
+relay (one call or a few per mod, at most 60 a minute, so a big pack takes a
+few minutes) and kept in memory until it's imported. Mods CurseForge tags
+for the game only are left out and listed for your players; mods their
+authors keep from other apps go under **Needs you** after the import; a
+loader this app can't set up is refused before anything is asked or changed.
 
 Choosing the file reads it and changes nothing. The panel shows the Minecraft
 version, the loader and its version, and every file, marked as downloaded,

@@ -9,6 +9,7 @@ the only things the app does on the PC, each after a click.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import os
 import platform
@@ -22,6 +23,7 @@ import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from PySide6.QtCore import QObject, QSettings, QStandardPaths, Signal
 from PySide6.QtGui import QIcon
@@ -45,6 +47,7 @@ APP_ID_KEY = rf"Software\Classes\AppUserModelId\{APP_ID}"
 TAILSCALE_SIGNER = "Tailscale Inc."
 CANCELLED = 1223  # ERROR_CANCELLED: the UAC prompt was answered No
 DETACHED = 0x00000008 | 0x00000200 | NO_WINDOW  # on its own, in a new process group
+TAILSCALE_RANGE = ipaddress.ip_network("100.64.0.0/10")
 SIGN_IN_PAGE = re.compile(r"https://login\.tailscale\.com/\S+")
 # File paths reach PowerShell in an environment variable, never in its code.
 POWERSHELL = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"]
@@ -55,6 +58,16 @@ SIGNER_SCRIPT = (
 INSTALL_SCRIPT = (
     "try { $p = Start-Process msiexec.exe -Verb RunAs -Wait -PassThru "
     "-ArgumentList ('/i \"' + $env:CB_FILE + '\" /quiet /norestart'); exit $p.ExitCode } "
+    f"catch {{ exit {CANCELLED} }}"
+)
+
+
+# Runs "mcsc server-user on|repair|off" as administrator and waits for it
+# (Windows asks first); installer/serveruser.py does the work.
+SERVER_USER_SCRIPT = (
+    "try { $p = Start-Process -FilePath $env:CB_FILE -Verb RunAs -Wait -PassThru "
+    "-WindowStyle Hidden -ArgumentList ('server-user ' + $env:CB_WHAT + ' \"' + $env:USERNAME + '\"'); "
+    "exit $p.ExitCode } "
     f"catch {{ exit {CANCELLED} }}"
 )
 
@@ -104,6 +117,15 @@ class _Clicks(QObject):
     clicked = Signal(str, str)
 
 
+def _tailscale_http(url: str) -> bool:
+    parts = urlsplit(url)
+    try:
+        address = ipaddress.ip_address(parts.hostname or "")
+    except ValueError:
+        return False
+    return parts.scheme == "http" and address in TAILSCALE_RANGE
+
+
 def _target(place: str) -> str:
     return f"Command Block sign-in ({place})"
 
@@ -123,7 +145,9 @@ class WindowsPC:
     def open_link(self, url: str) -> None:
         # Links can come from the agent (a suggestion's "Get Java"), maybe on
         # someone else's PC; on Windows a path here would run a program.
-        if url.startswith("https://"):
+        # A live map is plain http, so that's allowed only to a Tailscale
+        # address (100.64.0.0/10), never to the internet.
+        if url.startswith("https://") or _tailscale_http(url):
             webbrowser.open(url)
 
     def save_path(self, name: str) -> str | None:
@@ -308,6 +332,23 @@ class WindowsPC:
         )
         if done.returncode == CANCELLED:
             raise PCError(text("desktop.fix.setup_refused"))
+
+    def server_user(self, what: str) -> int:
+        """Make, repair or remove the separate Windows user (one UAC
+        prompt). Returns the exit code; CANCELLED when Windows was told No."""
+        from agent import appinfo
+
+        if what not in ("on", "repair", "off"):
+            raise ValueError(what)
+        program = appinfo.program_dir() / appinfo.CLI_EXE
+        if not program.is_file():
+            raise PCError(text("desktop.fix.no_setup"))
+        done = subprocess.run(
+            [*POWERSHELL, SERVER_USER_SCRIPT],
+            env={**os.environ, "CB_FILE": str(program), "CB_WHAT": what},
+            creationflags=NO_WINDOW,
+        )
+        return done.returncode
 
     def install_msi(self, path: Path) -> int:
         """Runs the setup as administrator and waits. Returns its exit code."""

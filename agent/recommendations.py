@@ -16,6 +16,7 @@ problem goes away and comes back).
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -67,6 +68,24 @@ class Facts:
     online_at: float | None = None  # when the server last came online, None when off
     # The Discord bot's first problem (agent/discord/bot.py), None when fine or off.
     discord: dict[str, Any] | None = None
+    # The server's type and what its console last printed (None: not yet).
+    type_id: str = ""
+    type_name: str = ""
+    minecraft_version: str | None = None
+    loader_version: str | None = None
+    # Safety notes (agent/notes.py): warnings matching this server, known
+    # bad files found on it, and the "Notes from 40 days ago" label when the
+    # notes file is out of date.
+    advisories: list[dict[str, Any]] = field(default_factory=list)
+    bad_files: list[dict[str, Any]] = field(default_factory=list)
+    notes_age: str | None = None
+    # Newer server software (agent/softwarecheck.py), as last checked.
+    software: dict[str, Any] = field(default_factory=dict)
+    # Add-on suggestions (agent/suggestions.py): the last check, the
+    # speed-ups with their measured reason, and who the server is for.
+    addons: dict[str, Any] | None = None
+    speed_ups: dict[str, Any] = field(default_factory=dict)
+    played_by: str = ""
 
 
 @dataclass
@@ -90,7 +109,7 @@ class Recommendation:
         }
 
 
-Rule = Callable[[Facts], Recommendation | None]
+Rule = Callable[[Facts], Recommendation | list[Recommendation] | None]
 
 
 def _days(seconds: float) -> str:
@@ -445,7 +464,180 @@ def discord_problem(f: Facts) -> Recommendation | None:
     )
 
 
+def security_advisories(f: Facts) -> list[Recommendation]:
+    """One per warning in the signed notes file that matches this server's
+    type and the version its console printed. The link is only shown."""
+    found = []
+    for a in f.advisories:
+        evidence = (
+            f"{f.type_name} {f.minecraft_version} is in the affected range "
+            f"({a['from']} to {a['to']}). From the signed safety notes."
+        )
+        if f.notes_age:
+            evidence += f" {f.notes_age}"
+        found.append(
+            Recommendation(
+                id=f"advisory_{a['id']}",
+                title=a["title"],
+                reason=a["what_to_do"],
+                evidence=evidence,
+                action={"label": "Read more", "url": a["link"]},
+                fingerprint=f"advisory:{a['id']}",
+                details={**a, "source": "signed safety notes file"},
+            )
+        )
+    return found
+
+
+def known_bad_files(f: Facts) -> Recommendation | None:
+    if not f.bad_files:
+        return None
+    names = [b["filename"] for b in f.bad_files]
+    first = f.bad_files[0]
+    return Recommendation(
+        id="known_bad_files",
+        title="Remove a known bad file",
+        reason=f"{first['name']}: {first['why']}",
+        evidence=f"On the safety notes' list of known bad files: {', '.join(names)}.",
+        action={"label": "Open mods", "page": "mods"},
+        fingerprint="bad:" + ",".join(sorted(names)),
+        details={"files": f.bad_files, "source": "SHA-512 of each file, signed safety notes"},
+    )
+
+
+def _version_fix(f: Facts, minecraft: str, loader: str | None) -> dict[str, Any]:
+    """The button runs the normal version change: backup first, one Undo."""
+    return {
+        "kind": "version",
+        "title": "Update",
+        "type": f.type_id,
+        "minecraft_version": minecraft,
+        "loader_version": loader,
+    }
+
+
+def newer_build(f: Facts) -> Recommendation | None:
+    """Only while the console still prints the build the offer was made for."""
+    from .softwarecheck import build_of
+
+    offer = f.software.get("build")
+    if (
+        not offer
+        or offer["minecraft"] != f.minecraft_version
+        or offer["installed"] != build_of(f.type_id, f.loader_version)
+    ):
+        return None
+    return Recommendation(
+        id="newer_build",
+        title=f"{f.type_name} build {offer['build']} is out",
+        reason="Newer builds of the same Minecraft version fix bugs and security holes.",
+        evidence=f"This server runs build {offer['installed']}; {offer['build']} is the newest "
+        f"stable build for Minecraft {offer['minecraft']}.",
+        action={"label": "Update", "page": "settings"},
+        fingerprint=f"build:{offer['build']}",
+        details={
+            **offer,
+            "fix": _version_fix(f, offer["minecraft"], offer["loader"]),
+            "source": "the official source's build list, checked once a day",
+        },
+    )
+
+
+def newer_minecraft(f: Facts) -> Recommendation | None:
+    offer = f.software.get("minecraft")
+    if not offer or offer["from"] != f.minecraft_version:
+        return None
+    return Recommendation(
+        id="newer_minecraft",
+        title=f"Minecraft {offer['minecraft']} is out",
+        reason="Move up when your mods and plugins support it. A backup is taken first, "
+        "and the change can be rolled back.",
+        evidence=f"This server runs Minecraft {offer['from']}; {f.type_name} offers "
+        f"{offer['minecraft']} as its newest stable release.",
+        action={"label": "Update", "page": "settings"},
+        fingerprint=f"minecraft:{offer['minecraft']}",
+        details={
+            **offer,
+            "fix": _version_fix(f, offer["minecraft"], None),
+            "source": "the official source's version list, checked once a day",
+        },
+    )
+
+
+SUGGEST = "suggest_"
+
+
+def _suggestion(f: Facts, item: dict[str, Any], measured: str | None) -> Recommendation:
+    """One add-on suggestion, or one of the speed-ups that aren't add-ons."""
+    if item["kind"] == "settings":
+        return Recommendation(
+            id=f"{SUGGEST}paper_settings",
+            title=item["name"],
+            reason="Fewer chunks around each player means less work for the server.",
+            evidence=f"{measured} View distance is {item['now']['view-distance']} and "
+            f"simulation distance {item['now']['simulation-distance']} in server.properties.",
+            action={"label": "Lower them", "page": "game-settings"},
+            fingerprint="paper:" + ",".join(f"{k}={v}" for k, v in sorted(item["values"].items())),
+            details={
+                "fix": {"kind": "game_settings", "values": item["values"]},
+                "source": "TPS or memory readings, and server.properties",
+            },
+        )
+    if item["kind"] == "change_type":
+        return Recommendation(
+            id=f"{SUGGEST}fabric",
+            title=item["name"],
+            reason="Lithium makes the game logic faster without changing how the game plays. "
+            "Your world and Minecraft version stay.",
+            evidence=f"{measured} Lithium has a Fabric build for Minecraft {f.minecraft_version}.",
+            action={"label": "Change server type", "page": "settings"},
+            fingerprint=f"fabric:{f.minecraft_version}",
+            details={"source": "TPS or memory readings, and Lithium's Modrinth versions"},
+        )
+    evidence = measured or (
+        f"On the hand-checked list for {f.type_name} servers, with a build for Minecraft "
+        f"{f.minecraft_version}."
+    )
+    return Recommendation(
+        id=SUGGEST + re.sub(r"[^a-z0-9]+", "_", item["project"].lower()),
+        title=f"Add {item['name']}",
+        reason=item.get("description") or "",
+        evidence=evidence,
+        action={"label": "Add", "page": "mods"},
+        fingerprint=f"addon:{item['project']}:{item['version']}",
+        details={
+            "fix": {"kind": "add_on", "project": item["project"], "name": item["name"]},
+            "place": item["place"],
+            "downloads": item["downloads"],
+            "source": "hand-checked list in the safety notes, checked against the add-on's site",
+        },
+    )
+
+
+def addon_suggestions(f: Facts) -> list[Recommendation]:
+    """Add-ons worth having, best first: a speed-up when this server was
+    measured to be slow, then "Good to have" picked by who the server is
+    for, then companions of what's here. Only ones that are safe to add
+    with one click: a stable build that doesn't change gameplay and goes on
+    the server. visible() shows the first one not dismissed or snoozed."""
+    if not f.addons:
+        return []
+    reason = (f.speed_ups.get("reason") or {}).get("evidence")
+    safe = [
+        i
+        for i in f.addons["items"]
+        if not i["technical_only"] and not i["changes_gameplay"] and i["place"] != "players"
+    ]
+    picks = [i for i in safe if i["kind"] != "performance"]
+    # Ones marked for who this server is for first; otherwise the notes' order.
+    picks.sort(key=lambda i: (f.played_by not in i["played_by"], i["kind"] != "good_to_have"))
+    faster = [i for i in f.speed_ups.get("items", []) if i["kind"] != "performance" or i in safe]
+    return [_suggestion(f, i, reason) for i in faster] + [_suggestion(f, i, None) for i in picks]
+
+
 RULES: tuple[Rule, ...] = (
+    security_advisories,
+    known_bad_files,
     tailscale_stopped,
     discord_problem,
     java_too_old,
@@ -460,6 +652,9 @@ RULES: tuple[Rule, ...] = (
     auto_restart_off,
     install_spark,
     mod_updates,
+    newer_build,
+    newer_minecraft,
+    addon_suggestions,
 )
 
 
@@ -467,13 +662,18 @@ def evaluate(facts: Facts) -> list[Recommendation]:
     found = []
     for rule in RULES:
         result = rule(facts)
-        if result is not None:
+        if isinstance(result, list):
+            found.extend(result)
+        elif result is not None:
             found.append(result)
     return found
 
 
-def gather(ctx) -> Facts:
-    """Read one server's measured facts for the rules."""
+def gather(ctx, addons: dict[str, Any] | None = None) -> Facts:
+    """Read one server's measured facts for the rules. ``addons`` is the
+    last add-on suggestions check (agent/suggestions.py kept())."""
+    from . import suggestions
+
     status = ctx.server.status()
     # The sampler's latest reading. Taking a fresh one here would restart
     # the sampler's network and process CPU windows.
@@ -525,7 +725,38 @@ def gather(ctx) -> Facts:
         mods=installed,
         online_at=status.get("online_at") if status.get("state") == "ONLINE" else None,
         discord=ctx.core.discord.problem() if getattr(ctx.core, "discord", None) else None,
+        type_id=server_type.id,
+        type_name=server_type.name,
+        minecraft_version=status.get("minecraft_version"),
+        loader_version=status.get("loader_version"),
+        advisories=matching_advisories(ctx, server_type.id, status.get("minecraft_version")),
+        bad_files=[
+            b
+            for b in ctx.core.notes.bad_installed.get(ctx.server_id, [])
+            if any(m["filename"] == b["filename"] for m in installed)
+        ],
+        notes_age=ctx.core.notes.age_label(),
+        software=ctx.db.get_setting("software_offers") or {},
+        addons=addons,
+        speed_ups=suggestions.speed_ups(ctx, addons, technical=False) if addons else {},
+        played_by=ctx.config.server.played_by,
     )
+
+
+def matching_advisories(ctx, type_id: str, minecraft: str | None) -> list[dict[str, Any]]:
+    """The notes' warnings for this type and the version the console printed.
+    Nothing matches an unknown version: no guess."""
+    from .servertypes.versions import version_key
+
+    notes = ctx.core.notes.notes
+    if notes is None or not minecraft:
+        return []
+    return [
+        a
+        for a in notes.advisories
+        if type_id in a["types"]
+        and version_key(a["from"]) <= version_key(minecraft) <= version_key(a["to"])
+    ]
 
 
 STATE_KEY = "recommendations"
@@ -544,6 +775,9 @@ def visible(db, found: list[Recommendation]) -> dict[str, Any]:
     if still != snoozed:
         db.set_setting(STATE_KEY, {"dismissed": sorted(dismissed), "snoozed": still})
     shown = [r for r in found if r.id not in dismissed and r.id not in still]
+    # At most one add-on suggestion at a time; the next shows once it's handled.
+    first = next((r for r in shown if r.id.startswith(SUGGEST)), None)
+    shown = [r for r in shown if not r.id.startswith(SUGGEST) or r is first]
     hidden = [r for r in found if r.id in dismissed or r.id in still]
     return {
         "recommendations": [r.to_dict() for r in shown],

@@ -19,6 +19,7 @@ import psutil
 
 from .. import tailscale
 from ..events import Event, EventBus
+from ..playerhours import HourPeak
 from ..security.paths import directory_size
 from . import health
 
@@ -96,6 +97,7 @@ class MetricsMonitor:
         # The process object is kept: its CPU reading is "since the last
         # reading on this object", so a fresh one every sample read 0%.
         self._proc: psutil.Process | None = None
+        self.hours = HourPeak(db, server.server_id)
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -228,6 +230,10 @@ class MetricsMonitor:
 
     # ------------------------------------------------------------------
     def port_listening(self, port: int | None = None, host: str = "127.0.0.1") -> bool:
+        args = self.server.launch_args
+        if not port and self.server.behind_guard and "--port" in args:
+            # Asked of the server itself, not of the guard in front of it.
+            port = int(args[args.index("--port") + 1])
         port = port or int(self.server.detected_port or self.config.server.port)
         if self.config.server_type.ping == "raknet":
             # Bedrock listens on UDP: asked with RakNet's unconnected ping.
@@ -439,8 +445,12 @@ class MetricsMonitor:
             try:
                 count = None
                 if player_source:
-                    count = len(player_source())
+                    # None: not measured yet (the server hasn't said who's on).
+                    found = player_source()
+                    count = None if found is None else len(found)
                 await self.sample_once(player_count=count)
+                if count is not None:
+                    self.hours.note(count)
             except asyncio.CancelledError:
                 raise
             except Exception:  # pragma: no cover

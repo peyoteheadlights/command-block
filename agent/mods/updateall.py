@@ -10,6 +10,7 @@ Being one change, it has one backup and one Undo.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..jobs import JobConflict
@@ -40,7 +41,7 @@ async def update_all(
     # What the agent notes about each mod (where it came from, its update),
     # put back with the files if one update fails.
     noted = [f"mod_{kind}:{mod.mod_id}" for mod, _ in targets for kind in ("source", "update")]
-    folder = _folder_in_server(ctx)
+    folder = folder_in_server(ctx, ctx.config.mods_dir)
     if folder is None:
         # A backup holds only what is inside the server folder, so it
         # couldn't put these mods back if one update failed.
@@ -111,14 +112,14 @@ async def update_all(
     }
 
 
-def _folder_in_server(ctx: ServerContext) -> str | None:
-    """The mods or plugins folder's name inside the server folder, or None
-    when it is somewhere else."""
-    mods_dir = ctx.config.mods_dir.resolve()
+def folder_in_server(ctx: ServerContext, path: Path) -> str | None:
+    """The top folder ``path`` is in, inside the server folder (a backup
+    can hold only those), or None when it is somewhere else."""
+    path = path.resolve()
     server_dir = ctx.config.server_dir.resolve()
-    if not mods_dir.is_relative_to(server_dir) or mods_dir == server_dir:
+    if not path.is_relative_to(server_dir) or path == server_dir:
         return None
-    return mods_dir.relative_to(server_dir).parts[0]
+    return path.relative_to(server_dir).parts[0]
 
 
 def _note_put_back(mods: ModManager, updated: list[dict[str, Any]], user: str) -> None:

@@ -9,12 +9,23 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import time
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QMenu, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QFrame,
+    QHBoxLayout,
+    QLineEdit,
+    QMenu,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .overview import card
 from .ui import Page, clock, duration, label, push, refill, size
@@ -27,6 +38,7 @@ KINDS = {
     "manual": "backups.kind_manual",
     "scheduled": "backups.kind_scheduled",
     "safety": "backups.kind_safety",
+    "season": "season.kind",
 }
 COPY = {
     "ok": "offsite.copied",
@@ -54,6 +66,13 @@ def is_world(path: Path) -> bool:
     """What can be dropped on the window to bring a world in."""
     if path.is_dir():
         return (path / "level.dat").is_file()  # Java and Bedrock worlds both have one
+    if path.suffix.lower() == ".zip":
+        try:
+            with zipfile.ZipFile(path) as zf:
+                if "pack.mcmeta" in zf.namelist():
+                    return False  # a datapack, which the Mods page adds
+        except (OSError, zipfile.BadZipFile):
+            pass  # the world import says what's wrong with it
     return path.suffix.lower() in WORLD_FILES
 
 
@@ -146,6 +165,28 @@ class BackupsPage(Page):
         layout.addWidget(self.take_home)
         self.column.addWidget(self.home_card)
 
+        # New season (agent/seasons.py): a fresh world, the old one kept.
+        self.season_card, layout = card(text("season.title"))
+        layout.addWidget(label(text("season.lead"), "sub"))
+        row = QHBoxLayout()
+        self.seed = QLineEdit()
+        self.seed.setMaxLength(32)
+        self.seed.setPlaceholderText(text("season.seed_hint"))
+        self.seed.setAccessibleName(text("season.seed"))
+        row.addWidget(label(text("season.seed"), "sub"))
+        row.addWidget(self.seed, 1)
+        layout.addLayout(row)
+        self.announce = QCheckBox(text("season.announce"))
+        self.announce.setChecked(True)
+        layout.addWidget(self.announce)
+        self.season_button = push(text("season.button"))
+        self.season_button.clicked.connect(self.new_season)
+        row = QHBoxLayout()
+        row.addWidget(self.season_button)
+        row.addStretch()
+        layout.addLayout(row)
+        self.column.addWidget(self.season_card)
+
         self.worlds_card, layout = card(text("backups.worlds"))
         self.worlds = QVBoxLayout()
         layout.addLayout(self.worlds)
@@ -188,6 +229,8 @@ class BackupsPage(Page):
             text("import.choose_mcworld" if self.bedrock else "import.choose_zip")
         )
         self.home_card.setVisible(self.may("backups.download"))
+        self.season_card.setVisible(replace)
+        self.season_button.setEnabled(True)
         self.home_lead.setText(text("download.lead_bedrock" if self.bedrock else "download.lead"))
         self.worlds_card.setVisible(technical)
         self.saves_title.hide()
@@ -288,6 +331,8 @@ class BackupsPage(Page):
             actions.append(("offsite.copy_now", lambda: self.copy(b)))
         if self.may("backups.restore"):
             actions.append(("desktop.backups.restore_all", lambda: self.restore_all(b)))
+        if b.get("kind") == "season" and self.may("servers.manage"):
+            actions.append(("season.open", lambda: self.open_season(b)))
         if self.may("backups.delete"):
             actions.append(("backups.delete", lambda: self.delete(b)))
         for key, do in actions:
@@ -414,6 +459,54 @@ class BackupsPage(Page):
             self.load_list()
 
         self.ask("DELETE", f"/backups/{b['id']}", done, self.said)
+
+    # ------------------------------------------------------------ seasons
+    def new_season(self) -> None:
+        if not self.window_.confirm(
+            text("season.confirm_title", name=self.row["name"]),
+            text("season.confirm_body"),
+            text("season.button"),
+        ):
+            return
+        self.season_button.setEnabled(False)
+        self.say(text("season.starting"))
+        body = {
+            "seed": self.seed.text().strip(),
+            "announce": self.announce.isChecked(),
+            "confirm": True,
+        }
+        self.ask(
+            "POST",
+            "/world/new-season",
+            lambda result: self.restored(text("season.done"), result),
+            self.said,
+            body=body,
+            always=lambda: self.season_button.setEnabled(True),
+            slow=True,
+        )
+
+    def open_season(self, b: dict) -> None:
+        """An old season as a server of its own: Duplicate, with the season
+        backup's world, settings and add-ons."""
+        made = time.strftime("%Y-%m-%d", time.localtime(b.get("created_at") or 0))
+        name = text("season.copy_name", name=self.row["name"], date=made)[:60]
+
+        def suggested(found: dict) -> None:
+            body = {
+                "name": name,
+                "directory": str(Path(found["directory"]).parent / name),
+                "world": "fresh",
+                "season_backup": b["id"],
+            }
+            self.ask(
+                "POST",
+                "/duplicate",
+                lambda _r: self.say(text("dup.started", name=name)),
+                self.said,
+                body=body,
+            )
+
+        self.ask("GET", "/duplicate", suggested, self.said)
 
     # ------------------------------------------------------------ restoring
     def restored(self, words: str, result: dict) -> None:

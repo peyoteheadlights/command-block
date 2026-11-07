@@ -78,13 +78,21 @@ def weekly_playtime(db, server_ids: list[str], until: float | None = None) -> li
     return [{"name": r["username"], "seconds": float(r["seconds"])} for r in rows if r["seconds"]]
 
 
-def top_levels(db, server_ids: list[str]) -> list[tuple[str, int]]:
-    """The members with the most XP among those whose linked accounts played
-    on these servers: (member id, XP)."""
+def most_played(played: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """weekly_playtime's lists from several PCs as one: a name's time added up."""
+    total: dict[str, float] = {}
+    for row in played:
+        total[row["name"]] = total.get(row["name"], 0) + float(row["seconds"])
+    rows = sorted(total.items(), key=lambda x: (-x[1], x[0].lower()))[:TOP]
+    return [{"name": name, "seconds": seconds} for name, seconds in rows]
+
+
+def members_on(db, server_ids: list[str]) -> set[str]:
+    """The members whose linked accounts played on these servers."""
     if not server_ids:
-        return []
+        return set()
     marks = ",".join("?" * len(server_ids))
-    members = {
+    return {
         r["discord_id"]
         for r in db.query(
             "SELECT DISTINCT l.discord_id FROM discord_links l JOIN players p ON p.uuid = l.uuid "
@@ -92,5 +100,8 @@ def top_levels(db, server_ids: list[str]) -> list[tuple[str, int]]:
             tuple(server_ids),
         )
     }
-    xp = all_xp(db)
+
+
+def top_levels(members, xp: dict[str, int]) -> list[tuple[str, int]]:
+    """The members with the most XP among ``members``: (member id, XP)."""
     return sorted(((m, xp.get(m, 0)) for m in members), key=lambda x: (-x[1], x[0]))[:TOP]

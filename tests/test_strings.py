@@ -47,8 +47,9 @@ def families() -> dict[str, set[str]]:
         },
         "tps.state_": {"active", "detecting", "unavailable", "disabled", "idle"},
         "serverset.keep_": {"daily", "weekly", "monthly"},
-        # one line per server type in the "+" comparison table
-        "types.": {f"{type_id}.best" for type_id in servertypes.TYPES},
+        # two lines per built-in server type in the "+" comparison table (a
+        # notes-file type brings its own hint)
+        "types.": {f"{t}.{line}" for t in servertypes.BUILT_IN for line in ("best", "hint")},
         "new.ease_": {t.ease for t in servertypes.TYPES.values()},
         # what can still put the PC to sleep while it is kept awake
         "awake.still_": set(keepawake.STILL_SLEEPS),

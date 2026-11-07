@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .graphs import HoursGraph
 from .overview import card, title_of
 from .ui import Page, clock, duration, label, push, refill
 from .words import mode, text
@@ -145,6 +146,14 @@ class PlayersPage(Page):
         layout.addWidget(label(text("players.add_hint"), "sub"))
         self.column.addWidget(self.add_card)
 
+        # When people play (agent/playerhours.py), asked for only while open.
+        self.hours_card, layout = card(text("activity.title"))
+        self.hours_graph = HoursGraph()
+        layout.addWidget(self.hours_graph)
+        self.hours_line = label(kind="sub")
+        layout.addWidget(self.hours_line)
+        self.column.addWidget(self.hours_card)
+
         everyone, layout = card(text("players.everyone"))
         self.everyone = QVBoxLayout()
         layout.addLayout(self.everyone)
@@ -191,6 +200,13 @@ class PlayersPage(Page):
     # ------------------------------------------------------------ loading
     def load(self) -> None:
         self.ask("GET", "/players", self.show_players)
+        self.hours_graph.colors = {
+            "line": self.window_.look["accent"],
+            "text": self.window_.look["text-secondary"],
+            "border": self.window_.look["text-tertiary"],
+            "plot": self.window_.look["surface-sunken"],
+        }
+        self.ask("GET", "/players/hours", self.show_hours, lambda _e: self.hours_card.hide())
         if self.may("console.read"):
             self.ask("GET", "/chat?lines=200", self.show_chat, lambda _e: None)
         self.chat_card.setVisible(self.may("console.read"))
@@ -200,6 +216,16 @@ class PlayersPage(Page):
         else:
             self.links_card.hide()
             self.help_card.hide()
+
+    def show_hours(self, data: dict) -> None:
+        self.hours_card.show()
+        self.hours_graph.show_hours(data["hours"])
+        quiet = data.get("quietest_hour")
+        self.hours_line.setText(
+            text("activity.line", hour=f"{quiet:02d}:00", days=data["days"])
+            if quiet is not None
+            else text("activity.none")
+        )
 
     def show_links(self, data: dict) -> None:
         rows: list[QWidget] = []

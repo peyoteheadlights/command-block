@@ -1,0 +1,144 @@
+{
+  "schema": 1,
+  "id": "essentialsx",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "Essentials"
+    ],
+    "modrinth": "essentialsx",
+    "hangar": "EssentialsX/Essentials"
+  },
+  "versions": ">=2.19.0 <3",
+  "title": "EssentialsX",
+  "what": "Everyday commands for players: homes, warps, kits, /tpa, nicknames, an economy and more.",
+  "steps": [
+    "Players use /sethome and /home, /tpa <name> to ask to teleport, and /warp <name>.",
+    "An operator makes a warp in the game by standing on the spot and typing /setwarp <name>.",
+    "Who may use which command is set with a permissions plugin such as LuckPerms.",
+    "The settings are in plugins/Essentials/config.yml (Edit settings)."
+  ],
+  "source": "https://github.com/EssentialsX/Essentials/blob/2.x/Essentials/src/main/resources/plugin.yml",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "heal",
+      "label": "Heal a player",
+      "command": "heal {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "feed",
+      "label": "Feed a player",
+      "command": "feed {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "gamemode",
+      "label": "Change a player's game mode",
+      "command": "gamemode {mode} {player}",
+      "fields": [
+        {
+          "id": "mode",
+          "kind": "choice",
+          "label": "Game mode",
+          "options": [
+            {
+              "value": "survival",
+              "label": "Survival"
+            },
+            {
+              "value": "creative",
+              "label": "Creative"
+            },
+            {
+              "value": "adventure",
+              "label": "Adventure"
+            },
+            {
+              "value": "spectator",
+              "label": "Spectator"
+            }
+          ]
+        },
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "seen",
+      "label": "When was a player last on?",
+      "command": "seen {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "tempban",
+      "label": "Ban a player for a while",
+      "command": "tempban {player} {time}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        },
+        {
+          "id": "time",
+          "kind": "choice",
+          "label": "For",
+          "options": [
+            {
+              "value": "1h",
+              "label": "1 hour"
+            },
+            {
+              "value": "1d",
+              "label": "1 day"
+            },
+            {
+              "value": "7d",
+              "label": "7 days"
+            }
+          ]
+        }
+      ],
+      "changes_world": true,
+      "permission": "players.manage",
+      "warning": "The player can't join until the time is up."
+    },
+    {
+      "id": "mute",
+      "label": "Mute or unmute a player",
+      "command": "mute {player}",
+      "help": "Pressing it again unmutes them.",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "permission": "players.manage"
+    }
+  ]
+}

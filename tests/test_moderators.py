@@ -8,6 +8,7 @@ from agent.api.routes import api_routes
 from agent.database.db import Database
 from agent.security import permissions as P
 
+from .conftest import build_config
 from .test_helpers import HELPER_PASSWORD, add_helper, declared, fill, sign_in
 
 
@@ -83,6 +84,8 @@ def test_every_route_checks_on_its_own_server(multi_client, owner):
     survival route needing more is refused."""
     sam = add_helper(multi_client, owner)
     give(multi_client, owner, {"survival": P.START_AND_STOP, "creative": P.SERVER_PERMISSIONS})
+    # This walk sends more requests than the per-minute limit allows.
+    multi_client.app.state.core.auth.api_rate.check = lambda key: None
     checked, wrong = 0, []
     for path, route, scope in api_routes():
         permission = declared(route)
@@ -242,8 +245,8 @@ def test_old_helpers_keep_what_they_had(tmp_path, monkeypatch):
     rows = {r["username"]: r for r in db.query("SELECT * FROM accounts")}
     assert rows["old"]["grants"] is not None and rows["everywhere"]["grants"] is not None
 
-    auth = AuthManager.__new__(AuthManager)
-    auth.db = db
+    # Shared accounts sign what was there before, once, at the first start.
+    auth = AuthManager(build_config(tmp_path), db)
     limited = auth.account("old")["access"]
     assert limited.on("creative") == P.LOOK_AFTER_IT
     assert limited.on("survival") == frozenset()

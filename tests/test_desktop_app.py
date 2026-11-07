@@ -463,6 +463,9 @@ def test_undo_and_redo_are_named_and_undo_on_the_agent(qapp, agent_http):
 def test_a_narrow_window_puts_the_right_panel_under_the_overview(qapp, agent_http):
     window = signed_in_on(qapp, agent_http)
     panel = window.server_screen.panel
+    # A wide hidden screen (Windows fonts made one 1162 wide) must not keep
+    # the window from getting narrow.
+    window.help.setMinimumWidth(1500)
     window.resize(1400, 800)
     wait_for(
         qapp,
@@ -1510,9 +1513,16 @@ def test_only_web_links_are_opened(monkeypatch):
 
     opened: list[str] = []
     monkeypatch.setattr(webbrowser, "open", opened.append)
-    for link in ("https://adoptium.net/", "C:\\Windows\\System32\\calc.exe", "file:///C:/x.exe"):
+    links = (
+        "https://adoptium.net/",
+        "C:\\Windows\\System32\\calc.exe",
+        "file:///C:/x.exe",
+        "http://100.64.0.9:8100/",  # a live map over Tailscale
+        "http://203.0.113.5:8100/",  # plain http to the internet: no
+    )
+    for link in links:
         WindowsPC().open_link(link)
-    assert opened == ["https://adoptium.net/"]
+    assert opened == ["https://adoptium.net/", "http://100.64.0.9:8100/"]
 
 
 def test_an_answer_about_a_server_no_longer_open_is_dropped(qapp, agent_http):

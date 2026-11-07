@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "id": "simple-voice-chat",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "voicechat"
+    ],
+    "modrinth": "simple-voice-chat",
+    "hangar": "henkelmax/SimpleVoiceChat"
+  },
+  "versions": ">=2.4.0 <3",
+  "title": "Simple Voice Chat",
+  "what": "Players nearby can talk to each other. Everyone needs the Simple Voice Chat mod in their own game too.",
+  "steps": [
+    "Players install the Simple Voice Chat mod for their game (Fabric, Forge or NeoForge).",
+    "It uses its own UDP port, 24454 unless changed in its settings. Friends from the internet need that port open on the router too.",
+    "In the game, players press V to open the voice settings and make or join groups."
+  ],
+  "source": "https://github.com/henkelmax/simple-voice-chat/blob/1.21.4/common/src/main/java/de/maxhenkel/voicechat/command/VoicechatCommands.java",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "test",
+      "label": "Test a player's voice chat",
+      "command": "voicechat test {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    }
+  ]
+}

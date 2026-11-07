@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ... import playerhours
 from ...minecraft import playeractions
 from ...security.auth import Principal
 from ...security.permissions import (
@@ -15,7 +16,13 @@ from ...security.permissions import (
     require,
 )
 from ..deps import audit, get_server
-from ..responses import PlayerActionResult, PlayerActionStatus, Players, PlayerStats
+from ..responses import (
+    PlayerActionResult,
+    PlayerActionStatus,
+    PlayerHours,
+    Players,
+    PlayerStats,
+)
 from .models import PlayerActionRequest
 
 router = APIRouter()
@@ -49,6 +56,15 @@ async def players(principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depe
             a.to_dict() for a in ctx.player_actions.recent() if a.kind in playeractions.ACTIONS
         ][:10],
     }
+
+
+@router.get("/players/hours", response_model=PlayerHours)
+async def player_hours(
+    principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
+):
+    """Players online by hour of the day over 4 weeks, and the quietest hour
+    (for restart and backup times). Hours never measured are null."""
+    return playerhours.profile(ctx.core.db, ctx.server_id)
 
 
 @router.get("/players/{name}/stats", response_model=PlayerStats)

@@ -55,10 +55,12 @@ from .mods import takes
 from .new_server import NewServerScreen
 from .overview import SimpleOverview, TechnicalOverview
 from .pc import WindowsPC
+from .rented import ConnectPanel, RentedRow, RentedScreen
 from .server_tab import BUSY, ServerScreen, state_words
 from .tailscale_step import TailscaleStep
-from .ui import clock, content_page, has_packs, label, push
+from .ui import clock, content_page, has_packs, label, push, refill
 from .words import mode, text
+from .yourpcs import YourPCs
 
 log = logging.getLogger(__name__)
 
@@ -167,7 +169,12 @@ class SignInScreen(QWidget):
 
 
 class ServerRow(QFrame):
-    def __init__(self, window: MainWindow, row: dict) -> None:
+    """One server on All servers. ``act`` starts or stops a server on another
+    of the owner's PCs (that PC checks the account may)."""
+
+    def __init__(
+        self, window: MainWindow, row: dict, act: Callable[[str], None] | None = None
+    ) -> None:
         super().__init__()
         self.setProperty("kind", "row")
         layout = QHBoxLayout(self)
@@ -179,6 +186,8 @@ class ServerRow(QFrame):
         name = label(row["name"])
         name.setObjectName("title")
         layout.addWidget(name, 1)
+        if row.get("test"):
+            layout.addWidget(label(text("test.badge"), "chip"))
         state = row.get("state", "UNKNOWN")
         layout.addWidget(label(state_words(row), "sub"))
         if state == "ONLINE":
@@ -195,8 +204,11 @@ class ServerRow(QFrame):
         button = push(text(f"action.{action}"), "primary" if action == "start" else "")
         button.setEnabled(state not in BUSY)
         button.setAccessibleName(f"{text(f'action.{action}')} {row['name']}")
-        button.clicked.connect(lambda: window.server_action(row["id"], action))
-        button.setVisible(window.may(row["id"], "server.control"))
+        if act is not None:
+            button.clicked.connect(lambda: act(action))
+        else:
+            button.clicked.connect(lambda: window.server_action(row["id"], action))
+            button.setVisible(window.may(row["id"], "server.control"))
         layout.addWidget(button)
 
 
@@ -257,6 +269,10 @@ class AllServersScreen(QWidget):
         heading = label(text("page.servers"))
         heading.setObjectName("title")
         top.addWidget(heading, 1)
+        # A server rented from a host, on its Pterodactyl panel (owner only).
+        self.connect_button = push(text("desktop.rented.connect"), "plain")
+        self.connect_button.clicked.connect(lambda: ConnectPanel(window).exec())
+        top.addWidget(self.connect_button)
         outer.addLayout(top)
         self.problem = label(kind="problem")
         self.problem.hide()
@@ -271,6 +287,7 @@ class AllServersScreen(QWidget):
         self.rows.setSpacing(8)
         outer.addLayout(self.rows)
         outer.addStretch()
+        self.servers: list[dict] = []
 
     def failed(self, exc: AgentError) -> None:
         self.problem.setText(str(exc))
@@ -282,14 +299,56 @@ class AllServersScreen(QWidget):
 
     def fill(self, servers: list[dict]) -> None:
         self.problem.hide()
-        while self.rows.count():
-            old = self.rows.takeAt(0).widget()
-            if old is not None:
-                old.setParent(None)
-        if not servers:
+        self.servers = servers
+        self.show_all()
+
+    def show_all(self) -> None:
+        """This PC's servers, then each of the owner's other PCs' (Your
+        PCs), under the PC's name."""
+        refill(self.rows, [])
+        others = self.window_.other_pcs()
+        if others:
+            self.rows.addWidget(label(self.window_.this_pc_name(), name="h2"))
+        if not self.servers:
             self.rows.addWidget(label(text("servers.none"), "sub"))
-        for row in servers:
+        for row in self.servers:
             self.rows.addWidget(ServerRow(self.window_, row))
+        self.connect_button.setVisible(self.window_.role in (None, "owner"))
+        if self.window_.rented:
+            self.rows.addWidget(label(text("desktop.rented.heading_list"), name="h2"))
+            for row in self.window_.rented:
+                self.rows.addWidget(RentedRow(self.window_, row))
+        for pc in others:
+            self.rows.addWidget(label(pc.get("name") or "", name="h2"))
+            found = self.window_.elsewhere.get(pc["id"])
+            if found is None:
+                self.rows.addWidget(label(text("desktop.pcs.loading"), "sub"))
+            elif isinstance(found, str):
+                self.rows.addWidget(label(found, "sub"))
+            elif not found:
+                self.rows.addWidget(label(text("servers.none"), "sub"))
+            else:
+                for row in found:
+                    act = lambda action, p=pc, r=row: self.window_.act_elsewhere(p, r, action)  # noqa: E731
+                    self.rows.addWidget(ServerRow(self.window_, row, act))
+
+
+class ScreenStack(QStackedWidget):
+    """Only the shown screen sets how small the window can get. A plain
+    QStackedWidget takes the widest of all screens, so one wide hidden
+    screen kept the window too wide for the narrow layout."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.currentChanged.connect(lambda _i: self.updateGeometry())
+
+    def sizeHint(self) -> QSize:
+        shown = self.currentWidget()
+        return shown.sizeHint() if shown is not None else super().sizeHint()
+
+    def minimumSizeHint(self) -> QSize:
+        shown = self.currentWidget()
+        return shown.minimumSizeHint() if shown is not None else super().minimumSizeHint()
 
 
 class MainWindow(QMainWindow):
@@ -311,8 +370,13 @@ class MainWindow(QMainWindow):
         self.dark = dark if dark is not None else self.dark_look(pc.setting("look"))
         self.scale = pc.text_scale()
         self.servers: list[dict] = []
+        self.all_servers: list[dict] = []  # with Test servers, which Simple mode hides
+        # Other PCs' servers (Your PCs), by PC id: rows, or why there are none.
+        self.elsewhere: dict[str, list[dict] | str] = {}
+        self._elsewhere_at = 0.0
         self.types: list[dict] = []  # the server types, asked for once (/server-types)
         self.server_id: str | None = None
+        self.rented: list[dict] = []  # servers on a host's panel (desktop/rented.py)
         self.alerts: list[dict] = []  # newest first, as the bell lists them
         self.last_alert = 0  # the newest alert id seen, to catch up after a reconnect
         self.caught_up = False  # the alerts from before signing in are loaded
@@ -365,12 +429,13 @@ class MainWindow(QMainWindow):
             self.tools[name] = tool
             bar.addWidget(tool)
         column.addWidget(self.topbar)
-        self.stack = QStackedWidget()
+        self.stack = ScreenStack()
         column.addWidget(self.stack, 1)
         self.setCentralWidget(desk)
         self.setAcceptDrops(True)
         self.screens: dict[str, QWidget] = {}
         self.server_screen = ServerScreen(self)
+        self.rented_screen = RentedScreen(self)
         self.notifications = NotificationsScreen(self)
         self.down_screen = NoticeScreen("Agent not running")
         self.update_screen = NoticeScreen("Update needed")
@@ -379,6 +444,7 @@ class MainWindow(QMainWindow):
             SignInScreen(self),
             AllServersScreen(self),
             self.server_screen,
+            self.rented_screen,
             self.notifications,
             self.down_screen,
             self.update_screen,
@@ -397,6 +463,7 @@ class MainWindow(QMainWindow):
                 "updates": Updates(self),
                 "moderators": Moderators(self),
                 "discord": Discord(self),
+                "pcs": YourPCs(self),
                 "devices": Devices(self),
                 "account": Account(self),
             },
@@ -616,9 +683,12 @@ class MainWindow(QMainWindow):
         self.binder.blockSignals(False)
 
     def select_binder_tab(self) -> None:
-        wanted = {"All servers": "all", "New server": "new", "Server": self.server_id}.get(
-            self.screen_name
-        )
+        wanted = {
+            "All servers": "all",
+            "Rented server": "all",
+            "New server": "new",
+            "Server": self.server_id,
+        }.get(self.screen_name)
         for i in range(self.binder.count()):
             if self.binder.tabData(i) == wanted:
                 self.binder.setCurrentIndex(i)
@@ -642,11 +712,89 @@ class MainWindow(QMainWindow):
         self.show_screen("Server")
         self.load_server_parts()
 
+    def open_rented(self, server_id: str) -> None:
+        row = next((r for r in self.rented if r["id"] == server_id), None)
+        if row is None:
+            return
+        self.apply_look(None)
+        self.rented_screen.open(row)
+        self.show_screen("Rented server")
+        self.select_binder_tab()
+
+    def rented_loaded(self, found: dict) -> None:
+        self.rented = found.get("servers") or []
+        self.screens["All servers"].show_all()  # type: ignore[attr-defined]
+        if self.screen_name == "Rented server":
+            row = next(
+                (r for r in self.rented if r["id"] == self.rented_screen.row.get("id")), None
+            )
+            if row is None:
+                self.show_screen("All servers")
+            else:
+                self.rented_screen.show_row(row)
+
     # ------------------------------------------------------------ data
     def refresh(self) -> None:
         self.run(self.agent.servers, self.servers_loaded, self.screens["All servers"].failed)  # type: ignore[attr-defined]
+        # A moderator with no rented server may be refused: then there are none.
+        self.run(lambda: self.agent.call("GET", "/rented"), self.rented_loaded, lambda _e: None)
+        if time.time() - self._elsewhere_at >= self.ELSEWHERE_EVERY:
+            self._elsewhere_at = time.time()
+            self.run(lambda: self.agent.call("GET", "/pcs"), self.pcs_loaded, lambda _e: None)
+
+    # -- the owner's other PCs (Your PCs) ---------------------------------
+    ELSEWHERE_EVERY = 30  # seconds: other PCs' servers are asked for this often at most
+
+    def pcs_loaded(self, found: dict) -> None:
+        """Keep the PC list on this device (it is learned from the agent's
+        synced list), then ask each other PC for its servers, with this same
+        sign-in: it works on every PC of the account."""
+        pcs = [p for p in found.get("pcs") or [] if p.get("address") and p.get("fingerprint")]
+        self.pc.set_setting("pcs", pcs)
+        for pc in self.other_pcs():
+            self.run(
+                partial(self._servers_of, pc),
+                partial(self._elsewhere_found, pc),
+                partial(self._elsewhere_failed, pc),
+            )
+        self.screens["All servers"].show_all()  # type: ignore[attr-defined]
+
+    def other_pcs(self) -> list[dict]:
+        return [p for p in self.pc.setting("pcs") or [] if not p.get("this")]
+
+    def this_pc_name(self) -> str:
+        mine = next((p for p in self.pc.setting("pcs") or [] if p.get("this")), None)
+        return (mine or {}).get("name") or text("desktop.pcs.this_pc")
+
+    def _client_for(self, pc: dict) -> AgentClient:
+        client = AgentClient.connect(pc["address"], int(pc["port"]), pc["fingerprint"])
+        client.token = self.agent.token
+        return client
+
+    def _servers_of(self, pc: dict) -> list[dict]:
+        return self._client_for(pc).servers()
+
+    def _elsewhere_failed(self, pc: dict, exc: AgentError) -> None:
+        self._elsewhere_found(pc, str(exc))
+
+    def _elsewhere_found(self, pc: dict, rows: list[dict] | str) -> None:
+        self.elsewhere[pc["id"]] = rows
+        self.screens["All servers"].show_all()  # type: ignore[attr-defined]
+
+    def act_elsewhere(self, pc: dict, row: dict, action: str) -> None:
+        def done(_result: Any) -> None:
+            self._elsewhere_at = 0.0
+            self.refresh()
+
+        self.run(
+            lambda: self._client_for(pc).server_action(row["id"], action),
+            done,
+            lambda exc: self.screens["All servers"].failed(exc),  # type: ignore[attr-defined]
+        )
 
     def servers_loaded(self, servers: list[dict]) -> None:
+        self.all_servers = servers
+        servers = [r for r in servers if mode["technical"] or not r.get("test")]
         self.servers = servers
         self.update_tray()
         self.screens["All servers"].fill(servers)  # type: ignore[attr-defined]
@@ -698,6 +846,16 @@ class MainWindow(QMainWindow):
             self.set_mode(True)  # Simple hides these; Technical has every page
         self.server_screen.show_page(page)
 
+    def install_addon(self, project: str) -> None:
+        """Open the Mods page and run its normal install for one add-on (a
+        Protection card or game settings offer), with its version check."""
+        from .mods import ModsPage
+
+        self.open_page("Mods")
+        page = self.server_screen.page_widgets["Mods"]
+        if isinstance(page, ModsPage):
+            page.install_hit({"slug": project})
+
     def open_activity(self, crashes: bool = False) -> None:
         """Activity, with everything or only the crashes."""
         self.server_screen.activity.crashes_only = crashes
@@ -724,6 +882,9 @@ class MainWindow(QMainWindow):
         self.run(lambda: self.agent.status(sid), here(screen.header.show_status), lambda _e: None)
         if self.role in (None, "owner"):  # the agent refuses moderators too
             self.run(self.agent.support_ask, here(self.show_ask), lambda _e: None)
+        # Read once when the Overview opens, not on the graphs' timer.
+        overview = screen.technical_overview if mode["technical"] else screen.simple_overview
+        overview.protection.load(sid)
         if mode["technical"]:
             self.load_technical()
             return
@@ -1258,7 +1419,7 @@ class MainWindow(QMainWindow):
         if self.pc.setting("help_wake"):
             self.sync_helper()
         self.update_tray()
-        self.servers_loaded(self.servers)  # hides what this account can't do
+        self.servers_loaded(self.all_servers)  # hides what this account can't do
         if self.screen_name == "Server" and self.server_screen.row:
             # a page opened before this answered showed the owner's buttons
             self.server_screen.show_page(self.server_screen.current_page)
@@ -1341,7 +1502,10 @@ class MainWindow(QMainWindow):
             self.server_screen.build_tabs()
             self.server_screen.show_row(self.server_screen.row)
             self.load_server_parts()
+        # Simple mode hides Test servers.
+        self.servers = [r for r in self.all_servers if mode["technical"] or not r.get("test")]
         self.screens["All servers"].fill(self.servers)  # type: ignore[attr-defined]
+        self.fill_binder()
 
     # ------------------------------------------------------------ actions
     def server_action(self, server_id: str, action: str) -> None:

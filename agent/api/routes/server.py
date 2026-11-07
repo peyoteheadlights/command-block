@@ -7,6 +7,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ... import joinguard
 from ...minecraft.commands import CommandError, validate
 from ...minecraft.java import memory_limit_mb
 from ...minecraft.process import ServerError
@@ -239,6 +240,8 @@ async def server_command(
     ctx=Depends(get_server),
 ):
     validated = validate(payload.command, confirm=payload.confirm)
+    if validated.name in ("ban-ip", "pardon-ip") and ctx.core.guard.fallback(ctx):
+        return await _guard_ban(ctx, request, principal, validated)
     await ctx.server.send_command(validated.raw)
     audit(ctx, request, "console_command", target=validated.name, detail=validated.raw)
     return {
@@ -247,6 +250,33 @@ async def server_command(
         "output to see what the server did with it.",
         **validated.to_dict(),
     }
+
+
+async def _guard_ban(ctx, request: Request, principal: Principal, validated) -> dict:
+    """Behind Join protection without the proxy add-on the server sees every
+    player as this PC, so "ban-ip" would shut everyone out. The guard
+    blocks the player's real address instead."""
+    words = validated.raw.split()
+    target = words[1] if len(words) > 1 else ""
+    hub = ctx.core.guard
+    try:
+        address = joinguard.address_key(target)
+    except ValueError:
+        address = hub.address_of(ctx, target)
+    if not address:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Join protection hasn't seen {target or 'that player'} join, so it doesn't "
+            "know their address. Use their address instead.",
+        )
+    if validated.name == "ban-ip":
+        hub.block(ctx, address, principal.user)
+        detail = f"Join protection now blocks {address} (the server only sees this PC)."
+    else:
+        hub.unblock(ctx, address, principal.user)
+        detail = f"Join protection no longer blocks {address}."
+    audit(ctx, request, "console_command", target=validated.name, detail=validated.raw)
+    return {"result": "BLOCKED", "detail": detail, **validated.to_dict()}
 
 
 @router.get("/server/command/check", response_model=CommandCheck)

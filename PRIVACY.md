@@ -15,10 +15,14 @@ here.
 | **GitHub** (`api.github.com`, this repository's releases) | Once a day to see if a new version is out (on by default; `updates.check: false` in `config.yaml` turns it off), when you select **Check now**, and when you install an update | An ordinary web request. Nothing about you or your servers |
 | **Mojang / Microsoft**, **Fabric**, **Quilt**, **Forge**, **NeoForge**, **PaperMC**, **Purpur**, **GeyserMC** | When you make a server, change its version or add crossplay | Which version to download |
 | **Modrinth** | When you search for, add or update mods, and every 12 hours to see if your mods have updates (on by default; `mods.update_check_hours: 0` in `config.yaml` turns it off) | Your search words, or which mods you have, and the Minecraft version |
+| **Hangar** (`hangar.papermc.io`, PaperMC's plugin site) | On Paper and Purpur servers: when you search for, add or update plugins, with the same update check as Modrinth, and once for each plugin jar the app didn't add, to look it up by its checksum | Your search words, which plugins you have (as checksums or project numbers), and the Minecraft version |
+| **CurseForge**, through Command Block's relay (a Firebase function, `europe-west1-command-block-d4526.cloudfunctions.net`) | On mod servers: when you search for, add or update mods, read or import a CurseForge modpack, and once for the mod jars the app didn't add, to look them up by fingerprint. Never in the 12-hour update check. The first time, the agent signs in to Firebase anonymously (no name, no email) | Searching CurseForge goes through Command Block's relay, which sees which mods you search for: your search words, which mods and files you ask about (as numbers or fingerprints) and the Minecraft version. The relay keeps nothing; Google's servers see your IP address as for any request. Mod files then come straight from CurseForge's own file servers (`forgecdn.net`) |
+| **GitHub** (one add-on's repository) | When you paste a GitHub release link to add a mod or plugin, and with the update check for an add-on added that way | Which repository and release |
 | **Adoptium** (Java) | When you ask the setup or the apps to get Java | Which Java version to download |
 | **Discord** | Only if you set up Discord alerts | The alert text (for example "Server crashed") to the webhook you entered |
 | **Your email server** | Only if you set up email alerts | The alert text to the addresses you entered |
 | **Google Firebase Cloud Messaging** (Android) and **Apple Push Notification service** (iPhone) | Only if the owner set up lock-screen alerts for the phone app, and only to phones that turned them on | A wake-up with an alert number and no words in it. The phone then reads the alert from your PC |
+| **Your other PCs** (Your PCs) | Only after you join two of your own PCs into one account: when an account changes, and when a PC starts | The owner and moderator accounts (names and password hashes, never passwords), which servers each moderator was given, and the signed-in devices; with the Discord bot, its token (encrypted), its Discord settings, and each PC's server names, Levels XP, linked Minecraft names and wake details. Straight from PC to PC over your own network. No server in between |
 | **Tailscale** (`pkgs.tailscale.com`, `api.tailscale.com`) | When you select Install Tailscale in the desktop app, and when you make a share link for a moderator with a Tailscale key you saved | Which Tailscale setup to download, or the key and this PC's Tailscale address, to make the link |
 
 Each of these services has its own privacy policy, and sees your PC's
@@ -33,7 +37,10 @@ your own Tailscale network; this app never sends it anywhere else.
 Players' internet addresses aren't saved, with one exception: on a server
 with an IP whitelist add-on, the address it turned away a known player
 from is kept encrypted, shown only in part (`203.0.x.x`), and deleted when
-the player is taken off the whitelist. If you pick a Discord channel for a
+the player is taken off the whitelist. With Join protection on, the
+addresses it blocks are kept until the block ends or you remove it, and its
+log of who joined keeps only part of each address (`203.0.x.x`), for the
+last 500 joins. If you pick a Discord channel for a
 server's console, its lines are posted there with addresses hidden.
 
 **Get help** saves a file of logs and checks on your PC. It is never sent

@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "id": "grim",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "GrimAC"
+    ],
+    "modrinth": "grimac",
+    "hangar": "GrimAnticheat/GrimAnticheat"
+  },
+  "versions": ">=2.3.0 <3",
+  "title": "Grim anticheat",
+  "what": "Spots players who cheat on movement and fighting, and flags them for you.",
+  "steps": [
+    "Operators type /grim alerts in the game to see alerts as they happen.",
+    "Look at a player's history before deciding anything: a lagging player can be flagged too."
+  ],
+  "source": "https://github.com/GrimAnticheat/Grim/wiki/Commands",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "profile",
+      "label": "Show a player's client",
+      "command": "grim profile {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "history",
+      "label": "Show a player's flags",
+      "command": "grim history {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "grim reload",
+      "help": "This also clears the current flags."
+    }
+  ]
+}

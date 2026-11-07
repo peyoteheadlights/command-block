@@ -1,21 +1,30 @@
-"""Installed mods, Modrinth search and install, updates, rollback and
-dependencies."""
+"""Installed mods, search and install from Modrinth, Hangar and CurseForge,
+add from a file or link, "Needs you", updates, rollback and dependencies."""
 
 from __future__ import annotations
 
+import asyncio
 import time
+from itertools import zip_longest
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
+from ... import protection, suggestions
 from ...jobs import JobConflict
+from ...mods import copy as copy_module
+from ...mods.addfrom import add_file, add_from_link, read_link
 from ...mods.dependencies import DependencyError
-from ...mods.modrinth import ModrinthError
+from ...mods.sources import SourceError, split
 from ...mods.updateall import update_all
-from ...security.auth import Principal
-from ...security.permissions import MODS_MANAGE, SERVER_VIEW, require
-from ..deps import audit, get_server
+from ...security.auth import AuthError, Principal
+from ...security.permissions import MODS_MANAGE, SERVER_VIEW, check, check_server, require
+from ..deps import audit, get_core, get_server
 from ..errors import DOMAIN_ERRORS, audit_failure, respond_as
 from ..responses import (
+    CopyCheck,
+    CopyDone,
+    CopyTargets,
     DependencyInstall,
     DependencyPlan,
     DependencyReport,
@@ -23,6 +32,7 @@ from ..responses import (
     ModHistory,
     ModImpact,
     ModInstalled,
+    ModLink,
     ModList,
     ModProject,
     ModRemoved,
@@ -32,13 +42,19 @@ from ..responses import (
     ModUpdates,
     ModUploaded,
     ModVersions,
+    Ok,
+    Suggestions,
     UpdateAllPlan,
     UpdateAllResult,
 )
 from .models import (
+    CopyAddonsRequest,
     DependencyInstallRequest,
     ModFileRequest,
     ModInstallRequest,
+    ModLinkAddRequest,
+    ModLinkRequest,
+    ModProjectRequest,
     ModRollbackRequest,
     ModUpdateRequest,
     UpdateAllRequest,
@@ -62,6 +78,7 @@ async def list_mods(principal: Principal = Depends(require(SERVER_VIEW)), ctx=De
         "directory": str(ctx.config.mods_dir),
         "server_state": ctx.server.state.value,
         "updates_checked_at": ctx.db.get_setting("mod_updates_checked_at"),
+        "needs_you": ctx.mods.needs_you(),
     }
 
 
@@ -74,18 +91,59 @@ async def search_mods(
     principal: Principal = Depends(require(SERVER_VIEW)),
     ctx=Depends(get_server),
 ):
-    version = minecraft_version or ctx.server.mc_version
-    return await ctx.mods.modrinth.search(
-        q, minecraft_version=version or None, limit=limit, offset=offset
+    version = minecraft_version or ctx.server.mc_version or None
+    mods = ctx.mods
+    other = mods.hangar if ctx.config.server_type.hangar_platform else None
+    if mods.curseforge.loaders:
+        other = mods.curseforge
+    if other is None:
+        found = await mods.modrinth.search(q, minecraft_version=version, limit=limit, offset=offset)
+        return {**found, "hits": protection.flag_look_alikes(found["hits"])}
+    # Modrinth and Hangar (plugin servers) or CurseForge (mod servers) side
+    # by side, each named. Their files share no checksum, so the same add-on
+    # can show twice; installing it twice is refused by its hash.
+    # shortcut: each site fills half the page, so once one runs out the
+    # pages get shorter and the other's offset can repeat a few results.
+    half, start = max(1, limit // 2), max(0, offset) // 2
+    sites = (mods.modrinth, other)
+    names = [site.label for site in sites]
+    answers = await asyncio.gather(
+        *(site.search(q, minecraft_version=version, limit=half, offset=start) for site in sites),
+        return_exceptions=True,
     )
+    for answer in answers:
+        if isinstance(answer, BaseException) and not isinstance(answer, SourceError):
+            raise answer
+    found = [a for a in answers if isinstance(a, dict)]
+    if not found:
+        raise answers[0]
+    problems = [
+        f"{name} isn't available right now."
+        for name, a in zip(names, answers, strict=True)
+        if not isinstance(a, dict)
+    ]
+    for name, answer in zip(names, answers, strict=True):
+        for hit in answer["hits"] if isinstance(answer, dict) else []:
+            hit.setdefault("source_name", name)
+    hits = [hit for pair in zip_longest(*(a["hits"] for a in found)) for hit in pair if hit]
+    return {
+        "hits": protection.flag_look_alikes(hits),
+        "total": sum(a.get("total") or 0 for a in found),
+        "problems": problems,
+    }
 
 
 @router.get("/mods/project/{project}", response_model=ModProject)
 async def mod_project(
     project: str, principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
 ):
-    info = await ctx.mods.modrinth.project(project)
-    versions = await ctx.mods.modrinth.versions(project, ctx.server.mc_version)
+    source, plain = split(project)
+    if source not in ("modrinth", "hangar", "curseforge"):
+        raise HTTPException(status_code=404, detail="That add-on source isn't known.")
+    ctx.mods.site(source)  # refused on a server the site has nothing for
+    site: Any = getattr(ctx.mods, source)  # .modrinth, .hangar or .curseforge
+    info = await site.project(plain)
+    versions = await site.versions(plain, ctx.server.mc_version)
     return {
         "project": info,
         "versions": versions[:25],
@@ -103,7 +161,7 @@ async def install_mod(
     try:
         result = await ctx.mod_change(
             f"Installing {payload.project}",
-            lambda: ctx.mods.install_from_modrinth(
+            lambda: ctx.mods.install_from_site(
                 payload.project,
                 user=principal.user,
                 version_id=payload.version_id,
@@ -130,18 +188,52 @@ async def install_mod(
 async def upload_mod(
     request: Request,
     file: UploadFile = File(...),
+    confirm: bool = False,
     principal: Principal = Depends(require(MODS_MANAGE)),
     ctx=Depends(get_server),
 ):
     data = await file.read(320 * 1024 * 1024)
     with audit_failure(ctx, request, "mod_upload", target=file.filename):
-        result = await ctx.mod_change(
-            f"Adding {file.filename}",
-            lambda: ctx.mods.install_local_file(file.filename or "", data, user=principal.user),
-            principal.user,
-        )
+        result = await add_file(ctx, file.filename or "", data, principal.user, confirm=confirm)
     audit(ctx, request, "mod_upload", target=file.filename)
     return {"ok": True, **result}
+
+
+@router.post("/mods/link", response_model=ModLink)
+async def mod_link(
+    payload: ModLinkRequest,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """What a pasted link offers: a GitHub release's files to pick from, or
+    "download it in your browser". Nothing is downloaded."""
+    with respond_as(400):
+        return await read_link(ctx.mods, payload.url)
+
+
+@router.post("/mods/link/add", response_model=ModUploaded)
+async def mod_link_add(
+    payload: ModLinkAddRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    with audit_failure(ctx, request, "mod_link_add", target=payload.version_id):
+        result = await add_from_link(ctx, payload.version_id, principal.user, payload.confirm)
+    audit(ctx, request, "mod_link_add", target=result["installed"]["filename"])
+    return {"ok": True, **result}
+
+
+@router.post("/mods/needs-you/dismiss", response_model=Ok)
+async def dismiss_needs_you(
+    payload: ModProjectRequest,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Take a mod off "Needs you" without adding it."""
+    if not ctx.mods.done_needing(payload.project):
+        raise HTTPException(status_code=404, detail="That mod isn't under Needs you.")
+    return {"ok": True}
 
 
 @router.get("/mods/impact", response_model=ModImpact)
@@ -264,6 +356,92 @@ async def update_all_mods(
     return {"ok": True, **result}
 
 
+@router.get("/suggestions", response_model=Suggestions)
+async def addon_suggestions(
+    technical: bool = False,
+    principal: Principal = Depends(require(SERVER_VIEW)),
+    ctx=Depends(get_server),
+):
+    """Good to have, often used with your mods, speed-ups (only with a
+    measured reason), For your players and the live map link. Checked
+    against this server; nothing is installed here."""
+    return await suggestions.lists(ctx, technical)
+
+
+def _may_change_mods(principal: Principal, server_id: str) -> bool:
+    try:
+        check_server(principal, server_id)
+        check(principal, MODS_MANAGE, server_id)
+    except AuthError:
+        return False
+    return True
+
+
+def _target(core, principal: Principal, ctx, server_id: str):
+    target = core.servers.get(server_id)
+    if target is None or target is ctx:
+        raise HTTPException(status_code=404, detail="Pick another server to copy to.")
+    if not _may_change_mods(principal, server_id):
+        raise HTTPException(
+            status_code=403, detail=f"Your account can't change add-ons on {target.name}."
+        )
+    return target
+
+
+@router.get("/mods/copy", response_model=CopyTargets)
+async def copy_targets(
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+    core=Depends(get_core),
+):
+    """The servers this account may copy add-ons to: others with add-ons
+    where it can change them too."""
+    return {
+        "targets": [
+            {"id": other.server_id, "name": other.name, "type": other.config.server_type.id}
+            for other in core.servers.values()
+            if other is not ctx
+            and other.config.server_type.has_content
+            and _may_change_mods(principal, other.server_id)
+        ]
+    }
+
+
+@router.post("/mods/copy/check", response_model=CopyCheck)
+async def check_copy(
+    payload: CopyAddonsRequest,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+    core=Depends(get_core),
+):
+    """What would come and what can't, and why. Changes nothing."""
+    target = _target(core, principal, ctx, payload.target)
+    with respond_as(400):
+        return await copy_module.check(ctx, target, payload.filenames)
+
+
+@router.post("/mods/copy", response_model=CopyDone)
+async def copy_addons(
+    payload: CopyAddonsRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+    core=Depends(get_core),
+):
+    """Copy the ticked add-ons and their settings to the other server, as
+    one change there: one backup first, one Undo."""
+    target = _target(core, principal, ctx, payload.target)
+    with respond_as(400), audit_failure(target, request, "mod_copy"):
+        result = await copy_module.copy(ctx, target, payload.filenames, user=principal.user)
+    audit(
+        target,
+        request,
+        "mod_copy",
+        detail=f"from {ctx.name}: " + ", ".join(c["name"] for c in result["copied"]),
+    )
+    return {"ok": True, **result}
+
+
 @router.get("/mods/versions/{mod_id}", response_model=ModVersions)
 async def mod_versions(
     mod_id: str, principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
@@ -303,7 +481,7 @@ async def mod_dependencies(
     report = ctx.mods.deps.analyse()
     try:
         await ctx.mods.deps.describe(report)
-    except (ModrinthError, DependencyError) as exc:
+    except (SourceError, DependencyError) as exc:
         report["lookup_error"] = f"Mod names could not be looked up on Modrinth: {exc}"
     return report
 

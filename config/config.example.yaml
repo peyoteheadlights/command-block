@@ -53,6 +53,7 @@ server:
   # and does not start the server again by itself.
   autosleep: false
   autosleep_minutes: 30      # 1 to 1440 (24 hours)
+  played_by: ""              # friends, kids or community: picks Simple mode's add-on suggestion
 
 monitor:
   auto_restart: true
@@ -124,6 +125,10 @@ security:
   lockout_minutes: 15
   rate_limit_requests: 120
   rate_limit_window: 60
+  # Run servers as the hidden Windows account CommandBlockServer, so a
+  # harmful mod or plugin can't read your files. Change it in Settings, not
+  # here: turning it on or off needs the installer (Administrator).
+  separate_windows_user: false
 
 backups:
   directory: backups         # relative paths resolve inside the agent data folder
@@ -149,6 +154,9 @@ mods:
   backup_directory: mod-backups
   trash_directory: mod-trash
   modrinth_api: https://api.modrinth.com/v2
+  # CurseForge goes through Command Block's relay. Neither is a secret.
+  curseforge_relay: https://europe-west1-command-block-d4526.cloudfunctions.net/curseforge
+  firebase_web_key: AIzaSyDUobgN-1BPbhI4jsLAASFU2Mf6rp3So_g
   user_agent: command-block (self-hosted)
   backup_before_install: true
   auto_stop_for_install: false
@@ -187,6 +195,7 @@ notifications:
     player_managed: true     # a player was whitelisted, made operator, kicked or banned
     modpack_imported: true   # a modpack was imported into a server
     autosleep: true          # a server was stopped because nobody was playing
+    server_software: true    # a newer stable build or Minecraft release is out for a server
   email:
     host: ""                 # e.g. smtp.gmail.com
     port: 587

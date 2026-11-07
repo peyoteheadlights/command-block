@@ -163,3 +163,73 @@ class Graph(QWidget):
                 p.drawRoundedRect(tag, 4, 4)
                 p.setPen(muted)
                 p.drawText(tag, Qt.AlignmentFlag.AlignCenter, words)
+
+
+class HoursGraph(QWidget):
+    """Players online by hour of the day: one bar per hour, the average of
+    each day's busiest count. An hour never measured is a hatched bar
+    marked Unknown, never a zero (house rule 1)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hours: list[dict] = []
+        self.colors = {"line": "#0066CC", "text": "#5F5F65", "border": "#DCDCE0", "plot": "#FFFFFF"}
+        self.setMinimumSize(240, 140)
+
+    def show_hours(self, hours: list[dict]) -> None:
+        self.hours = hours
+        known = [h for h in hours if h["average"] is not None]
+        self.setAccessibleName(text("activity.graph"))
+        self.setAccessibleDescription(
+            ", ".join(
+                f"{h['hour']:02d}:00 {h['average']:g}"
+                if h["average"] is not None
+                else f"{h['hour']:02d}:00 {text('state.unknown')}"
+                for h in hours
+            )
+            if known
+            else text("overview.not_measured")
+        )
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        c = self.colors
+        p = QPainter(self)
+        font = p.font()
+        font.setPointSizeF(font.pointSizeF() * 0.8)
+        p.setFont(font)
+        left, bottom = 30, 18
+        plot = QRectF(left, 6, self.width() - left - 6, self.height() - bottom - 6)
+        p.setPen(QPen(QColor(c["border"]), 1))
+        p.setBrush(QColor(c["plot"]))
+        p.drawRect(plot)
+        top = max([h["average"] or 0 for h in self.hours] + [1])
+        muted = QColor(c["text"])
+        p.setPen(muted)
+        for value in (0, top):
+            y = plot.bottom() - value / top * plot.height()
+            p.drawText(
+                QRectF(0, y - 8, left - 4, 16),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                f"{value:g}",
+            )
+        wide = plot.width() / 24
+        band = QColor(c["text"])
+        band.setAlpha(60)
+        for h in self.hours:
+            x = plot.left() + h["hour"] * wide
+            if h["hour"] % 6 == 0:
+                p.setPen(muted)
+                p.drawText(
+                    QRectF(x, plot.bottom() + 2, 40, 14),
+                    Qt.AlignmentFlag.AlignLeft,
+                    f"{h['hour']:02d}:00",
+                )
+            if h["average"] is None:
+                p.fillRect(
+                    QRectF(x + 1, plot.top() + 1, wide - 2, plot.height() - 2),
+                    QBrush(band, Qt.BrushStyle.BDiagPattern),
+                )
+                continue
+            tall = h["average"] / top * plot.height()
+            p.fillRect(QRectF(x + 1, plot.bottom() - tall, wide - 2, tall), QColor(c["line"]))

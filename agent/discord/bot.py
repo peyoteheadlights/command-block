@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from .. import levels
+from .. import levels, store
 from ..config import PROJECT_ROOT
 from ..events import OWNER_ONLY_EVENTS, Event
 from ..game_events import ANSWERS
@@ -44,6 +44,7 @@ from ..startrequests import STOPPED, TOLD, StartRequest, StartRequestError
 from ..stats import player_stats
 from ..whitelist import WhitelistError, settled, settled_words
 from . import bridge, client, layout, live, progress
+from .botpc import LinkRefused
 from .links import CODE_LIFE, LinkError
 
 if TYPE_CHECKING:
@@ -68,6 +69,9 @@ LIVE_EVERY = 60.0  # seconds between status message and presence checks
 START_COOLDOWN = 300.0  # seconds between starts of one server from Discord
 BATCH = 1.0  # seconds game lines are gathered before they're posted
 REFUSED = "\N{NO ENTRY SIGN}"  # the reaction on a message that didn't go into the game
+STORE_SEEN_KEY = "discord_store_seen"  # guild id -> member id -> Store rank roles given
+STORE_EVERY = 3600.0  # Store rank roles are checked hourly, and soon after a player joins
+STORE_AFTER_JOIN = 120.0  # Tebex runs a purchase's commands within minutes of a join
 SEEN_KEY = "discord_levels_seen"  # member id -> the Level their roles were last set for
 BOARDS_KEY = "discord_leaderboards"  # guild id -> the day its leaderboard was last posted
 BOARD_HOUR = 18  # on the PC's clock
@@ -96,6 +100,7 @@ SAYS_WHY = (
     JobConflict,
     QuestError,
     WhitelistError,
+    LinkRefused,
 )
 
 
@@ -172,8 +177,15 @@ NAME_OPTION = {
 
 
 class Bot:
-    def __init__(self, core: AgentCore, token: str):
+    """``rest_only``: on a PC that isn't the Bot PC (agent/discord/botpc.py).
+    No live connection; it posts this PC's own servers' alerts, chat, status
+    messages and events, and answers what the Bot PC passes on."""
+
+    def __init__(self, core: AgentCore, token: str, rest_only: bool = False):
         self.core = core
+        self.token = token
+        self.rest_only = rest_only
+        self.ready = False  # rest_only: Discord answered with the bot's facts
         self.rest = client.Rest(token)
         self.gateway = client.Gateway(self.rest, token, INTENTS, self._event, self._before_login)
         self.user: dict = {}
@@ -193,6 +205,7 @@ class Bot:
         self._posts_lock = asyncio.Lock()
         self._console_lock = asyncio.Lock()
         self._resync = False  # set when the Level roles changed: everyone's are set again
+        self._store_due = 0.0  # when the Store rank roles are checked next
         # Each server's console channels, read from the database once a
         # minute and on a change, never per console line.
         self.consoles: dict[str, list[str]] = {}
@@ -202,9 +215,34 @@ class Bot:
         core.whitelist.on_answer = self.form_answered
         core.bus.subscribe(self.from_game)
 
+    @property
+    def connected(self) -> bool:
+        return self.ready if self.rest_only else self.gateway.state == "connected"
+
     # -- running -------------------------------------------------------------
     def start(self) -> None:
-        self._task = asyncio.create_task(self._run(), name="discord-bot")
+        work = self._rest() if self.rest_only else self._run()
+        self._task = asyncio.create_task(work, name="discord-bot")
+
+    async def _rest(self) -> None:
+        while not self.ready:  # Discord or the network down: a minute later
+            try:
+                self.app = await self.rest.request("GET", "/applications/@me")
+                self.user = await self.rest.request("GET", "/users/@me")
+                break
+            except client.TokenRejected:
+                self.gateway.state, self.gateway.detail = (
+                    "token_rejected",
+                    "Discord refused the token.",
+                )
+                return
+            except client.DiscordError as exc:
+                log.info("Discord didn't answer this PC's bot: %s", exc)
+                self.gateway.detail = str(exc)
+                await asyncio.sleep(LIVE_EVERY)
+        self.core.botpc.restore()  # the Discord servers and their settings
+        self.ready = True
+        await self._live_loop()
 
     async def _run(self) -> None:
         await self.gateway.run()
@@ -291,15 +329,13 @@ class Bot:
     async def _live_loop(self) -> None:
         """Once a minute: the status messages, Level roles and level-ups,
         and the weekly leaderboards. One failing doesn't stop the others."""
-        await asyncio.sleep(LIVE_FIRST)
+        await asyncio.sleep(0 if self.rest_only else LIVE_FIRST)
         while True:
-            for work in (
-                self.update_live,
-                self.update_levels,
-                self.post_leaderboards,
-                self.update_quests,
-                self.update_events,
-            ):
+            # Levels and leaderboards count every PC's servers: the Bot PC's job.
+            works = [self.update_live, self.update_quests, self.update_events, self.minute]
+            if not self.rest_only:
+                works += [self.update_levels, self.post_leaderboards, self.update_store_roles]
+            for work in works:
                 try:
                     await work()
                 except client.DiscordError as exc:
@@ -308,20 +344,32 @@ class Bot:
                     log.exception("Discord %s didn't work", work.__name__)
             await asyncio.sleep(LIVE_EVERY)
 
+    async def minute(self) -> None:
+        self.core.botpc.minute(self)
+
     async def update_live(self) -> None:
         """Edit what changed, and nothing else (weak mini PCs, and Discord's
         rate limits)."""
         self.consoles = layout.consoles(self.core.db, set(self.guilds))
-        tied = sorted({sid for gid in self.guilds for sid in self.server_names(gid)})
-        line = live.presence([self.core.servers[sid] for sid in tied])
-        if line and line != self.gateway.presence:
-            await self.gateway.set_presence(line)
+        if not self.rest_only:
+            remote = self.core.botpc.remote()
+            tied = sorted({r for gid in self.guilds for r in self.server_names(gid, True)})
+            line = live.presence(
+                [
+                    live.seen(self.core.discord_servers[r])
+                    if r in self.core.discord_servers
+                    else remote[r]
+                    for r in tied
+                ]
+            )
+            if line and line != self.gateway.presence:
+                await self.gateway.set_presence(line)
         shared = layout.addresses(self.core.db)
         posts = self.core.db.get_setting(POSTS_KEY, {}) or {}
         changed = False
         for gid in list(self.guilds):
             for row in layout.channels(self.core.db, gid):
-                ctx = self.core.servers.get(row["server_id"])
+                ctx = self.core.discord_servers.get(row["server_id"])
                 if row["kind"] != "status" or ctx is None:
                     continue
                 words = live.status_message(ctx, shared.get(ctx.server_id))
@@ -377,7 +425,7 @@ class Bot:
             if resync:
                 db.set_setting(SEEN_KEY, {})
             seen: dict[str, int] = db.get_setting(SEEN_KEY, {}) or {}
-            now = {m: levels.level_of(xp) for m, xp in levels.all_xp(db).items()}
+            now = {m: levels.level_of(xp) for m, xp in self.xp().items()}
             # Every account unlinked: back to no Level role, once.
             gone = {m for m in seen if m not in now}
             now.update({m: 0 for m in gone})
@@ -461,6 +509,83 @@ class Bot:
             await self.rest.request("PUT", f"{path}/{wanted}")
         return wanted
 
+    def resync_store(self) -> None:
+        """The Store rank roles changed: check them on the next minute."""
+        self._store_due = 0.0
+
+    def store_ranks_of(self, guild_id: str) -> list[dict[str, Any]]:
+        """The Store ranks, for the Level roles editor, when one of this
+        Discord server's Minecraft servers has a store; with the paired role."""
+        servers = [self.core.servers.get(sid) for sid in layout.servers_of(self.core.db, guild_id)]
+        if not any(ctx and store.key_of(ctx) for ctx in servers):
+            return []
+        pairs = layout.store_roles(self.core.db, guild_id)
+        return [
+            {"rank": r["id"], "name": r["name"], "role_id": pairs.get(r["id"])} for r in store.RANKS
+        ]
+
+    async def update_store_roles(self) -> None:
+        """Hourly, and two minutes after a player joins: each member whose
+        linked Minecraft account holds a Store rank gets the paired Discord
+        role, and loses the ones this bot gave when the rank goes (expiry,
+        refund or chargeback). Read from LuckPerms' own files, never the
+        console. Discord is only called for a change."""
+        now = time.time()
+        if now < self._store_due:
+            return
+        self._store_due = now + STORE_EVERY
+        db = self.core.db
+        seen: dict[str, dict[str, list[str]]] = db.get_setting(STORE_SEEN_KEY, {}) or {}
+
+        def plain(uuid: str) -> str:
+            return uuid.replace("-", "").lower()
+
+        for gid in list(self.guilds):
+            pairs = layout.store_roles(db, gid)
+            before = seen.get(gid) or {}
+            if not pairs and not before:
+                continue
+            held: dict[str, set[str]] = {}
+            for sid in layout.servers_of(db, gid):
+                ctx = self.core.servers.get(sid)
+                for uuid, ranks in (store.holders(ctx) if ctx else {}).items():
+                    held.setdefault(plain(uuid), set()).update(ranks)
+            try:
+                found = {r["id"]: r for r in await self.rest.request("GET", f"/guilds/{gid}/roles")}
+            except client.DiscordError:
+                self._store_due = now + LIVE_EVERY * 5  # try again soon, not in an hour
+                raise
+            ours = layout.our_roles(db, gid)
+            usable = {
+                rank: rid
+                for rank, rid in pairs.items()
+                if rid in found and not layout.level_role_refused(gid, found[rid], ours)
+            }
+            wanted: dict[str, set[str]] = {}
+            for row in db.query("SELECT discord_id, uuid FROM discord_links"):
+                roles = {usable[r] for r in held.get(plain(row["uuid"]), ()) if r in usable}
+                if roles:
+                    wanted.setdefault(row["discord_id"], set()).update(roles)
+            after: dict[str, list[str]] = {}
+            for member in set(wanted) | set(before):
+                want, had = wanted.get(member, set()), set(before.get(member) or [])
+                path = f"/guilds/{gid}/members/{member}/roles"
+                try:
+                    for rid in sorted(want - had):
+                        await self.rest.request("PUT", f"{path}/{rid}")
+                    for rid in sorted(had - want):
+                        await self.rest.request("DELETE", f"{path}/{rid}")
+                except client.DiscordError as exc:
+                    log.info("couldn't set a Store rank role: %s", exc)
+                    if exc.status != 404:  # not in this Discord server: nothing to keep
+                        after[member] = sorted(had)
+                        self._store_due = min(self._store_due, now + LIVE_EVERY * 5)
+                    continue
+                if want:
+                    after[member] = sorted(want)
+            seen[gid] = after
+        db.set_setting(STORE_SEEN_KEY, seen)
+
     async def post_leaderboards(self, now: datetime.datetime | None = None) -> None:
         """Each Discord server's weekly leaderboard, on its day from 18:00,
         once (remembered, so a restart doesn't post it twice)."""
@@ -475,14 +600,28 @@ class Bot:
             day = layout.level_settings(db, gid)["leaderboard_day"]
             if day != now.weekday() or not channel or posted.get(gid) == today:
                 continue
-            names = self.server_names(gid)
+            names = self.server_names(gid, True)
             if not names:
                 continue
-            ids = sorted(names)
+            ids = sorted(r for r in names if r in self.core.discord_servers)
+            played = levels.weekly_playtime(db, ids, now.timestamp())
+            members = levels.members_on(db, ids)
+            off = []
+            for pc in sorted({r.partition("@")[2] for r in names} - {""}):
+                sids = [r.partition("@")[0] for r in names if r.endswith(f"@{pc}")]
+                found = await self.core.botpc.call(
+                    pc, "leaderboard", {"servers": sids, "until": now.timestamp()}
+                )
+                if found is None:
+                    off.append(self.core.botpc.name_of(pc))
+                    continue
+                played += found.get("played") or []
+                members |= set(found.get("members") or [])
             words = progress.leaderboard(
                 " and ".join(sorted(names.values())),
-                levels.weekly_playtime(db, ids, now.timestamp()),
-                levels.top_levels(db, ids),
+                levels.most_played(played),
+                levels.top_levels(members, self.xp()),
+                off,
             )
             await self.rest.request(
                 "POST",
@@ -621,7 +760,7 @@ class Bot:
             found = self.core.game_events
             now = time.time()
             # recent() and polls() only list servers that are still there.
-            servers = self.core.servers
+            servers = self.core.discord_servers
             for event in found.recent():
                 view = found.view(event)
                 if view["state"] == "coming" and not event["reminded_at"]:
@@ -630,7 +769,7 @@ class Bot:
                     "game_events",
                     event,
                     progress.event_post(view, servers[event["server_id"]].name),
-                    rsvp_buttons(view),
+                    rsvp_buttons(view, self.core.botpc.to_discord(event["server_id"])),
                     new=view["state"] in ("coming", "on"),
                 )
             for poll in found.polls():
@@ -639,7 +778,7 @@ class Bot:
                     "polls",
                     poll,
                     progress.poll_post(view, servers[poll["server_id"]].name),
-                    vote_buttons(view),
+                    vote_buttons(view, self.core.botpc.to_discord(poll["server_id"])),
                     None if view["open"] else progress.poll_result(view),
                     new=view["open"],
                 )
@@ -705,7 +844,7 @@ class Bot:
                 continue
             pinged = going
             if layout.guild_options(db, gid)["reminders"] == "private":
-                server = self.core.servers[event["server_id"]].name
+                server = self.core.discord_servers[event["server_id"]].name
                 words = progress.private_reminder(event, server, self.guilds[gid]["name"])
                 pinged = []
                 for member in going:
@@ -770,8 +909,8 @@ class Bot:
         """Whether this alert goes to an alerts channel: only a Minecraft
         server's own alerts, never the ones about the PC (owner only)."""
         return (
-            self.gateway.state == "connected"
-            and event.server_id in self.core.servers
+            self.connected
+            and event.server_id in self.core.discord_servers
             and event.type not in OWNER_ONLY_EVENTS
             and bool(layout.alert_channels(self.core.db, event.server_id, self.guilds))
         )
@@ -783,7 +922,7 @@ class Bot:
         )
         body = {
             "embeds": [embed],
-            "components": alert_buttons(event, self.core.servers[event.server_id]),
+            "components": alert_buttons(event, self.core.discord_servers[event.server_id]),
             "allowed_mentions": {"parse": []},
         }
         sent = 0
@@ -801,7 +940,7 @@ class Bot:
         its alerts lose their buttons and say how."""
         reply = request.reply or {}
         if reply.get("channel_id") and reply.get("member_id"):
-            ctx = self.core.servers.get(request.server_id)
+            ctx = self.core.discord_servers.get(request.server_id)
             told = TOLD[how].format(server=ctx.name if ctx else request.server_id)
             self.spawn(self.tell(reply["channel_id"], reply["member_id"], told))
         words = {
@@ -832,11 +971,13 @@ class Bot:
         """A bus event: chat and player lines go to the server's chat
         channels, gathered for a moment so a busy chat is one post; console
         lines to its console channels."""
-        if self.gateway.state != "connected" or event.server_id not in self.core.servers:
+        if not self.connected or event.server_id not in self.core.discord_servers:
             return
         if event.type == "console":
             self._to_console(event)
             return
+        if event.type == "player_joined":
+            self._store_due = min(self._store_due, time.time() + STORE_AFTER_JOIN)
         line = bridge.game_line(event)
         if line is None:
             return
@@ -905,9 +1046,12 @@ class Bot:
         db = self.core.db
         if gid not in self.guilds or not layout.guild_options(db, gid)["remove_on_leave"]:
             return
+        if not self.rest_only:  # the other PCs' servers too
+            for pc in self.core.botpc.linked():
+                self.spawn(self.core.botpc.call(pc, "member_left", {"data": data}))
         servers = set(layout.servers_of(db, gid))
         for row in self.core.links.of_member(member):
-            ctx = self.core.servers.get(row["server_id"])
+            ctx = self.core.discord_servers.get(row["server_id"])
             if ctx is None or row["server_id"] not in servers:
                 continue
             try:
@@ -950,7 +1094,14 @@ class Bot:
             ),
             None,
         )
-        ctx = self.core.servers.get(server_id or "")
+        if server_id and "@" in server_id and not self.rest_only:  # on another PC
+            found = await self.core.botpc.call(
+                server_id.partition("@")[2], "message", {"message": message}
+            )
+            if found is None:
+                log.info("a Discord message didn't reach a server on a PC that's off")
+            return
+        ctx = self.core.discord_servers.get(server_id or "")
         if ctx is None or ctx.server.state.value != "ONLINE":
             return
         roles = [str(r) for r in (message.get("member") or {}).get("roles") or []]
@@ -997,16 +1148,16 @@ class Bot:
     async def refresh(self, guild_id: str) -> None:
         """Register the commands in a Discord server, then check it."""
         self.consoles = layout.consoles(self.core.db, set(self.guilds))
-        names = self.server_names(guild_id)
         await self.rest.request(
             "PUT",
             f"/applications/{self.app['id']}/guilds/{guild_id}/commands",
-            command_list(names),
+            command_list(self.choices(guild_id), self.rented_choices()),
         )
         await self.check(guild_id)
 
     async def check(self, guild_id: str | None = None) -> None:
-        names = {sid: ctx.name for sid, ctx in self.core.servers.items()}
+        names = {sid: ctx.name for sid, ctx in self.core.discord_servers.items()}
+        names.update({r: s["name"] for r, s in self.core.botpc.remote().items()})
         for gid in [guild_id] if guild_id else list(self.guilds):
             try:
                 report = await layout.inspect(self.rest, self.core.db, gid, self.user["id"], names)
@@ -1014,13 +1165,48 @@ class Bot:
                 report = {"problems": [{"id": "unreadable", "detail": str(exc)}]}
             self.reports[gid] = {**report, "checked_at": time.time()}
 
-    def server_names(self, guild_id: str) -> dict[str, str]:
-        """The Minecraft servers this Discord server is for, id -> name."""
+    def server_names(self, guild_id: str, everywhere: bool = False) -> dict[str, str]:
+        """The Minecraft servers this Discord server is for, id -> name.
+        ``everywhere``: on the Bot PC, with those on the other PCs too
+        ("survival@<pc>")."""
+        remote = self.core.botpc.remote() if everywhere and not self.rest_only else {}
         return {
-            sid: self.core.servers[sid].name
+            sid: self.core.discord_servers[sid].name
+            if sid in self.core.discord_servers
+            else remote[sid]["name"]
             for sid in layout.servers_of(self.core.db, guild_id)
-            if sid in self.core.servers
+            if sid in self.core.discord_servers or sid in remote
         }
+
+    def choices(self, guild_id: str) -> dict[str, str]:
+        """The server option's choices, as Discord names them; two servers
+        with one name say which PC each is on."""
+        names = self.server_names(guild_id, True)
+        remote = self.core.botpc.remote()
+        joined = self.core.pcs.joined()
+        twice = {n for n in names.values() if joined and list(names.values()).count(n) > 1}
+        here = self.core.pcs.name()
+        return {
+            self.core.botpc.to_discord(r): (
+                f"{n} ({remote[r]['pc_name'] if r in remote else here})" if n in twice else n
+            )
+            for r, n in names.items()
+        }
+
+    def rented_choices(self) -> dict[str, str]:
+        """Rented servers the owner put on Discord (agent/rented.py)."""
+        return {
+            s.id: f"{s.name} ({self.core.rented.panels[s.panel_id]['host']})"
+            for s in self.core.rented.servers.values()
+            if s.discord != "off"
+        }
+
+    def xp(self) -> dict[str, int]:
+        """Levels XP, on every PC (the other PCs say theirs in bot_news)."""
+        found = levels.all_xp(self.core.db)
+        for member, more in self.core.botpc.remote_xp().items():
+            found[member] = found.get(member, 0) + more
+        return found
 
     # -- what the apps see --------------------------------------------------------
     def switches(self) -> dict[str, bool | None]:
@@ -1040,9 +1226,19 @@ class Bot:
         if switches["members"] is False:
             off.append("remove_on_leave")
         app_id = self.app.get("id")
+        remote = self.core.botpc.remote()
         return {
             "token_set": True,
-            "state": self.gateway.state,
+            "state": "elsewhere" if self.rest_only else self.gateway.state,
+            "bot_pc": self.core.botpc.status(),
+            "servers": [
+                {"id": sid, "name": ctx.name}
+                for sid, ctx in sorted(self.core.discord_servers.items())
+            ]
+            + [
+                {"id": r, "name": f"{s['name']} ({s['pc_name']})"}
+                for r, s in sorted(remote.items())
+            ],
             "detail": self.gateway.detail,
             "connected_at": self.gateway.connected_at,
             "name": self.user.get("username"),
@@ -1052,7 +1248,7 @@ class Bot:
             "features_off": off,
             "no_game_chat": sorted(
                 sid
-                for sid, ctx in self.core.servers.items()
+                for sid, ctx in self.core.discord_servers.items()
                 if not ctx.config.server_type.reads_chat
             ),
             "addresses": layout.addresses(self.core.db),
@@ -1081,6 +1277,7 @@ class Bot:
                 {"level": at, "role_id": rid, "name": names.get(rid)}
                 for at, rid in layout.level_roles(self.core.db, guild_id)
             ],
+            "store_ranks": self.store_ranks_of(guild_id),
         }
 
     def problem(self) -> dict[str, Any] | None:
@@ -1110,7 +1307,8 @@ class Bot:
             self.user = await self.rest.request("PATCH", "/users/@me", body) or self.user
 
     async def set_up(self, guild_id: str, server_ids: list[str]) -> dict[str, Any]:
-        servers = {sid: self.core.servers[sid].name for sid in server_ids}
+        names = {s["id"]: s["name"] for s in self.status()["servers"]}
+        servers = {sid: names[sid] for sid in server_ids}
         made = await layout.set_up(self.rest, self.core.db, guild_id, servers)
         await self.refresh(guild_id)
         return made
@@ -1124,10 +1322,12 @@ class Bot:
         )
 
     # -- commands -------------------------------------------------------------------
-    async def interaction(self, data: dict) -> None:
+    async def interaction(self, data: dict, server: str | None = None) -> None:
         """A slash command (type 2), a button press (type 3) or a filled-in
         pop-up form (type 5): rate limit, pick the server, check the
-        permission like a route, run, answer, audit."""
+        permission like a route, run, answer, audit. A server on another PC:
+        passed on to that PC, which does all that itself. ``server``: the
+        server the Bot PC picked, when it passed it on here."""
         kind = data.get("type")
         body = data.get("data") or {}
         member = data.get("member") or {}
@@ -1185,12 +1385,17 @@ class Bot:
             needs_server, slow = True, True
             asking = button if button.sure and not on_prompt else None
         result, deferred = "ok", False
+        if server:
+            call.options["server"] = server
         try:
             self.rate.check(f"discord:{call.member_id}")
             server_id = self.pick_server(call) if needs_server else None
+            if server_id and server_id not in self.core.discord_servers:  # on another PC
+                await self.pass_on(data, server_id, name)
+                return
             P.check(call.principal, permission, server_id)
             if server_id:
-                call.ctx = self.core.servers[server_id]
+                call.ctx = self.core.discord_servers[server_id]
             if asking and call.ctx is not None:
                 question = str(asking.sure).format(name=call.arg, server=call.ctx.name)
                 await self.respond(data, question, components=sure_buttons(asking, call))
@@ -1232,21 +1437,33 @@ class Bot:
         else:
             await self.respond(data, words, update=on_prompt)
 
+    async def pass_on(self, data: dict, ref: str, name: str) -> None:
+        """A server on another of the owner's PCs: that PC answers Discord
+        itself. "That PC is off" when it doesn't take it in time."""
+        sid, _, pc = ref.partition("@")
+        if await self.core.botpc.call(pc, "interaction", {"interaction": data, "server": ref}):
+            return
+        starting = name in ("/start", "button start_yes", "/request-start")
+        await self.respond(data, self.core.botpc.off_words(ref, starting))
+
     def pick_server(self, call: Call) -> str:
         """The option if given, else the channel's Minecraft server, else
-        the only one; with several, ask which."""
-        names = self.server_names(call.guild_id)
+        the only one; with several, ask which. One on another PC is
+        "survival@<pc>" (on the Bot PC)."""
+        names = self.server_names(call.guild_id, True)
+        known = set(self.core.discord_servers) | (set() if self.rest_only else set(names))
         wanted = call.options.get("server")
         if wanted:
-            if wanted not in self.core.servers:
+            wanted = self.core.botpc.local(str(wanted))
+            if wanted not in known:
                 raise Refused("That server isn't there any more.")
-            return str(wanted)
+            return wanted
         here = (
             layout.server_of_channel(self.core.db, call.guild_id, call.channel_id)
             if call.channel_id
             else None
         )
-        if here in self.core.servers:
+        if here in known:
             return str(here)
         if len(names) == 1:
             return next(iter(names))
@@ -1306,9 +1523,10 @@ def logo() -> bytes | None:
         return None
 
 
-def command_list(names: dict[str, str]) -> list[dict]:
+def command_list(names: dict[str, str], rented: dict[str, str] | None = None) -> list[dict]:
     """The commands as Discord registers them in one Discord server. The
-    server option lists that Discord server's own Minecraft servers."""
+    server option lists that Discord server's own Minecraft servers; /rented
+    is there only when the owner put a rented server on Discord."""
     server = {
         "type": 3,
         "name": "server",
@@ -1319,6 +1537,11 @@ def command_list(names: dict[str, str]) -> list[dict]:
     out: list[dict] = []
     for command in COMMANDS.values():
         options = list(command.options)
+        if command.group == "rented":
+            if not rented:
+                continue
+            choices = [{"name": n[:100], "value": i} for i, n in sorted(rented.items())][:25]
+            options = [{**RENTED_OPTION, "choices": choices}]
         if command.needs_server and server["choices"]:
             options.append(server)
         entry = {
@@ -1343,10 +1566,30 @@ def command_list(names: dict[str, str]) -> list[dict]:
     return out
 
 
+def on_the_list(data: dict) -> bool:
+    """A command, button or pop-up form the bot has: all a Bot link may
+    pass on (permissions.check_bot_link)."""
+    body, kind = data.get("data") or {}, data.get("type")
+    if kind == 2:
+        name = str(body.get("name"))
+        if name in GROUPS:
+            name = f"{name} {(body.get('options') or [{}])[0].get('name')}"
+        return name in COMMANDS
+    if kind == 3:
+        custom = str(body.get("custom_id") or "")
+        return custom == "cancel" or custom.removeprefix("sure:").split(":")[0] in BUTTONS
+    if kind == 5:
+        _, wanted, *_ = str(body.get("custom_id")).split(":") + ["", ""]
+        return str(body.get("custom_id")).startswith("form:") and bool(
+            wanted in COMMANDS and COMMANDS[wanted].form
+        )
+    return False
+
+
 def form_of(command: Command, ctx: ServerContext) -> dict:
     """A command's pop-up form, tied to the server it was opened for."""
     return {
-        "custom_id": f"form:{command.name}:{ctx.server_id}",
+        "custom_id": f"form:{command.name}:{ctx.core.botpc.to_discord(ctx.server_id)}",
         "title": command.form_title.format(server=ctx.name)[:45],
         "components": [{"type": 1, "components": [box]} for box in command.form],
     }
@@ -1399,14 +1642,14 @@ def alert_buttons(event: Event, ctx: ServerContext) -> list[dict]:
             "type": 2,
             "style": BUTTONS[a].style,
             "label": BUTTONS[a].label,
-            "custom_id": f"{a}:{ctx.server_id}:{name}"[:100],
+            "custom_id": f"{a}:{ctx.core.botpc.to_discord(ctx.server_id)}:{name}"[:100],
         }
         for a in wanted
     ]
     return [{"type": 1, "components": row}] if row else []
 
 
-def rsvp_buttons(event: dict[str, Any]) -> list[dict]:
+def rsvp_buttons(event: dict[str, Any], server: str) -> list[dict]:
     """Going / Maybe / Can't, until the event ends or is called off."""
     if event["state"] not in ("coming", "on"):
         return []
@@ -1418,7 +1661,7 @@ def rsvp_buttons(event: dict[str, Any]) -> list[dict]:
                     "type": 2,
                     "style": BUTTONS[f"rsvp_{a}"].style,
                     "label": BUTTONS[f"rsvp_{a}"].label,
-                    "custom_id": f"rsvp_{a}:{event['server_id']}:{event['id']}",
+                    "custom_id": f"rsvp_{a}:{server}:{event['id']}",
                 }
                 for a in ANSWERS
             ],
@@ -1426,7 +1669,7 @@ def rsvp_buttons(event: dict[str, Any]) -> list[dict]:
     ]
 
 
-def vote_buttons(poll: dict[str, Any]) -> list[dict]:
+def vote_buttons(poll: dict[str, Any], server: str) -> list[dict]:
     """One button per answer while the poll is open."""
     if not poll["open"]:
         return []
@@ -1438,7 +1681,7 @@ def vote_buttons(poll: dict[str, Any]) -> list[dict]:
                     "type": 2,
                     "style": 1,
                     "label": answer[:80],
-                    "custom_id": f"vote:{poll['server_id']}:{poll['id']}.{i}",
+                    "custom_id": f"vote:{server}:{poll['id']}.{i}",
                 }
                 for i, answer in enumerate(poll["answers"])
             ],
@@ -1448,6 +1691,7 @@ def vote_buttons(poll: dict[str, Any]) -> list[dict]:
 
 def sure_buttons(button: Button, call: Call) -> list[dict]:
     assert call.ctx is not None
+    server = call.ctx.core.botpc.to_discord(call.ctx.server_id)
     return [
         {
             "type": 1,
@@ -1456,7 +1700,7 @@ def sure_buttons(button: Button, call: Call) -> list[dict]:
                     "type": 2,
                     "style": 4,
                     "label": f"Yes, {button.label.lower()}",
-                    "custom_id": f"sure:{button.action}:{call.ctx.server_id}:{call.arg}"[:100],
+                    "custom_id": f"sure:{button.action}:{server}:{call.arg}"[:100],
                 },
                 {"type": 2, "style": 2, "label": "Cancel", "custom_id": "cancel"},
             ],
@@ -1482,6 +1726,15 @@ async def ip(bot: Bot, call: Call) -> str:
     shared = layout.addresses(bot.core.db).get(call.ctx.server_id)
     info = await asyncio.to_thread(join_info, call.ctx)  # asks Tailscale
     return live.ip(call.ctx, shared, info)
+
+
+async def store_link(bot: Bot, call: Call) -> str:
+    ctx = call.ctx
+    assert ctx is not None
+    link = store.link_of(ctx)
+    if not link:
+        raise Refused(f"{ctx.name} has no store.")
+    return f"Support {ctx.name} here: {link}\nIn the game, type /{store.BUY_COMMAND}."
 
 
 async def start_server(ctx: ServerContext, actor: str) -> None:
@@ -1522,6 +1775,72 @@ async def request_start(bot: Bot, call: Call) -> str:
         f"Asked. The owner and moderators of {ctx.name} have been told; "
         "you'll hear here within 15 minutes."
     )
+
+
+RENTED_STATES = {
+    "ONLINE": "online",
+    "OFFLINE": "stopped",
+    "STARTING": "starting",
+    "STOPPING": "stopping",
+}
+
+
+def rented_server(bot: Bot, call: Call, control: bool):
+    """The picked rented server, if the owner put it on Discord (and, for
+    start and stop, allowed those)."""
+    found = bot.core.rented.servers.get(str(call.options.get("rented") or ""))
+    if found is None or found.discord == "off":
+        raise Refused("That rented server isn't on Discord.")
+    if control and found.discord != "control":
+        raise Refused(
+            f"{found.name} can't be started or stopped from Discord. "
+            "The owner can allow it in Command Block."
+        )
+    return found
+
+
+def rented_words(server) -> str:
+    if server.state == "UNKNOWN":
+        return "in an unknown state: the host's panel didn't answer"
+    return RENTED_STATES.get(server.state, "in an unknown state")
+
+
+async def rented_status(bot: Bot, call: Call) -> str:
+    server = rented_server(bot, call, control=False)
+    return f"{server.name} is {rented_words(server)}."
+
+
+async def rented_power(bot: Bot, call: Call, signal: str, wanted: str) -> str:
+    from ..rented import PanelError
+
+    server = rented_server(bot, call, control=True)
+    if server.state != wanted:
+        raise Refused(f"{server.name} is {rented_words(server)}.")
+    wait = bot.started.get(server.id, 0) + START_COOLDOWN - time.time()
+    if wait > 0:
+        raise Refused(
+            f"{server.name} was started or stopped from Discord a moment ago. "
+            f"Try again in {math.ceil(wait / 60)} min."
+        )
+    try:
+        await bot.core.rented.power(server, signal)
+    except PanelError as exc:
+        # Why stays on the PC: the panel's words can name the host's setup.
+        log.info("a rented %s from Discord failed: %s", signal, exc)
+        raise Refused("The host didn't take it. The owner can see why in Command Block.") from None
+    bot.started[server.id] = time.time()
+    bot.core.db.audit(
+        f"rented_{signal}", user=call.principal.user, target=server.id, detail="discord"
+    )
+    return f"Asked the host to {signal} {server.name}. /rented status says when it's done."
+
+
+async def rented_start(bot: Bot, call: Call) -> str:
+    return await rented_power(bot, call, "start", "OFFLINE")
+
+
+async def rented_stop(bot: Bot, call: Call) -> str:
+    return await rented_power(bot, call, "stop", "ONLINE")
 
 
 # -- the buttons ---------------------------------------------------------------------
@@ -1635,9 +1954,11 @@ async def show_stats(bot: Bot, call: Call) -> str:
 
 async def show_level(bot: Bot, call: Call) -> str:
     """/level: across every linked account, so no server is picked."""
-    if not bot.core.links.of_member(call.member_id):
+    if not bot.core.links.of_member(call.member_id) and not bot.core.botpc.remote_links(
+        call.member_id
+    ):
         raise Refused("Link your Minecraft account with /link first; Levels come from playing.")
-    xp = levels.all_xp(bot.core.db).get(call.member_id, 0)
+    xp = bot.xp().get(call.member_id, 0)
     roles = layout.level_roles(bot.core.db, call.guild_id)
     try:
         # Also sets their Level role here, for someone who joined this
@@ -1654,11 +1975,16 @@ async def show_level(bot: Bot, call: Call) -> str:
 
 
 async def my_links(bot: Bot, call: Call) -> str:
-    rows = bot.core.links.of_member(call.member_id)
+    """On every PC: the other PCs say theirs in bot_news."""
+    rows = [
+        {"name": r["name"], "server": r["server_id"]}
+        for r in bot.core.links.of_member(call.member_id)
+    ] + bot.core.botpc.remote_links(call.member_id)
     if not rows:
         return "You have no linked Minecraft accounts. Use /link to add one."
-    names = {sid: ctx.name for sid, ctx in bot.core.servers.items()}
-    lines = [f"{r['name']} (linked on {names.get(r['server_id'], r['server_id'])})" for r in rows]
+    names = {sid: ctx.name for sid, ctx in bot.core.discord_servers.items()}
+    names.update({r: s["name"] for r, s in bot.core.botpc.remote().items()})
+    lines = [f"{r['name']} (linked on {names.get(r['server'], r['server'])})" for r in rows]
     return "Your linked Minecraft accounts:\n" + "\n".join(lines)
 
 
@@ -1667,6 +1993,13 @@ async def unlink(bot: Bot, call: Call) -> str:
     for row in bot.core.links.of_member(call.member_id):
         if row["name"].lower() == name.lower():
             bot.core.links.unlink(row["uuid"])
+            return f"{row['name']} isn't linked to you any more."
+    for row in bot.core.botpc.remote_links(call.member_id):
+        if row["name"].lower() == name.lower():
+            asked = {"member": call.member_id, "name": row["name"]}
+            found = await bot.core.botpc.call(row["pc"], "unlink", asked)
+            if found is None:
+                raise Refused(f"{bot.core.botpc.off_words(row['server'], False)} Try again later.")
             return f"{row['name']} isn't linked to you any more."
     raise Refused(f"{name} isn't one of your linked accounts. /links lists them.")
 
@@ -2028,7 +2361,14 @@ QUEST_OPTION = {
     "required": True,
     "min_value": 1,
 }
+RENTED_OPTION = {
+    "type": 3,
+    "name": "rented",
+    "description": "Which rented server",
+    "required": True,
+}
 GROUPS = {
+    "rented": "Rented servers on a host: status, start and stop",
     "quest": "Quests: join one, see your progress, say you're done",
     "event": "Events: make one (if your Discord role may)",
     "poll": "Polls: make one (if your Discord role may)",
@@ -2081,7 +2421,32 @@ COMMANDS: dict[str, Command] = {
             status,
         ),
         Command("players", "Who's playing right now", P.SERVER_VIEW, players),
+        # Rented servers (agent/rented.py): only status, start and stop.
+        Command(
+            "rented status",
+            "Is the rented server online",
+            P.SERVER_VIEW,
+            rented_status,
+            needs_server=False,
+        ),
+        Command(
+            "rented start",
+            "Start the rented server (if your Discord role may start servers)",
+            P.SERVER_CONTROL,
+            rented_start,
+            needs_server=False,
+            slow=True,
+        ),
+        Command(
+            "rented stop",
+            "Stop the rented server (if your Discord role may start servers)",
+            P.SERVER_CONTROL,
+            rented_stop,
+            needs_server=False,
+            slow=True,
+        ),
         Command("ip", "How to join the Minecraft server", P.SERVER_VIEW, ip, slow=True),
+        Command("store", "Where to support the Minecraft server", P.SERVER_VIEW, store_link),
         Command(
             "start",
             "Start the Minecraft server (if your Discord role may)",

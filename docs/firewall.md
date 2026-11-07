@@ -51,6 +51,23 @@ than intended: delete it and re-run the script.
 .\installer\firewall.ps1 -Remove
 ```
 
+## Game ports
+
+Minecraft itself also needs its port open for friends on your network. When
+Java asks Windows the first time, Windows makes a rule for every port Java
+opens. The installer offers a tighter one instead (the "Let players in only on my servers'
+ports" switch, on by default):
+
+```powershell
+.\installer\firewall.ps1 -ServerPorts "TCP:25565,UDP:19132"
+```
+
+That makes one "Command Block game port" rule per server port and turns off
+(doesn't delete) the inbound allow rules for `java.exe` and `javaw.exe`, marked
+in their description. `-Remove` deletes the game port rules and turns those
+Java rules back on. If Windows refuses, the install carries on and says so. A server added
+later gets its rule the next time the installer runs (an update counts).
+
 ## What you must not do
 
 - **Do not port-forward 8765** on your router. The agent is not designed to

@@ -1,0 +1,496 @@
+{
+  "schema": 1,
+  "serial": 2,
+  "issued": "2026-10-31",
+  "expires": "2026-11-30",
+  "advisories": [
+    {
+      "id": "log4shell",
+      "types": [
+        "vanilla",
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge",
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "from": "1.7",
+      "to": "1.18",
+      "title": "Log4Shell (CVE-2021-44228)",
+      "what_to_do": "Update to Minecraft 1.18.1 or newer. If you can't, use Mojang's fix: the Protection card puts it in with one click.",
+      "link": "https://www.minecraft.net/en-us/article/important-message--security-vulnerability-java-edition"
+    }
+  ],
+  "known_bad_files": [],
+  "java": [],
+  "recommended_addons": [
+    {
+      "project": "lithium",
+      "name": "Lithium",
+      "types": [
+        "fabric",
+        "quilt",
+        "neoforge"
+      ],
+      "kind": "performance",
+      "changes_gameplay": false,
+      "players_need": "optional"
+    },
+    {
+      "project": "ferrite-core",
+      "name": "FerriteCore",
+      "types": [
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge"
+      ],
+      "kind": "performance",
+      "changes_gameplay": false,
+      "players_need": "optional"
+    },
+    {
+      "project": "krypton",
+      "name": "Krypton",
+      "types": [
+        "fabric",
+        "quilt"
+      ],
+      "kind": "performance",
+      "changes_gameplay": false,
+      "players_need": "optional"
+    },
+    {
+      "project": "modernfix",
+      "name": "ModernFix",
+      "types": [
+        "forge",
+        "neoforge"
+      ],
+      "kind": "performance",
+      "changes_gameplay": false,
+      "players_need": "optional"
+    },
+    {
+      "project": "alternate-current",
+      "name": "Alternate Current",
+      "types": [
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge"
+      ],
+      "kind": "performance",
+      "changes_gameplay": true,
+      "players_need": "server"
+    },
+    {
+      "project": "lmd",
+      "name": "Let Me Despawn",
+      "types": [
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge",
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "performance",
+      "changes_gameplay": true,
+      "players_need": "server"
+    },
+    {
+      "project": "c2me-fabric",
+      "name": "C2ME",
+      "types": [
+        "fabric"
+      ],
+      "kind": "performance",
+      "changes_gameplay": false,
+      "players_need": "optional",
+      "technical_only": true
+    },
+    {
+      "project": "scalablelux",
+      "name": "ScalableLux",
+      "types": [
+        "fabric",
+        "neoforge"
+      ],
+      "kind": "performance",
+      "changes_gameplay": false,
+      "players_need": "optional",
+      "technical_only": true
+    },
+    {
+      "project": "chunky",
+      "name": "Chunky",
+      "types": [
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge",
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": false,
+      "players_need": "optional",
+      "group": "starter",
+      "played_by": [
+        "friends",
+        "kids",
+        "community"
+      ]
+    },
+    {
+      "project": "essentialsx",
+      "name": "EssentialsX",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": true,
+      "players_need": "server",
+      "group": "starter",
+      "played_by": [
+        "friends",
+        "community"
+      ]
+    },
+    {
+      "project": "luckperms",
+      "name": "LuckPerms",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf",
+        "fabric",
+        "forge",
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": false,
+      "players_need": "server",
+      "group": "starter",
+      "played_by": [
+        "community"
+      ]
+    },
+    {
+      "project": "worldedit",
+      "name": "WorldEdit",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf",
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": false,
+      "players_need": "server",
+      "group": "starter"
+    },
+    {
+      "project": "axgraves",
+      "name": "AxGraves",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": true,
+      "players_need": "server",
+      "group": "starter"
+    },
+    {
+      "project": "coreprotect",
+      "name": "CoreProtect",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": false,
+      "players_need": "server",
+      "group": "protect",
+      "played_by": [
+        "kids",
+        "community"
+      ]
+    },
+    {
+      "project": "worldguard",
+      "name": "WorldGuard",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": false,
+      "players_need": "server",
+      "group": "protect",
+      "played_by": [
+        "community"
+      ]
+    },
+    {
+      "project": "bluemap",
+      "name": "BlueMap",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf",
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": false,
+      "players_need": "server",
+      "group": "maps",
+      "played_by": [
+        "friends",
+        "kids"
+      ]
+    },
+    {
+      "project": "simple-voice-chat",
+      "name": "Simple Voice Chat",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf",
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": false,
+      "players_need": "both",
+      "group": "voice",
+      "played_by": [
+        "friends",
+        "kids"
+      ]
+    },
+    {
+      "project": "spark",
+      "name": "spark",
+      "types": [
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": false,
+      "players_need": "optional",
+      "played_by": [
+        "community"
+      ]
+    },
+    {
+      "project": "universal-graves",
+      "name": "Universal Graves",
+      "types": [
+        "fabric",
+        "quilt"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": true,
+      "players_need": "server"
+    },
+    {
+      "project": "waystones",
+      "name": "Waystones",
+      "types": [
+        "fabric",
+        "forge",
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": true,
+      "players_need": "both"
+    },
+    {
+      "project": "carry-on",
+      "name": "Carry On",
+      "types": [
+        "fabric",
+        "forge",
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "changes_gameplay": true,
+      "players_need": "both"
+    },
+    {
+      "project": "viabackwards",
+      "name": "ViaBackwards",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "often_used_with",
+      "changes_gameplay": false,
+      "players_need": "server",
+      "with": [
+        "viaversion"
+      ]
+    },
+    {
+      "project": "sodium-extra",
+      "name": "Sodium Extra",
+      "types": [
+        "fabric",
+        "quilt",
+        "neoforge"
+      ],
+      "kind": "often_used_with",
+      "changes_gameplay": false,
+      "players_need": "optional",
+      "with": [
+        "sodium"
+      ]
+    },
+    {
+      "project": "reeses-sodium-options",
+      "name": "Reese's Sodium Options",
+      "types": [
+        "fabric",
+        "quilt",
+        "neoforge"
+      ],
+      "kind": "often_used_with",
+      "changes_gameplay": false,
+      "players_need": "optional",
+      "with": [
+        "sodium"
+      ]
+    },
+    {
+      "project": "authmereloaded",
+      "name": "AuthMe Reloaded",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "good_to_have",
+      "role": "login",
+      "players_need": "server"
+    },
+    {
+      "project": "easyauth",
+      "name": "EasyAuth",
+      "types": [
+        "fabric"
+      ],
+      "kind": "good_to_have",
+      "role": "login",
+      "players_need": "server"
+    },
+    {
+      "project": "nedologin",
+      "name": "Nedologin",
+      "types": [
+        "forge",
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "role": "login",
+      "players_need": "server",
+      "technical_only": true
+    },
+    {
+      "project": "S4Tu3Hn2",
+      "name": "Login System",
+      "types": [
+        "forge",
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "role": "login",
+      "players_need": "server",
+      "technical_only": true
+    },
+    {
+      "project": "sonar",
+      "name": "Sonar",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "good_to_have",
+      "role": "antibot",
+      "players_need": "server",
+      "played_by": [
+        "community"
+      ]
+    },
+    {
+      "project": "grimac",
+      "name": "Grim Anticheat",
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "kind": "good_to_have",
+      "group": "protect",
+      "players_need": "server",
+      "played_by": [
+        "community"
+      ]
+    },
+    {
+      "project": "mfONdVnp",
+      "name": "Proxy Protocol Support",
+      "types": [
+        "fabric",
+        "quilt"
+      ],
+      "kind": "good_to_have",
+      "role": "proxy",
+      "players_need": "server"
+    },
+    {
+      "project": "qepfBTp0",
+      "name": "HAProxyCompat",
+      "types": [
+        "neoforge"
+      ],
+      "kind": "good_to_have",
+      "role": "proxy",
+      "players_need": "server"
+    },
+    {
+      "project": "VVMQoiHH",
+      "name": "ProperProxyProtocol",
+      "types": [
+        "forge"
+      ],
+      "kind": "good_to_have",
+      "role": "proxy",
+      "players_need": "server",
+      "technical_only": true
+    }
+  ]
+}

@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton
+from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton, QWidget
 
 from .agent import AgentError
-from .ui import Page, label, push
+from .ui import Page, label, push, refill
 from .words import text
 
 if TYPE_CHECKING:
@@ -58,6 +58,16 @@ class ConsolePage(Page):
         self.log.setMaximumBlockCount(KEPT)
         self.log.setAccessibleName(words("console.output_label"))
         self.column.addWidget(self.log, 1)
+        # Command buttons: the owner's own, each one command, sent like a typed one.
+        self.buttons: list[dict] = []
+        self.button_row = QHBoxLayout()
+        self.column.addLayout(self.button_row)
+        self.editor = QPlainTextEdit()
+        self.editor.setPlaceholderText(words("buttons.edit_hint"))
+        self.editor.setAccessibleName(words("buttons.edit"))
+        self.editor.setMaximumHeight(160)
+        self.editor.hide()
+        self.column.addWidget(self.editor)
         send_row = QHBoxLayout()
         send_row.addWidget(label(">", "address"))
         self.command = QLineEdit()
@@ -96,6 +106,10 @@ class ConsolePage(Page):
         for widget in (self.command, self.send_button, self.clear_button, self.hint):
             widget.setVisible(typing)
         self.ask("GET", "/logs?lines=200", self.show_log)
+        self.editor.hide()
+        refill(self.button_row, [])
+        if typing:
+            self.ask("GET", "/command-buttons", self.show_buttons, lambda _e: None)
         self.command.setFocus()
 
     def changed(self) -> None:
@@ -186,7 +200,8 @@ class ConsolePage(Page):
         self.send_button.setEnabled(False)
 
         def done(_result) -> None:
-            self.command.clear()
+            if self.command.text().strip() == command:
+                self.command.clear()
             self.say("")
 
         self.ask(
@@ -196,4 +211,48 @@ class ConsolePage(Page):
             lambda exc: self.say(str(exc)),
             body={"command": command, "confirm": True},
             always=lambda: self.send_button.setEnabled(True),
+        )
+
+    # ------------------------------------------------------------ command buttons
+    def show_buttons(self, data: dict) -> None:
+        self.buttons = data.get("buttons") or []
+        shown: list[QWidget] = []
+        for b in self.buttons:
+            button = push(b["name"])
+            button.setToolTip(b["command"])
+            button.setAccessibleName(f"{b['name']}: {b['command']}")
+            button.clicked.connect(lambda _=False, b=b: self.press(b))
+            shown.append(button)
+        self.edit_button = push(words("buttons.edit"), "plain")
+        self.edit_button.clicked.connect(self.edit_buttons)
+        refill(self.button_row, [*shown, self.edit_button])
+        self.button_row.addStretch()
+
+    def press(self, b: dict) -> None:
+        """Checked again by the agent, and a dangerous one asked first."""
+        self.checked(b["command"], {"valid": True, "danger_reason": b.get("danger_reason")})
+
+    def edit_buttons(self) -> None:
+        if self.editor.isHidden():
+            self.editor.setPlainText(
+                "\n".join(f"{b['name']}: {b['command']}" for b in self.buttons)
+            )
+            self.editor.show()
+            self.editor.setFocus()
+            self.edit_button.setText(words("buttons.save"))
+            return
+        rows = []
+        for line in self.editor.toPlainText().splitlines():
+            if not line.strip():
+                continue
+            name, _, command = line.partition(":")
+            rows.append({"name": name.strip()[:24], "command": command.strip()})
+
+        def done(data: dict) -> None:
+            self.editor.hide()
+            self.show_buttons(data)
+            self.say(words("buttons.saved"))
+
+        self.ask(
+            "PUT", "/command-buttons", done, lambda exc: self.say(str(exc)), body={"buttons": rows}
         )

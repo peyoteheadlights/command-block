@@ -27,6 +27,9 @@ class FakePC(WindowsPC):
         self.tray_shown = False
         self.agent_starts = 0  # "Start the agent" clicks that reached Windows
         self.setups_opened = 0  # "Install the right Java" clicks that reached Windows
+        # "mcsc server-user ..." runs, and the code each one ends with.
+        self.server_user_runs: list[str] = []
+        self.server_user_code = 0
         # The Tailscale step: what it ran, and what each step says went wrong.
         self.tailscale_installs = 0
         self.tailscale_ups = 0
@@ -121,6 +124,10 @@ class FakePC(WindowsPC):
 
     def open_setup(self) -> None:
         self.setups_opened += 1
+
+    def server_user(self, what: str) -> int:
+        self.server_user_runs.append(what)
+        return self.server_user_code
 
     def install_tailscale(self) -> None:
         self.tailscale_installs += 1

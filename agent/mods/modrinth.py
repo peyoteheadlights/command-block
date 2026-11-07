@@ -24,8 +24,9 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .. import downloads
+from .. import downloads, savedlists
 from ..security.paths import PathSafetyError, safe_filename
+from .sources import NotFound, SourceError
 
 log = logging.getLogger("msc.modrinth")
 
@@ -33,15 +34,18 @@ ALLOWED_HOSTS = {"cdn.modrinth.com", "cdn-raw.modrinth.com", "api.modrinth.com"}
 MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024  # 300 MB ceiling for a single mod file
 
 
-class ModrinthError(RuntimeError):
+class ModrinthError(SourceError):
     pass
 
 
-class ModrinthNotFound(ModrinthError):
+class ModrinthNotFound(ModrinthError, NotFound):
     """Modrinth answered that the project or version does not exist."""
 
 
 class ModrinthClient:
+    name = "modrinth"
+    label = "Modrinth"
+
     def __init__(self, config):
         self.config = config
         self.base = config.mods.modrinth_api.rstrip("/")
@@ -146,6 +150,8 @@ class ModrinthClient:
                     "icon_url": hit.get("icon_url"),
                     "license": hit.get("license"),
                     "page": f"https://modrinth.com/{self.page_kind(hit)}/{hit.get('slug')}",
+                    "source": self.name,
+                    "source_name": self.label,
                 }
             )
         return {
@@ -155,7 +161,30 @@ class ModrinthClient:
         }
 
     async def project(self, id_or_slug: str) -> dict[str, Any]:
-        data = await self._get(f"/project/{id_or_slug}")
+        return self._project(await self._get(f"/project/{id_or_slug}"))
+
+    async def projects(self, ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Several projects in one call, by id and by slug. The last good
+        answer is kept, so a saved copy (its age noted) answers when
+        Modrinth can't be reached."""
+        params = {"ids": json.dumps(sorted(set(ids)))}
+        key = f"{self.base}/projects?{params['ids']}"
+        try:
+            data = await self._get("/projects", params)
+            if not isinstance(data, list):
+                raise ModrinthError("Modrinth sent an answer that couldn't be read.")
+        except ModrinthError as exc:
+            data = savedlists.fall_back(key, "api.modrinth.com", exc)
+        else:
+            savedlists.save(key, data)
+        found = {}
+        for item in data:
+            if isinstance(item, dict):
+                project = self._project(item)
+                found[str(item.get("id"))] = found[str(item.get("slug"))] = project
+        return found
+
+    def _project(self, data: dict[str, Any]) -> dict[str, Any]:
         return {
             "project_id": data.get("id"),
             "slug": data.get("slug"),
@@ -190,8 +219,20 @@ class ModrinthClient:
             params["loaders"] = _json.dumps(list(loaders))
         if minecraft_version:
             params["game_versions"] = _json.dumps([minecraft_version])
-        data = await self._get(f"/project/{id_or_slug}/version", params)
-        return [self._version_summary(v) for v in data]
+        path = f"/project/{id_or_slug}/version"
+        key = f"{self.base}{path}?{_json.dumps(params, sort_keys=True)}"
+        try:
+            data = await self._get(path, params)
+            if not isinstance(data, list):
+                raise ModrinthError("Modrinth sent an answer that couldn't be read.")
+        except ModrinthNotFound:
+            raise
+        except ModrinthError as exc:
+            # The last good list, its age noted (agent/savedlists.py).
+            data = savedlists.fall_back(key, "api.modrinth.com", exc)
+        else:
+            savedlists.save(key, data)
+        return [self._version_summary(v) for v in data if isinstance(v, dict)]
 
     async def version(self, version_id: str) -> dict[str, Any]:
         return self._version_summary(await self._get(f"/version/{version_id}"))
@@ -240,6 +281,7 @@ class ModrinthClient:
         minecraft_version: str | None,
         loaders: tuple[str, ...] | None = None,
         allow_types: tuple[str, ...] = ("release", "beta", "alpha"),
+        like: str | None = None,
     ) -> dict | None:
         versions = await self.versions(id_or_slug, minecraft_version, loaders)
         for release_type in allow_types:
@@ -247,6 +289,14 @@ class ModrinthClient:
                 if version["release_type"] == release_type:
                     return version
         return versions[0] if versions else None
+
+    async def by_hash(self, sha512: str) -> str | None:
+        """The project a file belongs to, found by its SHA-512, or None."""
+        try:
+            found = await self._get(f"/version_file/{sha512}", {"algorithm": "sha512"})
+        except ModrinthNotFound:
+            return None
+        return str(found.get("project_id") or "") or None
 
     # ------------------------------------------------------------------
     async def download(self, version: dict[str, Any]) -> tuple[bytes, str, str]:

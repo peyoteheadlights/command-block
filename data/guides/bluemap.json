@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "id": "bluemap",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "BlueMap"
+    ],
+    "modrinth": "bluemap",
+    "hangar": "Blue/BlueMap"
+  },
+  "versions": ">=5.0 <6",
+  "title": "BlueMap",
+  "what": "A 3D map of the world in a web browser. It draws the map by itself as the world changes.",
+  "steps": [
+    "Accept its download terms first: open plugins/BlueMap/core.conf and set accept-download to true, then restart.",
+    "Open the map with the button on the Mods page.",
+    "Drawing a big world takes a while and uses the PC's power; Pause stops it."
+  ],
+  "source": "https://bluemap.bluecolored.de/wiki/commands/",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "status",
+      "label": "How far is it?",
+      "command": "bluemap"
+    },
+    {
+      "id": "maps",
+      "label": "List the maps",
+      "command": "bluemap maps"
+    },
+    {
+      "id": "stop",
+      "label": "Pause drawing",
+      "command": "bluemap stop"
+    },
+    {
+      "id": "start",
+      "label": "Go on drawing",
+      "command": "bluemap start"
+    },
+    {
+      "id": "purge",
+      "label": "Draw a map again from scratch",
+      "command": "bluemap purge {map}",
+      "fields": [
+        {
+          "id": "map",
+          "kind": "name",
+          "label": "Map"
+        }
+      ],
+      "changes_world": true,
+      "warning": "The drawn map is deleted and drawn again, which takes a while."
+    },
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "bluemap reload"
+    }
+  ]
+}

@@ -780,7 +780,11 @@ private struct UpdateAllSheet: View {
             }
             if let plan = plan {
                 Section {
-                    Text(model.t(plan.updates.isEmpty ? "mobile.content.update_all_none" : "mobile.content.update_all_lead"))
+                    if !plan.updates.isEmpty {
+                        Text(model.t("mobile.content.update_all_lead"))
+                    } else if plan.unchecked.isEmpty {
+                        Text(model.t("mobile.content.update_all_none"))
+                    }
                     if let blocked = blocked {
                         Text(verbatim: blocked).foregroundStyle(.orange)
                     }

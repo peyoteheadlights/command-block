@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "id": "dynmap",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "dynmap"
+    ],
+    "modrinth": "dynmap"
+  },
+  "versions": ">=3.0 <4",
+  "title": "dynmap",
+  "what": "A live map of the world in a web browser, like Google Maps.",
+  "steps": [
+    "Open the map with the button on the Mods page.",
+    "Draw the whole world once, then it keeps up by itself as players build.",
+    "Drawing uses a lot of the PC's power; pause it while people play."
+  ],
+  "source": "https://github.com/webbukkit/dynmap/wiki/Commands",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "fullrender",
+      "label": "Draw a whole world",
+      "command": "dynmap fullrender {world}",
+      "fields": [
+        {
+          "id": "world",
+          "kind": "world",
+          "label": "World"
+        }
+      ]
+    },
+    {
+      "id": "cancel",
+      "label": "Stop drawing a world",
+      "command": "dynmap cancelrender {world}",
+      "fields": [
+        {
+          "id": "world",
+          "kind": "world",
+          "label": "World"
+        }
+      ]
+    },
+    {
+      "id": "pause",
+      "label": "Pause all drawing",
+      "command": "dynmap pause all"
+    },
+    {
+      "id": "resume",
+      "label": "Go on drawing",
+      "command": "dynmap pause none"
+    },
+    {
+      "id": "stats",
+      "label": "Show progress",
+      "command": "dynmap stats"
+    }
+  ]
+}

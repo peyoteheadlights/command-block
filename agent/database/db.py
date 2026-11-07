@@ -668,6 +668,66 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        21,
+        # Join protection's name-to-address log (agent/joinguard.py): the
+        # address masked (1.2.x.x), the newest few hundred per server.
+        """
+        CREATE TABLE join_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            address TEXT NOT NULL,
+            result TEXT NOT NULL,
+            ts REAL NOT NULL
+        );
+        CREATE INDEX join_log_server ON join_log(server_id, id DESC);
+        """,
+    ),
+    (
+        22,
+        # Shared accounts (agent/security/records.py, agent/yourpcs.py): the
+        # signed records the owner's PCs share, seq counting changes made
+        # here. Each moderator gets an id that stays when their name
+        # changes ("Sam 2").
+        """
+        CREATE TABLE sync_records (
+            kind TEXT NOT NULL,
+            key TEXT NOT NULL,
+            body TEXT NOT NULL,
+            hlc TEXT NOT NULL,
+            pc TEXT NOT NULL,
+            removed INTEGER NOT NULL DEFAULT 0,
+            sig TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            PRIMARY KEY (kind, key)
+        );
+        CREATE INDEX sync_records_seq ON sync_records(seq);
+        ALTER TABLE accounts ADD COLUMN id TEXT;
+        UPDATE accounts SET id = lower(hex(randomblob(8)));
+        """,
+    ),
+    (
+        23,
+        # Command buttons on the Console page (agent/api/routes/console.py),
+        # and the busiest player count of each hour the agent watched a
+        # server (agent/playerhours.py); an hour with no row is Unknown.
+        """
+        CREATE TABLE command_buttons (
+            server_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            command TEXT NOT NULL,
+            PRIMARY KEY (server_id, position)
+        );
+        CREATE TABLE player_hours (
+            server_id TEXT NOT NULL,
+            hour INTEGER NOT NULL,
+            players INTEGER NOT NULL,
+            PRIMARY KEY (server_id, hour)
+        );
+        """,
+    ),
 ]
 
 
@@ -805,6 +865,17 @@ class Database:
             )
             self._conn.commit()
 
+    def set_command_buttons(self, server_id: str, buttons: list[tuple[str, str]]) -> None:
+        """Replace a server's command buttons (name, command), in one transaction."""
+        with self._lock:
+            self._conn.execute("DELETE FROM command_buttons WHERE server_id = ?", (server_id,))
+            self._conn.executemany(
+                "INSERT INTO command_buttons (server_id, position, name, command) "
+                "VALUES (?, ?, ?, ?)",
+                [(server_id, i, name, command) for i, (name, command) in enumerate(buttons)],
+            )
+            self._conn.commit()
+
     def recent_events(self, server_id: str, limit: int = 100) -> list[dict]:
         """One server's events, plus the agent-wide ones (sign-ins, the
         agent starting), which belong on every server's history."""
@@ -862,6 +933,9 @@ class Database:
     def prune(self, metrics_days: int = 14, events_keep: int = 5000) -> None:
         cutoff = time.time() - metrics_days * 86400
         self.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
+        self.execute(
+            "DELETE FROM player_hours WHERE hour < ?", (int(time.time() // 3600) - 28 * 24,)
+        )
         self.execute(
             "DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT ?)",
             (events_keep,),

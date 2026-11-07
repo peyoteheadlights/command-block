@@ -44,7 +44,7 @@ LOG_NAMES = re.compile(r"^(agent|agent-errors)\.log(\.\d+)?$")
 INSTALL_LOGS = ("startup.log", "startup.log.1", "setup.log", "console.log", "last_startup.json")
 
 PATTERNS = [
-    (re.compile(r"pbkdf2_sha256\$[^\s\"',]+"), "[password hash removed]"),
+    (re.compile(r"(?:pbkdf2_sha256|scrypt)\$[^\s\"',]+"), "[password hash removed]"),
     (re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer [removed]"),
     (re.compile(r"https://(?:\w+\.)?discord(?:app)?\.com/api/webhooks/\S+"), "[webhook removed]"),
     (

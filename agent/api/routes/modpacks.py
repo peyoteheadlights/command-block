@@ -1,5 +1,6 @@
-"""Importing a Modrinth modpack (.mrpack): as a new server (agent-wide) or
-into an existing one (per server)."""
+"""Importing a modpack (a Modrinth .mrpack, or a CurseForge pack from a
+file or picked on CurseForge): as a new server (agent-wide) or into an
+existing one (per server)."""
 
 from __future__ import annotations
 
@@ -8,11 +9,12 @@ import asyncio
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
 from ... import modpack
+from ...mods.curseforge import MODPACKS, CurseForgeClient
 from ...security.auth import Principal
 from ...security.permissions import MODS_MANAGE, SERVERS_MANAGE, SETTINGS_SERVER, require
 from ..deps import audit, get_core, get_server
-from ..responses import ModpackImported, ModpackInspected, Ok, ServerCreated
-from .models import ModpackIntoRequest, ModpackNewRequest
+from ..responses import ModpackImported, ModpackInspected, ModSearch, Ok, ServerCreated
+from .models import CurseForgeModpackRequest, ModpackIntoRequest, ModpackNewRequest
 
 # Agent-wide: reading a pack, and making a new server from it.
 global_router = APIRouter()
@@ -30,10 +32,13 @@ async def inspect_modpack(
     principal: Principal = Depends(require(MODS_MANAGE)),
     core=Depends(get_core),
 ):
-    """Upload a .mrpack and say what it holds, before anything changes.
-    With ``server_id``, also what importing it into that server would do."""
-    if not (file.filename or "").lower().endswith(".mrpack"):
-        raise HTTPException(status_code=400, detail="Choose a Modrinth modpack file (.mrpack).")
+    """Upload a .mrpack or a CurseForge pack's .zip and say what it holds,
+    before anything changes. With ``server_id``, also what importing it into
+    that server would do."""
+    if not (file.filename or "").lower().endswith((".mrpack", ".zip")):
+        raise HTTPException(
+            status_code=400, detail="Choose a modpack file (.mrpack, or a CurseForge pack's .zip)."
+        )
     token, path = modpack.new_upload(core)
     size = 0
     try:
@@ -45,16 +50,46 @@ async def inspect_modpack(
                         status_code=400, detail="That pack is bigger than 1 GB, so it wasn't read."
                     )
                 await asyncio.to_thread(out.write, chunk)
-        pack = await asyncio.to_thread(modpack.inspect, path)
+        pack = await modpack.read(core, token, path)
     except BaseException:
-        path.unlink(missing_ok=True)
+        modpack.forget(core, token)
         raise
-    result = {"token": token, "pack": pack.to_dict()}
-    if server_id:
-        ctx = core.get_server(server_id)
-        result["into"] = modpack.plan_into(ctx, pack)
     audit(core, request, "modpack_inspect", target=pack.name)
+    return _inspected(core, token, pack, server_id)
+
+
+def _inspected(core, token: str, pack: modpack.Pack, server_id: str) -> dict:
+    result: dict = {"token": token, "pack": pack.to_dict()}
+    if server_id:
+        result["into"] = modpack.plan_into(core.get_server(server_id), pack)
     return result
+
+
+@global_router.get("/modpacks/curseforge/search", response_model=ModSearch)
+async def search_curseforge_modpacks(
+    q: str = "",
+    limit: int = 20,
+    offset: int = 0,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    core=Depends(get_core),
+):
+    """CurseForge's modpacks, most popular first, through our relay."""
+    client = CurseForgeClient(core.config)
+    return await client.search(q, limit=limit, offset=offset, kind=MODPACKS)
+
+
+@global_router.post("/modpacks/curseforge", response_model=ModpackInspected)
+async def fetch_curseforge_modpack(
+    payload: CurseForgeModpackRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    core=Depends(get_core),
+):
+    """Download a CurseForge modpack's newest release and say what it holds,
+    as for an uploaded pack. Nothing on a server changes yet."""
+    token, pack = await modpack.from_curseforge(core, payload.project)
+    audit(core, request, "modpack_inspect", target=pack.name)
+    return _inspected(core, token, pack, payload.server_id)
 
 
 @global_router.delete("/modpacks/{token}", response_model=Ok)

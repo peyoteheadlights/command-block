@@ -103,7 +103,7 @@ def test_an_unchanged_value_rewrites_nothing(tmp_path):
         ("motd", "x" * 151),
         ("server-port", 80),
         ("server-port", 70000),
-        ("online-mode", False),  # not one of the form's keys
+        ("enable-rcon", False),  # not one of the form's keys
     ],
 )
 def test_a_bad_value_is_refused_and_nothing_is_written(tmp_path, key, value):

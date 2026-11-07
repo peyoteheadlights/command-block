@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "id": "multiverse-core",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "Multiverse-Core"
+    ],
+    "modrinth": "multiverse-core",
+    "hangar": "Multiverse/Multiverse-Core"
+  },
+  "versions": ">=5.0.0 <6",
+  "title": "Multiverse-Core",
+  "what": "Lets one server have several worlds, like a creative world next to the survival one.",
+  "steps": [
+    "Make a world here, then teleport there in the game with /mv tp.",
+    "Every world takes disk space and memory, so a small PC is happiest with a few."
+  ],
+  "source": "https://github.com/Multiverse/Multiverse-Core/tree/main/src/main/java/org/mvplugins/multiverse/core/commands",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "list",
+      "label": "List the worlds",
+      "command": "mv list"
+    },
+    {
+      "id": "info",
+      "label": "Show a world",
+      "command": "mv info {world}",
+      "fields": [
+        {
+          "id": "world",
+          "kind": "world",
+          "label": "World"
+        }
+      ]
+    },
+    {
+      "id": "create",
+      "label": "Make a world",
+      "command": "mv create {name} {env}",
+      "fields": [
+        {
+          "id": "name",
+          "kind": "name",
+          "label": "World name"
+        },
+        {
+          "id": "env",
+          "kind": "choice",
+          "label": "Kind",
+          "options": [
+            {
+              "value": "NORMAL",
+              "label": "Normal"
+            },
+            {
+              "value": "NETHER",
+              "label": "Nether"
+            },
+            {
+              "value": "THE_END",
+              "label": "The End"
+            }
+          ]
+        }
+      ],
+      "changes_world": true,
+      "warning": "A new world folder is made and kept loaded."
+    }
+  ]
+}

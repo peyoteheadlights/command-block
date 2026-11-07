@@ -396,7 +396,9 @@ def _ask_server_dir(ctx: Context, problem: str) -> str | None:
 
 def step_secrets(ctx: Context) -> Step:
     values = read_env(ctx.env_path)
-    if values.get("MCSC_ADMIN_PASSWORD_HASH", "").startswith("pbkdf2_sha256$"):
+    from agent.security.auth import is_password_hash
+
+    if is_password_hash(values.get("MCSC_ADMIN_PASSWORD_HASH", "")):
         extra = ""
         if ctx.writing and not values.get("MCSC_API_TOKEN"):
             write_env_value(ctx.env_path, "MCSC_API_TOKEN", secrets.token_urlsafe(32))

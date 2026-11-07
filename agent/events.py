@@ -40,6 +40,9 @@ OWNER_ONLY_EVENTS = frozenset(
         # The PC's own address, and only the owner can reconnect it.
         "phones_can_reach",
         "tailscale_stopped",
+        # Player lists changed outside the app: the owner's check on everyone.
+        "ops_changed",
+        "lists_changed",
     }
 )
 

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from xml.etree import ElementTree
 
-from .. import downloads
+from .. import downloads, savedlists
 from ..downloads import DownloadError, FileSpec
 from . import ServerType, get
 
@@ -33,8 +33,11 @@ FABRIC_META = "https://meta.fabricmc.net/v2"
 QUILT_META = "https://meta.quiltmc.org/v3"
 FORGE_MAVEN = "https://maven.minecraftforge.net/net/minecraftforge/forge"
 NEOFORGE_MAVEN = "https://maven.neoforged.net/releases/net/neoforged/neoforge"
-PAPER_API = "https://fill.papermc.io/v3/projects/paper"
+FILL_API = "https://fill.papermc.io/v3/projects"
+PAPER_API = f"{FILL_API}/paper"
 PURPUR_API = "https://api.purpurmc.org/v2/purpur"
+# Leaf's API has the shape of PaperMC's older v2 API.
+LEAF_API = "https://api.leafmc.one/v2/projects/leaf"
 
 VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+\-]{0,63}$")
 # Words in a version name that mark it as not finished yet.
@@ -117,6 +120,8 @@ class Plan:
     verified: bool = True
     # Bedrock: the zip the server is unpacked from (kept in the data folder).
     archive: str | None = None
+    # False when the build picked isn't marked finished (no stable build yet).
+    stable: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -140,11 +145,21 @@ def check_version(value: Any, what: str = "version") -> str:
     return text
 
 
+def _is_list(data: Any) -> bool:
+    return isinstance(data, list)
+
+
+def _is_dict(data: Any) -> bool:
+    return isinstance(data, dict)
+
+
 # ----------------------------------------------------------------------
 # Vanilla (Mojang)
 # ----------------------------------------------------------------------
 async def _mojang_manifest() -> dict[str, Any]:
-    data = await downloads.fetch_json(MOJANG_MANIFEST)
+    data = await savedlists.fetch_json(
+        MOJANG_MANIFEST, lambda d: isinstance(d, dict) and d.get("versions")
+    )
     if not isinstance(data, dict) or not data.get("versions"):
         raise VersionError("Mojang's version list couldn't be read.")
     return data
@@ -172,7 +187,10 @@ async def vanilla_plan(minecraft: str) -> Plan:
     entry = next((v for v in data["versions"] if str(v.get("id")) == minecraft), None)
     if entry is None:
         raise VersionError(f"Mojang doesn't list Minecraft {minecraft}.")
-    detail = await downloads.fetch_json(downloads.check_url(str(entry["url"])))
+    detail = await savedlists.fetch_json(
+        downloads.check_url(str(entry["url"])), lambda d: isinstance(d, dict)
+    )
+    remember_java(minecraft, detail)
     server = ((detail.get("downloads") or {}).get("server")) or {}
     if not server.get("url"):
         raise VersionError(
@@ -197,11 +215,59 @@ async def vanilla_plan(minecraft: str) -> Plan:
 
 
 # ----------------------------------------------------------------------
+# Java, from Mojang's own version files
+# ----------------------------------------------------------------------
+JAVA_KEY = "mojang-java"  # every {minecraft: java} answer read so far, in one saved copy
+
+
+def remember_java(minecraft: str, detail: Any) -> int | None:
+    """Note the Java that Mojang's version file asks for (javaVersion.majorVersion)."""
+    from ..minecraft import java
+
+    major = (detail.get("javaVersion") or {}).get("majorVersion") if _is_dict(detail) else None
+    if not isinstance(major, int) or isinstance(major, bool) or not 8 <= major <= 99:
+        return None
+    if java.FROM_MOJANG.get(minecraft) != major:
+        java.FROM_MOJANG[minecraft] = major
+        savedlists.save(JAVA_KEY, java.FROM_MOJANG)
+    return major
+
+
+def load_java() -> None:
+    """At agent start: the answers read before, so the pickers and the start
+    check know them without asking Mojang again."""
+    from ..minecraft import java
+
+    saved = savedlists.load(JAVA_KEY)
+    if saved and _is_dict(saved[0]):
+        java.FROM_MOJANG.update(
+            {str(k): v for k, v in saved[0].items() if isinstance(v, int) and 8 <= v <= 99}
+        )
+
+
+async def java_for(minecraft: str) -> int | None:
+    """The Java a Minecraft version needs. Mojang's version file for it is
+    read (live or saved) before a server is made or changed; the built-in
+    table is only the fallback. None when nobody knows."""
+    from ..minecraft.java import required_java
+
+    try:
+        data = await _mojang_manifest()
+        entry = next((v for v in data["versions"] if str(v.get("id")) == minecraft), None)
+        if entry is not None:
+            url = downloads.check_url(str(entry.get("url") or ""))
+            remember_java(minecraft, await savedlists.fetch_json(url, _is_dict))
+    except DownloadError as exc:
+        log.info("Mojang's version file for %s couldn't be read: %s", minecraft, exc)
+    return required_java(minecraft)
+
+
+# ----------------------------------------------------------------------
 # Fabric and Quilt (their meta APIs)
 # ----------------------------------------------------------------------
 async def _meta_versions(base: str) -> tuple[list[dict], list[dict]]:
-    games = await downloads.fetch_json(f"{base}/versions/game")
-    loaders = await downloads.fetch_json(f"{base}/versions/loader")
+    games = await savedlists.fetch_json(f"{base}/versions/game", _is_list)
+    loaders = await savedlists.fetch_json(f"{base}/versions/loader", _is_list)
     if not isinstance(games, list) or not isinstance(loaders, list):
         raise VersionError("The loader's version list couldn't be read.")
     return games, loaders
@@ -253,7 +319,8 @@ async def meta_plan(server_type: ServerType, minecraft: str, loader: str | None)
     chosen = loader or (_loader_names(loaders) or offered)[0]
     if chosen not in offered:
         raise VersionError(f"{server_type.name} has no loader version {chosen}.")
-    installer = await downloads.fetch_json(f"{base}/versions/installer")
+    stable = any(e.get("version") == chosen and _stable_loader(e) for e in loaders)
+    installer = await savedlists.fetch_json(f"{base}/versions/installer", _is_list)
     if server_type.id == "fabric":
         # The ready-made server launcher is built by Fabric's installer, so
         # its address names the installer version as well.
@@ -277,6 +344,7 @@ async def meta_plan(server_type: ServerType, minecraft: str, loader: str | None)
             source="meta.fabricmc.net",
             # Fabric's meta API publishes no checksum for the launcher jar.
             verified=False,
+            stable=stable,
         )
     if not isinstance(installer, list) or not installer:
         raise VersionError("Quilt's installer list couldn't be read.")
@@ -298,6 +366,7 @@ async def meta_plan(server_type: ServerType, minecraft: str, loader: str | None)
         installer="quilt-installer.jar",
         source="meta.quiltmc.org",
         verified=False,
+        stable=stable,
     )
 
 
@@ -325,7 +394,7 @@ async def forge_versions(server_type: ServerType) -> list[Version]:
     """Forge's Maven versions are "<minecraft>-<build>"; NeoForge's are
     "<minor>.<patch>.<build>" for Minecraft 1.<minor>.<patch>."""
     if server_type.id == "forge":
-        xml = await downloads.fetch_text(f"{FORGE_MAVEN}/maven-metadata.xml")
+        xml = await savedlists.fetch_text(f"{FORGE_MAVEN}/maven-metadata.xml", _maven_versions)
         by_game: dict[str, list[str]] = {}
         for entry in _maven_versions(xml):
             minecraft, _, build = entry.partition("-")
@@ -342,7 +411,7 @@ async def forge_versions(server_type: ServerType) -> list[Version]:
             )
             for mc, builds in sorted(by_game.items(), key=lambda i: version_key(i[0]), reverse=True)
         ]
-    xml = await downloads.fetch_text(f"{NEOFORGE_MAVEN}/maven-metadata.xml")
+    xml = await savedlists.fetch_text(f"{NEOFORGE_MAVEN}/maven-metadata.xml", _maven_versions)
     by_game = {}
     for entry in _maven_versions(xml):
         game = _neoforge_minecraft(entry)
@@ -413,14 +482,19 @@ async def forge_plan(server_type: ServerType, minecraft: str, loader: str | None
         installer=f"{server_type.id}-installer.jar",
         source=server_type.version_host,
         verified=bool(spec.sha1),
+        stable=not UNSTABLE_RE.search(chosen),
     )
 
 
 # ----------------------------------------------------------------------
-# Paper and Purpur
+# Paper (and types from the notes file on PaperMC's Fill API), Purpur, Leaf
 # ----------------------------------------------------------------------
-async def paper_versions() -> list[Version]:
-    data = await downloads.fetch_json(PAPER_API)
+def _fill(project: str) -> str:
+    return f"{FILL_API}/{check_version(project, 'project')}"
+
+
+async def paper_versions(project: str = "paper") -> list[Version]:
+    data = await savedlists.fetch_json(_fill(project), lambda d: isinstance(d, dict) and d)
     versions = (data.get("versions") or {}) if isinstance(data, dict) else {}
     found: list[str] = []
     if isinstance(versions, dict):
@@ -436,8 +510,10 @@ async def paper_versions() -> list[Version]:
     return [Version(minecraft=v, stable=not UNSTABLE_RE.search(v)) for v in found]
 
 
-async def paper_plan(minecraft: str) -> Plan:
-    builds = await downloads.fetch_json(f"{PAPER_API}/versions/{minecraft}/builds")
+async def paper_plan(minecraft: str, project: str = "paper") -> Plan:
+    builds = await savedlists.fetch_json(
+        f"{_fill(project)}/versions/{minecraft}/builds", lambda d: isinstance(d, (list, dict))
+    )
     rows = builds if isinstance(builds, list) else (builds.get("builds") or [])
     if not rows:
         raise VersionError(f"PaperMC has no build for Minecraft {minecraft} yet.")
@@ -457,23 +533,24 @@ async def paper_plan(minecraft: str) -> Plan:
     checksums = application.get("checksums") or {}
     spec = FileSpec(
         url=downloads.check_url(url),
-        name="paper.jar",
+        name=f"{project}.jar",
         sha256=checksums.get("sha256") or application.get("sha256"),
         size=int(application["size"]) if str(application.get("size", "")).isdigit() else None,
         allow_unverified=False,
     )
     return Plan(
-        type_id="paper",
+        type_id=project,
         minecraft=minecraft,
         loader=str(newest.get("id") or newest.get("build") or ""),
         downloads=[Download(spec)],
-        jar="paper.jar",
+        jar=f"{project}.jar",
         source="fill.papermc.io",
+        stable=str(newest.get("channel", "")).upper() in ("DEFAULT", "STABLE"),
     )
 
 
 async def purpur_versions() -> list[Version]:
-    data = await downloads.fetch_json(PURPUR_API)
+    data = await savedlists.fetch_json(PURPUR_API, lambda d: isinstance(d, dict) and d)
     found = [str(v) for v in (data.get("versions") or [])] if isinstance(data, dict) else []
     if not found:
         raise VersionError("Purpur's version list couldn't be read.")
@@ -482,13 +559,13 @@ async def purpur_versions() -> list[Version]:
 
 
 async def purpur_plan(minecraft: str) -> Plan:
-    detail = await downloads.fetch_json(f"{PURPUR_API}/{minecraft}")
+    detail = await savedlists.fetch_json(f"{PURPUR_API}/{minecraft}", _is_dict)
     builds = (detail.get("builds") or {}) if isinstance(detail, dict) else {}
     build = str(builds.get("latest") or "")
     if not build:
         raise VersionError(f"Purpur has no build for Minecraft {minecraft} yet.")
     check_version(build, "Purpur build")
-    info = await downloads.fetch_json(f"{PURPUR_API}/{minecraft}/{build}")
+    info = await savedlists.fetch_json(f"{PURPUR_API}/{minecraft}/{build}", _is_dict)
     spec = FileSpec(
         url=downloads.check_url(f"{PURPUR_API}/{minecraft}/{build}/download"),
         name="purpur.jar",
@@ -502,6 +579,49 @@ async def purpur_plan(minecraft: str) -> Plan:
         jar="purpur.jar",
         source="api.purpurmc.org",
         verified=bool(spec.md5),
+    )
+
+
+async def leaf_versions() -> list[Version]:
+    data = await savedlists.fetch_json(LEAF_API, lambda d: isinstance(d, dict) and d)
+    found = [str(v) for v in (data.get("versions") or [])] if isinstance(data, dict) else []
+    if not found:
+        raise VersionError("Leaf's version list couldn't be read.")
+    found = sorted({v for v in found if VERSION_RE.match(v)}, key=version_key, reverse=True)
+    return [Version(minecraft=v, stable=not UNSTABLE_RE.search(v)) for v in found]
+
+
+async def leaf_plan(minecraft: str) -> Plan:
+    """The newest build, preferring one marked stable ("default"). Leaf's
+    list is oldest first, as PaperMC's v2 API was."""
+    data = await savedlists.fetch_json(f"{LEAF_API}/versions/{minecraft}/builds", _is_dict)
+    rows = [r for r in (data.get("builds") or []) if isinstance(r, dict)]
+    rows = [r for r in rows if str(r.get("build", "")).isdigit()]
+    if not rows:
+        raise VersionError(f"Leaf has no build for Minecraft {minecraft} yet.")
+    rows.sort(key=lambda r: int(r["build"]), reverse=True)
+    stable = [r for r in rows if str(r.get("channel", "")).lower() == "default"]
+    newest = (stable or rows)[0]
+    files = newest.get("downloads") or {}
+    application = files.get("primary") or files.get("application") or {}
+    name = str(application.get("name") or "")
+    if not re.fullmatch(r"[A-Za-z0-9._+\-]{1,100}\.jar", name):
+        raise VersionError(f"Leaf didn't say which file to download for Minecraft {minecraft}.")
+    build = str(newest["build"])
+    spec = FileSpec(
+        url=downloads.check_url(f"{LEAF_API}/versions/{minecraft}/builds/{build}/downloads/{name}"),
+        name="leaf.jar",
+        sha256=application.get("sha256"),
+        allow_unverified=False,
+    )
+    return Plan(
+        type_id="leaf",
+        minecraft=minecraft,
+        loader=build,
+        downloads=[Download(spec)],
+        jar="leaf.jar",
+        source="api.leafmc.one",
+        stable=bool(stable),
     )
 
 
@@ -521,8 +641,10 @@ async def list_versions(type_id: str) -> list[Version]:
         return await meta_versions(server_type)
     if server_type.id in ("forge", "neoforge"):
         return await forge_versions(server_type)
-    if server_type.id == "paper":
-        return await paper_versions()
+    if server_type.id == "paper" or server_type.like == "paper":
+        return await paper_versions(server_type.id)
+    if server_type.id == "leaf":
+        return await leaf_versions()
     return await purpur_versions()
 
 
@@ -542,8 +664,10 @@ async def make_plan(type_id: str, minecraft: str, loader: str | None = None) -> 
         return await meta_plan(server_type, minecraft, loader)
     if server_type.id in ("forge", "neoforge"):
         return await forge_plan(server_type, minecraft, loader)
-    if server_type.id == "paper":
-        return await paper_plan(minecraft)
+    if server_type.id == "paper" or server_type.like == "paper":
+        return await paper_plan(minecraft, server_type.id)
+    if server_type.id == "leaf":
+        return await leaf_plan(minecraft)
     return await purpur_plan(minecraft)
 
 
@@ -552,16 +676,28 @@ def latest_stable(versions: list[Version]) -> Version | None:
 
 
 async def report(type_id: str) -> dict[str, Any]:
-    """The version list as the version pickers show it. For Bedrock it says
-    when Mojang's list couldn't be read but kept copies are offered."""
+    """The version list as the version pickers show it. It says when a site
+    couldn't be reached and a saved list is shown (Bedrock: kept copies)."""
     server_type = get(type_id)
     if server_type.id == "bedrock":
         from . import bedrock
 
         found, problem = await bedrock.versions()
-        return {**versions_payload(server_type.id, found), "source_problem": problem}
-    found = await list_versions(server_type.id)
-    return {**versions_payload(server_type.id, found), "source_problem": None}
+        return {
+            **versions_payload(server_type.id, found),
+            "source_problem": problem,
+            "saved_at": None,
+        }
+    with savedlists.watch() as used:
+        found = await list_versions(server_type.id)
+    saved_at, problem = savedlists.problem(used)
+    # saved_at is set when a site couldn't be reached and its saved list
+    # is shown; problem says how old it is.
+    return {
+        **versions_payload(server_type.id, found),
+        "source_problem": problem,
+        "saved_at": saved_at,
+    }
 
 
 def versions_payload(type_id: str, versions: list[Version]) -> dict[str, Any]:

@@ -409,7 +409,7 @@ class ContentTest {
             agent.server.enqueue(agent.json("""{"ok": true, "installed": {"filename": "e.jar", "name": "Epsilon", "version": "3.0"}}"""))
             assertEquals("Epsilon", c.uploadMod("s", PickedFile.of("e.jar", byteArrayOf(80, 75, 3, 4))).installed?.name)
             val sent = agent.server.takeRequest()
-            assertEquals("/api/servers/s/mods/upload", sent.path)
+            assertEquals("/api/servers/s/mods/upload?confirm=true", sent.path)
             assertTrue(sent.getHeader("Content-Type")!!.startsWith("multipart/form-data"))
             val body = sent.body.readUtf8()
             assertTrue(body, body.contains("name=\"file\"; filename=\"e.jar\""))

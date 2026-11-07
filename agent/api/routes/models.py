@@ -32,6 +32,15 @@ class CommandRequest(BaseModel):
     confirm: bool = False
 
 
+class CommandButton(BaseModel):
+    name: str = Field(min_length=1, max_length=24)
+    command: str = Field(min_length=1, max_length=512)
+
+
+class CommandButtonsRequest(BaseModel):
+    buttons: list[CommandButton] = Field(max_length=12)
+
+
 class StopRequest(BaseModel):
     timeout: float | None = Field(default=None, ge=1, le=1800)
     force: bool = False
@@ -57,7 +66,7 @@ class UndoRequest(BaseModel):
 
 class ModInstallRequest(BaseModel):
     project: str = Field(max_length=100)
-    version_id: str | None = Field(default=None, max_length=64)
+    version_id: str | None = Field(default=None, max_length=200)
     allow_replace: bool = False
     install_dependencies: bool = False
 
@@ -67,13 +76,34 @@ class ModFileRequest(BaseModel):
 
 
 class ModUpdateRequest(ModFileRequest):
-    version_id: str | None = Field(default=None, max_length=64)
+    # Modrinth's, "hangar:<id>" or a GitHub file's "owner/repo/<id>".
+    version_id: str | None = Field(default=None, max_length=200)
+
+
+class ModProjectRequest(BaseModel):
+    project: str = Field(max_length=100)
+
+
+class ModLinkRequest(BaseModel):
+    url: str = Field(max_length=500)
+
+
+class ModLinkAddRequest(BaseModel):
+    version_id: str = Field(max_length=200)
+    confirm: bool = False  # the "no site lists this file" warning was shown
 
 
 class UpdateAllRequest(BaseModel):
     """The ticked mods or plugins, each with the version the plan showed."""
 
     mods: list[ModUpdateRequest] = Field(min_length=1, max_length=200)
+
+
+class CopyAddonsRequest(BaseModel):
+    """The ticked add-ons on this server, and the server to copy them to."""
+
+    target: str = Field(max_length=64)
+    filenames: list[str] = Field(min_length=1, max_length=200)
 
 
 class ModRollbackRequest(BaseModel):
@@ -92,6 +122,10 @@ class ScheduleRequest(BaseModel):
 
 class SettingsRequest(BaseModel):
     updates: dict[str, Any]
+
+
+class SeparateWindowsUserRequest(BaseModel):
+    on: bool
 
 
 class MaintenanceRequest(BaseModel):
@@ -149,6 +183,27 @@ class VersionChangeRequest(BaseModel):
     start_after: bool = False
 
 
+class TypeChangeRequest(BaseModel):
+    type: str = Field(min_length=1, max_length=32)
+    # Simple mode offers only Vanilla to and from Fabric and Paper.
+    technical: bool = False
+    # "Stop and change": the server is stopped for the change.
+    stop_first: bool = False
+    confirm: bool = False
+
+
+class ConvertRequest(BaseModel):
+    """Bedrock to Java or back with Chunker, as a new server."""
+
+    type: str = Field(min_length=1, max_length=32)
+    minecraft_version: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=60)
+    directory: str = Field(min_length=1, max_length=400)
+    eula_accepted: bool = False
+    # The owner ticked "I understand what doesn't come along".
+    understood: bool = False
+
+
 class CreateServerRequest(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     # The folder to create. Must be empty or not exist yet; checked by
@@ -160,9 +215,47 @@ class CreateServerRequest(BaseModel):
     memory_mb: int | None = Field(default=None, ge=512, le=65536)
     # A palette id or "#RRGGBB". Empty: the next color no server uses.
     color: str | None = Field(default=None, max_length=16)
+    # Technical, Paper and its forks: write the vanilla spawn settings.
+    vanilla_spawns: bool = False
     # True only when the person ticked the box themselves. The agent never
     # accepts Minecraft's rules on their behalf.
     eula_accepted: bool = False
+    # A Test server (agent/testserver.py).
+    test: bool = False
+
+
+class CustomServerRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    directory: str = Field(min_length=1, max_length=400)
+    # The owner's server jar on this PC.
+    jar: str = Field(min_length=1, max_length=400)
+    based_on: str = Field(max_length=32)
+    memory_mb: int | None = Field(default=None, ge=1024, le=65536)
+    color: str | None = Field(default=None, max_length=16)
+    eula_accepted: bool = False
+    # True only when the owner ticked "I trust this jar" themselves.
+    trusted: bool = False
+
+
+class ReplaceJarRequest(BaseModel):
+    jar: str = Field(min_length=1, max_length=400)
+
+
+class BringInReadRequest(BaseModel):
+    # A server folder or .zip on this PC. Read only, never changed.
+    path: str = Field(min_length=1, max_length=400)
+
+
+class BringInRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=400)
+    name: str = Field(min_length=1, max_length=60)
+    # The new, empty folder it is copied into.
+    directory: str = Field(min_length=1, max_length=400)
+    # Only for a kind the app can't tell: what it's based on, which jar in
+    # it is the server, and the owner's own "I trust this jar" tick.
+    based_on: str | None = Field(default=None, max_length=32)
+    jar: str | None = Field(default=None, max_length=180)
+    trusted: bool = False
 
 
 class AddonToggleRequest(BaseModel):
@@ -195,10 +288,36 @@ class PlayerActionRequest(BaseModel):
     confirm: bool = False
 
 
+class NewSeasonRequest(BaseModel):
+    # Empty: Minecraft picks a random seed.
+    seed: str = Field(default="", max_length=32)
+    # Tell Discord (and the other alert channels).
+    announce: bool = True
+    confirm: bool = False
+
+
+class BackupFolderRequest(BaseModel):
+    folder: str = Field(min_length=1, max_length=400)
+
+
+class BringBackRequest(BaseModel):
+    folder: str = Field(min_length=1, max_length=400)
+    server: str = Field(min_length=1, max_length=64)  # its id there
+    name: str = Field(min_length=1, max_length=60)
+    directory: str = Field(min_length=1, max_length=400)
+    # Only when its copies don't say which version it ran.
+    minecraft_version: str | None = Field(default=None, max_length=64)
+    eula_accepted: bool = False
+
+
 class DuplicateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     directory: str = Field(min_length=1, max_length=400)
     world: Literal["copy", "fresh"]
+    # Make the copy a Test server.
+    test: bool = False
+    # Open an old season: the world comes from this season backup.
+    season_backup: int | None = None
 
 
 class ModpackNewRequest(BaseModel):
@@ -208,6 +327,11 @@ class ModpackNewRequest(BaseModel):
     color: str | None = Field(default=None, max_length=16)
     # True only when the person ticked the box themselves.
     eula_accepted: bool = False
+
+
+class CurseForgeModpackRequest(BaseModel):
+    project: str = Field(max_length=40, description='"curseforge:<id>"')
+    server_id: str = Field(default="", max_length=64)
 
 
 class ModpackIntoRequest(BaseModel):
@@ -371,7 +495,7 @@ class DiscordSetup(BaseModel):
 
 class DiscordTie(BaseModel):
     kind: Literal["alerts", "quests", "levels", "events", "chat", "status", "console"]
-    server_id: str = Field(default="", max_length=64)
+    server_id: str = Field(default="", max_length=100)  # "survival@<pc>" on another PC
     channel_id: str | None = Field(None, pattern=r"^\d{1,25}$")
 
 
@@ -385,16 +509,23 @@ class DiscordLevelRole(BaseModel):
     role_id: str = Field(pattern=r"^\d{1,25}$")
 
 
+class DiscordStoreRole(BaseModel):
+    rank: str = Field(pattern=r"^[a-z]{1,20}$")  # a Store rank id (agent/store.py)
+    role_id: str = Field(pattern=r"^\d{1,25}$")
+
+
 class DiscordLevelSettings(BaseModel):
     announce: bool = True
     # 0 (Monday) to 6 (Sunday); null: no weekly leaderboard.
     leaderboard_day: int | None = Field(None, ge=0, le=6)
     # Left out: the Level roles stay as they are.
     roles: list[DiscordLevelRole] | None = Field(None, max_length=20)
+    # Left out: the Store rank roles stay as they are.
+    store_roles: list[DiscordStoreRole] | None = Field(None, max_length=10)
 
 
 class DiscordAddress(BaseModel):
-    server_id: str = Field(max_length=64)
+    server_id: str = Field(max_length=100)
     # A name or address and maybe a port, as friends type it into Minecraft.
     address: str | None = Field(None, max_length=253, pattern=r"^[A-Za-z0-9.\-]+(:\d{1,5})?$")
 
@@ -467,3 +598,74 @@ class NewPoll(BaseModel):
     question: str = Field(max_length=300)
     answers: list[str] = Field(max_length=5)
     closes_at: float
+
+
+class GuideButtonRequest(BaseModel):
+    """One guide button's typed values, by field id."""
+
+    values: dict[str, int | bool | str] = Field(default_factory=dict, max_length=10)
+    confirm: bool = False
+
+
+class ProtectionFixRequest(BaseModel):
+    """One fix from the Protection card, and for "change_port" the port
+    (else the next free one)."""
+
+    fix: str = Field(min_length=1, max_length=40, pattern=r"^[a-z0-9_]+$")
+    port: int | None = Field(None, ge=1024, le=65535)
+
+
+class JoinLaunchRequest(BaseModel):
+    """Launch mode: how long (1 hour to 7 days) and how many players are expected."""
+
+    hours: float = Field(24, ge=1, le=168)
+    players: int = Field(ge=1, le=100000)
+
+
+class JoinBlockRequest(BaseModel):
+    address: str = Field(min_length=2, max_length=64)
+
+
+class ConfigFileRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=400)
+
+
+class ConfigFileSaveRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=400)
+    text: str = Field(max_length=512 * 1024)
+    version: str = Field(min_length=64, max_length=64)
+
+
+class PcJoinRequest(BaseModel):
+    """On the new PC: join the account the link is from."""
+
+    link: str = Field(max_length=1024)
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=256)
+
+
+class SyncJoinRequest(BaseModel):
+    """From a new PC to a PC already in the account (agent/yourpcs.py)."""
+
+    code: str = Field(max_length=128)
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=256)
+    pc: dict[str, Any]
+    sync_key: str = Field(max_length=128)
+
+
+class SyncChangesRequest(BaseModel):
+    records: list[dict[str, Any]] = Field(max_length=5000)
+
+
+class BotLinkRequest(BaseModel):
+    """From the Bot PC, over a Bot link (agent/discord/botpc.py)."""
+
+    interaction: dict[str, Any] | None = None
+    server: str | None = Field(None, max_length=100)
+    message: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
+    member: str | None = Field(None, max_length=25)
+    name: str | None = Field(None, max_length=20)
+    servers: list[str] = Field(default_factory=list, max_length=50)
+    until: float | None = None

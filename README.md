@@ -30,9 +30,18 @@ As a kid I remember how rough it was not being able to figure out how to play Mi
 - NeoForge
 - Paper
 - Purpur
+- Leaf (Technical mode)
 - Bedrock
 
-You can use a server you already have, or let the setup make a new one.
+In Technical mode you can also run your own server jar.
+
+You can change a server's type later (for example Vanilla to Paper) and keep your world. In Technical mode you can also make a Java copy of a Bedrock world, or a Bedrock copy of a Java one, with [Chunker](https://github.com/HiveGamesOSS/Chunker) by Hive Games.
+
+You can bring in a server you already have (from a folder or a zip, including CurseForge server packs), or let the app make a new one.
+
+Running a server for a community? In Technical mode the owner can set up a store through [Tebex](https://www.tebex.io): Command Block installs Tebex's plugin and LuckPerms, makes three cosmetic ranks and gives you the steps to paste into Tebex's site. Payments stay on Tebex; Command Block never touches money. Never on a server for kids or a Test server.
+
+Rented a server from a host? If the host uses a Pterodactyl panel (most do, like Sparked Host), you can connect it with a client API key and see it next to your own servers: status, start, stop, restart, the console and the host's backups. Your moderators, alerts and the Discord bot work for it too. Aternos doesn't allow other apps, so it only gets an "Open Aternos" link.
 
 ## How do I get it?
 
@@ -63,15 +72,15 @@ This app is in no way done and will be supported for a good long while. Here's e
 
 - Safety notes and saved version lists that stay up to date without a new release.
 - Manage servers on several PCs under one owner account.
-- Help picking a server type, support for Spigot, Leaf and custom jars, and switching a server's type (for example Vanilla to Paper).
 - Add mods from a link or file, including CurseForge (if they let me have the api key), plus recommended add-ons, performance and QoL suggestions, and guides for popular add-ons.
 - Editing add-on config files inside the app.
-- Bring a server in from a folder or zip, or bring servers back from a backup folder on a new PC.
+- Bring servers back from a backup folder on a new PC.
 - Test servers, and "New season" (keep the old world, start a fresh one with the same settings).
-- A server store through Tebex, cosmetics only by default.
+- The Store tab in the phone apps.
 - Attack protection, a changeable port, and sign-in for offline-mode servers.
 - Start a sleeping server when someone tries to join, a "new version is out" alert, a player activity graph and your own command buttons.
-- Controlling servers on rented hosts that have an official API.
+- Rented servers on Nitrado, and files, mods and safe changes on rented servers.
+- Rented servers in the phone apps.
 - playit.gg support.
 
 **After 1.0**
@@ -100,6 +109,6 @@ Command Block is free, open-source and will stay that way. If you want to suppor
 
 ## License
 
-[MIT License](LICENSE), Copyright (c) 2026 peyoteheadlights. The setup and the program use Qt for Python (PySide6) under the LGPLv3, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[MIT License](LICENSE), Copyright (c) 2026 peyoteheadlights. The setup and the program use Qt for Python (PySide6) under the LGPLv3, and Chunker by Hive Games under the MIT License, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.

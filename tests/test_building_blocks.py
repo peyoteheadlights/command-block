@@ -262,6 +262,13 @@ def test_every_route_declares_its_permission():
         "/api/auth/once",  # the installer's one-time code, this PC only
         "/api/invite/check",
         "/api/invite/accept",
+        # The owner's other PCs: a sync key, or a join code and the owner's
+        # password (agent/yourpcs.py).
+        "/api/sync/join",
+        "/api/sync/hello",
+        "/api/sync/changes",
+        # The Bot PC passing on what Discord asked: a Bot link (agent/discord/botpc.py).
+        "/api/sync/bot/{what}",
     }
     missing = []
     routes = api_routes()

@@ -137,7 +137,7 @@ apps filter by the server being looked at.
 nothing outside it asks `if type == "fabric"`:
 
 - `__init__.py`: one frozen `ServerType` per type (Vanilla, Fabric, Quilt,
-  Forge, NeoForge, Paper, Purpur), saying what it accepts, what its add-ons
+  Forge, NeoForge, Paper, Purpur, Leaf), saying what it accepts, what its add-ons
   are called and where they live, which metadata file they carry, which
   Modrinth loaders match, how it is launched (`-jar`, or `java @win_args.txt`
   for Forge and NeoForge; `unix_args.txt` off Windows), its installer's
@@ -145,14 +145,24 @@ nothing outside it asks `if type == "fabric"`:
   folders a backup must hold besides the configured list (`backup_extra`),
   and whether GeyserMC publishes a build for it. The apps'
   comparison table is generated from exactly this, so it cannot drift.
+  It also says what each type suits (`goals`), and `recommend()` turns
+  "plain vanilla / plugins / mods" into the picker's advice. Leaf and Purpur
+  are offered for new servers only in Technical. The notes file can add a
+  type that reuses Paper's provider (`register_variant`); its servers' config
+  names that base (`like`), so they load before the notes do.
+- `custom.py`: the owner's own server jar, based on a type. Never checked,
+  updated or version-changed by the app.
 - `versions.py`: one provider per type, each asking that project's own API
   (Mojang's piston-meta, meta.fabricmc.net, meta.quiltmc.org, the Forge and
-  NeoForged Maven metadata, fill.papermc.io, api.purpurmc.org), and turning
+  NeoForged Maven metadata, fill.papermc.io, api.purpurmc.org,
+  api.leafmc.one), and turning
   a chosen version into a `Plan` of files to fetch.
 - `install.py`: putting that plan in place, running the loader installer
   where there is one (see `docs/security.md`), and changing a server's
   version or type through the safe-change routine, keeping the previous
   software for a one-step roll back.
+- `agent/bringin.py` (beside the package): bring a server folder or zip in,
+  copied as one job, type found from its files.
 - `create.py`: a brand-new server. It checks the folder, checks Java, writes
   `server.properties` and `eula.txt`, installs and registers it. It is never started
   for you.

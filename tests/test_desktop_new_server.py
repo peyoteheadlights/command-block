@@ -36,7 +36,10 @@ def plus_tab(qapp, agent_http, pc=None):
     wait_for(
         qapp,
         lambda: (
-            window.screen_name == "New server" and "Which kind of server?" in shown_text(screen)
+            window.screen_name == "New server"
+            and any(
+                w in shown_text(screen) for w in ("Which kind of server?", "Which server type?")
+            )
         ),
     )
     return window, screen
@@ -78,9 +81,12 @@ def test_the_rules_links_open_in_the_browser(qapp, agent_http, monkeypatch):
     assert pc.opened == ["https://aka.ms/MinecraftEULA"]
 
 
-def test_a_server_already_on_this_pc_is_added_with_the_folder_picker(qapp, agent_http, tmp_path):
+def test_in_technical_a_server_can_still_be_added_where_it_is(qapp, agent_http, tmp_path):
     pc = FakePC()
     window, screen = plus_tab(qapp, agent_http, pc)
+    window.set_mode(True)
+    screen.load()
+    wait_for(qapp, lambda: "Which server type?" in shown_text(screen))
     button(screen, "Server I already have").click()
     folder = make_server_folder(tmp_path / "Old", port=25570)
     pc.picked = str(folder)
@@ -113,3 +119,47 @@ def test_a_pack_that_cant_be_imported_says_why_and_offers_no_create(qapp, agent_
         for b in screen.findChildren(QtWidgets.QPushButton)
         if b.text() == "Create server" and b.isVisibleTo(screen)
     ]
+
+
+def test_a_goal_marks_the_kinds_that_fit_and_paper_warns_about_farms(qapp, agent_http, monkeypatch):
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(fake_sources()))
+    _window, screen = plus_tab(qapp, agent_http)
+    assert "Leaf" not in shown_text(screen), "forks only in Technical"
+    assert "Exactly like the game." in shown_text(screen)
+    radio = next(
+        b
+        for b in screen.findChildren(QtWidgets.QRadioButton)
+        if b.text() == "Plain vanilla with friends"
+    )
+    radio.setChecked(True)
+    wait_for(qapp, lambda: screen.advice is not None, 20)
+    assert screen.advice["recommended"] == ["vanilla", "fabric"]
+    screen.choose_buttons["paper"].click()
+    wait_for(qapp, lambda: "farms may work differently" in shown_text(screen), 20)
+
+
+def test_a_server_folder_is_read_then_brought_in(qapp, agent_http, tmp_path):
+    pc = FakePC()
+    window, screen = plus_tab(qapp, agent_http, pc)
+    button(screen, "Server I already have").click()
+    folder = make_server_folder(tmp_path / "Old SMP", port=25570)
+    pc.picked = str(folder)
+    button(screen, "Choose a folder").click()
+    button(screen, "Read it").click()
+    wait_for(qapp, lambda: "Found: Fabric, 0 mods, 1 world." in shown_text(screen), 20)
+    pc.picked = str(tmp_path / "Copy")
+    button(screen, "Browse…").click()
+    button(screen, "Bring it in").click()
+    wait_for(qapp, lambda: "Bringing Old SMP in." in shown_text(screen), 20)
+    wait_for(
+        qapp,
+        lambda: (
+            "Old SMP"
+            in [
+                r["name"]
+                for r in agent_http.get("/api/servers", headers=owner(agent_http)).json()["servers"]
+            ]
+        ),
+        30,
+    )
+    assert (tmp_path / "Copy" / "fabric-server-launch.jar").is_file()

@@ -138,6 +138,8 @@ def join_info(ctx: ServerContext) -> dict[str, Any]:
             "local": local,
             "consoles_note": True,
         }
+    from .discord import layout
+
     return {
         "java": {
             "port": port.port,
@@ -145,6 +147,9 @@ def join_info(ctx: ServerContext) -> dict[str, Any]:
             "default_port": port.port == MINECRAFT_DEFAULT_PORT,
             "local": local,
             "tailscale": tailscale,
+            # The address the owner typed (a playit Premium address, say):
+            # shown first everywhere, as typed.
+            "shared": layout.addresses(ctx.core.db).get(ctx.server_id),
         },
         "bedrock": bedrock,
         "internet": {

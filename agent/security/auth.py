@@ -3,8 +3,10 @@
 Design:
 
   * The operator signs in with a username and password. The password is never
-    stored - only a PBKDF2-HMAC-SHA256 hash with a per-install salt, taken
-    from the MCSC_ADMIN_PASSWORD_HASH environment variable.
+    stored - only a scrypt hash with its own salt (older PBKDF2 hashes still
+    work and are re-made). It lives in the owner's signed record in the
+    database (agent/security/records.py), moved in from .env at the first
+    start; the owner's other PCs share it (agent/yourpcs.py).
   * A successful sign-in returns a random 256-bit session token. Only the
     SHA-256 of that token is stored, so a stolen database yields no usable
     tokens.
@@ -18,11 +20,14 @@ Design:
     (agent/security/permissions.py).
   * The owner's password can be reset only on the PC itself
     (python -m installer.reset_password), which rewrites .env and signs
-    every session out. A running agent notices the new .env and uses it.
+    every session on that PC out. A running agent notices the new .env and
+    uses it; on a PC that shares its accounts it waits for a confirm from
+    another PC first.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -39,52 +44,87 @@ from typing import Any
 
 log = logging.getLogger("msc.auth")
 
-# OWASP's Password Storage Cheat Sheet figure for PBKDF2-HMAC-SHA256. A hash
-# records its own round count, so older hashes keep working and are re-made
-# with this count the next time that person signs in (needs_rehash).
+# OWASP's Password Storage Cheat Sheet figure for PBKDF2-HMAC-SHA256, the
+# hash used before scrypt. A hash records how it was made, so older hashes
+# keep working and are re-made with scrypt the next time that person signs in
+# (needs_rehash).
 OWASP_PBKDF2_SHA256_ROUNDS = 600_000
 PBKDF2_ROUNDS = OWASP_PBKDF2_SHA256_ROUNDS
+# scrypt with one of OWASP's listed settings (N=2^15, r=8, p=3): 32 MiB and
+# about 0.23 s on the 4-core test machine, so well under a second on a weak
+# mini PC (docs/security.md).
+SCRYPT_N = 2**15
+SCRYPT_R = 8
+SCRYPT_P = 3
 TOKEN_BYTES = 32
 
 
 # ----------------------------------------------------------------------
 # password hashing
 # ----------------------------------------------------------------------
+def _scrypt(password: str, salt: bytes, n: int, r: int, p: int) -> bytes:
+    return hashlib.scrypt(
+        password.encode("utf-8"), salt=salt, n=n, r=r, p=p, maxmem=128 * n * r + 2**25, dklen=32
+    )
+
+
 def hash_password(password: str, salt: bytes | None = None, rounds: int | None = None) -> str:
-    """Return a self-describing hash string: pbkdf2_sha256$rounds$salt$hash."""
-    rounds = rounds or PBKDF2_ROUNDS
+    """A self-describing hash: scrypt$N$r$p$salt$hash, or with ``rounds``
+    the older pbkdf2_sha256$rounds$salt$hash (kept for tests and old
+    installs)."""
     if len(password) < 10:
         raise ValueError("The password needs at least 10 characters.")
     salt = salt or secrets.token_bytes(16)
-    derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
+    b64 = base64.b64encode
+    if rounds:
+        derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
+        return "$".join(["pbkdf2_sha256", str(rounds), b64(salt).decode(), b64(derived).decode()])
+    derived = _scrypt(password, salt, SCRYPT_N, SCRYPT_R, SCRYPT_P)
     return "$".join(
         [
-            "pbkdf2_sha256",
-            str(rounds),
-            base64.b64encode(salt).decode(),
-            base64.b64encode(derived).decode(),
+            "scrypt",
+            str(SCRYPT_N),
+            str(SCRYPT_R),
+            str(SCRYPT_P),
+            b64(salt).decode(),
+            b64(derived).decode(),
         ]
     )
 
 
+def is_password_hash(value: str) -> bool:
+    return (value or "").startswith(("pbkdf2_sha256$", "scrypt$"))
+
+
 def verify_password(password: str, encoded: str) -> bool:
     try:
-        algorithm, rounds, salt_b64, hash_b64 = encoded.split("$")
-        if algorithm != "pbkdf2_sha256":
+        parts = encoded.split("$")
+        given = password.encode("utf-8")
+        if parts[0] == "pbkdf2_sha256" and len(parts) == 4:
+            derived = hashlib.pbkdf2_hmac(
+                "sha256", given, base64.b64decode(parts[2]), int(parts[1])
+            )
+        elif parts[0] == "scrypt" and len(parts) == 6:
+            n, r, p = int(parts[1]), int(parts[2]), int(parts[3])
+            # A hash from another PC never makes this one use huge memory.
+            if n > 2**17 or r > 16 or p > 16:
+                return False
+            derived = _scrypt(password, base64.b64decode(parts[4]), n, r, p)
+            parts = [parts[0], "", "", parts[5]]
+        else:
             return False
-        derived = hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), base64.b64decode(salt_b64), int(rounds)
-        )
-        return hmac.compare_digest(derived, base64.b64decode(hash_b64))
-    except (ValueError, TypeError, AttributeError):
+        return hmac.compare_digest(derived, base64.b64decode(parts[3]))
+    except (ValueError, TypeError, AttributeError, MemoryError):
         return False
 
 
 def needs_rehash(encoded: str) -> bool:
-    """True for a valid hash made with fewer rounds than PBKDF2_ROUNDS."""
+    """True for a valid older hash: PBKDF2, or scrypt with a smaller N."""
     try:
-        algorithm, rounds, _salt, _hash = encoded.split("$")
-        return algorithm == "pbkdf2_sha256" and int(rounds) < PBKDF2_ROUNDS
+        parts = encoded.split("$")
+        if parts[0] == "pbkdf2_sha256" and len(parts) == 4:
+            return int(parts[1]) > 0
+        return parts[0] == "scrypt" and len(parts) == 6 and int(parts[1]) < SCRYPT_N
     except (ValueError, AttributeError):
         return False
 
@@ -251,8 +291,29 @@ class RateLimiter:
             del self._hits[key]
 
 
+_NEVER = object()
+TAMPERED = (
+    "This PC's account records didn't pass their safety check, so that sign-in is refused. "
+    "If you didn't change anything, reset the owner password on the PC "
+    "(python -m installer.reset_password)."
+)
+
+
+def _has_access(grants: dict[str, Any]) -> bool:
+    """Whether one PC's saved permissions for a moderator let them see
+    anything there."""
+    every = grants.get("servers") is None
+    if every and json.loads(grants.get("new_server_grants") or "[]"):
+        return True
+    if json.loads(grants.get("pc_grants") or "[]"):
+        return True
+    return any(json.loads(grants.get("grants") or "{}").values())
+
+
 class AuthManager:
     def __init__(self, config, db, bus=None):
+        from .records import Records
+
         self.config = config
         self.db = db
         self.bus = bus
@@ -261,15 +322,72 @@ class AuthManager:
             config.security.rate_limit_window,
         )
         self.login_rate = RateLimiter(10, 300.0)
-
-        self._env_seen: int | None = self._env_stamp()
+        self.records = Records(db, config.data_dir)
+        self.records.tampered = self._tampered
+        self.records.applied.update(
+            account=self._apply_account,
+            session=self._apply_session,
+            owner=self._apply_owner,
+            owner_reset=self._apply_owner_reset,
+        )
+        self.loop: asyncio.AbstractEventLoop | None = None  # the agent's, once it runs
+        self._env_seen: object = _NEVER
+        self._adopt()
 
     # ------------------------------------------------------------------
     @property
     def configured(self) -> bool:
-        return bool(self.config.admin_password_hash or self.config.api_token)
+        return bool(self.records.raw("owner", "owner") or self.config.api_token)
 
-    # -- the owner's password, which lives in .env --------------------------
+    def joined(self) -> bool:
+        """Whether this PC shares its accounts with others (agent/yourpcs.py)."""
+        return any(r["key"] != self.records.pc for r in self.records.all("pc"))
+
+    def _publish(self, type_: str, message: str, level: str = "warn", **data: Any) -> None:
+        if not self.bus:
+            return
+        from ..events import Event
+
+        event = Event(type=type_, level=level, message=message, data=data)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # Called from a worker thread: hand it to the agent's own loop.
+            if self.loop is not None and not self.loop.is_closed():
+                self.loop.call_soon_threadsafe(self.bus.publish_soon, event)
+            return
+        self.bus.publish_soon(event)
+
+    def _tampered(self, kind: str) -> None:
+        self.db.audit("records_tampered", result="refused", detail=kind)
+        self._publish(
+            "records_tampered",
+            "An account record on this PC failed its safety check and wasn't used",
+            level="error",
+            kind=kind,
+        )
+
+    def _adopt(self) -> None:
+        """Sign what was here before shared accounts, once: the owner from
+        .env, every moderator and every sign-in still in force. After that a
+        row without a good record is never used."""
+        self._refresh_owner()
+        if self.db.get_setting("records_adopted"):
+            return
+        # Brought in by "Import from another PC": a new id each.
+        self.db.execute("UPDATE accounts SET id = lower(hex(randomblob(8))) WHERE id IS NULL")
+        for row in self.db.query("SELECT * FROM accounts"):
+            self._record_account(row)
+        rows = self.db.query(f"SELECT * FROM sessions WHERE {live_session()}", (time.time(),))
+        for row in rows:
+            self._record_session(row)
+        self.db.set_setting("records_adopted", time.time())
+
+    # -- the owner -----------------------------------------------------------
+    # The owner's name and password hash live in the signed "owner" record,
+    # shared by the owner's PCs. .env keeps the first-run value only: when it
+    # changes (python -m installer.reset_password, or the installer run again
+    # with a new password) that counts as a reset on this PC.
     def _env_stamp(self) -> int | None:
         path = getattr(self.config, "env_path", None)
         try:
@@ -278,36 +396,131 @@ class AuthManager:
             return None
 
     def _refresh_owner(self) -> None:
-        """Pick up a password reset made on the PC while the agent runs: when
-        .env has changed since it was last read, its owner lines win. A new
-        owner password ends every owner sign-in, phones included."""
         stamp = self._env_stamp()
-        if stamp is None or stamp == self._env_seen:
+        if stamp == self._env_seen:
             return
+        first = self._env_seen is _NEVER
         self._env_seen = stamp
-        try:
-            text = self.config.env_path.read_text(encoding="utf-8")
-        except OSError:
+        if stamp is not None and not first:
+            try:
+                text = self.config.env_path.read_text(encoding="utf-8")
+            except OSError:
+                return
+            for raw in text.splitlines():
+                key, _, value = raw.strip().partition("=")
+                if key.strip() in ("MCSC_ADMIN_PASSWORD_HASH", "MCSC_ADMIN_USERNAME") and value:
+                    os.environ[key.strip()] = value.strip().strip('"').strip("'")
+        name, hashed = self.config.admin_username, self.config.admin_password_hash
+        if not is_password_hash(hashed):
             return
-        old_name, old_hash = self.config.admin_username, self.config.admin_password_hash
-        for raw in text.splitlines():
-            key, _, value = raw.strip().partition("=")
-            if key.strip() in ("MCSC_ADMIN_PASSWORD_HASH", "MCSC_ADMIN_USERNAME") and value:
-                os.environ[key.strip()] = value.strip().strip('"').strip("'")
+        seen = f"{name}\n{hashed}"
+        if self.db.get_setting("owner_env_seen") == seen:
+            return
+        self.db.set_setting("owner_env_seen", seen)
+        if self.records.raw("owner", "owner") is None:
+            self.records.put(
+                "owner", "owner", {"username": name, "password_hash": hashed, "changed": ""}
+            )
+            return
         log.info("the owner's sign-in details in .env changed; using the new ones")
-        if old_hash and self.config.admin_password_hash != old_hash:
-            for name in {old_name, self.config.admin_username}:
-                self.db.execute("DELETE FROM sessions WHERE user = ?", (name,))
-            self.db.audit("owner_password_changed", user=self.config.admin_username)
-            log.info("the owner's password changed; the owner's sign-ins have ended")
+        self.reset_owner(name, hashed)
+
+    def reset_owner(self, username: str, hashed: str) -> None:
+        """A new owner password set on this PC itself. On its own it is the
+        owner's password at once. On a PC that shares its accounts it works
+        here only, until an owner device signed in to another PC confirms it
+        (Your PCs), so one PC can't take over the others."""
+        body = {"username": username, "password_hash": hashed, "changed": self.records.clock.now()}
+        if self.joined():
+            self.records.put("owner_reset", self.records.pc, body)
+            self._publish(
+                "owner_password_reset",
+                "The owner password was reset on this PC. It works on the other PCs "
+                "once you confirm it from one of them.",
+                pc=self.records.pc,
+            )
+        else:
+            self.records.put("owner", "owner", body)
+            self._publish("owner_password_changed", "The owner password was changed")
+        self.db.audit("owner_password_changed", user=username)
+        log.info("the owner's password changed; the owner's sign-ins have ended")
+
+    def owner(self) -> dict[str, Any]:
+        """The owner on this PC: username, password_hash and changed (when the
+        password last changed). A reset made here and not confirmed yet wins
+        here only."""
+        self._refresh_owner()
+        shared = self.records.get("owner", "owner")
+        reset = self.records.get("owner_reset", self.records.pc)
+        if reset and (shared is None or reset["hlc"] > shared["hlc"]):
+            return reset["body"]
+        if shared is None:
+            if self.records.raw("owner", "owner") is not None:
+                raise AuthError(TAMPERED, status=503)
+            raise AuthError(
+                "No password is configured. Set MCSC_ADMIN_PASSWORD_HASH in the agent's .env file "
+                "(use: python -m installer.make_secrets).",
+                status=503,
+            )
+        return shared["body"]
+
+    def _save_owner(self, **changes: Any) -> None:
+        """Change the owner record in force here (the reset, while it waits)."""
+        reset = self.records.get("owner_reset", self.records.pc)
+        shared = self.records.get("owner", "owner")
+        if reset and (shared is None or reset["hlc"] > shared["hlc"]):
+            self.records.put("owner_reset", self.records.pc, {**reset["body"], **changes})
+        elif shared:
+            self.records.put("owner", "owner", {**shared["body"], **changes})
 
     @property
     def owner_username(self) -> str:
-        self._refresh_owner()
-        return self.config.admin_username
+        try:
+            return str(self.owner()["username"])
+        except AuthError:
+            return self.config.admin_username
 
     def _is_owner_name(self, username: str) -> bool:
         return hmac.compare_digest(username.lower(), self.owner_username.lower())
+
+    def _apply_owner(self, record: dict[str, Any], old: dict[str, Any] | None) -> None:
+        if old and old["body"].get("password_hash") != record["body"].get("password_hash"):
+            if old["body"].get("changed") != record["body"].get("changed"):
+                self._publish("owner_password_changed", "The owner password was changed")
+
+    def _apply_owner_reset(self, record: dict[str, Any], old: dict[str, Any] | None) -> None:
+        if record["key"] != self.records.pc and not record["removed"]:
+            self._publish(
+                "owner_password_reset",
+                "The owner password was reset on another PC. Open Your PCs to confirm it.",
+                pc=record["key"],
+            )
+
+    def pending_resets(self) -> list[dict[str, Any]]:
+        """Resets made on other PCs that wait for this PC's owner to confirm."""
+        shared = self.records.get("owner", "owner")
+        return [
+            {"pc": r["key"], "at": r["body"]["changed"]}
+            for r in self.records.all("owner_reset")
+            if r["key"] != self.records.pc and (shared is None or r["hlc"] > shared["hlc"])
+        ]
+
+    def confirm_reset(self, principal: Principal, pc: str) -> None:
+        """An owner device signed in to this PC, before the reset was made,
+        confirms a reset made on another PC: it becomes everyone's."""
+        reset = next((r for r in self.pending_resets() if r["pc"] == pc), None)
+        made = self.records.get("session", principal.token_hash or "")
+        if reset is None:
+            raise AccountError("There's no password reset waiting from that PC.")
+        if pc == self.records.pc or not made or made["body"].get("created", "") >= reset["at"]:
+            raise AuthError(
+                "Confirm it from a device that was signed in to another PC before the reset.",
+                status=403,
+            )
+        body = self.records.get("owner_reset", pc)
+        assert body is not None
+        self.records.put("owner", "owner", body["body"])
+        self.db.audit("owner_reset_confirmed", user=principal.user, target=pc)
 
     def _locked_out(self, user: str, source_ip: str) -> float | None:
         max_failed = self.config.security.max_failed_logins
@@ -368,15 +581,9 @@ class AuthManager:
         ends it."""
         username = (username or "").strip()[:64]
         self.login_rate.check(f"login:{source_ip or 'unknown'}")
-        self._refresh_owner()
-        if not self.config.admin_password_hash:
-            raise AuthError(
-                "No password is configured. Set MCSC_ADMIN_PASSWORD_HASH in the agent's .env file "
-                "(use: python -m installer.make_secrets).",
-                status=503,
-            )
+        owner = self.owner()
         account = None
-        if not hmac.compare_digest(username, self.config.admin_username):
+        if not hmac.compare_digest(username, owner["username"]):
             account = self.account(username)
             if account:
                 username = account["username"]  # helpers' names ignore capitals
@@ -389,8 +596,8 @@ class AuthManager:
             )
         if account is not None:
             password_ok = verify_password(password or "", account["password_hash"])
-        elif hmac.compare_digest(username, self.config.admin_username):
-            password_ok = verify_password(password or "", self.config.admin_password_hash)
+        elif hmac.compare_digest(username, owner["username"]):
+            password_ok = verify_password(password or "", owner["password_hash"])
         else:
             verify_password(password or "", _dummy_hash())
             password_ok = False
@@ -400,12 +607,29 @@ class AuthManager:
             if self.bus:
                 from ..events import Event
 
+                # Counted from the same rows the lockout reads, so the alert
+                # says how many tries there really were (house rule 1).
+                minutes = int(self.config.security.lockout_minutes)
+                tries = len(
+                    self.db.query(
+                        "SELECT ts FROM login_attempts WHERE success = 0 AND ts > ? "
+                        "AND (user = ? OR source_ip = ?)",
+                        (time.time() - minutes * 60, username, source_ip),
+                    )
+                )
+                where = source_ip or "unknown address"
+                message = f"Failed sign-in for '{username}' from {where}"
+                if tries > 1:
+                    message = (
+                        f"{tries} failed sign-ins in {minutes} minutes for '{username}' "
+                        f"or from {where}"
+                    )
                 self.bus.publish_soon(
                     Event(
                         type="auth_failure",
                         level="warn",
-                        message=f"Failed sign-in for '{username}' from {source_ip or 'unknown address'}",
-                        data={"username": username, "source_ip": source_ip},
+                        message=message,
+                        data={"username": username, "source_ip": source_ip, "tries": tries},
                     )
                 )
             raise AuthError("That username or password isn't right.")
@@ -444,9 +668,8 @@ class AuthManager:
             log.warning("The one-time sign-in file couldn't be deleted: %s", path)
         if used or time.time() > float(saved.get("expires_at") or 0):
             raise AuthError(ONE_TIME_GONE)
-        self._refresh_owner()
         return self._new_session(
-            self.config.admin_username,
+            self.owner()["username"],
             "owner",
             source_ip=source_ip,
             label=label,
@@ -465,20 +688,19 @@ class AuthManager:
     ) -> dict[str, Any]:
         token = secrets.token_urlsafe(TOKEN_BYTES)
         expires = time.time() + self._lifetime(remember)
-        self.db.insert(
-            "sessions",
-            {
-                "token_hash": token_hash(token),
-                "user": username,
-                "created_at": time.time(),
-                "expires_at": expires,
-                "last_used": time.time(),
-                "source_ip": source_ip,
-                "label": label[:80],
-                "remember": 1 if remember or until_signed_out else 0,
-                "until_signed_out": 1 if until_signed_out else 0,
-            },
-        )
+        row = {
+            "token_hash": token_hash(token),
+            "user": username,
+            "created_at": time.time(),
+            "expires_at": expires,
+            "last_used": time.time(),
+            "source_ip": source_ip,
+            "label": label[:80],
+            "remember": 1 if remember or until_signed_out else 0,
+            "until_signed_out": 1 if until_signed_out else 0,
+        }
+        self.db.insert("sessions", row)
+        self._record_session(row)
         self.db.audit("login", user=username, source_ip=source_ip)
         self.purge_expired()
         return {
@@ -489,11 +711,84 @@ class AuthManager:
             "remember": bool(remember),
         }
 
+    # -- signed-in devices, shared by the owner's PCs ---------------------
+    def _account_id(self, user: str) -> str | None:
+        if self._is_owner_name(user):
+            return "owner"
+        row = self.db.query_one("SELECT id FROM accounts WHERE username = ?", (user,))
+        return row["id"] if row else None
+
+    def _record_session(self, row: dict[str, Any], created: str | None = None) -> None:
+        """A sign-in's record: the same token then works on every PC. Only
+        what never changes is shared; last use and expiry renew per PC."""
+        self.records.put(
+            "session",
+            row["token_hash"],
+            {
+                "user": row["user"],
+                "account": self._account_id(row["user"]),
+                "created": created or self.records.clock.now(),
+                "created_at": row["created_at"],
+                "expires_at": row["expires_at"],
+                "remember": int(row["remember"] or 0),
+                "until_signed_out": int(row["until_signed_out"] or 0),
+                "label": row.get("label") or "",
+                "source_ip": row.get("source_ip") or "",
+            },
+        )
+
+    def _end_sessions(self, where: str, params: tuple = ()) -> int:
+        """Sign these out on every PC: each gets a "removed" marker."""
+        rows = self.db.query(f"SELECT token_hash FROM sessions WHERE {where}", params)
+        for row in rows:
+            self.records.remove("session", row["token_hash"])
+            self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (row["token_hash"],))
+        return len(rows)
+
+    def _forget_session(self, digest: str) -> None:
+        """An expired sign-in, gone here only."""
+        self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
+        self.records.drop("session", digest)
+
+    def _apply_session(self, record: dict[str, Any], old: dict[str, Any] | None) -> None:
+        digest, body = record["key"], record["body"]
+        if record["removed"]:
+            self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
+            return
+        if not body.get("until_signed_out") and float(body.get("expires_at") or 0) < time.time():
+            return
+        user = body.get("user") or ""
+        if body.get("account") == "owner":
+            user = self.owner_username
+        elif body.get("account"):
+            found = self.db.query_one(
+                "SELECT username FROM accounts WHERE id = ?", (body["account"],)
+            )
+            if not found:
+                return
+            user = found["username"]
+        self.db.execute(
+            "INSERT OR IGNORE INTO sessions (token_hash, user, created_at, expires_at, last_used, "
+            "source_ip, label, remember, until_signed_out) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                digest,
+                user,
+                body.get("created_at") or time.time(),
+                body.get("expires_at") or 0,
+                body.get("created_at"),
+                body.get("source_ip") or "",
+                body.get("label") or "",
+                int(body.get("remember") or 0),
+                int(body.get("until_signed_out") or 0),
+            ),
+        )
+
     def _upgrade_hash(self, username: str, password: str, account: dict[str, Any] | None) -> None:
-        """Re-hash a password that was stored with fewer rounds than today's,
-        now that the right password is in hand. A failure only logs: the old
-        hash keeps working."""
-        stored = account["password_hash"] if account else self.config.admin_password_hash
+        """Re-hash a password stored the older way (PBKDF2, or scrypt with
+        less work), now that the right password is in hand. It is the same
+        password, so nobody is signed out. A failure only logs: the old hash
+        keeps working."""
+        stored = account["password_hash"] if account else self.owner()["password_hash"]
         if not needs_rehash(stored):
             return
         try:
@@ -505,21 +800,10 @@ class AuthManager:
                 "UPDATE accounts SET password_hash = ? WHERE username = ?",
                 (new_hash, account["username"]),
             )
-            log.info("re-hashed %s's password with %d rounds", username, PBKDF2_ROUNDS)
-            return
-        env_path = getattr(self.config, "env_path", None)
-        if not env_path or not env_path.is_file():
-            return
-        try:
-            from installer.setup_tool import write_env_value
-
-            write_env_value(env_path, "MCSC_ADMIN_PASSWORD_HASH", new_hash)
-        except Exception as exc:  # LockDownError, OSError: keep the old hash
-            log.warning("couldn't save the owner's re-hashed password: %s", exc)
-            return
-        os.environ["MCSC_ADMIN_PASSWORD_HASH"] = new_hash
-        self._env_seen = self._env_stamp()
-        log.info("re-hashed the owner's password with %d rounds", PBKDF2_ROUNDS)
+            self._record_account(account["username"])
+        else:
+            self._save_owner(password_hash=new_hash)
+        log.info("re-hashed %s's password with scrypt", username)
 
     def _lifetime(self, remember: bool) -> float:
         security = self.config.security
@@ -531,18 +815,26 @@ class AuthManager:
         api_token = self.config.api_token
         if api_token and hmac.compare_digest(token, api_token):
             return Principal(user="api-token", kind="api_token")
-        self._refresh_owner()  # a new owner password ends the owner's sessions first
         digest = token_hash(token)
         row = self.db.query_one("SELECT * FROM sessions WHERE token_hash = ?", (digest,))
         if not row:
             raise AuthError("You've been signed out. Sign in again.")
         kept = bool(row.get("until_signed_out"))
         if not kept and row["expires_at"] < time.time():
-            self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
+            self._forget_session(digest)
             raise AuthError("Your session has expired. Sign in again.")
+        record = self.records.get("session", digest)
+        if record is None or record["body"].get("account") != self._account_id(row["user"]):
+            if record is None and self.records.raw("session", digest) is None:
+                self._tampered("session")
+            raise AuthError(TAMPERED)
         role, access = self._role_of(row["user"])
         if role is None:
             # The helper account was removed: its sessions end with it.
+            self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
+            raise AuthError("You've been signed out. Sign in again.")
+        if role == "owner" and record["body"].get("created", "") < self.owner()["changed"]:
+            # Made before the owner password last changed: that ends it.
             self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
             raise AuthError("You've been signed out. Sign in again.")
         now = time.time()
@@ -567,8 +859,7 @@ class AuthManager:
     def _role_of(self, user: str) -> tuple[str | None, Access | None]:
         """The role and per-server permissions of a signed-in name, or
         (None, None) when no such account exists any more."""
-        self._refresh_owner()
-        if hmac.compare_digest(user, self.config.admin_username):
+        if self._is_owner_name(user):
             return "owner", None
         account = self.account(user)
         if not account:
@@ -614,18 +905,148 @@ class AuthManager:
                 name,
             ),
         )
+        self._record_account(name)
+
+    # -- the records behind a moderator --------------------------------------
+    # One "account" record (name, password hash), shared and newest-wins, and
+    # one "grants" record per PC: what they may do on that PC's servers,
+    # written only by that PC.
+    ACCOUNT_FIELDS = (
+        "username",
+        "password_hash",
+        "role",
+        "created_at",
+        "created_by",
+        "password_changed_at",
+    )
+    GRANT_FIELDS = ("servers", "grants", "new_server_grants", "pc_grants")
+
+    def _record_account(self, row_or_name: dict[str, Any] | str, made: str | None = None) -> None:
+        row = (
+            row_or_name
+            if isinstance(row_or_name, dict)
+            else self.db.query_one("SELECT * FROM accounts WHERE username = ?", (row_or_name,))
+        )
+        if not row:
+            return
+        old = self.records.get("account", row["id"])
+        body = {k: row.get(k) for k in self.ACCOUNT_FIELDS}
+        body["made"] = (
+            made or (old["body"].get("made") if old else None) or self.records.clock.now()
+        )
+        if not old or {k: old["body"].get(k) for k in body} != body:
+            self.records.put("account", row["id"], body)
+        self._record_grants(row)
+
+    def _record_grants(self, row: dict[str, Any]) -> None:
+        key = f"{self.records.pc}:{row['id']}"
+        body = {k: row.get(k) for k in self.GRANT_FIELDS}
+        old = self.records.get("grants", key)
+        if not old or old["body"] != body:
+            self.records.put("grants", key, body)
+
+    def _signed(self, row: dict[str, Any]) -> bool:
+        """The row matches its signed records (a row changed straight in the
+        database file doesn't)."""
+        record = self.records.get("account", row.get("id") or "")
+        grants = self.records.get("grants", f"{self.records.pc}:{row.get('id')}")
+        ok = (
+            record is not None
+            and grants is not None
+            and all(record["body"].get(k) == row.get(k) for k in ("username", "password_hash"))
+            and grants["body"] == {k: row.get(k) for k in self.GRANT_FIELDS}
+        )
+        if not ok:
+            self.records._tell("account", row.get("id") or "")
+        return ok
+
+    def _apply_account(self, record: dict[str, Any], old: dict[str, Any] | None) -> None:
+        """A moderator added, changed or removed on another PC."""
+        rid, body = record["key"], record["body"]
+        here = self.db.query_one("SELECT * FROM accounts WHERE id = ?", (rid,))
+        if record["removed"]:
+            if here:
+                self._drop_account(here["username"])
+            return
+        name = str(body.get("username") or "")
+        clash = self.db.query_one(
+            "SELECT * FROM accounts WHERE username = ? AND id != ?", (name, rid)
+        )
+        if clash is not None:
+            name = self._settle_clash(clash, rid, body)
+        fields = {k: body.get(k) for k in self.ACCOUNT_FIELDS}
+        fields["username"] = name
+        if here is None:
+            self.db.insert(
+                "accounts",
+                {
+                    **fields,
+                    "id": rid,
+                    "servers": "[]",
+                    "grants": "{}",
+                    "new_server_grants": "[]",
+                    "pc_grants": "[]",
+                },
+            )
+        else:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            self.db.execute(f"UPDATE accounts SET {sets} WHERE id = ?", (*fields.values(), rid))
+            if here["username"] != name:
+                self._renamed(rid, here["username"], name)
+        if name != body.get("username"):
+            self._record_account(name, made=body.get("made"))
+        else:
+            self._record_grants(self.db.query_one("SELECT * FROM accounts WHERE id = ?", (rid,)))
+
+    def _settle_clash(self, clash: dict[str, Any], rid: str, body: dict[str, Any]) -> str:
+        """Two moderators with one name, made on two PCs apart: the older
+        keeps it, the newer becomes "Sam 2", and the owner is told. Every PC
+        decides the same way."""
+        theirs = (str(body.get("made") or ""), rid)
+        mine_record = self.records.get("account", clash["id"])
+        mine = (str((mine_record or {"body": {}})["body"].get("made") or ""), clash["id"])
+        name = str(body.get("username"))
+        number = 2
+        # A sign-in name has no spaces, so "Sam" becomes "Sam2".
+        while self.db.query_one("SELECT 1 FROM accounts WHERE username = ?", (f"{name}{number}",)):
+            number += 1
+        new_name = f"{name[: 32 - len(str(number))]}{number}"
+        self._publish(
+            "moderator_renamed",
+            f"Two moderators were both called {name}. The newer one is now {new_name}.",
+            username=name,
+            renamed=new_name,
+        )
+        if theirs > mine:
+            return new_name
+        self.db.execute("UPDATE accounts SET username = ? WHERE id = ?", (new_name, clash["id"]))
+        self._renamed(clash["id"], name, new_name)
+        self._record_account(new_name)
+        return name
+
+    def _renamed(self, rid: str, old: str, new: str) -> None:
+        keys = self.db.query(
+            "SELECT key FROM sync_records WHERE kind = 'session' "
+            "AND json_extract(body, '$.account') = ?",
+            (rid,),
+        )
+        for row in keys:
+            self.db.execute("UPDATE sessions SET user = ? WHERE token_hash = ?", (new, row["key"]))
+        self.db.execute("UPDATE invites SET username = ? WHERE username = ?", (new, old))
 
     def account(self, username: str) -> dict[str, Any] | None:
         row = self.db.query_one(
             "SELECT * FROM accounts WHERE username = ?", ((username or "")[:64],)
         )
-        return self._account_row(row) if row else None
+        return self._account_row(row) if row and self._signed(row) else None
 
     def accounts(self) -> list[dict[str, Any]]:
         """Every helper, without the password hashes."""
         rows = self.db.query("SELECT * FROM accounts ORDER BY username COLLATE NOCASE")
         out = []
         for row in rows:
+            if not self._signed(row):
+                continue
             account = self._account_row(row)
             sessions = self.db.query_one(
                 "SELECT COUNT(*) AS n, MAX(last_used) AS last FROM sessions "
@@ -705,8 +1126,10 @@ class AuthManager:
                 "created_at": now,
                 "created_by": by,
                 "password_changed_at": now,
+                "id": secrets.token_hex(8),
             },
         )
+        self._record_account(username)
         self.db.audit("helper_added", user=by, target=username)
         return self.account(username) or {}
 
@@ -785,9 +1208,27 @@ class AuthManager:
                 "UPDATE accounts SET password_hash = ?, password_changed_at = ? WHERE username = ?",
                 (encoded, time.time(), name),
             )
-            self.db.execute("DELETE FROM sessions WHERE user = ?", (name,))
+            self._record_account(name)
+            self._end_sessions("user = ?", (name,))
             self.db.audit("helper_password_set", user=by, target=name)
+        if self.joined() and not self.can_see_anything(name):
+            # Taken off their last server on any PC: gone everywhere.
+            self.delete_account(name, by)
+            return {"username": name, "removed": True}
         return self.account(name) or {}
+
+    def can_see_anything(self, name: str) -> bool:
+        """Whether a moderator has any server or PC permission on any PC."""
+        row = self.db.query_one("SELECT * FROM accounts WHERE username = ?", (name,))
+        return bool(row) and (_has_access(row) or self.can_see_anything_elsewhere(name))
+
+    def can_see_anything_elsewhere(self, name: str) -> bool:
+        row = self.db.query_one("SELECT id FROM accounts WHERE username = ?", (name,))
+        return bool(row) and any(
+            _has_access(r["body"])
+            for r in self.records.all("grants")
+            if r["key"].endswith(f":{row['id']}") and not r["key"].startswith(self.records.pc)
+        )
 
     # -- invites ---------------------------------------------------------
     # An invite lets a new moderator choose their password (or one who forgot
@@ -806,7 +1247,8 @@ class AuthManager:
         now = time.time()
         if forget_password:
             self.db.execute("UPDATE accounts SET password_hash = '' WHERE username = ?", (name,))
-            self.db.execute("DELETE FROM sessions WHERE user = ?", (name,))
+            self._record_account(name)
+            self._end_sessions("user = ?", (name,))
             self.db.audit("helper_password_forgotten", user=by, target=name)
         elif account["password_hash"]:
             raise AccountError(f"{name} has a password already. Reset it to send a new invite.")
@@ -911,6 +1353,7 @@ class AuthManager:
             "UPDATE accounts SET password_hash = ?, password_changed_at = ? WHERE username = ?",
             (encoded, now, name),
         )
+        self._record_account(name)
         self.db.audit("helper_invite_used", user=name, source_ip=source_ip, detail=label[:80])
         self._record_attempt(name, source_ip, True)
         return self._new_session(
@@ -922,11 +1365,19 @@ class AuthManager:
         if not account:
             raise AccountError(f"There is no moderator called {username}.")
         name = account["username"]
+        self._end_sessions("user = ?", (name,))
+        row = self.db.query_one("SELECT id FROM accounts WHERE username = ?", (name,))
+        if row:
+            self.records.remove("account", row["id"])
+            self.records.remove("grants", f"{self.records.pc}:{row['id']}")
+        self._drop_account(name)
+        self.db.audit("helper_removed", user=by, target=name)
+        return name
+
+    def _drop_account(self, name: str) -> None:
         self.db.execute("DELETE FROM accounts WHERE username = ?", (name,))
         self.db.execute("DELETE FROM sessions WHERE user = ?", (name,))
         self.db.execute("DELETE FROM invites WHERE username = ?", (name,))
-        self.db.audit("helper_removed", user=by, target=name)
-        return name
 
     def change_own_password(self, principal: Principal, current: str, new: str) -> None:
         """A helper changing their own password. Their other sessions end;
@@ -944,9 +1395,9 @@ class AuthManager:
             "UPDATE accounts SET password_hash = ?, password_changed_at = ? WHERE username = ?",
             (encoded, time.time(), account["username"]),
         )
-        self.db.execute(
-            "DELETE FROM sessions WHERE user = ? AND token_hash != ?",
-            (account["username"], principal.token_hash or ""),
+        self._record_account(account["username"])
+        self._end_sessions(
+            "user = ? AND token_hash != ?", (account["username"], principal.token_hash or "")
         )
         self.db.audit("password_changed", user=account["username"])
 
@@ -966,45 +1417,44 @@ class AuthManager:
         kept = bool(old.get("until_signed_out"))
         token = secrets.token_urlsafe(TOKEN_BYTES)
         expires = time.time() + self._lifetime(remember)
-        self.db.insert(
-            "sessions",
-            {
-                "token_hash": token_hash(token),
-                "user": principal.user,
-                "created_at": time.time(),
-                "expires_at": expires,
-                "last_used": time.time(),
-                "source_ip": source_ip,
-                # The same device keeps its name on the Security page.
-                "label": old.get("label") or "rotated",
-                "remember": 1 if remember else 0,
-                "until_signed_out": 1 if kept else 0,
-                # The device's own alerts and wake key stay with it.
-                "alerts": old.get("alerts"),
-                "wake_key_hash": old.get("wake_key_hash"),
-            },
-        )
+        made = self.records.get("session", principal.token_hash)
+        new_row = {
+            "token_hash": token_hash(token),
+            "user": principal.user,
+            "created_at": time.time(),
+            "expires_at": expires,
+            "last_used": time.time(),
+            "source_ip": source_ip,
+            # The same device keeps its name on the Security page.
+            "label": old.get("label") or "rotated",
+            "remember": 1 if remember else 0,
+            "until_signed_out": 1 if kept else 0,
+            # The device's own alerts and wake key stay with it.
+            "alerts": old.get("alerts"),
+            "wake_key_hash": old.get("wake_key_hash"),
+        }
+        self.db.insert("sessions", new_row)
+        # Still from before any later password change, like the old one.
+        self._record_session(new_row, created=made["body"].get("created") if made else None)
         # So does its phone's push address (fcm.phones joins on the session).
         self.db.execute(
             "UPDATE app_phones SET session = ? WHERE session = ?",
             (token_hash(token), principal.token_hash),
         )
-        self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (principal.token_hash,))
+        self._end_sessions("token_hash = ?", (principal.token_hash,))
         self.db.audit("token_rotate", user=principal.user, source_ip=source_ip)
         return {"token": token, "expires_at": None if kept else expires}
 
     def logout(self, principal: Principal) -> None:
         if principal.token_hash:
-            self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (principal.token_hash,))
+            self._end_sessions("token_hash = ?", (principal.token_hash,))
             self.db.audit("logout", user=principal.user)
 
     def revoke_all(self, user: str | None = None) -> int:
-        if user:
-            cur = self.db.execute("DELETE FROM sessions WHERE user = ?", (user,))
-        else:
-            cur = self.db.execute("DELETE FROM sessions", ())
+        # "Sign out everywhere": every PC the owner has, too.
+        ended = self._end_sessions("user = ?", (user,)) if user else self._end_sessions("1 = 1")
         self.db.audit("sessions_revoked", user=user or "all")
-        return cur.rowcount
+        return ended
 
     # -- preferences -----------------------------------------------------
     # How each account likes the apps (Simple or Technical, theme),
@@ -1045,10 +1495,13 @@ class AuthManager:
         return read
 
     def purge_expired(self) -> int:
-        cur = self.db.execute(
-            "DELETE FROM sessions WHERE expires_at < ? AND until_signed_out = 0", (time.time(),)
+        rows = self.db.query(
+            "SELECT token_hash FROM sessions WHERE expires_at < ? AND until_signed_out = 0",
+            (time.time(),),
         )
-        return cur.rowcount
+        for row in rows:
+            self._forget_session(row["token_hash"])
+        return len(rows)
 
     # -- signed-in devices ------------------------------------------------
     @staticmethod
@@ -1094,7 +1547,7 @@ class AuthManager:
         if not rows:
             raise AuthError("There's no such sign-in.", status=404)
         for row in rows:
-            self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (row["token_hash"],))
+            self._end_sessions("token_hash = ?", (row["token_hash"],))
         return {"ok": True, "user": rows[0]["user"], "label": rows[0]["label"]}
 
     def active_sessions(self) -> list[dict[str, Any]]:

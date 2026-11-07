@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "tab",
+  "addon": {
+    "content": "plugins",
+    "names": [
+      "TAB"
+    ],
+    "modrinth": "tab-was-taken",
+    "hangar": "NEZNAMY/TAB"
+  },
+  "versions": ">=4.0.0 <7",
+  "title": "TAB",
+  "what": "Changes the player list (Tab key): header, footer, name colors and prefixes, and optional sidebars.",
+  "steps": [
+    "Most of it is set in plugins/TAB/config.yml (Edit settings).",
+    "After changing a file, press Read its settings again."
+  ],
+  "source": "https://github.com/NEZNAMY/TAB/wiki/Commands-&-Permissions",
+  "checked": "2026-10-31",
+  "buttons": [
+    {
+      "id": "reload",
+      "label": "Read its settings again",
+      "command": "tab reload"
+    },
+    {
+      "id": "groups",
+      "label": "List the groups",
+      "command": "tab groups"
+    },
+    {
+      "id": "cpu",
+      "label": "How much the server's power it uses",
+      "command": "tab cpu"
+    }
+  ]
+}

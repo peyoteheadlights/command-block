@@ -17,12 +17,14 @@ from .gear import Section, buttons
 from .overview import card
 from .theme import SHARED
 from .ui import label, push
-from .words import text
+from .words import mode, text
 
 if TYPE_CHECKING:
     from .window import MainWindow
 
 REPO = "https://github.com/peyoteheadlights/command-block"
+# What to do when a fractureiser marker is found (the community's own steps).
+FRACTUREISER = "https://github.com/trigram-mrp/fractureiser/blob/main/docs/users.md"
 # (title, words, button, where it goes, what the account needs). Where:
 # a server's page, or a gear section after "gear:".
 STEPS = [
@@ -63,7 +65,37 @@ class Guide(Section):
             layout.addWidget(label(text("guide.password_text"), "sub"))
             layout.addWidget(label("python -m installer.reset_password", "address"))
             cards.append(frame)
+        if self.owner() and mode["technical"]:
+            frame, layout = card(text("desktop.fracture.button"))
+            self.fracture = label("", "sub")
+            check = push(text("desktop.fracture.button"))
+            check.clicked.connect(self.check_fracture)
+            self.steps = push(text("desktop.fracture.steps"), "plain")
+            self.steps.clicked.connect(lambda: self.window_.pc.open_link(FRACTUREISER))
+            self.steps.hide()
+            layout.addWidget(self.fracture)
+            layout.addLayout(buttons(check, self.steps))
+            cards.append(frame)
         self.fill("steps", *cards)
+
+    def check_fracture(self) -> None:
+        """Read only, on the agent's PC: the known marks, never a verdict."""
+
+        def show(result: dict) -> None:
+            found = result.get("found") or []
+            if found:
+                self.fracture.setText(text("desktop.fracture.found", paths=", ".join(found)))
+            else:
+                self.fracture.setText(text("desktop.fracture.none"))
+            self.fracture.setProperty("kind", "problem" if found else "sub")
+            self.fracture.style().polish(self.fracture)
+            self.steps.setVisible(bool(found))
+
+        self.window_.run(
+            lambda: self.window_.agent.call("POST", "/security/fractureiser-check"),
+            show,
+            lambda exc: self.fracture.setText(str(exc)),
+        )
 
     def go(self, where: str) -> None:
         window = self.window_
@@ -98,6 +130,8 @@ class About(Section):
             )
         layout.addWidget(label(text("mobile.about.free"), "sub"))
         layout.addWidget(label(text("mobile.about.disclaimer"), "muted"))
+        layout.addWidget(label(text("desktop.about.curseforge"), "muted"))
+        layout.addWidget(label(text("desktop.about.chunker"), "muted"))
         links = [
             ("desktop.about.docs", f"{REPO}#readme"),
             ("mobile.about.source", REPO),

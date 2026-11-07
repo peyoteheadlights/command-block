@@ -66,6 +66,8 @@ folder; the refusal names the other server.
 | `autosleep` | `false` | Stop this server when nobody has been playing for a while. Off until you turn it on, per server. It never stops a server while the player count is Unknown, because "nobody is online" would then be a guess. The server does not start again by itself. |
 | `autosleep_minutes` | `30` | How long the server has to be empty first, between 1 and 1440 (24 hours). A warning goes out in the game a minute before the stop. |
 | `cpu_cores` | `[]` | Which CPU cores this server may use, counted from 0 as Task Manager's "Set affinity" does (`[0, 1, 2, 3]` is cores 1 to 4). Empty means every core. Java is also told how many cores it has (`-XX:ActiveProcessorCount`, unless `jvm_args` already sets it). A core this PC does not have stops the start with a message. Settings → CPU cores sets it, and a change applies at once to a running server. |
+| `test` | `false` | A Test server: no default schedules, not listed by the Discord bot, hidden in Simple mode. Set when the server is made. |
+| `build_folder` | `""` | Test servers only, owner only: the `.jar` files at the top of this folder are copied into the mods or plugins folder each time the server starts, with the same checks as adding a file. Nothing in it is run. |
 
 ## monitor
 
@@ -114,19 +116,25 @@ folder; the refusal names the other server.
 ## security
 
 `session_hours` 12, `max_failed_logins` 5, `lockout_minutes` 15,
-`rate_limit_requests` 120, `rate_limit_window` 60.
+`rate_limit_requests` 120, `rate_limit_window` 60,
+`separate_windows_user` (true for new installs, false after an update: run
+servers, Chunker and loader installers as the hidden Windows account
+`CommandBlockServer`; change it in Settings, which runs the installer as
+Administrator, see [security](security.md#the-separate-windows-user)).
 
 ## backups
 
 `directory`, `include` (list of folders/files), `keep_daily` 7, `keep_weekly` 4,
 `keep_monthly` 3, `compression` (`deflate` or `store`; `store` is far faster
-and far larger), `stop_server_for_backup`.
+and far larger), `stop_server_for_backup`, `on_stop` (false: back up after a planned stop if someone played, see [backups](backups.md)).
 
 ## mods
 
 `directory` (relative to the server folder), `backup_directory`,
 `trash_directory`, `modrinth_api`, `user_agent`, `backup_before_install`,
-`update_check_hours` 12.
+`update_check_hours` 12, `curseforge_relay` and `firebase_web_key` (our
+CurseForge relay and the Firebase project its anonymous sign-in is for;
+neither is a secret).
 
 ## notifications
 

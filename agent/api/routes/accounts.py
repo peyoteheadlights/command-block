@@ -39,7 +39,7 @@ router = APIRouter()
 def _servers(core, ids: list[str] | None) -> list[str] | None:
     if ids is None:
         return None
-    unknown = [i for i in ids if i not in core.servers]
+    unknown = [i for i in ids if i not in core.server_names()]
     if unknown:
         raise HTTPException(status_code=400, detail=f"There is no server '{unknown[0]}'.")
     if not ids:
@@ -68,8 +68,8 @@ def _moderator(core, account: dict) -> dict:
         "new_server": _described(access.new_server),
         "pc": sorted(access.pc),
         "access": [
-            {"id": ctx.server_id, "name": ctx.name, **_described(access.on(ctx.server_id))}
-            for ctx in core.servers.values()
+            {"id": sid, "name": name, **_described(access.on(sid))}
+            for sid, name in core.server_names().items()
         ],
     }
 
@@ -82,7 +82,7 @@ async def list_accounts(
         "owner": core.auth.owner_username,
         "helpers": [_moderator(core, account) for account in core.auth.accounts()],
         "permissions": catalogue(),
-        "servers": [{"id": ctx.server_id, "name": ctx.name} for ctx in core.servers.values()],
+        "servers": [{"id": sid, "name": name} for sid, name in core.server_names().items()],
     }
 
 
@@ -211,6 +211,17 @@ async def change_account(
     except AccountError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     audit(core, request, "helper_change", target=account["username"])
+    if account.get("removed"):
+        # Taken off their last server on any of the owner's PCs.
+        await core.bus.publish(
+            Event(
+                type="helper_removed",
+                level="warn",
+                message=f"{account['username']} has no servers left on any PC, so they were removed",
+                data={"username": account["username"]},
+            )
+        )
+        return {"ok": True, "username": account["username"], "removed": True}
     return {"ok": True, "username": account["username"]}
 
 

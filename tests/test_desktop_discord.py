@@ -325,3 +325,38 @@ def test_the_console_channel_and_leaving_are_set_on_the_discord_page(qapp, fake,
     tick.setChecked(True)
     wait_for_window(qapp, lambda: layout.guild_options(core.db, GUILD_ID)["remove_on_leave"])
     assert layout.guild_options(core.db, GUILD_ID)["reminders"] == "private"  # kept
+
+
+def test_bot_offline_and_run_the_bot_here_on_another_pc(qapp, fake, discord_http):  # noqa: F811
+    """Another of the owner's PCs is the Bot PC (agent/discord/botpc.py)."""
+    window, page = gear(qapp, discord_http, "discord")
+    wait_for_window(qapp, lambda: "Connected as" in shown_text(page))
+    away = {"id": "p2", "name": "Den PC", "this": False, "reach": {"state": "unreachable"}}
+    page.show_state(({"token_set": True, "state": "elsewhere", "bot_pc": away}, page.data))
+    wait_for_window(qapp, lambda: "Bot offline: Den PC is off." in shown_text(page))
+    assert "Change the bot's settings on Den PC." in shown_text(page)
+    assert "Run the bot on this PC instead" in shown_buttons(page)
+    assert "Invite the bot" not in shown_buttons(page)  # the Bot PC's settings
+    page.show_state(
+        (
+            {"token_set": True, "state": "elsewhere", "bot_pc": {**away, "reach": {"state": "ok"}}},
+            page.data,
+        )
+    )
+    wait_for_window(qapp, lambda: "The bot runs on Den PC." in shown_text(page))
+
+
+def test_the_bot_pc_lists_each_pcs_bot_link(qapp, fake, discord_http):  # noqa: F811
+    window, page = gear(qapp, discord_http, "discord")
+    wait_for_window(qapp, lambda: "Connected as" in shown_text(page))
+    links = [
+        {"pc": "p2", "name": "Den PC", "linked": True},
+        {"pc": "p3", "name": "Attic", "linked": False},
+    ]
+    here = {"id": "p1", "name": "Office", "this": True, "links": links}
+    page.show_state(({**page.state, "bot_pc": here}, page.data))
+    wait_for_window(qapp, lambda: "Den PC: Discord can reach its servers." in shown_text(page))
+    assert "Attic: Discord can't reach its servers." in shown_text(page)
+    assert {"Remove bot link", "Add bot link"} <= set(shown_buttons(page))
+    button(page, "Remove bot link").click()
+    wait_for_window(qapp, lambda: "Discord can't reach Den PC's servers now." in shown_text(window))

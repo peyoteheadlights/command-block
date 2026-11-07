@@ -305,3 +305,32 @@ def fingerprint(cert_path: str | Path) -> str | None:
         return cert.fingerprint(hashes.SHA256()).hex(":").upper()
     except (OSError, ValueError):
         return None
+
+
+class WrongCertificate(OSError):
+    """The PC answered with a certificate other than the one pinned."""
+
+
+def pinned_context(host: str, port: int, fingerprint: str, timeout: float = 5) -> ssl.SSLContext:
+    """A TLS context that trusts only the certificate with this SHA-256
+    fingerprint (64 hex digits), checked before anything is sent: the
+    pairing link's pin, used by the desktop app and by one PC calling
+    another. OSError when the PC can't be reached."""
+    probe = ssl.create_default_context()
+    probe.minimum_version = ssl.TLSVersion.TLSv1_2
+    probe.check_hostname = False
+    probe.verify_mode = ssl.CERT_NONE
+    with socket.create_connection((host, port), timeout=timeout) as raw:
+        with probe.wrap_socket(raw, server_hostname=host) as tls:
+            der = tls.getpeercert(binary_form=True)
+    import hashlib
+
+    if not der or hashlib.sha256(der).hexdigest() != fingerprint.lower():
+        raise WrongCertificate(f"{host}:{port} has another certificate")
+    context = ssl.create_default_context(cadata=ssl.DER_cert_to_PEM_cert(der))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.check_hostname = False
+    # The pinned certificate is the only trust anchor; it is checked exactly.
+    context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+    context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    return context

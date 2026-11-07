@@ -22,3 +22,17 @@ version 3 (`licenses/LGPL-3.0.txt`, which builds on `licenses/GPL-3.0.txt`).
 - Qt includes other open-source parts (for example zlib, PCRE2, FreeType,
   HarfBuzz and libpng), listed with their licenses at
   https://doc.qt.io/qt-6.8/licenses-used-in-qt.html.
+
+## Chunker
+
+Making a Java copy of a Bedrock world (or the other way round) uses
+Chunker 1.21.0 by Hive Games (https://github.com/HiveGamesOSS/Chunker),
+Copyright (c) 2024 Hive Games, under the MIT License
+(`licenses/Chunker-MIT.txt`). Its command-line jar is built from that
+version's source without changes and ships as `tools/chunker-cli.jar`.
+
+The jar carries Chunker's own libraries: picocli, Caffeine, Gson, Guava,
+fastutil, lz4-java, JetBrains Annotations and Hive Games' LevelDB for Java,
+under the Apache License 2.0 (`licenses/Apache-2.0.txt`), and the small
+libraries Guava pulls in. Their versions are in Chunker's
+`gradle/libs.versions.toml`.

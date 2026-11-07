@@ -317,7 +317,7 @@ def test_wss_streams_events_after_authentication(live_tls):
     context = ssl.create_default_context(cafile=str(config.tls_ca_certificate))
     from websockets.sync.client import connect
 
-    with connect(f"wss://localhost:{port}/ws", ssl=context) as ws:
+    with connect(f"wss://localhost:{port}/ws", ssl=context, open_timeout=30) as ws:
         ws.send(json.dumps({"type": "auth", "token": token}))
         ready = json.loads(ws.recv(timeout=10))
         assert ready["type"] == "ready"
@@ -339,7 +339,7 @@ def test_wss_rejects_an_unauthenticated_socket(live_tls):
     context = ssl.create_default_context(cafile=str(config.tls_ca_certificate))
     from websockets.sync.client import connect
 
-    with connect(f"wss://localhost:{port}/ws", ssl=context) as ws:
+    with connect(f"wss://localhost:{port}/ws", ssl=context, open_timeout=30) as ws:
         ws.send(json.dumps({"type": "tail", "lines": 5}))
         message = json.loads(ws.recv(timeout=10))
         assert message["type"] == "error"

@@ -8,8 +8,16 @@ import time
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QButtonGroup, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
 
+from .fixes import run_fix
 from .graphs import Graph
 from .overview import card
 from .ui import Page, clock, label, push, refill
@@ -136,6 +144,10 @@ class PerformancePage(Page):
         layout.addStretch()
         row.addWidget(health, 1)
         self.column.addLayout(row)
+        faster, layout = card(words("perf.speed_ups"))
+        self.speed_ups = QVBoxLayout()
+        layout.addLayout(self.speed_ups)
+        self.column.addWidget(faster)
         self.column.addStretch()
         self.timer = QTimer(self)
         self.timer.setInterval(self.REFRESH_MS)
@@ -179,6 +191,7 @@ class PerformancePage(Page):
         self.ask("GET", f"/performance?hours={self.hours}", self.show_performance, self.unknown)
         self.ask("GET", "/tps", self.show_tps)
         self.ask("GET", "/health/server", self.show_health)
+        self.ask("GET", "/suggestions?technical=true", self.show_speed_ups)
         sid = self.row["id"]
         self.change.setVisible(self.window_.may(sid, "settings.server"))
         self.detect.setVisible(self.window_.may(sid, "server.control"))
@@ -380,3 +393,39 @@ class PerformancePage(Page):
             if detail:
                 shown.append(label(detail.strip(), "sub"))
         refill(self.health, shown)
+
+    # ------------------------------------------------------------ speed-ups
+    def show_speed_ups(self, found: dict) -> None:
+        """Only with a measured reason (lag or memory); never a guess."""
+        reason = found.get("performance_reason")
+        if not reason:
+            refill(self.speed_ups, [label(words("perf.nothing_measured"), "muted")])
+            return
+        shown: list[QWidget] = [label(reason["evidence"], "sub")]
+        sid, change = self.row["id"], self.window_.may(self.row["id"], "mods.manage")
+        for item in found.get("performance") or []:
+            row = QHBoxLayout()
+            row.addWidget(label(item["name"], "step"), 1)
+            if item["kind"] == "change_type":
+                button = push(words("perf.open_settings"))
+                button.clicked.connect(lambda: self.window_.open_page("Settings"))
+            elif item["kind"] == "settings":
+                button = push(words("desktop.fix.distance_lower"))
+                fix = {"kind": "game_settings", "values": item["values"]}
+                button.setVisible(self.window_.may(sid, "settings.game"))
+                button.clicked.connect(
+                    lambda _=False, f=fix: run_fix(self.window_, sid, f, self.say)
+                )
+            else:
+                button = push(words("desktop.typechange.add"))
+                button.setAccessibleName(f"{button.text()}: {item['name']}")
+                fix = {"kind": "add_on", "project": item["project"], "name": item["name"]}
+                button.setVisible(change)
+                button.clicked.connect(
+                    lambda _=False, f=fix: run_fix(self.window_, sid, f, self.say)
+                )
+            row.addWidget(button)
+            line = QWidget()
+            line.setLayout(row)
+            shown.append(line)
+        refill(self.speed_ups, shown)

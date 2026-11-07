@@ -245,10 +245,13 @@ def client(config, monkeypatch):
 @pytest.fixture(autouse=True)
 def quick_password_hashing(monkeypatch):
     """Tests hash with 1,000 rounds (the real count takes about half a
-    second per sign-in); test_password_rehash covers the real figure."""
+    second per sign-in) and a tiny scrypt; test_password_rehash covers the
+    real figures."""
     from agent.security import auth
 
     monkeypatch.setattr(auth, "PBKDF2_ROUNDS", 1000)
+    monkeypatch.setattr(auth, "SCRYPT_N", 16)
+    monkeypatch.setattr(auth, "SCRYPT_P", 1)
 
 
 @pytest.fixture(autouse=True)
@@ -271,6 +274,55 @@ def isolated_app_data(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("ProgramData", str(base))
     monkeypatch.setenv("XDG_DATA_HOME", str(base))
     return base
+
+
+@pytest.fixture(autouse=True)
+def isolated_saved_lists(monkeypatch):
+    """Saved site answers and what they taught (Java, safety notes) never
+    carry over from one test to the next."""
+    from agent import notes, savedlists
+    from agent.minecraft import java
+
+    monkeypatch.setattr(savedlists, "_root", None)
+    monkeypatch.setattr(java, "FROM_MOJANG", {})
+    monkeypatch.setattr(java, "NOTES_ROWS", [])
+    monkeypatch.setattr(notes, "BAD_FILES", {})
+
+
+@pytest.fixture(autouse=True)
+def no_shipped_suggestions(monkeypatch, tmp_path_factory):
+    """No add-on suggestions unless a test sets some, so no route asks
+    Modrinth about them in the background."""
+    from agent import notes
+
+    monkeypatch.setattr(notes, "SHIPPED", tmp_path_factory.mktemp("notes") / "none.json")
+    monkeypatch.setattr(notes, "RECOMMENDED", [])
+
+
+@pytest.fixture(autouse=True)
+def no_real_sites(monkeypatch):
+    """Downloads and site lists never reach the real internet in a test
+    (on CI they could: a search then got real CurseForge results). A test
+    that needs a site sets its own fake transport over this one."""
+    import httpx
+
+    from agent import downloads
+
+    def offline(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no internet in tests", request=request)
+
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(offline))
+
+
+@pytest.fixture(autouse=True)
+def fresh_curseforge_sign_in(monkeypatch):
+    """Each test signs in to the CurseForge relay afresh, with its own pace."""
+    from agent.mods import curseforge
+    from agent.mods.hangar import Pace
+
+    monkeypatch.setattr(curseforge, "SIGN_IN", curseforge.SignIn())
+    monkeypatch.setattr(curseforge, "PACE", Pace(60, 60.0))
+    monkeypatch.delenv(curseforge.ENV_KEY, raising=False)
 
 
 @pytest.fixture(autouse=True)

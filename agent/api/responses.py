@@ -130,7 +130,10 @@ class CommandCheck(Open):
 
 
 class CommandSent(Open):
-    result: str = Field(description="SENT: written to the console, not yet answered")
+    result: str = Field(
+        description="SENT: written to the console, not yet answered. BLOCKED: ban-ip went "
+        "to Join protection instead"
+    )
     detail: str
     command: str
     name: str = Field(description="The command's first word")
@@ -1059,6 +1062,19 @@ class Mod(Open):
     issues: list[ModIssue] = []
     has_history: bool | None = None
     update_available: ModUpdate | None = None
+    source: str | None = Field(
+        None,
+        description="modrinth, hangar, curseforge, github or file; null for a jar the app "
+        "didn't add",
+    )
+    source_name: str | None = None
+    checked_by: str | None = Field(
+        None,
+        description="The site that lists this file (Modrinth, Hangar, CurseForge); null: nobody",
+    )
+    checked_with: str | None = Field(
+        None, description="sha1 for CurseForge, a weaker check than the other sites use"
+    )
 
 
 class ModProblem(ModIssue):
@@ -1066,8 +1082,20 @@ class ModProblem(ModIssue):
     filename: str | None = None
 
 
+class NeedsYou(Open):
+    """A CurseForge mod its author keeps from other apps: the owner opens
+    its page, downloads it and drops the file in."""
+
+    project: str
+    version_id: str | None = None
+    name: str | None = None
+    filename: str | None = None
+    page: str | None = Field(None, description="Its CurseForge page; null when not known now")
+
+
 class ModList(Open):
     mods: list[Mod]
+    needs_you: list[NeedsYou] = []
     problems: list[ModProblem] = []
     minecraft_version: str | None = Field(
         None, description="null until the server has started once"
@@ -1157,11 +1185,20 @@ class ModrinthHit(Open):
     page: str | None = None
     server_side: str | None = None
     client_side: str | None = None
+    source: str | None = Field(None, description="modrinth, hangar or curseforge")
+    source_name: str | None = None
+    blocked: bool | None = Field(
+        None, description="CurseForge: its author doesn't let other apps download it"
+    )
+    look_alike: str | None = Field(
+        None, description="A far more downloaded result whose name is nearly the same"
+    )
 
 
 class ModSearch(Open):
     hits: list[ModrinthHit]
     total: int | None = None
+    problems: list[str] = Field([], description='"Hangar isn\'t available right now."')
 
 
 class ModrinthFile(Open):
@@ -1209,11 +1246,31 @@ class DependencyNeeded(Open):
     installed: bool = False
 
 
+class DependencyLink(Open):
+    name: str | None = None
+    url: str
+    required: bool
+
+
+class DependencyOptional(Open):
+    name: str | None = None
+    project: str
+
+
 class ModInstalled(Open):
     ok: bool
     installed: dict[str, Any]
     dependencies_required: list[DependencyNeeded] = []
     dependencies_installed: list[dict[str, Any]] = []
+    dependencies_links: list[DependencyLink] = Field(
+        [], description="Needed plugins that aren't on Hangar: a link only, never downloaded"
+    )
+    dependencies_optional: list[DependencyOptional] = Field(
+        [], description="Plugins it works with, listed but not added"
+    )
+    needs_you: list[NeedsYou] = Field([], description="Needed mods now under Needs you")
+    checked_by: str | None = None
+    checked_with: str | None = Field(None, description='"sha1" for CurseForge')
 
 
 class DependencyItem(Open):
@@ -1270,6 +1327,33 @@ class DependencyInstall(Open):
 class ModUploaded(Open):
     ok: bool
     installed: dict[str, Any]
+    source: str | None = Field(
+        None,
+        description="modrinth, hangar or curseforge when a site lists it, else file or github",
+    )
+    checked_by: str | None = Field(None, description="null: nobody checked it")
+    checked_with: str | None = Field(None, description='"sha1" for CurseForge')
+    undo: Undo | None = None
+
+
+class ModLinkFile(Open):
+    version_id: str
+    filename: str
+    size: int | None = None
+    checksum: bool = Field(description="GitHub lists its SHA-256, so the download is checked")
+
+
+class ModLink(Open):
+    """A pasted link: a GitHub release's files, or the browser-and-drop answer."""
+
+    kind: str = Field(description="github or browser")
+    message: str | None = None
+    repo: str | None = None
+    tag: str | None = None
+    name: str | None = None
+    prerelease: bool | None = None
+    page: str | None = None
+    files: list[ModLinkFile] = []
 
 
 class UpdateAllRow(Open):
@@ -1280,6 +1364,10 @@ class UpdateAllRow(Open):
     installed_version: str
     latest_version: str
     version_id: str
+    source: str | None = Field(None, description="The site the update comes from")
+    saved: str | None = Field(
+        None, description="How old the site's list was, when only its saved copy could be read"
+    )
 
 
 class UpdateAllUnchecked(Open):
@@ -1298,7 +1386,7 @@ class UpdateAllPlan(Open):
     )
     server_running: bool
     blocked_by: str | None = Field(None, description="The task holding the server, if any")
-    checked_at: float
+    checked_at: float | None = Field(None, description="When Modrinth last answered; null: never")
 
 
 class UpdateAllDone(Open):
@@ -1315,6 +1403,262 @@ class UpdateAllResult(Open):
     updated: list[UpdateAllDone]
     safety_backup: SafetyBackup | None = Field(None, description="The one backup made first")
     undo: Undo | None = None
+
+
+# ------------------------------------------------------------ suggestions
+class Downloads(Open):
+    count: int
+    source: str = Field(description="The site the count comes from")
+    read_at: float = Field(description="When it was read (a saved copy keeps its own date)")
+
+
+class Suggestion(Open):
+    project: str = Field(description="The id to send to /mods/install")
+    name: str
+    description: str | None = None
+    kind: str = Field(description="performance, good_to_have or often_used_with")
+    group: str = Field(description="Plugin servers: starter, protect, bedrock, maps, voice; or ''")
+    changes_gameplay: bool
+    technical_only: bool = Field(description="Alpha or beta build, or marked so: Technical only")
+    release_type: str | None = None
+    version: str | None = Field(None, description="The build that fits this server")
+    place: str = Field(description="server, both (players need it too) or players")
+    page: str | None = None
+    downloads: Downloads | None = Field(None, description="null: the site gave no count")
+    with_: list[str] = Field([], alias="with", description="often_used_with: what triggers it")
+
+
+class SpeedUp(Open):
+    """A performance suggestion: an add-on (as Suggestion), Paper's own
+    settings ("settings", with "values" to save) or "change_type"."""
+
+    kind: str
+    name: str
+
+
+class ForPlayers(Open):
+    name: str
+    page: str | None = None
+    also_on_server: bool = Field(
+        description="Installed here, and players need it in their game too"
+    )
+
+
+class MapLink(Open):
+    id: str
+    name: str
+    port: int | None = None
+    source: str = Field(description="Where the port number came from")
+    link: str | None = Field(
+        None, description="Over this PC's Tailscale address; null: see problem"
+    )
+    problem: str | None = None
+
+
+class Suggestions(Open):
+    """The add-ons and performance pages' suggestions, checked against this
+    server. Nothing here is installed by itself."""
+
+    type: str
+    minecraft_version: str | None = None
+    problem: str | None = Field(None, description="Why nothing could be checked")
+    read_at: float | None = None
+    stale: str | None = Field(None, description="A saved copy was used: how old, which site")
+    good_to_have: list[Suggestion]
+    often_used_with: list[Suggestion]
+    performance: list[SpeedUp]
+    performance_reason: dict[str, Any] | None = Field(
+        None, description="{why: lag or memory, evidence}; null: nothing measured, no speed-ups"
+    )
+    for_your_players: list[ForPlayers]
+    maps: list[MapLink]
+
+
+class CopyTarget(Open):
+    id: str
+    name: str
+    type: str
+
+
+class CopyTargets(Open):
+    targets: list[CopyTarget] = Field(description="Other servers with add-ons you may change")
+
+
+class CopyItem(Open):
+    filename: str
+    name: str
+    project: str | None = None
+    version: str | None = None
+    settings: list[str] = []
+
+
+class CantCome(Open):
+    filename: str
+    name: str
+    why: str
+
+
+class CopyCheck(Open):
+    target: str
+    minecraft_version: str
+    coming: list[CopyItem]
+    cant_come: list[CantCome]
+    settings_note: str | None = None
+
+
+class CopyDone(Open):
+    ok: bool
+    job_id: str
+    copied: list[CopyItem]
+    cant_come: list[CantCome]
+    settings_note: str | None = None
+    safety_backup: SafetyBackup | None = Field(None, description="The one backup made first")
+    undo: Undo | None = None
+
+
+# ------------------------------------------------------------ guides
+class GuideField(Open):
+    id: str
+    kind: str = Field(description="number, player, toggle, choice, world or name")
+    label: str
+    min: int | None = None
+    max: int | None = None
+    default: int | None = None
+    options: list[dict[str, str]] | None = Field(None, description="value and label, for choices")
+
+
+class GuideButton(Open):
+    id: str
+    label: str
+    help: str = ""
+    command: str = Field(description="The template; Technical mode shows it")
+    fields: list[GuideField] = []
+    changes_world: bool = Field(description="Ask before pressing it")
+    warning: str | None = None
+
+
+class Guide(Open):
+    id: str
+    title: str
+    what: str
+    steps: list[str]
+    source: str = Field(description="The add-on's own page the guide was written from")
+    filename: str = Field(description="The installed add-on it is for")
+    addon_version: str
+    buttons: list[GuideButton]
+
+
+class GuideList(Open):
+    guides: list[Guide]
+
+
+class GuideAnswer(Open):
+    command: str = Field(description="What was sent to the console")
+    lines: list[dict[str, str]] = Field(description="What the console said next: raw, level")
+    answered: bool = Field(description="False: the console said nothing within a few seconds")
+
+
+# ------------------------------------------------------------ protection
+class ProtectionLine(Open):
+    id: str
+    level: str = Field(description="worst, problem, suggest or info")
+    words: str = Field(description="Its key in shared/strings.json")
+    values: dict[str, Any]
+    fix: str | None = Field(None, description="The fix id this account may use, or null")
+    permission: str | None = None
+    addons: list[dict[str, Any]] = Field(
+        description="Add-ons to offer: project, name, small (a small community project)"
+    )
+    link: str | None = None
+    technical: bool = Field(description="Only shown in Technical mode")
+
+
+class ProtectionCard(Open):
+    lines: list[ProtectionLine]
+    running: bool
+
+
+class ProtectionFixed(Open):
+    ok: bool
+    fix: str
+    undo: dict[str, Any] | None = None
+
+
+class JoinProtectionStatus(Open):
+    on: bool = Field(description="The setting")
+    running: bool = Field(description="The guard holds the port for the running server now")
+    restart_needed: bool
+    why_not: str | None = Field(None, description="java_only or start_command, or null")
+    blocked_today: int = Field(description="Connections turned away today")
+    size: str = Field(description="small or big, as used now")
+    limits: dict[str, int]
+    launch_until: float | None = None
+    real_addresses: bool | None = Field(
+        None, description="The server gets PROXY headers; null when the guard isn't running"
+    )
+    playit_seen: bool = Field(description="playit sent a real address within 7 days")
+    asleep: bool = Field(description="Answering for a slept server")
+
+
+class JoinBlock(Open):
+    address: str
+    until: float | None = Field(None, description="null: stays until removed")
+    why: str
+    by: str
+
+
+class JoinLogRow(Open):
+    name: str
+    address: str = Field(description="Masked, like 1.2.x.x")
+    result: str
+    ts: float
+
+
+class JoinProtection(Open):
+    status: JoinProtectionStatus
+    blocks: list[JoinBlock]
+    log: list[JoinLogRow]
+
+
+class FractureiserCheck(Open):
+    found: list[str] = Field(description="Known markers found on this PC; empty: none found")
+    checked: list[str] = Field(description="What was looked at")
+
+
+# ------------------------------------------------------------ settings files
+class ConfigFileRow(Open):
+    path: str = Field(description="Inside the server folder, with / between folders")
+    format: str = Field(description="json, toml, yaml, properties or text")
+    size: int
+    modified: float
+    too_big: bool
+
+
+class ConfigFileList(Open):
+    name: str | None = Field(None, description="The add-on, for its own files")
+    files: list[ConfigFileRow]
+    truncated: bool = False
+
+
+class ConfigFile(Open):
+    path: str
+    format: str
+    text: str = Field(description="Hidden values show as ••••••")
+    hidden: list[dict[str, Any]] = Field(description="line and key of each hidden value")
+    version: str = Field(description="The file's sha256, sent back with a save")
+    size: int
+    running: bool
+
+
+class ConfigFileSaved(Open):
+    ok: bool
+    path: str
+    nothing_changed: bool | None = None
+    version: str | None = None
+    safety_backup: str | None = None
+    undo: Undo | None = None
+    running: bool
+    restart_needed: bool = False
 
 
 # ------------------------------------------------------------ modpacks
@@ -1521,12 +1865,101 @@ class ServerType(Open):
     modrinth: bool = False
     metadata_files: list[str] = []
     version_source: str | None = None
+    goals: list[str] = Field([], description="vanilla, plugins and/or mods: what it suits")
+    technical_only: bool = Field(False, description="Offered for new servers only in Technical")
+    changes_farms: bool = Field(False, description="Some farms work differently than in vanilla")
+    never_recommended: bool = False
+    like: str | None = Field(None, description="The built-in type a notes-file type copies")
+    hint: str | None = Field(
+        None, description="A notes-file type's one line; built-in ones are in the strings table"
+    )
 
 
 class ServerTypes(Open):
     types: list[ServerType]
     recommended: str
     default: str
+
+
+class TypeAdvice(Open):
+    """The New server picker's recommendation for what someone wants."""
+
+    goal: str = Field(description="vanilla, plugins or mods")
+    types: list[str] = Field(description="The Java types that fit, in the table's order")
+    recommended: list[str]
+    warn: list[str] = Field(
+        description="Types that change how some farms work: picking one after saying vanilla shows the warning"
+    )
+
+
+class CommandButtonRow(Open):
+    name: str
+    command: str
+    danger_reason: str | None = Field(None, description="set: ask before sending it")
+
+
+class CommandButtons(Open):
+    buttons: list[CommandButtonRow]
+    max: int
+
+
+class PlayerHour(Open):
+    hour: int = Field(description="0 to 23, this PC's time")
+    average: float | None = Field(None, description="null: never measured (Unknown)")
+    busiest: int | None = None
+    measured_days: int
+
+
+class PlayerHours(Open):
+    days: int
+    hours: list[PlayerHour]
+    quietest_hour: int | None = Field(None, description="null: no hour measured yet")
+    measured_hours: int
+    total_hours: int
+
+
+class BackedUpServer(Open):
+    """A server in an off-PC backup folder, with its newest copy."""
+
+    id: str
+    name: str
+    type: str | None = None
+    type_name: str | None = None
+    minecraft: str | None = Field(None, description="null: its copies don't say")
+    backup_name: str
+    backup_at: float
+    size_bytes: int
+    copies: int
+    here: bool = Field(description="a server on this PC has the same name")
+    problem: str | None = Field(None, description="why it can't come back")
+
+
+class BackupFolderServers(Open):
+    servers: list[BackedUpServer]
+
+
+class BringInFound(Open):
+    """A server folder or zip, read before anything is copied."""
+
+    source: str = Field(description="folder or zip")
+    path: str
+    type: str | None = Field(None, description="null: a kind the app can't tell (a custom jar)")
+    type_name: str | None = None
+    jar: str = ""
+    jars: list[str] = []
+    minecraft: str | None = Field(
+        None, description="What its files say; confirmed only once the console prints it"
+    )
+    loader: str | None = None
+    needs_install: bool = False
+    content: str | None = None
+    addons: int = 0
+    worlds: int = 0
+    size_bytes: int = 0
+    files: int = 0
+    problem: str | None = None
+    can_bring_in: bool
+    summary: str
 
 
 class OfferedVersion(Open):
@@ -1540,6 +1973,24 @@ class OfferedVersion(Open):
     latest: bool = False
 
 
+class SafetyNotesStatus(Open):
+    """The signed notes file as the agent knows it. With no good file the
+    message is "Couldn't check for safety notes.", never "no problems"."""
+
+    state: str = Field(description="good, expired, refused or none")
+    message: str
+    reason: str | None = Field(None, description="Why the newest try gave no good file")
+    serial: int | None = None
+    issued: str | None = None
+    expires: str | None = None
+    fetched_at: float | None = None
+    checked_at: float | None = None
+    needs_newer_app: bool = False
+    update_app: str | None = None
+    advisories: int = 0
+    known_bad_files: int = 0
+
+
 class TypeVersions(Open):
     type: str
     type_name: str
@@ -1549,7 +2000,13 @@ class TypeVersions(Open):
     loader_name: str | None = None
     latest_stable: str | None = None
     versions: list[OfferedVersion]
-    source_problem: str | None = None
+    source_problem: str | None = Field(
+        None,
+        description='Why the list may be out of date ("From 3 days ago, couldn\'t reach PaperMC.")',
+    )
+    saved_at: float | None = Field(
+        None, description="When the saved list shown was read; null when it was read just now"
+    )
 
 
 class LastVersionChange(Open):
@@ -1566,6 +2023,7 @@ class ServerVersion(Open):
 
     type: str
     capabilities: ServerType
+    custom_jar: bool = Field(False, description="The owner's own jar: never checked or updated")
     minecraft_version: str | None = None
     minecraft_version_source: str | None = None
     loader_version: str | None = None
@@ -1605,6 +2063,48 @@ class VersionPreflight(Open):
     not_supporting: list[str] = []
     crossplay: bool = False
     crossplay_available: bool = False
+
+
+class TypeChangeTarget(Open):
+    id: str
+    name: str
+    changes_farms: bool = False
+
+
+class WorldCopy(Open):
+    """A suggested name and folder for a Bedrock/Java copy, and what it leaves out."""
+
+    name: str
+    directory: str
+    warning: str
+    left_out: list[str]
+
+
+class TypeChangeOptions(Open):
+    """What the Change server type card offers (owner only)."""
+
+    type: str
+    targets: list[TypeChangeTarget]
+    minecraft_version: str | None = Field(None, description="null: not seen yet, so no change")
+    problem: str | None = None
+    running: bool
+    players_online: int = 0
+    copy_to_other_edition: WorldCopy | None = Field(None, description="Technical mode only")
+
+
+class SimilarAddon(Open):
+    kind: str = Field(description="same (that add-on's build for the new type) or look_alike")
+    name: str
+    project: str = Field(description="The id to send to /mods/install")
+
+
+class SimilarAddons(Open):
+    """After Change server type: add-ons to offer with Add buttons. Each also
+    says which old add-on it is for ("for")."""
+
+    type: str
+    suggestions: list[SimilarAddon]
+    problems: list[str] = []
 
 
 class VersionChanged(Open):
@@ -1806,6 +2306,14 @@ class WorldImported(Open):
     undo: Undo | None = None
 
 
+class NewSeason(Open):
+    ok: bool
+    job_id: str
+    seed: str | None = Field(None, description="null: Minecraft picks one on the next start")
+    safety_backup: SafetyBackup | None = None
+    undo: Undo | None = None
+
+
 class WorldPacked(Open):
     """The world zipped for single-player; download it with the token."""
 
@@ -1835,6 +2343,17 @@ class SettingsSaved(Open):
     ok: bool
     applied: dict[str, Any]
     rejected: dict[str, str] = Field(description="Each refused key with the reason")
+
+
+class SeparateWindowsUser(Open):
+    on: bool
+    ok: bool = Field(description="The account and its saved password both work")
+    problem: str | None = Field(
+        description="account, password or windows_only when ok is false, else null"
+    )
+    account: str
+    available: bool
+    restarting: list[str] = []
 
 
 class MaintenanceSet(Open):
@@ -1961,7 +2480,16 @@ class TailscaleState(Open):
 class DiscordStatus(Open):
     token_set: bool
     state: str = Field(
-        description="off (no token), connecting, connected, token_rejected, intents_refused or stopped"
+        description="off (no token), connecting, connected, token_rejected, intents_refused, "
+        "stopped, or elsewhere (another of the owner's PCs runs the bot)"
+    )
+    bot_pc: dict[str, Any] | None = Field(
+        None,
+        description="With several PCs: the Bot PC's id, name, this, and its reach "
+        "(another PC) or each PC's Bot link (this PC)",
+    )
+    servers: list[dict[str, Any]] = Field(
+        default_factory=list, description="Servers a Discord server can be set up for, every PC's"
     )
     detail: str = ""
     connected_at: float | None = None
@@ -1995,6 +2523,10 @@ class DiscordLevels(Open):
     )
     roles: list[dict[str, Any]] = Field(
         description="Each Level role: level, role_id and name (null until the bot has read it)"
+    )
+    store_ranks: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="The Store ranks and their paired role_id, when a server here has a store",
     )
 
 
@@ -2100,3 +2632,87 @@ class EventsPage(Open):
     )
     kinds: list[str] = Field(description="The event kinds this server can check")
     bot: bool = Field(description="The Discord bot is connected (events are answered there)")
+
+
+# ------------------------------------------------------------ your PCs
+class PcReach(Open):
+    state: str = Field(description="this, ok, sending, unreachable or unknown")
+    since: float | None = Field(None, description="out of reach since; null when it answers")
+    last_reached: float | None = None
+    waiting: bool = Field(description="changes saved here that it hasn't got yet")
+
+
+class PcRow(Open):
+    id: str
+    name: str
+    address: str | None = None
+    port: int | None = None
+    fingerprint: str | None = None
+    this: bool
+    reach: PcReach
+
+
+class PcList(Open):
+    this_pc: str
+    joined: bool
+    pcs: list[PcRow]
+    joins: list[dict[str, Any]] | None = Field(None, description="owner only: PCs asking to join")
+    resets: list[dict[str, Any]] | None = Field(None, description="owner only: resets to confirm")
+    joining: bool | None = None
+
+
+class JoinLink(Open):
+    ok: bool
+    url: str
+    qr: list[str]
+    expires_at: float
+
+
+class JoinAnswer(Open):
+    ok: bool
+    waiting: bool | None = None
+    allowed: bool | None = None
+
+
+class SyncChanges(Open):
+    records: list[dict[str, Any]]
+    seq: int
+
+
+class BotLinkAnswer(Open):
+    ok: bool
+    done: bool | None = None
+    played: list[dict[str, Any]] | None = None
+    members: list[str] | None = None
+
+
+class SyncTaken(Open):
+    ok: bool
+    taken: int
+
+
+class SyncHello(Open):
+    pc: str
+    signing_key: str
+    records: list[dict[str, Any]]
+    seq: int
+
+
+class StoreView(Open):
+    offered: bool = Field(
+        description="False: no Store tab (kids, Test, not for a community, Bedrock)"
+    )
+    reason: str | None
+    needs_type: bool = Field(
+        description="Not Paper, Purpur, Leaf or Fabric: offer Change server type"
+    )
+    connected: bool
+    installed: dict[str, bool]
+    ranks: list[dict[str, Any]]
+    store: dict[str, Any] = Field(description="What the last check read from Tebex; never the key")
+    packages: list[dict[str, Any]] | None
+    checklist: str
+
+
+class StoreChecked(StoreView):
+    remind: list[str] = Field(description="Packages the app didn't make, seen for the first time")

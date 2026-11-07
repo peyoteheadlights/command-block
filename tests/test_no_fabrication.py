@@ -20,6 +20,7 @@ from agent.monitoring.metrics import MetricsMonitor
 from agent.monitoring.players import PlayerTracker
 
 from .test_mods import make_jar
+from .test_suggestions import listed, make  # noqa: F401 (fixtures)
 
 
 @pytest.fixture
@@ -598,3 +599,157 @@ def test_stats_nobody_saved_are_never_numbers(tmp_path):
     found = {"player": "Alex", "source": "files", **read_files(tmp_path, uuid)}
     assert found["values"] == {}
     assert "last saved <t:" in stats(found, "Survival")
+
+
+# ---------------------------------------------------------------- keeping current
+def test_no_problems_are_claimed_without_a_good_notes_file(config):
+    """With no good safety notes file the status says it couldn't check;
+    it never says nothing was found."""
+    core = AgentCore(config)
+    try:
+        status = core.notes.status()
+        assert status["state"] == "none"
+        assert status["message"] == "Couldn't check for safety notes."
+        assert not any(
+            w in str(status).lower() for w in ("no problems", "you're safe", "all clear")
+        )
+    finally:
+        core.db.close()
+
+
+def test_a_saved_list_always_carries_its_age():
+    from agent import savedlists
+
+    saved_at, problem = savedlists.problem(
+        [{"site": "PaperMC", "saved_at": 1000.0}], now=1000.0 + 3 * 86400
+    )
+    assert saved_at == 1000.0
+    assert problem == "From 3 days ago, couldn't reach PaperMC."
+    assert savedlists.problem([]) == (None, None)
+
+
+def test_a_snapshot_name_gets_no_java_guess():
+    # Its leading number is a year, not a Minecraft version.
+    assert required_java("24w40a") is None
+
+
+async def test_newer_software_never_counts_as_installed(config):
+    """The installed version shown is only ever what the console printed,
+    not what an offered update would make it."""
+    core = AgentCore(config)
+    try:
+        ctx = core.default
+        assert await core.software.check_server(ctx) == {}  # unknown: nothing offered
+        assert ctx.server.status()["minecraft_version"] is None
+    finally:
+        await core.jobs.stop()
+        core.db.close()
+
+
+async def test_an_added_file_is_never_shown_as_checked_by_a_site(mods, config, tmp_path):
+    """Only a site that lists the very file has looked at it. A jar dropped
+    in or added from a GitHub release says nobody checked it, and a jar
+    copied into the folder by hand has no source at all, never a guess."""
+    source = make_jar(tmp_path / "build.jar", "cooltech", "2.1.0")
+    result = await mods.install_local_file("cooltech.jar", source.read_bytes(), user="tester")
+    assert result["source"] == "file" and result["checked_by"] is None
+    make_jar(config.mods_dir / "byhand.jar", "byhand")
+    rows = {row["mod_id"]: row for row in mods.list_installed()}
+    assert (rows["cooltech"]["source"], rows["cooltech"]["checked_by"]) == ("file", None)
+    assert (rows["byhand"]["source"], rows["byhand"]["checked_by"]) == (None, None)
+    plan = await mods.update_plan()
+    assert "cooltech" in {row["mod_id"] for row in plan["unchecked"]}, (
+        "a file's add-on is never counted as up to date"
+    )
+
+
+async def test_curseforge_sha1_is_never_shown_as_the_stronger_check(mods, config, monkeypatch):
+    """CurseForge publishes only sha1, so its files say so and are never
+    shown the way Modrinth's SHA-512-checked files are."""
+    import httpx
+
+    from agent import downloads
+
+    from .test_curseforge import FakeCurseForge
+
+    relay = FakeCurseForge()
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(relay))
+    mods.server.mc_version = "1.21.4"
+    result = await mods.install_from_site("curseforge:306612", user="tester")
+    assert (result["checked_by"], result["checked_with"]) == ("CurseForge", "sha1")
+    make_jar(config.mods_dir / "fromsite.jar", "fromsite")
+    mods.remember("fromsite", "modrinth", {"project_id": "AAAA"})
+    rows = {row["mod_id"]: row for row in mods.list_installed()}
+    assert rows["fabric-api"]["checked_with"] == "sha1"
+    assert rows["fromsite"]["checked_by"] == "Modrinth" and rows["fromsite"]["checked_with"] is None
+    from desktop.words import text
+
+    assert "weaker" in text("desktop.mods.checked_sha1")
+
+
+async def test_a_blocked_curseforge_mod_never_gets_a_made_up_link(mods, monkeypatch):
+    """No download link is guessed for a mod its author keeps from other
+    apps, and its page is only ever the one CurseForge gives."""
+    import httpx
+
+    from agent import downloads
+    from agent.mods.curseforge import Blocked
+
+    from .test_curseforge import FakeCurseForge
+
+    relay = FakeCurseForge()
+    relay.mods[333]["links"] = {"websiteUrl": "https://example.com/secret"}
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(relay))
+    mods.server.mc_version = "1.21.4"
+    with pytest.raises(Blocked):
+        await mods.install_from_site("curseforge:333", user="tester")
+    (need,) = mods.needs_you()
+    assert need["page"] is None, "not CurseForge's own page, so not shown"
+    assert not any("forgecdn" in asked for asked in relay.asked)
+
+
+def test_a_custom_jar_is_never_shown_as_checked(multi_client, tmp_path):
+    """The owner's own jar: never verified, updated or given a version the
+    console didn't print."""
+    import zipfile
+
+    jar = tmp_path / "fork.jar"
+    with zipfile.ZipFile(jar, "w") as zf:
+        zf.writestr("fork.txt", "a pretend fork")
+    made = multi_client.post(
+        "/api/new-server/custom-jar",
+        json={
+            "name": "Fork",
+            "directory": str(tmp_path / "fork"),
+            "jar": str(jar),
+            "based_on": "fabric",
+            "eula_accepted": True,
+            "trusted": True,
+        },
+    ).json()
+    assert made["verified"] is False and made["server"]["custom_jar"] is True
+    version = multi_client.get("/api/servers/fork/version").json()
+    assert version["minecraft_version"] is None and version["pending_version"] is None
+    assert "checked" not in str(made).lower().replace("unchecked", "")
+
+
+def test_speed_ups_need_a_measured_reason():
+    from agent.suggestions import measured
+
+    assert measured([], 18.0, 90.0) is None
+    unknown = [{"ts": 1.0, "tps": None, "ram_percent": None}] * 30
+    assert measured(unknown, 18.0, 90.0) is None
+
+
+def test_a_download_count_always_says_where_and_when(make, monkeypatch):  # noqa: F811
+    from .test_suggestions import FakeModrinth, get
+
+    real = FakeModrinth._info
+    monkeypatch.setattr(
+        FakeModrinth,
+        "_info",
+        lambda self, slug: {**real(self, slug), "downloads": None if slug == "chunky" else 5},
+    )
+    counts = {s["project"]: s["downloads"] for s in get(make())["good_to_have"]}
+    assert counts["chunky"] is None  # the site gave none: none is shown
+    assert all(c is None or (c["source"] == "Modrinth" and c["read_at"]) for c in counts.values())

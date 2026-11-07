@@ -135,7 +135,7 @@ def test_helper_passwords_are_hashed_like_the_owners(multi_client, owner):
     add_helper(multi_client, owner)
     core = multi_client.app.state.core
     row = core.db.query_one("SELECT password_hash FROM accounts WHERE username = 'sam'")
-    assert row["password_hash"].startswith("pbkdf2_sha256$")
+    assert row["password_hash"].startswith("scrypt$")
     assert HELPER_PASSWORD not in row["password_hash"]
     listed = multi_client.get("/api/accounts", headers=owner).json()
     assert "password_hash" not in str(listed)

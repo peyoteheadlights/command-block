@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from agent import appinfo
+from agent import appinfo, starter
 
 from . import autostart, bootstrap, layout
 
@@ -261,6 +261,18 @@ class System:
                 f"firewall.ps1 exited {code}: {(err or out).strip()[:2000]}",
             )
 
+    def server_ports(self, script: Path, ports: list[tuple[str, int]]) -> None:
+        """One firewall rule per server port, in place of Windows' broad
+        "allow Java" rules (firewall.ps1 -ServerPorts)."""
+        listed = ",".join(f"{protocol.upper()}:{int(port)}" for protocol, port in ports)
+        args = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"]
+        code, out, err = self.run([*args, "-File", str(script), "-ServerPorts", listed])
+        if code != 0:
+            raise SystemError_(
+                "Windows didn't let the installer add the server port rules.",
+                f"firewall.ps1 exited {code}: {(err or out).strip()[:2000]}",
+            )
+
     def register_updater_task(self, program_dir: Path) -> None:
         """The task the in-app updater asks Windows to run. It runs one fixed
         program from the Program Files folder (which only Administrators can
@@ -489,6 +501,247 @@ class System:
 
         secure_directory(root)
 
+    # ------------------------------------------------------------ the separate Windows user
+    # installer/serveruser.py. Windows' own calls through ctypes: no program
+    # is run, so the password is never on a command line.
+    def make_server_user(self, name: str, password: str) -> None:
+        """Make the hidden local account, or give it this new password and
+        turn it back on when it's there already (Repair). It can't sign in
+        by Remote Desktop or over the network, its password never expires,
+        and it's left off the sign-in screen. A keyboard sign-in stays
+        allowed only because Windows needs that kind to start a program as
+        it (Mark's pick, 2026-11-06); nobody knows the password."""
+        if not IS_WINDOWS:
+            raise SystemError_("The separate Windows user is only on Windows.")
+        import ctypes
+        from ctypes import wintypes
+
+        class UserInfo1(ctypes.Structure):
+            _fields_ = [
+                ("name", wintypes.LPWSTR),
+                ("password", wintypes.LPWSTR),
+                ("password_age", wintypes.DWORD),
+                ("priv", wintypes.DWORD),
+                ("home_dir", wintypes.LPWSTR),
+                ("comment", wintypes.LPWSTR),
+                ("flags", wintypes.DWORD),
+                ("script_path", wintypes.LPWSTR),
+            ]
+
+        class UserInfo1003(ctypes.Structure):
+            _fields_ = [("password", wintypes.LPWSTR)]
+
+        class UserInfo1008(ctypes.Structure):
+            _fields_ = [("flags", wintypes.DWORD)]
+
+        # UF_SCRIPT | UF_PASSWD_CANT_CHANGE | UF_DONT_EXPIRE_PASSWD
+        flags = 0x1 | 0x40 | 0x10000
+        netapi = ctypes.WinDLL("netapi32")
+        wrong = wintypes.DWORD()
+        info = UserInfo1(
+            name, password, 0, 1, None, "Runs Command Block's Minecraft servers", flags, None
+        )
+        code = netapi.NetUserAdd(None, 1, ctypes.byref(info), ctypes.byref(wrong))
+        if code == 2224:  # NERR_UserExists
+            code = netapi.NetUserSetInfo(
+                None, name, 1003, ctypes.byref(UserInfo1003(password)), ctypes.byref(wrong)
+            )
+            if code == 0:  # without UF_ACCOUNTDISABLE or UF_LOCKOUT: on again
+                code = netapi.NetUserSetInfo(
+                    None, name, 1008, ctypes.byref(UserInfo1008(flags)), ctypes.byref(wrong)
+                )
+        if code != 0:
+            raise SystemError_(
+                "The separate Windows user couldn't be made.", f"NetUser* answered {code}"
+            )
+        self._hide_from_sign_in(name, hide=True)
+        problem = self._logon_rights(name, add=True)
+        if problem:
+            # Never leave an account Remote Desktop could reach.
+            self.remove_server_user(name)
+            raise SystemError_(
+                "The separate Windows user couldn't be kept off Remote Desktop.", problem
+            )
+
+    def remove_server_user(self, name: str) -> None:
+        """Remove the account, its rights, its profile folder and the
+        sign-in screen entry. Nothing to do when it's gone already."""
+        if not IS_WINDOWS:
+            return
+        import ctypes
+
+        self._logon_rights(name, add=False)
+        sid = _sid_text(name)
+        if sid:
+            userenv = ctypes.WinDLL("userenv")
+            userenv.DeleteProfileW(sid, None, None)  # its profile folder; may be gone
+        netapi = ctypes.WinDLL("netapi32")
+        code = netapi.NetUserDel(None, name)
+        if code not in (0, 2221):  # 2221: NERR_UserNotFound
+            raise SystemError_(
+                "The separate Windows user couldn't be removed.", f"NetUserDel answered {code}"
+            )
+        self._hide_from_sign_in(name, hide=False)
+
+    # ------------------------------------------------------------ the starter service
+    # agent/starter.py: runs as SYSTEM and starts programs as the separate
+    # Windows user. Windows' own sc.exe adds, starts, stops and removes it.
+    def current_user_sid(self) -> str:
+        """The account this runs as, the one the startup task runs the agent
+        as (autostart.current_user)."""
+        sid = _sid_text(autostart.current_user()) if IS_WINDOWS else None
+        if not sid:
+            raise SystemError_("Windows couldn't say which account this is.")
+        return sid
+
+    def install_starter(self, program_dir: Path, password: str, agent_user: str) -> None:
+        exe = Path(program_dir) / appinfo.CLI_EXE
+        program_files = layout.default_program_dir().parent
+        if not exe.is_file() or not exe.resolve().is_relative_to(program_files.resolve()):
+            # SYSTEM must only ever run a program that only Administrators
+            # can change.
+            raise SystemError_(
+                "The starter service needs the app installed in Program Files.", str(exe)
+            )
+        self.install_service(
+            starter.SERVICE, f'"{exe}" starter-service', starter.settings_path(),
+            password, agent_user,
+        )  # fmt: skip
+
+    def install_service(
+        self, name: str, command: str, settings: Path, password: str, agent_user: str
+    ) -> None:
+        """Write the settings into a folder locked to SYSTEM and
+        Administrators, then add (or change) the service and (re)start it so
+        it reads them. The live test uses this with its own name."""
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        code, out, err = self.run([
+            "icacls", str(settings.parent), "/inheritance:r", "/grant:r",
+            "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F",
+        ])  # fmt: skip
+        if code != 0:
+            raise SystemError_("The starter service's folder couldn't be locked.", out + err)
+        starter.write_settings(settings, password, agent_user)
+        create = ["binPath=", command, "start=", "auto"]
+        code, out, err = self.run(
+            ["sc.exe", "create", name, *create, "DisplayName=", "Command Block server starter"]
+        )
+        if code == 1073:  # it's there already (Repair): point it at this copy
+            code, out, err = self.run(["sc.exe", "config", name, *create])
+        if code != 0:
+            raise SystemError_("Windows didn't add the starter service.", f"sc {code}: {out}{err}")
+        self.run(["sc.exe", "description", name,
+                  "Starts Command Block's Minecraft servers as the separate Windows user."])  # fmt: skip
+        self.run(["sc.exe", "failure", name, "reset=", "86400", "actions=", "restart/5000"])
+        self.stop_starter(name)
+        self.start_starter(name)
+
+    def start_starter(self, name: str = starter.SERVICE) -> None:
+        """Start it and wait until it runs; it stops at once when it can't
+        read its settings, and that's an error here."""
+        self.run(["sc.exe", "start", name])
+        state = self._service_state(name, ("RUNNING", "STOPPED"))
+        if "RUNNING" not in state:
+            raise SystemError_("The starter service didn't start.", state.strip()[-300:])
+
+    def stop_starter(self, name: str = starter.SERVICE) -> bool:
+        """Stop it and wait until Windows lets go of its files. True when it
+        was running."""
+        code, _, _ = self.run(["sc.exe", "stop", name])
+        if code != 0:  # 1062 not running, 1060 not there
+            return False
+        self._service_state(name, ("STOPPED",))
+        return True
+
+    def remove_starter(self, name: str = starter.SERVICE, settings: Path | None = None) -> None:
+        self.stop_starter(name)
+        code, out, err = self.run(["sc.exe", "delete", name])
+        if code not in (0, 1060, 1072):  # 1060 not there, 1072 already going
+            raise SystemError_("Windows didn't remove the starter service.", f"sc {code}: {err}")
+        import shutil
+
+        shutil.rmtree((settings or starter.settings_path()).parent, ignore_errors=True)
+
+    def _service_state(self, name: str, wanted: tuple[str, ...], seconds: float = 30) -> str:
+        deadline = time.monotonic() + seconds
+        while True:
+            code, out, _ = self.run(["sc.exe", "query", name])
+            if code == 1060:  # not there
+                return out
+            state = next((line for line in out.splitlines() if "STATE" in line), "")
+            if any(w in state for w in wanted) or time.monotonic() > deadline:
+                return out
+            time.sleep(0.5)
+
+    @staticmethod
+    def _hide_from_sign_in(name: str, hide: bool) -> None:
+        import winreg
+
+        key_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList"
+        access = winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY
+        if hide:
+            with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, access) as key:
+                winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, 0)
+            return
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, access) as key:
+                winreg.DeleteValue(key, name)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _logon_rights(name: str, add: bool) -> str | None:
+        """Deny Remote Desktop and network sign-in (add), or take every
+        right off the account (remove). Returns what went wrong, or None."""
+        import ctypes
+        from ctypes import wintypes
+
+        class LsaText(ctypes.Structure):
+            _fields_ = [
+                ("Length", wintypes.USHORT),
+                ("MaximumLength", wintypes.USHORT),
+                ("Buffer", wintypes.LPWSTR),
+            ]
+
+        class LsaAttributes(ctypes.Structure):
+            _fields_ = [
+                ("Length", wintypes.ULONG),
+                ("RootDirectory", wintypes.HANDLE),
+                ("ObjectName", ctypes.c_void_p),
+                ("Attributes", wintypes.ULONG),
+                ("SecurityDescriptor", ctypes.c_void_p),
+                ("SecurityQualityOfService", ctypes.c_void_p),
+            ]
+
+        sid = _sid(name)
+        if sid is None:
+            return None if not add else "the account wasn't found"
+        advapi = ctypes.WinDLL("advapi32")
+        attributes = LsaAttributes()
+        attributes.Length = ctypes.sizeof(attributes)
+        policy = ctypes.c_void_p()
+        # POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES
+        status = advapi.LsaOpenPolicy(
+            None, ctypes.byref(attributes), 0x10 | 0x800, ctypes.byref(policy)
+        )
+        if status != 0:
+            return f"LsaOpenPolicy {advapi.LsaNtStatusToWinError(status)}"
+        try:
+            if add:
+                names = ("SeDenyRemoteInteractiveLogonRight", "SeDenyNetworkLogonRight")
+                rights = (LsaText * len(names))(
+                    *(LsaText(len(n) * 2, len(n) * 2 + 2, n) for n in names)
+                )
+                status = advapi.LsaAddAccountRights(policy, sid, rights, len(names))
+            else:
+                status = advapi.LsaRemoveAccountRights(policy, sid, True, None, 0)
+        finally:
+            advapi.LsaClose(policy)
+        if status != 0:
+            code = advapi.LsaNtStatusToWinError(status)
+            return None if code == 2 else f"LsaAccountRights {code}"  # 2: it had none
+        return None
+
     def install_msi(self, command: list[str]) -> None:
         code, out, err = self.run(command, timeout=900)
         if code not in (0, 3010):  # 3010: done, a restart finishes it
@@ -496,6 +749,42 @@ class System:
                 "Java didn't install.",
                 f"msiexec exited {code}: {(err or out).strip()[:2000]}",
             )
+
+
+def _sid(name: str):
+    """The account's SID as Windows keeps it, or None when there's no such
+    account."""
+    import ctypes
+    from ctypes import wintypes
+
+    advapi = ctypes.WinDLL("advapi32")
+    size, domain_size, use = wintypes.DWORD(0), wintypes.DWORD(0), wintypes.DWORD()
+    advapi.LookupAccountNameW(None, name, None, ctypes.byref(size), None,
+                              ctypes.byref(domain_size), ctypes.byref(use))  # fmt: skip
+    if not size.value:
+        return None
+    sid = ctypes.create_string_buffer(size.value)
+    domain = ctypes.create_unicode_buffer(domain_size.value)
+    if not advapi.LookupAccountNameW(None, name, sid, ctypes.byref(size), domain,
+                                     ctypes.byref(domain_size), ctypes.byref(use)):  # fmt: skip
+        return None
+    return sid
+
+
+def _sid_text(name: str) -> str | None:
+    import ctypes
+
+    sid = _sid(name)
+    if sid is None:
+        return None
+    text = ctypes.c_wchar_p()
+    advapi = ctypes.WinDLL("advapi32")
+    if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+        return None
+    try:
+        return text.value
+    finally:
+        ctypes.windll.kernel32.LocalFree(text)
 
 
 def updater_task_xml(

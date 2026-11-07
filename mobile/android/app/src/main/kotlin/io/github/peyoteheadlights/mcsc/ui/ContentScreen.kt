@@ -571,7 +571,7 @@ private fun UpdateAllDialog(vm: AppViewModel, content: ContentPages) {
         if (read.loading) Text(t("mobile.content.checking"))
         Loading(read)
         plan ?: return@Question
-        if (plan.updates.isEmpty()) Text(t("mobile.content.update_all_none")) else Text(t("mobile.content.update_all_lead"))
+        if (plan.updates.isNotEmpty()) Text(t("mobile.content.update_all_lead")) else if (plan.unchecked.isEmpty()) Text(t("mobile.content.update_all_none"))
         blocked?.let { Text(it, color = LocalColors.current.warning, modifier = Modifier.padding(top = 6.dp)) }
         for (row in plan.updates) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {

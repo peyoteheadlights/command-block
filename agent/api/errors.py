@@ -20,12 +20,15 @@ from .. import requestid
 from ..addons import AddonError
 from ..backups.hold import HoldError
 from ..backups.manager import BackupError
+from ..bringin import BringInError
 from ..changes import ChangeError
 from ..config import ConfigError
+from ..configfiles import ConfigFileError, FileChanged
 from ..core import UnknownServer
 from ..crossplay import CrossplayError
 from ..downloads import DownloadError
 from ..duplicate import DuplicateError
+from ..guides import GuideError
 from ..jobs import JobConflict, JobNotFound
 from ..memory import MemoryLimitError
 from ..minecraft.chat import ChatError
@@ -36,15 +39,18 @@ from ..minecraft.properties import FormError, PropertiesError
 from ..modpack import ModpackError
 from ..mods.dependencies import DependencyError
 from ..mods.manager import ModError
-from ..mods.modrinth import ModrinthError
+from ..mods.sources import SourceError
+from ..protection import ProtectionError
 from ..safechange import SafeChangeError
 from ..scheduler.scheduler import ScheduleError
+from ..seasons import SeasonError
 from ..security.auth import AuthError
 from ..security.paths import PathSafetyError
 from ..servertypes import UnknownServerType
 from ..servertypes.bedrock import BedrockError
 from ..servertypes.install import InstallError
 from ..servertypes.versions import VersionError
+from ..store import StoreError
 from ..transfer import TransferError
 from ..whitelist import WhitelistError
 from ..worldimport import WorldImportError
@@ -60,7 +66,7 @@ ERROR_STATUS: dict[type[Exception], int] = {
     DependencyError: 400,
     ScheduleError: 400,
     PathSafetyError: 400,
-    ModrinthError: 502,  # Modrinth failed, not the request
+    SourceError: 502,  # the add-on site failed, not the request
     UnknownServer: 404,
     JobNotFound: 404,
     JobConflict: 409,  # another change is already running on that server
@@ -79,12 +85,19 @@ ERROR_STATUS: dict[type[Exception], int] = {
     WorldUndoError: 409,  # the server has to be off first
     ChangeError: 409,  # nothing to undo or redo now
     WorldImportError: 400,
+    SeasonError: 400,
     MemoryLimitError: 400,
     TransferError: 400,
     AddonError: 400,
     BedrockError: 400,
     HoldError: 409,  # the running server didn't get its files ready to copy
     WhitelistError: 400,
+    BringInError: 400,
+    GuideError: 400,
+    ConfigFileError: 400,
+    FileChanged: 409,  # the file changed on the PC since it was opened
+    ProtectionError: 400,
+    StoreError: 400,
 }
 DOMAIN_ERRORS: tuple[type[Exception], ...] = tuple(ERROR_STATUS)
 
@@ -131,9 +144,21 @@ async def _form_handler(request: Request, exc: Exception) -> JSONResponse:
     return error_response(request, 400, {"detail": str(exc), "problems": exc.problems})
 
 
+def _file_handler(status: int):
+    """A settings file that was refused: the line it is about, when known."""
+
+    async def handler(request: Request, exc: Exception) -> JSONResponse:
+        assert isinstance(exc, ConfigFileError)
+        return error_response(request, status, {"detail": str(exc), "line": exc.line})
+
+    return handler
+
+
 def register_error_handlers(app: FastAPI) -> None:
     for exc_type, status in ERROR_STATUS.items():
         app.add_exception_handler(exc_type, _status_handler(status))
+    for exc_type in (ConfigFileError, FileChanged):
+        app.add_exception_handler(exc_type, _file_handler(ERROR_STATUS[exc_type]))
     app.add_exception_handler(StarletteHTTPException, _http_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.add_exception_handler(FormError, _form_handler)

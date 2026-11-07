@@ -128,7 +128,13 @@ class ServerSettings(Section):
     # quilt, forge, neoforge, paper or purpur. Servers from before server
     # types are Fabric.
     type: str = "fabric"
+    # For a type the notes file added (agent/notes.py): the built-in type it
+    # copies, so the server still loads before the notes do.
+    like: str = ""
     jar: str = "fabric-server-launch.jar"
+    # The owner's own server jar, run as the type above says it's based on.
+    # The app never checks or updates it (agent/servertypes/custom.py).
+    custom_jar: bool = False
     # Forge and NeoForge are launched from the argument file their
     # installer writes (java @libraries/.../win_args.txt) instead of -jar.
     # Set by the app when it installs them; empty means "-jar <jar>".
@@ -156,6 +162,30 @@ class ServerSettings(Section):
     # default). It is never started again on its own: see agent/autosleep.py.
     autosleep: bool = False
     autosleep_minutes: int = 30
+    # Bedrock only: put a newer Bedrock server in by itself once nobody is
+    # online (off by default; agent/softwarecheck.py).
+    bedrock_auto_update: bool = False
+    # Who the server is for: "friends", "kids" or "community" (first run's
+    # "Who's this server for?"), "" when not answered. Picks Simple mode's
+    # one add-on suggestion (agent/suggestions.py).
+    played_by: str = ""
+    # Join protection (agent/joinguard.py): the guard in front of a Java
+    # server, off by default. Size "" picks small or big by itself; limits
+    # the owner changed in Technical; only home network and Tailscale.
+    join_protection: bool = False
+    join_size: str = ""
+    join_limits: dict[str, int] = field(default_factory=dict)
+    join_home_only: bool = False
+    # Launch mode: Slow mode with raised limits until this time (0: off).
+    launch_until: float = 0
+    launch_players: int = 0
+    # Start a server auto-sleep stopped when someone tries to join.
+    start_on_join: bool = False
+    # A Test server (Technical): no default schedules, hidden from the
+    # Discord bot. Its build folder's jars are copied in at each start
+    # (agent/testserver.py).
+    test: bool = False
+    build_folder: str = ""
 
 
 @dataclass(frozen=True)
@@ -223,6 +253,16 @@ class SecuritySettings(Section):
     lockout_minutes: float = 15
     rate_limit_requests: int = 120
     rate_limit_window: float = 60
+    # The chat spam rule (agent/watchers.py): this many names new to the
+    # server saying the same line within this many seconds turns the
+    # whitelist on and sends an alert.
+    chat_spam_rule: bool = True
+    chat_spam_names: int = 5
+    chat_spam_seconds: float = 60
+    # Servers (and Chunker, the Forge installer) run as the hidden Windows
+    # account CommandBlockServer (agent/serveruser.py). The installer turns
+    # it on for new installs; upgrades turn it on in Settings.
+    separate_windows_user: bool = False
 
 
 @dataclass(frozen=True)
@@ -236,6 +276,13 @@ class BackupSettings(Section):
             "server.properties",
             "config",
             "mods",
+            # The player lists, so a world brought back keeps its whitelist.
+            "whitelist.json",
+            "ops.json",
+            "banned-players.json",
+            "banned-ips.json",
+            "allowlist.json",
+            "permissions.json",
         ]
     )
     keep_daily: int = 7
@@ -247,6 +294,9 @@ class BackupSettings(Section):
     # cloud folder (OneDrive, Google Drive, Dropbox). Empty: no second copy.
     # See agent/backups/offsite.py.
     offsite_directory: str = ""
+    # Back up after a planned stop if someone played since the last backup
+    # (off by default: weak mini PCs stop quicker without it).
+    on_stop: bool = False
 
 
 @dataclass(frozen=True)
@@ -255,6 +305,11 @@ class ModSettings(Section):
     backup_directory: str = "mod-backups"
     trash_directory: str = "mod-trash"
     modrinth_api: str = "https://api.modrinth.com/v2"
+    # CurseForge through our relay (agent/mods/curseforge.py). The web key
+    # only names the Firebase project for its anonymous sign-in; it isn't a
+    # secret and it isn't CurseForge's key, which the app never has.
+    curseforge_relay: str = "https://europe-west1-command-block-d4526.cloudfunctions.net/curseforge"
+    firebase_web_key: str = "AIzaSyDUobgN-1BPbhI4jsLAASFU2Mf6rp3So_g"
     user_agent: str = "command-block (self-hosted)"
     backup_before_install: bool = True
     auto_stop_for_install: bool = False
@@ -322,6 +377,12 @@ class NotificationSettings(Section):
             "quests": True,
             "whitelist_requests": True,
             "reports": True,
+            "server_software": True,
+            "ops_changed": True,
+            "lists_changed": True,
+            "chat_spam": True,
+            "join_protection": True,
+            "your_pcs": True,
         }
     )
     email: EmailSettings = field(default_factory=EmailSettings)
@@ -410,6 +471,8 @@ SECRET_ENV_KEYS = (
     "MCSC_DISCORD_BOT_TOKEN",
     # The key the stored IP addresses are encrypted with (agent/whitelist.py).
     "MCSC_ADDRESS_KEY",
+    # The anonymous sign-in to our CurseForge relay (agent/mods/curseforge.py).
+    "MCSC_CURSEFORGE_REFRESH_TOKEN",
     "MCSC_SMTP_USERNAME",
     "MCSC_SMTP_PASSWORD",
     # The browser alerts' keys: gone with the web pages, but older installs
@@ -719,11 +782,17 @@ class Config:
         from .minecraft.cpu import shape_problems
 
         try:
+            if settings.like and settings.type not in servertypes.TYPES:
+                servertypes.register_variant(settings.type, settings.like)
             servertypes.check(settings.type)
         except servertypes.UnknownServerType as exc:
             raise ConfigError(f"{prefix}.type: {exc}") from None
         if settings.bedrock_port and not 0 < settings.bedrock_port < 65536:
             raise ConfigError(f"{prefix}.bedrock_port has to be a port number from 1 to 65535.")
+        if settings.played_by not in ("", "friends", "kids", "community"):
+            raise ConfigError(f"{prefix}.played_by has to be friends, kids or community.")
+        if settings.join_size not in ("", "small", "big"):
+            raise ConfigError(f"{prefix}.join_size has to be small or big.")
 
         problems = shape_problems(settings.cpu_cores, f"{prefix}.cpu_cores")
         if problems:

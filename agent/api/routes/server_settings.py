@@ -27,10 +27,18 @@ SERVER_SETTABLE = (
     "server.cpu_cores",
     "server.autosleep",
     "server.autosleep_minutes",
+    "server.bedrock_auto_update",
+    "server.join_protection",
+    "server.join_size",
+    "server.join_limits",
+    "server.join_home_only",
+    "server.start_on_join",
+    "server.build_folder",
     "monitor.",
     "backups.keep_",
     "backups.include",
     "backups.stop_server_for_backup",
+    "backups.on_stop",
     "mods.backup_before_install",
     "mods.update_check_hours",
 )
@@ -53,6 +61,7 @@ async def get_server_settings(
         "editable": list(SERVER_SETTABLE),
         "cpu": _cpu_overview(ctx),
         "sleep": ctx.autosleep.status(),
+        "join": ctx.core.guard.status(ctx),
     }
 
 
@@ -90,6 +99,9 @@ async def update_server_settings(
         if not any(key == p or key.startswith(p) for p in SERVER_SETTABLE):
             rejected[key] = "This setting can't be changed here."
             continue
+        if key in ("server.bedrock_auto_update", "server.build_folder") and not principal.is_owner:
+            rejected[key] = "Only the owner can turn this on or off."
+            continue
         if key == "server.autosleep_minutes":
             try:
                 minutes = int(value)
@@ -99,6 +111,24 @@ async def update_server_settings(
                 rejected[key] = "Pick between 1 minute and 24 hours."
                 continue
             value = minutes
+        if key in ("server.join_protection", "server.start_on_join") and value:
+            if not ctx.config.server_type.wakes_on_join:
+                rejected[key] = "Bedrock servers can't use this yet."
+                continue
+        if key == "server.join_limits":
+            value = _join_limits(value)
+            if value is None:
+                rejected[key] = "Each limit has to be a whole number from 1 to 10000."
+                continue
+        if key == "server.build_folder":
+            from ...security.paths import PathSafetyError
+            from ...testserver import check_build_folder
+
+            try:
+                value = check_build_folder(ctx, str(value or ""))
+            except PathSafetyError as exc:
+                rejected[key] = str(exc)
+                continue
         if key == "server.cpu_cores":
             found = cpu.shape_problems(value) or cpu.problems(value)
             if found:
@@ -135,6 +165,18 @@ async def update_server_settings(
         # Applied to the running server at once, and read back from it.
         result["cpu_cores"] = await ctx.server.apply_cpu_cores()
     return result
+
+
+def _join_limits(value) -> dict | None:
+    from ...joinguard import LIMIT_KEYS
+
+    if not isinstance(value, dict) or not set(value) <= set(LIMIT_KEYS):
+        return None
+    try:
+        found = {k: int(v) for k, v in value.items()}
+    except (TypeError, ValueError):
+        return None
+    return found if all(1 <= v <= 10000 for v in found.values()) else None
 
 
 def _where(ctx, key: str):

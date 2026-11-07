@@ -147,6 +147,10 @@ Per server, under `/api/servers/{id}/`:
 | POST | `/api/server/clear-crash-block` | Re-enable auto-restart after a crash loop |
 | POST | `/api/server/command` | `{command, confirm}`: one Minecraft command |
 | GET | `/api/server/command/check?command=` | Does it need confirmation? |
+| GET, PUT | `/api/command-buttons` | The Console page's named buttons (up to 12, each checked like a typed command). A press is a normal `/api/server/command` |
+| GET | `/api/players/hours` | Players online by hour of the day over 28 days (null: never measured) and the quietest hour |
+| POST | `/api/world/new-season` | `{seed, announce, confirm}`: a fresh world, the old one kept as a season backup |
+| POST | `/api/bring-back/read`, `/api/bring-back` | The servers in an off-PC backup folder, and rebuilding one from its newest copy (a job) |
 
 ## Console, logs, events
 
@@ -221,7 +225,10 @@ summaries use this).
 
 `GET /api/mods`, `GET /api/mods/search?q=&minecraft_version=`,
 `GET /api/mods/project/{slug}`, `POST /api/mods/install`,
-`POST /api/mods/upload` (multipart), `GET /api/mods/impact?filename=`,
+`POST /api/mods/upload` (multipart: a jar or a datapack .zip; one backup and
+one Undo), `POST /api/mods/link` (`{"url"}`: a GitHub release's files, or
+`"kind": "browser"`), `POST /api/mods/link/add` (`{"version_id"}` from it),
+`GET /api/mods/impact?filename=`,
 `POST /api/mods/remove`, `POST /api/mods/enable`, `POST /api/mods/disable`,
 `GET /api/mods/updates?refresh=`, `POST /api/mods/update`,
 `GET /api/mods/versions/{mod_id}`, `POST /api/mods/rollback`,
@@ -235,6 +242,17 @@ couldn't be asked about; needs `server.view`),
 `POST /api/mods/update-all` (`{"mods": [{"filename", "version_id"}]}`: the
 ticked ones as one change, with the server stopped: one backup first, all
 put back if any update fails, one Undo; needs `mods.manage`).
+
+On Paper and Purpur servers search answers come from Modrinth and Hangar,
+on Fabric, Quilt, Forge and NeoForge servers from Modrinth and CurseForge,
+each hit with `source_name`, plus `problems` when one of them is down. Hangar
+ids look like `hangar:31`, CurseForge's `curseforge:238222` (a file
+`curseforge:238222-4712345`), and go back unchanged to `project`, `install`
+and `version_id`. A CurseForge hit with `"blocked": true` can't be
+downloaded by the app; installing it, or a mod that needs it, lists it in
+`GET /api/mods`'s `needs_you` (its `page`, and the file to drop), and
+`POST /api/mods/needs-you/dismiss` (`{"project"}`) takes it off. CurseForge
+files say `"checked_with": "sha1"`.
 
 ## Game settings
 
@@ -255,6 +273,8 @@ Both saves keep a safety backup of the old file and answer with `changed`,
 | GET | `/api/servers/{id}/duplicate` | A suggested name and folder for a copy |
 | POST | `/api/servers/{id}/duplicate` | `{"name", "directory", "world": "copy" \| "fresh"}`. Runs as a job; the copy gets the next free port and an unused color |
 | POST | `/api/modpacks/inspect` | Multipart upload of a `.mrpack` (`?server_id=` adds `into`, what importing into that server would do). Reads it and answers with a `token` and the `pack`: versions, every file with `download`, `client_only` or `refused` and why, `problems`, `can_import`. Changes nothing |
+| GET | `/api/modpacks/curseforge/search?q=` | CurseForge modpacks, most popular first |
+| POST | `/api/modpacks/curseforge` | `{"project": "curseforge:<id>", "server_id"}`: downloads the pack's newest release and answers as `inspect` does (a CurseForge pack's `.zip` can be uploaded to `inspect` too). Its files may also be `needs_you` |
 | DELETE | `/api/modpacks/{token}` | Throw an uploaded pack away |
 | POST | `/api/modpacks/{token}/new-server` | Make a new server from the pack: `{"name", "directory", "eula_accepted": true}` |
 | POST | `/api/servers/{id}/modpack` | Import into this server: `{"token", "confirm": true}`. Stops it, backs it up, moves its mods aside, changes its version first if needed |
@@ -266,9 +286,13 @@ Agent-wide:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/server-types` | Every type with its capabilities. The apps' comparison table is generated from this |
+| GET | `/api/server-types/recommend?goal=&loaders=&technical=` | Which types fit `vanilla`, `plugins` or `mods` (only the loaders in `loaders`, the ones every picked mod supports), which to recommend, and which warn about farms. Leaf, Purpur and notes-file types only with `technical=true`; forks are never recommended |
 | GET | `/api/server-types/{type}/versions` | The Minecraft versions that type offers, from its own official source, with the loader or build versions for each |
 | GET | `/api/new-server/options` | What the New server panel needs: types, default memory and why, the PC's measured memory, a free port, a free color, the EULA link |
 | POST | `/api/new-server` | Create one. Refused without `eula_accepted: true` (for Bedrock this accepts Mojang's EULA and Privacy Policy, recorded before anything is downloaded). Downloads, installs and registers; starts nothing |
+| POST | `/api/new-server/custom-jar` | Owner only. A new server that runs the owner's own jar (`jar`, a path on this PC) as `based_on`. Needs `trusted: true` and `eula_accepted: true`. Never checked or updated by the app (`custom_jar: true`) |
+| POST | `/api/bring-in/read` | Owner only. What a server folder or `.zip` on this PC holds (type from its files, add-ons, worlds, size, the Minecraft version its files name). Nothing is copied or run |
+| POST | `/api/bring-in` | Owner only. Copy it into a new, empty folder as a job, fix a port clash, set up the official loader if only its installer is there, and make the first backup. An unknown kind needs `based_on`, `jar` and `trusted: true` |
 | GET\|POST | `/api/bedrock/terms` | Whether Mojang's EULA and Privacy Policy were accepted, by whom and when; `POST {"accepted": true}` records the person's own tick |
 | GET | `/api/bedrock/versions` | The Bedrock server zips this app downloaded and kept (Mojang only offers the newest) |
 
@@ -280,6 +304,8 @@ Per server:
 | POST | `/api/servers/{id}/version/preflight` | What a change would do, before anything happens: direction, Java verdict, which add-ons would be moved aside, which declare nothing |
 | POST | `/api/servers/{id}/version` | Make the change. Needs `confirm: true`. Stops the server, takes a verified backup, installs, checks |
 | POST | `/api/servers/{id}/version/roll-back` | Put the previous software back |
+| POST | `/api/servers/{id}/custom-jar` | Owner only. Replace the owner's own jar (`jar`): stops the server, backs the old one up, one Undo puts it back |
+| POST | `/api/servers/{id}/game-settings/vanilla-spawns` | Paper and its forks: set the fixed spawn settings in `spigot.yml` that keep vanilla farms working, with one Undo |
 | POST | `/api/servers/{id}/eula` | Record that the person accepted Minecraft's rules. The only thing that writes `eula=true` |
 | GET\|PUT | `/api/servers/{id}/crossplay` | Whether Bedrock players can join, the port, and the differences; `PUT {"enabled": true}` installs Geyser and Floodgate |
 
@@ -317,6 +343,42 @@ permissions). Per server, with Players (`players.manage`):
 `POST .../discord-links/requests/{id}` (`answer`, `uuid`). See
 [discord.md](discord.md).
 
+## Rented servers (Pterodactyl panels)
+
+`agent/rented.py`. `GET /api/rented` (`server.view`; only the rented
+servers this account can see; `panels` for the owner): each with `kind`
+`pterodactyl`, `host`, `state` (`ONLINE`, `OFFLINE`, `STARTING`,
+`STOPPING`, or `UNKNOWN` with `state_reason` when the panel didn't answer,
+never the last known state), `resources` (`memory_bytes`, `cpu_percent`,
+`disk_bytes`, `uptime_ms`, or null), `discord`, `needs_this_pc` and
+`later`. Owner only (`servers.manage`): `POST /api/rented/check` and
+`POST /api/rented/panels` (`address`, `key`, `allow_host` which must be
+true, `servers`), `DELETE /api/rented/panels/{id}` (Remove key). Per rented
+server, checked like a home server's permissions:
+`GET .../{id}/status`, `POST .../{id}/power` (`signal` start, stop,
+restart or kill; kill needs `confirm`), `GET .../{id}/console?after=n`
+(`console.read`), `POST .../{id}/command` (`console.send`, the usual
+command checks), `GET|POST .../{id}/backups` (`backups.create` to make
+one), `PUT .../{id}/discord` (`choice` off, status or control;
+`discord.manage`). A panel's refusal answers 502 with plain words. The key
+is never in an answer. Moderators can be given rented servers like home
+servers (`/api/accounts`).
+
+## Store (Tebex)
+
+`agent/store.py`. Owner only (`servers.manage`), per server:
+`GET .../store` (the Store tab: `offered` and `reason` (no store on a kids,
+Test, Bedrock or non-community server), `needs_type` (not Paper, Purpur,
+Leaf or Fabric), `connected`, `installed`, `ranks`, `store` (name, link,
+currency, offline, from Tebex), `packages`, `checklist`), `POST
+.../store/connect` (`key`: checked with Tebex, then Tebex's plugin and
+LuckPerms are installed and the Store ranks made, backup first and one
+Undo) and `POST .../store/check` (reads the packages back, ticks the ones
+named like a Store rank; `remind` lists new packages the app didn't make).
+The key is never in an answer. A server row's `played_by` says who it's
+for. In `PUT /api/discord/guilds/{id}/levels`, `store_roles` (`rank`,
+`role_id`) pairs Store ranks with Discord roles.
+
 ## TPS monitoring
 
 `GET /api/tps` (state, command, how it was detected, what was tried),
@@ -332,6 +394,9 @@ counting down; `restart_at` in `/api/status` is the deadline (Unix time).
 `GET|POST /api/schedules`, `PUT|DELETE /api/schedules/{id}`,
 `POST /api/schedules/{id}/run`,
 `GET|PUT /api/settings`, `POST /api/maintenance`,
+`GET|POST /api/settings/separate-windows-user` (`{on}`: is it on and does
+the account work; switching restarts running servers, and needs the account
+made by `mcsc server-user on` first),
 `POST /api/notifications/test?channel=` (`discord`, `email` or `push`),
 `GET /api/notifications/history` (owner only, like `GET /api/settings`),
 `GET /api/security`, `GET /api/security/tls`, `GET /api/security/audit`,

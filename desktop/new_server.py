@@ -1,17 +1,22 @@
 """The "+" tab, with three ways in:
 
-- New server: which Minecraft, which kind (the comparison table, built from
-  what each type says about itself), which version, its name, folder,
-  color and memory, then Minecraft's rules. Nothing is downloaded before
-  the box is ticked.
+- New server: which Minecraft, what it's for (plain vanilla, plugins or
+  mods: the kinds that fit are marked Recommended), which kind (the
+  comparison table, built from what each type says about itself), which
+  version, its name, folder, color and memory, then Minecraft's rules.
+  Nothing is downloaded before the box is ticked. In Technical the owner
+  can also run their own server jar.
 - From a modpack: the pack is read first (the same summary as importing
   one into a server), then a new server is made from it.
-- A server already on this PC: put on the list; nothing in its folder changes.
+- A server I already have: bring a folder or zip in (it's read first, then
+  copied, so the original stays as it is). In Technical it can also be put
+  on the list where it is.
 
 A new server opens once it's made. It is never started by itself."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import (
@@ -33,17 +38,27 @@ from PySide6.QtWidgets import (
 
 from .mods import pack_lines
 from .overview import card
-from .ui import field, label, push, refill, swatches
-from .words import mode, text
+from .ui import clock, field, label, push, refill, size, swatches
+from .words import has, mode, text
 
 if TYPE_CHECKING:
     from .window import MainWindow
 
 WAYS = ["add.way_new", "add.way_modpack", "add.way_have"]
+GOALS = [
+    ("vanilla", "new.goal_vanilla"),
+    ("plugins", "new.goal_plugins"),
+    ("mods", "new.goal_mods"),
+]
 
 
 def known(value: Any) -> bool:
     return value not in (None, "")
+
+
+def hint_of(kind: dict) -> str:
+    """A type's one line: a notes-file type brings its own."""
+    return kind.get("hint") or text(f"types.{kind['id']}.hint")
 
 
 class NewServerScreen(QScrollArea):
@@ -114,13 +129,24 @@ class NewServerScreen(QScrollArea):
             "loader": None,
             "color": options["color"],
         }
-        refill(self.steps, [self.edition_card(), self.kinds_card()])
+        self.goal: str | None = None
+        self.advice: dict | None = None
+        refill(self.steps, [self.edition_card(), self.goal_card()])
+        self.kinds_slot = QVBoxLayout()
         self.version_slot = QVBoxLayout()
         self.details_slot = QVBoxLayout()
-        self.steps.addLayout(self.version_slot)
-        self.steps.addLayout(self.details_slot)
+        for slot in (self.kinds_slot, self.version_slot, self.details_slot):
+            self.steps.addLayout(slot)
+        refill(self.kinds_slot, [self.kinds_card()])
+        if mode["technical"] and self.window_.agent.place == "this PC":
+            self.steps.addWidget(self.custom_card())
         refill(self.pack_column, [self.pack_card()])
-        refill(self.have_column, [self.have_card()])
+        refill(
+            self.have_column,
+            [self.bring_card()]
+            + ([self.have_card()] if mode["technical"] else [])
+            + ([self.back_card()] if self.window_.agent.place == "this PC" else []),
+        )
 
     # ------------------------------------------------------------ helpers
     def folder_field(self, words: str, hint: str, placeholder: str) -> tuple[QWidget, QLineEdit]:
@@ -186,6 +212,7 @@ class NewServerScreen(QScrollArea):
 
     def edition_changed(self, java: bool) -> None:
         self.kinds.setVisible(java)
+        self.goals.setVisible(java)
         refill(self.version_slot, [])
         refill(self.details_slot, [])
         self.choice["type"] = None
@@ -194,20 +221,61 @@ class NewServerScreen(QScrollArea):
             if found:
                 self.choose(found)
 
+    def goal_card(self) -> QFrame:
+        """What the server is for. The agent says which kinds fit, so the
+        phone apps and the first-run setup recommend the same."""
+        self.goals, layout = card(text("new.step_goal"))
+        layout.addWidget(label(text("new.goal_hint"), "sub"))
+        row = QHBoxLayout()
+        for goal, words in GOALS:
+            button = QRadioButton(text(words))
+            button.toggled.connect(lambda on, g=goal: self.pick_goal(g) if on else None)
+            row.addWidget(button)
+        row.addStretch()
+        layout.addLayout(row)
+        return self.goals
+
+    def pick_goal(self, goal: str) -> None:
+        self.goal = goal
+        technical = "true" if mode["technical"] else "false"
+        window = self.window_
+        window.run(
+            lambda: window.agent.call(
+                "GET", f"/server-types/recommend?goal={goal}&technical={technical}"
+            ),
+            self.show_advice,
+            self.failed,
+        )
+
+    def show_advice(self, advice: dict) -> None:
+        self.advice = advice
+        self.choice.update(type=None, minecraft=None, loader=None)
+        refill(self.kinds_slot, [self.kinds_card()])
+        refill(self.version_slot, [])
+        refill(self.details_slot, [])
+
     def kinds_card(self) -> QFrame:
         """The comparison table of the Java kinds: it describes, and never
-        claims a number nobody measured."""
+        claims a number nobody measured. Leaf and Purpur only in Technical."""
         self.kinds, layout = card(text("new.step_kind"))
         layout.addWidget(label(text("new.kind_hint"), "sub"))
-        recommended = self.options["recommended"]
+        recommended = (
+            set(self.advice["recommended"]) if self.advice else {self.options["recommended"]}
+        )
         columns = [
             (
                 "new.col_kind",
                 lambda t: (
-                    t["name"] + (f"  ({text('new.recommended')})" if t["id"] == recommended else "")
+                    t["name"]
+                    + (f"  ({text('new.recommended')})" if t["id"] in recommended else "")
+                    + "\n"
+                    + hint_of(t)
                 ),
             ),
-            ("new.col_best_for", lambda t: text(f"types.{t['id']}.best")),
+            (
+                "new.col_best_for",
+                lambda t: text(f"types.{t['id']}.best") if has(f"types.{t['id']}.best") else "",
+            ),
             (
                 "new.col_content",
                 lambda t: (
@@ -239,7 +307,11 @@ class NewServerScreen(QScrollArea):
         for col, (words, _cell) in enumerate(columns):
             table.addWidget(label(text(words), "muted"), 0, col)
         self.choose_buttons: dict[str, QPushButton] = {}
-        java = [t for t in self.options["types"] if t.get("edition") != "bedrock"]
+        java = [
+            t
+            for t in self.options["types"]
+            if t.get("edition") != "bedrock" and (mode["technical"] or not t.get("technical_only"))
+        ]
         for row, kind in enumerate(java, start=1):
             for col, (_words, cell) in enumerate(columns):
                 table.addWidget(label(cell(kind), "step" if col == 0 else ""), row, col)
@@ -251,8 +323,10 @@ class NewServerScreen(QScrollArea):
         for col in range(1, len(columns)):
             table.setColumnStretch(col, 1)
         layout.addLayout(table)
-        name = next((t["name"] for t in self.options["types"] if t["id"] == recommended), "")
-        layout.addWidget(label(text("new.rec_why", name=name), "sub"))
+        if not self.advice:
+            name = next((t["name"] for t in self.options["types"] if t["id"] in recommended), "")
+            layout.addWidget(label(text("new.rec_why", name=name), "sub"))
+        self.kinds.setVisible(self.java.isChecked())
         return self.kinds
 
     def choose(self, kind: dict) -> None:
@@ -275,6 +349,15 @@ class NewServerScreen(QScrollArea):
         if self.choice["type"] is not kind:
             return  # another kind was chosen meanwhile
         frame, layout = card(text("new.step_version"))
+        self.spawns: QCheckBox | None = None
+        if self.goal == "vanilla" and kind["id"] in (self.advice or {}).get("warn", []):
+            layout.addWidget(label(text("new.farms_warning", name=kind["name"]), "notice"))
+            if mode["technical"]:
+                self.spawns = QCheckBox(text("new.vanilla_spawns"))
+                layout.addWidget(self.spawns)
+                layout.addWidget(label(text("spawns.hint"), "sub"))
+        if kind.get("never_recommended"):
+            layout.addWidget(label(text("new.fork_warning", name=kind["name"]), "notice"))
         if payload.get("latest_only"):
             layout.addWidget(label(text("new.bedrock_versions"), "sub"))
         if payload.get("source_problem"):
@@ -379,6 +462,12 @@ class NewServerScreen(QScrollArea):
                 field(text("new.memory"), self.memory, self.options.get("memory_reason") or "")
             )
             layout.addWidget(label(text("new.port_hint", port=self.options.get("port")), "muted"))
+        # Technical: a throwaway server for trying builds (agent/testserver.py).
+        self.test = QCheckBox(text("test.make"))
+        self.test.setVisible(mode["technical"])
+        layout.addWidget(self.test)
+        if mode["technical"]:
+            layout.addWidget(label(text("test.make_hint"), "sub"))
         return frame
 
     def rules_card(self, kind: dict) -> QFrame:
@@ -434,7 +523,9 @@ class NewServerScreen(QScrollArea):
                     "loader_version": self.choice["loader"],
                     "memory_mb": self.memory.value() if self.memory else None,
                     "color": self.choice["color"],
+                    "vanilla_spawns": bool(self.spawns and self.spawns.isChecked()),
                     "eula_accepted": True,
+                    "test": self.test.isChecked(),
                 }
                 window = self.window_
                 window.run(
@@ -446,6 +537,314 @@ class NewServerScreen(QScrollArea):
 
         create.clicked.connect(make)
         return frame
+
+    # ------------------------------------------------------------ your own jar
+    def custom_card(self) -> QFrame:
+        """Technical, on the agent's own PC: a new server that runs the
+        owner's own jar. The agent refuses it for anyone but the owner."""
+        frame, layout = card(text("custom.title"))
+        layout.addWidget(label(text("custom.intro"), "sub"))
+        jar = QLineEdit()
+        jar.setReadOnly(True)
+        choose = push(text("custom.choose_jar"))
+        choose.clicked.connect(
+            lambda: jar.setText(
+                self.window_.pc.pick_file(text("custom.jar"), f"{text('custom.jar')} (*.jar)")
+                or jar.text()
+            )
+        )
+        pick = QHBoxLayout()
+        pick.addWidget(jar, 1)
+        pick.addWidget(choose)
+        holder = QWidget()
+        holder.setLayout(pick)
+        bases = QComboBox()
+        for kind in self.options["types"]:
+            if kind.get("edition") != "bedrock":
+                bases.addItem(kind["name"], kind["id"])
+        bases.setCurrentIndex(max(0, bases.findData("paper")))
+        row = QHBoxLayout()
+        row.addWidget(field(text("custom.jar"), holder), 2)
+        row.addWidget(field(text("custom.based_on"), bases), 1)
+        layout.addLayout(row)
+        name = QLineEdit()
+        name.setMaxLength(60)
+        folder, folder_box = self.folder_field(
+            text("new.folder"), text("new.folder_hint"), "C:\\Minecraft\\MyFork"
+        )
+        row = QHBoxLayout()
+        row.addWidget(field(text("add.name"), name), 1)
+        row.addWidget(folder, 1)
+        layout.addLayout(row)
+        layout.addWidget(label(text("custom.warning"), "notice"))
+        trust = QCheckBox(text("custom.trust"))
+        eula = QCheckBox(text("new.eula_tick"))
+        layout.addWidget(trust)
+        layout.addWidget(eula)
+        create = push(text("new.create"), "primary")
+        said = label(kind="sub")
+        buttons = QHBoxLayout()
+        buttons.addWidget(create)
+        buttons.addWidget(said, 1)
+        layout.addLayout(buttons)
+
+        def make() -> None:
+            if not jar.text():
+                said.setText(text("custom.need_jar"))
+            elif not name.text().strip() or not folder_box.text().strip():
+                said.setText(text("add.need_name_and_folder"))
+            elif not trust.isChecked():
+                said.setText(text("custom.need_trust"))
+            elif not eula.isChecked():
+                said.setText(text("new.need_eula"))
+            else:
+                create.setEnabled(False)
+                said.setText(text("new.creating"))
+                body = {
+                    "name": name.text().strip(),
+                    "directory": folder_box.text().strip(),
+                    "jar": jar.text(),
+                    "based_on": bases.currentData(),
+                    "color": self.choice["color"],
+                    "trusted": True,
+                    "eula_accepted": True,
+                }
+                window = self.window_
+                window.run(
+                    lambda: window.agent.call("POST", "/new-server/custom-jar", body, slow=True),
+                    lambda result: self.created(result, text("new.created", name=result["name"])),
+                    lambda exc: said.setText(str(exc)),
+                    lambda: create.setEnabled(True),
+                )
+
+        create.clicked.connect(make)
+        return frame
+
+    # ------------------------------------------------------------ bring a server in
+    def bring_card(self) -> QFrame:
+        """A folder or zip is read first and what was found is shown; only
+        then is it copied (as a job), so the original never changes."""
+        frame, layout = card(text("bring.title"))
+        layout.addWidget(label(text("bring.intro"), "sub"))
+        path = QLineEdit()
+        path.setMaxLength(400)
+        path.setPlaceholderText("C:\\Downloads\\MyServer.zip")
+        row = QHBoxLayout()
+        row.addWidget(path, 1)
+        if self.window_.agent.place == "this PC":
+            pc = self.window_.pc
+            for words, picker in (
+                ("bring.pick_folder", lambda: pc.pick_folder(text("bring.path"))),
+                ("bring.pick_zip", lambda: pc.pick_file(text("bring.path"), "Zip (*.zip)")),
+            ):
+                button = push(text(words))
+                button.clicked.connect(lambda _=False, p=picker: path.setText(p() or path.text()))
+                row.addWidget(button)
+        read = push(text("bring.read"), "primary")
+        row.addWidget(read)
+        layout.addWidget(label(text("bring.path"), "sub"))
+        layout.addLayout(row)
+        self.bring_slot = QVBoxLayout()
+        layout.addLayout(self.bring_slot)
+
+        def read_it() -> None:
+            if not path.text().strip():
+                return
+            refill(self.bring_slot, [label(text("bring.reading"), "sub")])
+            window = self.window_
+            window.run(
+                lambda: window.agent.call("POST", "/bring-in/read", {"path": path.text().strip()}),
+                self.show_found,
+                lambda exc: refill(self.bring_slot, [label(str(exc), "problem")]),
+            )
+
+        read.clicked.connect(read_it)
+        return frame
+
+    def show_found(self, found: dict) -> None:
+        shown = [label(text("bring.found", summary=found["summary"]), "step")]
+        if found.get("minecraft"):
+            shown.append(label(text("bring.from_files"), "sub"))
+        if found.get("needs_install"):
+            shown.append(label(text("bring.needs_install", name=found["type_name"]), "sub"))
+        if found.get("problem"):
+            refill(self.bring_slot, [*shown, label(found["problem"], "problem")])
+            return
+        custom = found.get("type") is None
+        if custom and not mode["technical"]:
+            refill(self.bring_slot, [*shown, label(text("bring.unknown_simple"), "problem")])
+            return
+        form = QWidget()
+        layout = QVBoxLayout(form)
+        layout.setContentsMargins(0, 0, 0, 0)
+        bases, jars, trust = QComboBox(), QComboBox(), QCheckBox(text("custom.trust"))
+        if custom:
+            layout.addWidget(label(text("bring.unknown"), "notice"))
+            for kind in self.options["types"]:
+                if kind.get("edition") != "bedrock":
+                    bases.addItem(kind["name"], kind["id"])
+            for jar in found.get("jars") or []:
+                jars.addItem(jar, jar)
+            jars.setCurrentIndex(max(0, jars.findData(found.get("jar"))))
+            row = QHBoxLayout()
+            row.addWidget(field(text("custom.based_on"), bases), 1)
+            row.addWidget(field(text("bring.which_jar"), jars), 1)
+            layout.addLayout(row)
+            layout.addWidget(label(text("custom.warning"), "notice"))
+            layout.addWidget(trust)
+        name = QLineEdit(Path(found["path"]).stem[:60])
+        name.setMaxLength(60)
+        folder, folder_box = self.folder_field(
+            text("bring.folder"), text("bring.folder_hint"), "C:\\Minecraft\\Survival"
+        )
+        row = QHBoxLayout()
+        row.addWidget(field(text("add.name"), name), 1)
+        row.addWidget(folder, 1)
+        layout.addLayout(row)
+        go = push(text("bring.button"), "primary")
+        said = label(kind="sub")
+        buttons = QHBoxLayout()
+        buttons.addWidget(go)
+        buttons.addWidget(said, 1)
+        layout.addLayout(buttons)
+
+        def start() -> None:
+            if not name.text().strip() or not folder_box.text().strip():
+                said.setText(text("add.need_name_and_folder"))
+                return
+            if custom and not trust.isChecked():
+                said.setText(text("custom.need_trust"))
+                return
+            go.setEnabled(False)
+            body = {
+                "path": found["path"],
+                "name": name.text().strip(),
+                "directory": folder_box.text().strip(),
+                **(
+                    {"based_on": bases.currentData(), "jar": jars.currentData(), "trusted": True}
+                    if custom
+                    else {}
+                ),
+            }
+            window = self.window_
+            window.run(
+                lambda: window.agent.call("POST", "/bring-in", body),
+                lambda _r: said.setText(text("bring.started", name=body["name"])),
+                lambda exc: said.setText(str(exc)),
+                lambda: go.setEnabled(True),
+            )
+
+        go.clicked.connect(start)
+        refill(self.bring_slot, [*shown, form])
+
+    # ------------------------------------------------------------ from backup copies
+    def back_card(self) -> QFrame:
+        """On a new PC: the servers in the off-PC backup folder, each rebuilt
+        from its newest copy. The folder is only read."""
+        frame, layout = card(text("back.title"))
+        layout.addWidget(label(text("back.intro"), "sub"))
+        folder, box = self.folder_field(text("back.folder"), "", "E:\\Backups")
+        layout.addWidget(folder)
+        read = push(text("bring.read"), "primary")
+        row = QHBoxLayout()
+        row.addWidget(read)
+        row.addStretch()
+        layout.addLayout(row)
+        self.back_slot = QVBoxLayout()
+        layout.addLayout(self.back_slot)
+
+        def read_it() -> None:
+            if not box.text().strip():
+                return
+            refill(self.back_slot, [label(text("bring.reading"), "sub")])
+            window = self.window_
+            window.run(
+                lambda: window.agent.call(
+                    "POST", "/bring-back/read", {"folder": box.text().strip()}
+                ),
+                lambda found: self.show_backed_up(box.text().strip(), found["servers"]),
+                lambda exc: refill(self.back_slot, [label(str(exc), "problem")]),
+            )
+
+        read.clicked.connect(read_it)
+        return frame
+
+    def show_backed_up(self, source: str, servers: list[dict]) -> None:
+        shown: list[QWidget] = []
+        picks: list[tuple[dict, QCheckBox, QLineEdit | None]] = []
+        for s in servers:
+            tick = QCheckBox(s["name"])
+            parts = [
+                " ".join(x for x in (s.get("type_name"), s.get("minecraft")) if x),
+                text("back.newest", when=clock(s["backup_at"]), size=size(s["size_bytes"])),
+            ]
+            shown.append(tick)
+            words = s.get("problem") or "  ·  ".join(p for p in parts if p)
+            if s.get("here") and not s.get("problem"):
+                words += "  ·  " + text("back.here")
+            shown.append(label(words, "problem" if s.get("problem") else "sub"))
+            version: QLineEdit | None = None
+            if s.get("problem"):
+                tick.setEnabled(False)
+            else:
+                tick.setChecked(not s.get("here"))
+                if not s.get("minecraft"):
+                    version = QLineEdit()
+                    version.setMaxLength(64)
+                    version.setPlaceholderText(text("back.version"))
+                    version.setAccessibleName(text("back.version"))
+                    shown.append(version)
+            picks.append((s, tick, version))
+        place, place_box = self.folder_field(
+            text("back.where"), text("back.where_hint"), "C:\\Minecraft"
+        )
+        shown.append(place)
+        eula = QCheckBox(text("new.eula_tick"))
+        link = push(text("new.eula_link"), "plain")
+        link.clicked.connect(lambda: self.window_.pc.open_link(self.options.get("eula_url") or ""))
+        shown += [link, eula]
+        go = push(text("back.button"), "primary")
+        said = label(kind="sub")
+        buttons = QWidget()
+        h = QHBoxLayout(buttons)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(go)
+        h.addWidget(said, 1)
+        shown.append(buttons)
+
+        def start() -> None:
+            chosen = [(s, v) for s, tick, v in picks if tick.isChecked()]
+            parent = place_box.text().strip()
+            if not chosen or not parent:
+                said.setText(text("back.need_pick"))
+                return
+            if not eula.isChecked():
+                said.setText(text("new.need_eula"))
+                return
+            go.setEnabled(False)
+            for s, version in chosen:
+                bring(
+                    {
+                        "folder": source,
+                        "server": s["id"],
+                        "name": s["name"],
+                        "directory": str(Path(parent) / s["name"]),
+                        "minecraft_version": version.text().strip() if version else None,
+                        "eula_accepted": True,
+                    }
+                )
+
+        def bring(body: dict) -> None:
+            window = self.window_
+            window.run(
+                lambda: window.agent.call("POST", "/bring-back", body),
+                lambda _r: said.setText(text("bring.started", name=body["name"])),
+                lambda exc: said.setText(str(exc)),
+                lambda: go.setEnabled(True),
+            )
+
+        go.clicked.connect(start)
+        refill(self.back_slot, shown)
 
     # ------------------------------------------------------------ from a modpack
     def pack_card(self) -> QFrame:

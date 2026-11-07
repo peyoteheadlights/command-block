@@ -17,6 +17,8 @@ from .bridge import escape
 from .live import duration
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ..minecraft.chat import ChatMessage
 
 LABELS = {
@@ -76,8 +78,12 @@ def level_up(member_id: str, level: int, role: str | None) -> str:
     return f"{words} They're a **{escape(role)}** now." if role else words
 
 
-def leaderboard(servers: str, played: list[dict[str, Any]], top: list[tuple[str, int]]) -> str:
+def leaderboard(
+    servers: str, played: list[dict[str, Any]], top: list[tuple[str, int]], off: Sequence[str] = ()
+) -> str:
     lines = [f"**This week on {servers}**", "", "Most played in the last 7 days:"]
+    if off:  # never a total that quietly leaves a PC out
+        lines.insert(1, f"Not counted: the servers on {' and '.join(off)}, which didn't answer.")
     lines += [
         f"{i}. {escape(p['name'])}: {duration(p['seconds'])}" for i, p in enumerate(played, 1)
     ] or ["Nobody played this week."]

@@ -41,7 +41,7 @@ from .. import colors, servertypes
 from ..config import PROJECT_ROOT, check_server_id
 from ..security.paths import check_new_server_folder
 from .install import InstallError, install_plan
-from .versions import list_versions, make_plan
+from .versions import java_for, list_versions, make_plan
 
 if TYPE_CHECKING:
     from ..core import AgentCore
@@ -229,9 +229,11 @@ async def create_server(
     memory_mb: int | None = None,
     color: str | None = None,
     eula_accepted: bool = False,
+    vanilla_spawns: bool = False,
     user: str = "system",
     after_install: Callable[[Any, Path, Any], Awaitable[dict[str, Any]]] | None = None,
     title: str | None = None,
+    test: bool = False,
 ) -> dict[str, Any]:
     """Create a new server. Returns the new server's summary and the job.
 
@@ -266,6 +268,7 @@ async def create_server(
     if entry is None:
         raise InstallError(f"{server_type.name} doesn't offer Minecraft {minecraft}.")
     if server_type.needs_java:
+        await java_for(minecraft)
         problem = java_problem(minecraft, core.config.server.java)
         if problem:
             raise InstallError(problem["problem"])
@@ -311,11 +314,14 @@ async def create_server(
                 "name": name,
                 "directory": str(folder),
                 "type": server_type.id,
+                # A notes-file type names its base, so it loads before the notes do.
+                **({"like": server_type.like} if server_type.like else {}),
                 "jar": plan.jar or server_type.jar,
                 "args_file": "",
                 "java": core.config.server.java,
                 "jvm_args": [] if is_bedrock else [f"-Xmx{memory}M"],
                 "port": port,
+                **({"test": True} if test else {}),
             }
             # A ServerContext is needed to install (the install log and the
             # data folder belong to the server), so register it first and
@@ -341,6 +347,10 @@ async def create_server(
             if server_type.content_folder:
                 ctx.config.set("mods.directory", server_type.content_folder)
             ctx.config.save()
+            if vanilla_spawns and server_type.changes_farms:
+                from ..gamesettings import write_vanilla_spawns
+
+                write_vanilla_spawns(folder)
             core.db.set_server_software(server_id, server_type.id, result["loader_version"])
             if color:
                 core.db.set_server_color(server_id, colors.normalise(color))

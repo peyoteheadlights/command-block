@@ -134,7 +134,8 @@ def test_the_list_shows_each_mod_and_changes_wait_until_the_server_stops(qapp, a
     with_mods(agent_http)
     running(qapp, agent_http)
     window, page = mods_page(qapp, agent_http)
-    wait_for(qapp, lambda: "3 mods installed" in shown_text(page))
+    # The rows are shown on the next turn of the event loop, after the count.
+    wait_for(qapp, lambda: "3 mods installed" in shown_text(page) and "Alpha" in shown_text(page))
     text = shown_text(page)
     assert "Alpha" in text and "Beta" in text and "Off" in text and "Working" in text
     assert "Stop the server first" in text
@@ -305,11 +306,13 @@ def test_add_a_file_and_drop_jar_files_on_the_window(qapp, agent_http, tmp_path)
     folder = with_mods(agent_http)
     pc = FakePC()
     window, page = mods_page(qapp, agent_http, pc)
+    asked = []
+    window.confirm = lambda title, *words: asked.append(title) or True  # no site lists these jars
     wait_for(qapp, lambda: button(page, "Add a file").isEnabled())
     pc.picked = str(make_jar(tmp_path / "one.jar", "one", name="One"))
     button(page, "Add a file").click()
     wait_for(qapp, lambda: "Added One" in page.note.text(), 20)
-    assert (folder / "one.jar").exists()
+    assert (folder / "one.jar").exists() and asked
 
     two, three = (
         make_jar(tmp_path / "two.jar", "two", name="Two"),
@@ -439,3 +442,288 @@ def test_a_moderator_without_mods_rights_sees_no_change_buttons(qapp, agent_http
     wait_for(qapp, lambda: "3 mods installed" in shown_text(page))
     assert not buttons_named(page, "Turn off") and not buttons_named(page, "Update all")
     assert not page.search_card.isVisibleTo(page)
+
+
+def test_a_datapack_drop_and_a_github_link_are_marked_not_checked(
+    qapp, agent_http, tmp_path, monkeypatch
+):
+    from agent import downloads
+
+    from .test_hangar_and_links import DATAPACK, FakeSites
+
+    class FabricRelease(FakeSites):
+        def asset_bytes(self, name):
+            return (tmp_path / "tree.jar").read_bytes()
+
+    make_jar(tmp_path / "tree.jar", "treeplugin", "1.2", name="Trees")
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(FabricRelease()))
+    folder = with_mods(agent_http)
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.read.isEnabled())
+    pack = tmp_path / "trees.zip"
+    pack.write_bytes(DATAPACK)
+    window.open_page("Overview")
+    assert drop(qapp, window, [pack])
+    wait_for(qapp, lambda: "Added the datapack trees" in page.note.text(), 20)
+    assert "Not checked by Modrinth" in page.note.text()
+    world = core_of(agent_http).servers["survival"].config.server_dir / "world"
+    assert (world / "datapacks" / "trees.zip").is_file()
+
+    page.link_box.setText("https://www.planetminecraft.com/data-pack/trees/")
+    page.read.click()
+    wait_for(qapp, lambda: "Download it in your browser" in page.note.text(), 20)
+
+    picks = []
+    window.pick = lambda title, body, choices: picks.append((title, choices)) or 0
+    window.confirm = lambda *words: True  # no site lists this jar: asked first
+    page.link_box.setText("https://github.com/tree-maker/trees/releases/tag/v1.2")
+    page.read.click()
+    wait_for(qapp, lambda: "Added Trees" in page.note.text(), 20)
+    assert picks[0][0] == "Which file from Trees v1.2?"
+    assert picks[0][1][0].startswith("TreePlugin-1.2.jar")
+    assert (folder / "TreePlugin-1.2.jar").is_file()
+    wait_for(qapp, lambda: "Not checked by Modrinth" in shown_text(page))
+
+
+def test_a_paper_server_searches_hangar_too_and_names_each_site(qapp, agent_http, monkeypatch):
+    from agent import downloads
+
+    from .test_hangar_and_links import FakeSites, PluginModrinth
+
+    sites = FakeSites()
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(sites))
+    ctx = core_of(agent_http).servers["survival"]
+    ctx.config.set("server.type", "paper")
+    use(agent_http, PluginModrinth())
+    window = signed_in_on(qapp, agent_http)
+    window.refresh()
+    wait_for(qapp, lambda: "Plugins" in page_tabs(window))
+    page = open_page(qapp, window, "Mods")
+    wait_for(qapp, lambda: page.data)
+    assert "Add from Modrinth or Hangar" in shown_text(page)
+    page.search_box.setText("via")
+    page.search()
+    wait_for(qapp, lambda: "1,031 downloads on Hangar" in shown_text(page), 20)
+    sites.down.add("hangar.papermc.io")
+    page.search_box.setText("essentials")
+    page.search()
+    wait_for(qapp, lambda: "Hangar isn't available right now." in shown_text(page), 20)
+    assert "EssentialsX" in shown_text(page)
+
+
+def test_curseforge_results_needs_you_and_the_sha1_label(qapp, agent_http, monkeypatch):
+    from agent import downloads
+
+    from .test_curseforge import FakeCurseForge
+
+    relay = FakeCurseForge()
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(relay))
+    folder = mods_folder(agent_http)
+    folder.mkdir(exist_ok=True)
+    (folder / "lithium.jar").write_bytes(relay.jar(5001))
+    mods = core_of(agent_http).servers["survival"].mods
+    mods.db.set_setting(
+        "mod_source:lithium", {"source": "curseforge", "project": "curseforge:394468"}
+    )
+    mods.need_you(
+        {
+            "project": "curseforge:333",
+            "name": "Secret Mod",
+            "filename": "secret-1.0.jar",
+            "page": "https://www.curseforge.com/minecraft/mc-mods/m333",
+        }
+    )
+    use(agent_http, FakeModrinth({}))
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc=pc)
+    assert "Add from Modrinth or CurseForge" in shown_text(page)
+    wait_for(qapp, lambda: "Checked (sha1), a weaker check than Modrinth's" in shown_text(page))
+    assert "Needs you" in shown_text(page) and "The file: secret-1.0.jar" in shown_text(page)
+    row_button(page, "Open on CurseForge", "Secret Mod").click()
+    assert pc.opened == ["https://www.curseforge.com/minecraft/mc-mods/m333"]
+
+    page.search_box.setText("lithium")
+    page.search()
+    wait_for(qapp, lambda: "downloads on CurseForge" in shown_text(page), 20)
+    page.search_box.setText("secret")
+    page.search()
+    wait_for(qapp, lambda: "doesn't let other apps download it" in shown_text(page), 20)
+    assert not row_buttons(page, "Install", "Secret Mod"), "never a download for it"
+
+    row_button(page, "Remove from the list", "Secret Mod").click()
+    wait_for(qapp, lambda: not page.needs_you_card.isVisibleTo(page), 20)
+    assert mods.needs_you() == []
+
+
+FOUND = {
+    "type": "fabric",
+    "minecraft_version": "1.21.1",
+    "problem": None,
+    "read_at": 1793422800.0,
+    "stale": None,
+    "good_to_have": [
+        {
+            "name": "Chunky",
+            "project": "chunky",
+            "description": "Pre-generates chunks.",
+            "kind": "good_to_have",
+            "group": "starter",
+            "changes_gameplay": False,
+            "technical_only": False,
+            "place": "server",
+            "release_type": "release",
+            "downloads": {"count": 1234, "source": "Modrinth", "read_at": 1793422800.0},
+        }
+    ],
+    "often_used_with": [],
+    "performance": [
+        {"kind": "settings", "name": "Lower view and simulation distance", "values": {}},
+        {"kind": "performance", "name": "Lithium", "project": "lithium"},
+    ],
+    "performance_reason": {"why": "lag", "evidence": "TPS was under 18 in 40 of 60 readings."},
+    "for_your_players": [
+        {"name": "Sodium", "page": "https://modrinth.com/mod/sodium", "also_on_server": False}
+    ],
+    "maps": [
+        {
+            "id": "bluemap",
+            "name": "BlueMap",
+            "port": 8100,
+            "source": "config/bluemap/webserver.conf",
+            "link": "http://100.64.0.9:8100/",
+        }
+    ],
+}
+
+
+def test_suggestions_map_link_and_speed_ups_are_shown(qapp, agent_http, monkeypatch):
+    from agent import suggestions
+
+    async def lists(ctx, technical):
+        return FOUND
+
+    monkeypatch.setattr(suggestions, "lists", lists)
+    with_mods(agent_http)
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc)
+    wait_for(qapp, lambda: page.players_card.isVisibleTo(page))
+    assert "Sodium" in shown_text(page.players_card)
+    assert not page.ideas_card.isVisibleTo(page)  # the lists are Technical only
+    # Qt shows a button added to a shown page on the next turn of the event loop.
+    wait_for(qapp, lambda: buttons_named(page, "Open the BlueMap map"))
+    buttons_named(page, "Open the BlueMap map")[0].click()
+    assert pc.opened == ["http://100.64.0.9:8100/"]
+
+    button(window, "Technical").click()
+    page = open_page(qapp, window, "Mods")
+    # The card can show its heading before the lists arrive.
+    wait_for(
+        qapp,
+        lambda: page.ideas_card.isVisibleTo(page) and "Chunky" in shown_text(page.ideas_card),
+    )
+    assert "1,234 downloads (Modrinth" in shown_text(page.ideas_card)
+
+    page = open_page(qapp, window, "Performance")
+    wait_for(qapp, lambda: "TPS was under 18" in shown_text(page))
+    assert buttons_named(page, "Apply") and buttons_named(page, "Add")
+
+
+def test_speed_ups_need_a_measured_reason(qapp, agent_http, monkeypatch):
+    from agent import suggestions
+
+    async def lists(ctx, technical):
+        return {**FOUND, "performance": [], "performance_reason": None}
+
+    monkeypatch.setattr(suggestions, "lists", lists)
+    window = signed_in_on(qapp, agent_http)
+    button(window, "Technical").click()
+    page = open_page(qapp, window, "Performance")
+    wait_for(qapp, lambda: "No measured lag" in shown_text(page))
+    assert not buttons_named(page, "Add")
+
+
+# ---------------------------------------------------------------- guides and Edit settings
+def plugin_server(agent_http):
+    """Survival as a Paper server with Chunky and its settings file."""
+    from .test_guides import plugin_jar
+
+    ctx = core_of(agent_http).servers["survival"]
+    ctx.config.set("server.type", "paper")
+    plugin_jar(ctx.config.mods_dir, "Chunky", "1.4.40")
+    (ctx.config.mods_dir / "Chunky").mkdir()
+    (ctx.config.mods_dir / "Chunky" / "config.yml").write_text("language: en\n", encoding="utf-8")
+    return ctx
+
+
+def dialog_of(qapp, kind):
+    from desktop.editor import FileEditor, GuideWindow
+
+    wanted = {"guide": GuideWindow, "file": FileEditor}[kind]
+    found: list = []
+    wait_for(
+        qapp,
+        lambda: (
+            found.extend(
+                w for w in qapp.topLevelWidgets() if isinstance(w, wanted) and w.isVisible()
+            )
+            or found
+        ),
+    )
+    return found[0]
+
+
+def test_a_guide_button_sends_its_command_and_shows_the_console_answer(qapp, agent_http):
+    plugin_server(agent_http)
+    running(qapp, agent_http)
+    window = signed_in_on(qapp, agent_http)
+    window.refresh()
+    page = open_page(qapp, window, "Mods")
+    wait_for(qapp, lambda: row_buttons(page, "Guide", "Chunky"))
+    row_button(page, "Guide", "Chunky").click()
+    guide = dialog_of(qapp, "guide")
+    assert "Loads the world ahead of time" in shown_text(guide)
+    assert "chunky progress" not in shown_text(guide)  # Simple: no raw commands
+    asked_titles: list = []
+    window.confirm = lambda title, body, yes: asked_titles.append(title) or False
+    start = [
+        b for b in guide.findChildren(QtWidgets.QPushButton) if b.text() == "Load the world ahead"
+    ]
+    start[0].click()
+    assert asked_titles == ["Load the world ahead"]  # it changes the world, so it asked
+    button(guide, "Show progress").click()
+    wait_for(qapp, lambda: "[Console] chunky progress" in shown_text(guide), 20, 0.1)
+    guide.close()
+
+
+def test_edit_settings_refuses_broken_yaml_on_its_line_then_saves_with_undo(qapp, agent_http):
+    ctx = plugin_server(agent_http)
+    window = signed_in_on(qapp, agent_http)
+    window.refresh()
+    page = open_page(qapp, window, "Mods")
+    wait_for(qapp, lambda: row_buttons(page, "Guide", "Chunky"))
+    menu_item(page, "Edit settings").trigger()
+    editor = dialog_of(qapp, "file")
+    assert editor.box.toPlainText() == "language: en\n"
+    assert "Careful" in shown_text(editor)
+    editor.box.setPlainText("language: en\n  bad: [\n")
+    editor.save.click()
+    wait_for(qapp, lambda: editor.problem.isVisible())
+    assert editor.box.textCursor().blockNumber() in (1, 2)
+    editor.box.setPlainText("language: de\n")
+    editor.save.click()
+    wait_for(qapp, lambda: not editor.isVisible())
+    path = ctx.config.mods_dir / "Chunky" / "config.yml"
+    assert path.read_text(encoding="utf-8") == "language: de\n"
+    wait_for(qapp, lambda: "Undo puts the old one back" in page.note.text())
+
+
+def test_the_settings_page_lists_the_folders_other_config_files(qapp, agent_http):
+    ctx = plugin_server(agent_http)
+    (ctx.config.server_dir / "bukkit.yml").write_text("a: 1\n", encoding="utf-8")
+    window = signed_in_on(qapp, agent_http)
+    page = open_page(qapp, window, "Settings")
+    wait_for(qapp, lambda: page.findChildren(QtWidgets.QListWidget))
+    listed = page.findChildren(QtWidgets.QListWidget)[0]
+    names = [listed.item(i).text() for i in range(listed.count())]
+    assert "bukkit.yml" in names and "plugins/Chunky/config.yml" in names
+    assert "server.properties" not in names

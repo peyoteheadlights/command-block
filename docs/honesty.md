@@ -13,7 +13,7 @@ number you cannot trust.
 | --- | --- | --- |
 | Server state | The child process the agent launched, plus the `Done (…)!` line in the console | Before the agent has checked anything, the state is `UNKNOWN` - not `OFFLINE` |
 | ONLINE specifically | The startup line actually appearing in the console | A launched process that has not finished starting is `STARTING`, never `ONLINE` |
-| Minecraft version | The version line this server's own console printed (each type prints its own: Fabric and Quilt's `Loading Minecraft X with … Loader Y`, Forge and NeoForge's `… vX Initialized`, Paper and Purpur's `(MC: X)`) | Until the server has started once. Never guessed from a jar name, a folder name, or the version somebody picked in the app |
+| Minecraft version | The version line this server's own console printed (each type prints its own: Fabric and Quilt's `Loading Minecraft X with … Loader Y`, Forge and NeoForge's `… vX Initialized`, Paper, Purpur and Leaf's `(MC: X)`) | Until the server has started once. Never guessed from a jar name, a folder name, the version somebody picked in the app, or what a brought-in server's files say (that one stays pending) |
 | Loader version | The same console line | Same |
 | Server type | What the config says it is, next to what the console's loader line says it is | A console that hasn't printed a loader line yet. The two disagreeing is reported, never resolved by guessing |
 | A version just installed | Still Unknown. The chosen version is kept as `pending_version` and only becomes the version once the console reports it | Always, until that happens |
