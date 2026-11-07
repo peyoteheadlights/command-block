@@ -463,31 +463,19 @@ def test_undo_and_redo_are_named_and_undo_on_the_agent(qapp, agent_http):
 def test_a_narrow_window_puts_the_right_panel_under_the_overview(qapp, agent_http):
     window = signed_in_on(qapp, agent_http)
     panel = window.server_screen.panel
+    # A wide hidden screen (Windows fonts made one 1162 wide) must not keep
+    # the window from getting narrow.
+    window.help.setMinimumWidth(1500)
     window.resize(1400, 800)
     wait_for(
         qapp,
         lambda: panel.isVisibleTo(window) and panel.mapTo(window, panel.rect().topLeft()).x() > 900,
     )
     window.resize(900, 800)
-    try:
-        wait_for(
-            qapp,
-            lambda: (
-                panel.isVisibleTo(window) and panel.mapTo(window, panel.rect().topLeft()).x() < 100
-            ),
-        )
-    except AssertionError:
-        # Only fails on Windows CI so far: say which parts keep the window wide.
-        widest = sorted(
-            (w.minimumSizeHint().width(), type(w).__name__, w.objectName())
-            for w in window.findChildren(QtWidgets.QWidget)
-            if w.isVisibleTo(window)
-        )[-12:]
-        raise AssertionError(
-            f"window {window.width()} wide (needs at least {window.minimumSizeHint().width()}), "
-            f"panel visible {panel.isVisibleTo(window)} "
-            f"at x={panel.mapTo(window, panel.rect().topLeft()).x()}, widest parts {widest}"
-        ) from None
+    wait_for(
+        qapp,
+        lambda: panel.isVisibleTo(window) and panel.mapTo(window, panel.rect().topLeft()).x() < 100,
+    )
 
 
 def test_every_control_has_a_name_and_can_be_reached_with_tab(qapp, agent_http):

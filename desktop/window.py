@@ -333,6 +333,24 @@ class AllServersScreen(QWidget):
                     self.rows.addWidget(ServerRow(self.window_, row, act))
 
 
+class ScreenStack(QStackedWidget):
+    """Only the shown screen sets how small the window can get. A plain
+    QStackedWidget takes the widest of all screens, so one wide hidden
+    screen kept the window too wide for the narrow layout."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.currentChanged.connect(lambda _i: self.updateGeometry())
+
+    def sizeHint(self) -> QSize:
+        shown = self.currentWidget()
+        return shown.sizeHint() if shown is not None else super().sizeHint()
+
+    def minimumSizeHint(self) -> QSize:
+        shown = self.currentWidget()
+        return shown.minimumSizeHint() if shown is not None else super().minimumSizeHint()
+
+
 class MainWindow(QMainWindow):
     STILL_DOWN_MS = 180_000  # then "may be off or asleep"
     TASK_AFTER_MS = 15_000  # after a Tailscale move, then run the agent's task
@@ -411,7 +429,7 @@ class MainWindow(QMainWindow):
             self.tools[name] = tool
             bar.addWidget(tool)
         column.addWidget(self.topbar)
-        self.stack = QStackedWidget()
+        self.stack = ScreenStack()
         column.addWidget(self.stack, 1)
         self.setCentralWidget(desk)
         self.setAcceptDrops(True)
