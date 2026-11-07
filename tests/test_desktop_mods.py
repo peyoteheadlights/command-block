@@ -616,8 +616,9 @@ def test_suggestions_map_link_and_speed_ups_are_shown(qapp, agent_http, monkeypa
 
     button(window, "Technical").click()
     page = open_page(qapp, window, "Mods")
-    wait_for(qapp, lambda: page.ideas_card.isVisibleTo(page))
-    assert "Chunky" in shown_text(page.ideas_card)
+    # The card can show its heading before the lists arrive.
+    wait_for(qapp, lambda: "Chunky" in shown_text(page.ideas_card))
+    assert page.ideas_card.isVisibleTo(page)
     assert "1,234 downloads (Modrinth" in shown_text(page.ideas_card)
 
     page = open_page(qapp, window, "Performance")
