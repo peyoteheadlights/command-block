@@ -244,7 +244,7 @@ class AccountRow:
         self.code, self.url = status.get("code"), status.get("url") or ""
         waiting = bool(self.url) and not status.get("signed_in")
         if status.get("signed_in"):
-            names = [status.get(n) for n in ("java_name", "gamertag", "name") if status.get(n)]
+            names = [str(status[n]) for n in ("java_name", "gamertag", "name") if status.get(n)]
             words = text(f"{self.words}.signed_in", names=", ".join(names) or "?")
         elif waiting:
             words = text(f"{self.words}.type_code", url=self.url, code=self.code or "")
