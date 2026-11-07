@@ -39,6 +39,7 @@ async def probe(account: str, secret: Path) -> dict:
         # 0xC0000142: Windows couldn't set the program up in this session).
         answer["exit_code"] = hex((process.returncode or 0) & 0xFFFFFFFF)
         answer["stderr"] = err.decode(errors="replace").strip()
+        answer["desktop"] = dict(serveruser.desktop_note)
     except (OSError, serveruser.ServerUserMissing) as exc:
         answer["run_as"] = f"refused: {exc!r} winerror={getattr(exc, 'winerror', None)}"
     return answer

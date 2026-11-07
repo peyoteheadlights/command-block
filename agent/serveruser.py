@@ -376,6 +376,7 @@ def _allow_agent(process: int) -> None:
 _STATION_RIGHTS = 0x037F  # WINSTA_ALL_ACCESS
 _DESKTOP_RIGHTS = 0x01FF  # DESKTOP_ALL_ACCESS
 _desktop_for: dict[str, str] = {}  # account -> "station\\desktop", granted once
+desktop_note: dict[str, Any] = {}  # what the last try found, for the boot test
 
 
 def _hidden_desktop(account: str) -> str | None:
@@ -407,15 +408,31 @@ def _hidden_desktop(account: str) -> str | None:
     station = user32.GetProcessWindowStation()
     desktop = user32.GetThreadDesktop(kernel.GetCurrentThreadId())
     station_name, desktop_name = name_of(station), name_of(desktop)
+    desktop_note["names"] = f"{station_name}\\{desktop_name}"
     if not station_name or not desktop_name or station_name.lower() == "winsta0":
         return None
-    for handle, rights in ((station, _STATION_RIGHTS), (desktop, _DESKTOP_RIGHTS)):
-        code = _add_to_access_list(handle, 7, rights, account)  # SE_WINDOW_OBJECT
-        if code != 0:
-            # The start below then fails with 0xC0000142 and the server log
-            # says the server stopped; this line says why.
-            log.warning("could not let %s use the hidden desktop: %s", account, code)
-            return None
+    # The handles above can't change access lists, so open both again by
+    # name asking for that right (READ_CONTROL | WRITE_DAC).
+    change = 0x00020000 | 0x00040000
+    user32.OpenWindowStationW.restype = wintypes.HANDLE
+    user32.OpenDesktopW.restype = wintypes.HANDLE
+    opened = [
+        (user32.OpenWindowStationW(station_name, False, change), _STATION_RIGHTS, "station"),
+        (user32.OpenDesktopW(desktop_name, 0, False, change), _DESKTOP_RIGHTS, "desktop"),
+    ]
+    try:
+        for handle, rights, what in opened:
+            code = _add_to_access_list(handle, 7, rights, account) if handle else -1
+            desktop_note[what] = code if handle else "could not open it"
+            if code != 0:
+                # The start below then stops with 0xC0000142; this says why.
+                log.warning("could not let %s use the hidden %s: %s", account, what, code)
+                return None
+    finally:
+        for handle, _, what in opened:
+            if handle:
+                close = user32.CloseWindowStation if what == "station" else user32.CloseDesktop
+                close(wintypes.HANDLE(handle))
     _desktop_for[account] = f"{station_name}\\{desktop_name}"
     return _desktop_for[account]
 
