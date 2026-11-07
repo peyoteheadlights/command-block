@@ -112,7 +112,7 @@ async def check(
                 "project": project,
                 "version_id": version["version_id"],
                 "version": version["version_number"],
-                "settings": [str(p.relative_to(source.config.server_dir)) for p in settings],
+                "settings": [p.relative_to(source.config.server_dir).as_posix() for p in settings],
             }
         )
     return {

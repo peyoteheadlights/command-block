@@ -263,7 +263,10 @@ def test_bot_offline_run_it_here_and_the_old_bot_pc_stops(pcs, fake):
     a.on()
     wait_for(lambda: a.core.discord is not None and a.core.discord.rest_only)
     assert fake.identifies == 2
-    assert a.core.db.query("SELECT kind, role_id FROM discord_roles ORDER BY kind") == roles
+    # A takes B's Discord settings once it has pulled them (the sync may land a moment later).
+    wait_for(
+        lambda: a.core.db.query("SELECT kind, role_id FROM discord_roles ORDER BY kind") == roles
+    )
     # Commands for A's server now go from B to A over a new Bot link.
     ref = f"test@{a.core.pcs.pc}"
     wait_for(lambda: ref in b.core.botpc.remote())

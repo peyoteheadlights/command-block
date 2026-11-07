@@ -276,7 +276,7 @@ def test_remove_key_deletes_it_and_takes_the_servers_off(multi_client, panel):
     assert response.status_code == 200
     assert len(response.json()["removed"]) == 2
     assert multi_client.get("/api/rented").json() == {"servers": [], "panels": []}
-    assert KEY not in core.rented.key_path.read_bytes().decode()
+    assert KEY.encode() not in core.rented.key_path.read_bytes()  # encrypted on Windows
     assert multi_client.delete(f"/api/rented/panels/{panel_id}").status_code == 404
 
 

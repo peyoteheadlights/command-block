@@ -466,6 +466,9 @@ def test_all_servers_groups_other_pcs_servers_by_pc(qapp, agent_http):
     window = open_window(qapp, agent_http)
     sign_in(qapp, window)
     on_all_servers(qapp, window)
+    # Let the agent's own PC list (this PC alone) arrive first, or it lands
+    # after ours and replaces it.
+    wait_for(qapp, lambda: window.pc.setting("pcs") is not None)
     window.pc.set_setting(
         "pcs",
         [

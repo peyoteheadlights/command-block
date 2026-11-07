@@ -51,7 +51,8 @@ def test_the_schedule_form_offers_the_quietest_hour(qapp, agent_http):
 def test_command_buttons_are_made_and_pressed_on_the_console(qapp, agent_http):
     running(qapp, agent_http)
     window, page = technical_page(qapp, agent_http, "Console")
-    wait_for(qapp, lambda: page.edit_button.isVisibleTo(page))
+    # The Edit button is made when the buttons arrive from the agent.
+    wait_for(qapp, lambda: hasattr(page, "edit_button") and page.edit_button.isVisibleTo(page))
     page.edit_button.click()
     page.editor.setPlainText("Hello: say hi from a button\n")
     page.edit_button.click()
