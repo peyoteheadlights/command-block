@@ -379,6 +379,7 @@ def test_each_pc_owns_its_servers_permissions_with_three_pcs(pcs):
     stolen = {**row, "key": row["key"].replace(b.core.pcs.pc, a.core.pcs.pc, 1)}
     assert a.core.auth.records.apply(stolen) == "refused"
     # Off their last server on A: B still has them, so they stay.
+    wait_for(lambda: a.core.auth.can_see_anything_elsewhere("sam"))
     a.call("PUT", "/api/accounts/sam", owner_a, json={"grants": {"test": []}})
     assert "sam" in names(a)
     # Off B's too, once B has heard about A: gone everywhere.
