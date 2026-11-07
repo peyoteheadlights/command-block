@@ -248,6 +248,8 @@ fun Confirm(
     danger: Boolean,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    /** The other button's words: Cancel when null. */
+    dismiss: String? = null,
 ) {
     val colors = LocalColors.current
     AlertDialog(
@@ -260,7 +262,7 @@ fun Confirm(
                 colors = ButtonDefaults.textButtonColors(contentColor = if (danger) colors.danger else colors.accentInk),
             ) { Text(confirm) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(t("mobile.common.cancel")) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(dismiss ?: t("mobile.common.cancel")) } },
         containerColor = colors.float,
         titleContentColor = colors.text,
         textContentColor = colors.text2,

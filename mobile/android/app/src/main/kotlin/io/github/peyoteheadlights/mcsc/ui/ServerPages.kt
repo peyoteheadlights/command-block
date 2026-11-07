@@ -57,6 +57,9 @@ class ServerPages(
     /** Quests and events. */
     val quests = QuestPages(serverId, scope, client, noted)
 
+    /** Diagnose server. */
+    val diagnose = DiagnosePage(serverId, scope, client, noted)
+
     // ------------------------------------------------------------ console
     var console: Read<List<ConsoleLine>> by mutableStateOf(Read())
         private set

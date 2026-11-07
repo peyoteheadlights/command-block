@@ -13,6 +13,9 @@ GET /api/servers/{server_id}/status
 POST /api/servers/{server_id}/server/start
 POST /api/servers/{server_id}/server/stop
 POST /api/servers/{server_id}/server/restart
+POST /api/servers/{server_id}/server/diagnose
+GET /api/servers/{server_id}/server/diagnose
+POST /api/servers/{server_id}/server/diagnose/changes
 GET /api/servers/{server_id}/logs
 POST /api/servers/{server_id}/logs/clear
 GET /api/servers/{server_id}/server/command/check

@@ -487,6 +487,8 @@ public enum States {
 public enum Permissions {
     public static let SERVER_VIEW = "server.view"
     public static let SERVER_CONTROL = "server.control"
+    /// Diagnose server; risky changes stay the owner's (the agent checks).
+    public static let SERVER_DIAGNOSE = "server.diagnose"
     public static let CONSOLE_SEND = "console.send"
     public static let PLAYERS_MANAGE = "players.manage"
     public static let PLAYERS_OP = "players.op"

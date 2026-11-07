@@ -41,7 +41,7 @@ from .whitelist import online_mode
 
 if TYPE_CHECKING:
     from .core import ServerContext
-    from .jobs import JobHandle
+    from .jobs import Job, JobHandle
 
 TEST_PLAYER = "CommandBlock"
 NOTICE = "Command Block is testing the server: a test player joins for about a minute."
@@ -320,6 +320,25 @@ def _why(step: dict[str, Any]) -> str | None:
             "fetch failed": "Couldn't reach Microsoft's sign-in from this PC.",
         }.get(error, error)
     return None
+
+
+def start(
+    ctx: ServerContext,
+    user: str,
+    mods: bool = False,
+    before: dict[str, Any] | None = None,
+    fixes: list | None = None,
+) -> Job:
+    """Start a round as a job (the apps' button, Apply and Discord's
+    /diagnose all come here). Follow it through ``ctx.diagnosis``."""
+    started = Run(ctx, user, before=before, mods=mods)
+    return ctx.core.jobs.start(
+        "diagnose",
+        f"Diagnosing {ctx.name}",
+        lambda handle: run(started, handle, fixes),
+        server_id=ctx.server_id,
+        user=user,
+    )
 
 
 async def run(out: Run, job: JobHandle, fixes: list | None = None) -> dict[str, Any]:

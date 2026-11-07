@@ -69,8 +69,8 @@ command is checked on the agent like an API route (a sign-in of kind
 `discord`, see `agent/security/permissions.py`), limited to 8 a minute per
 member, and written to the audit log with the member's name.
 
-The new "Quests and events" permission is in no level: tick it for a
-moderator or a Discord role on purpose.
+The "Quests and events" and "Diagnose server" permissions are in no level:
+tick them for a moderator or a Discord role on purpose.
 
 ## Status, alerts and starting
 
@@ -93,6 +93,13 @@ moderator or a Discord role on purpose.
   stopped, with 5 minutes between starts from Discord. If the server refuses
   to start, Discord only hears that it didn't (the reason can name folders
   on the PC); the app shows why.
+- `/diagnose` runs Diagnose server (Discord roles with Diagnose server): the
+  test player joins the ways the server is shared, and the reply turns into
+  a summary when it's done: worked, failed or not checked for each way in,
+  what it recognised, and how many changes wait. Each line's detail
+  (addresses, what the server said) and applying the changes stay in the
+  apps. It doesn't run while the owner is playing (it would kick them), and
+  the join with all mods only runs from the apps.
 - `/store` posts the server's store link (once the owner connected a Tebex
   store). In the Level roles editor, each Store rank can have a Discord
   role: a member whose linked Minecraft account holds the rank gets it, and

@@ -215,6 +215,8 @@ object States {
 object Permissions {
     const val SERVER_VIEW = "server.view"
     const val SERVER_CONTROL = "server.control"
+    /** Diagnose server; risky changes stay the owner's (the agent checks). */
+    const val SERVER_DIAGNOSE = "server.diagnose"
     const val CONSOLE_SEND = "console.send"
     const val PLAYERS_MANAGE = "players.manage"
     const val PLAYERS_OP = "players.op"

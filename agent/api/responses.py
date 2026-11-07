@@ -2750,6 +2750,13 @@ class DiagnoseDone(Open):
     detail: str
 
 
+class DiagnoseKnown(Open):
+    id: str
+    say: str = Field(description="What Diagnose recognised, in plain words")
+    link: str | None = Field(description="An https page about it; shown only, never opened")
+    change: str | None = Field(description="The title of the change offered for it, if any")
+
+
 class Diagnosis(Open):
     running: bool
     started_at: float | None
@@ -2769,6 +2776,9 @@ class Diagnosis(Open):
     sign_in_mods: bool = Field(
         default=False,
         description="The join with all mods wasn't tried: nobody signed in to HeadlessMC yet",
+    )
+    known: list[DiagnoseKnown] = Field(
+        default_factory=list, description="Known problems this round saw, one line each"
     )
 
 

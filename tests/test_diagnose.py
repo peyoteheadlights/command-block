@@ -14,7 +14,7 @@ import pytest
 from agent import diagnose, joinbot
 from agent.core import AgentCore
 from agent.security.paths import PathSafetyError
-from agent.security.permissions import SERVER_DIAGNOSE, SERVER_PERMISSIONS
+from agent.security.permissions import LEVELS, SERVER_DIAGNOSE, SERVER_PERMISSIONS
 
 from .conftest import build_bedrock_config, build_multi_config
 
@@ -169,8 +169,9 @@ def test_a_package_that_climbs_out_is_refused(tmp_path):
     assert not (tmp_path / "evil.js").exists()
 
 
-def test_diagnose_is_owner_only_for_now():
-    assert SERVER_DIAGNOSE not in SERVER_PERMISSIONS
+def test_diagnose_can_be_given_but_is_in_no_level():
+    assert SERVER_DIAGNOSE in SERVER_PERMISSIONS
+    assert not any(SERVER_DIAGNOSE in level for level in LEVELS.values())
 
 
 @pytest.fixture(autouse=True)
@@ -720,6 +721,29 @@ def test_deny_all_makes_nothing(multi_client):
     assert shown["changes"] == []
     assert shown["done"][0]["outcome"] == "denied"
     assert not (ctx.config.server_dir / "eula.txt").exists()
+
+
+def test_a_moderator_may_run_it_and_apply_safe_but_not_risky_changes(multi_client):
+    from tests.test_helpers import HELPER_PASSWORD, sign_in
+
+    owner = dict(multi_client.headers)
+    body = {
+        "username": "sam",
+        "password": HELPER_PASSWORD,
+        "servers": ["survival"],
+        "permissions": [SERVER_DIAGNOSE],
+    }
+    assert multi_client.post("/api/accounts", json=body, headers=owner).status_code == 200
+    sam = sign_in(multi_client, "sam", HELPER_PASSWORD)
+    ctx = multi_client.app.state.core.get_server("survival")
+    run = diagnose.Run(ctx, "admin")
+    run.finish()
+    run.result["changes"] = [{"key": "eula", "title": "EULA", "why": "", "safe": False}]
+    path = "/api/servers/survival/server/diagnose"
+    assert multi_client.get(path, headers=sam).status_code == 200
+    answer = multi_client.post(f"{path}/changes", json={"pick": "all"}, headers=sam)
+    assert answer.status_code == 403
+    assert multi_client.get("/api/microsoft", headers=sam).status_code == 403
 
 
 def test_the_desktop_app_offers_the_changes_and_applies_them(

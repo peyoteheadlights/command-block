@@ -87,6 +87,8 @@ struct ServersListView: View {
                     ServerSettingsView(serverId: id)
                 case .quests(let id):
                     QuestsView(serverId: id)
+                case .diagnose(let id):
+                    DiagnoseView(serverId: id)
                 case .add:
                     AddServerView()
                 }

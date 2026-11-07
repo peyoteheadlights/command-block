@@ -225,14 +225,7 @@ async def server_diagnose(
     if (form is None or form.mods is None) and fullmods.wanted(ctx):
         return {"job_id": None, "ask_mods": fullmods.ASK}
     # running from now: a second click is refused
-    started = diagnose.Run(ctx, principal.user, mods=bool(form and form.mods))
-    job = ctx.core.jobs.start(
-        "diagnose",
-        f"Diagnosing {ctx.name}",
-        lambda handle: diagnose.run(started, handle),
-        server_id=ctx.server_id,
-        user=principal.user,
-    )
+    job = diagnose.start(ctx, principal.user, mods=bool(form and form.mods))
     audit(ctx, request, "server_diagnose")
     return {"job_id": job.id}
 
@@ -270,14 +263,7 @@ async def server_diagnose_changes(
         diagnosefix.deny(result)
         return {"job_id": None}
     fixes = diagnosefix.picked(ctx, result, form.pick)
-    started = diagnose.Run(ctx, principal.user, before=result)
-    job = ctx.core.jobs.start(
-        "diagnose",
-        f"Diagnosing {ctx.name}",
-        lambda handle: diagnose.run(started, handle, fixes),
-        server_id=ctx.server_id,
-        user=principal.user,
-    )
+    job = diagnose.start(ctx, principal.user, before=result, fixes=fixes)
     return {"job_id": job.id}
 
 
