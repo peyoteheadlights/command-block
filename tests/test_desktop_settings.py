@@ -163,9 +163,13 @@ def test_bedrock_players_says_what_the_server_still_needs(qapp, agent_http):
 
 def test_a_bedrock_server_has_no_bedrock_players_section(qapp, agent_http):
     window, page = settings_page(qapp, agent_http)
-    window.server_screen.row = {**window.server_screen.row, "edition": "bedrock"}
-    page.row = window.server_screen.row
-    page.load()
+    # The fake server is Java. Every refresh of the server list shows the
+    # agent's row again (and rebuilds the pages when it changes), so keep
+    # this server Bedrock for the window's whole life, then open Settings anew.
+    shown = window.server_screen.show_row
+    window.server_screen.show_row = lambda row: shown({**row, "edition": "bedrock"})
+    window.server_screen.show_row(window.server_screen.row)
+    page = open_page(qapp, window, "Settings")
     assert not button(page, "Server settings").isHidden()
     assert all(
         b.isHidden()
@@ -217,9 +221,13 @@ def test_a_moderator_sees_settings_they_cant_change_greyed_out(qapp, agent_http)
 
 def test_update_bedrock_by_itself_is_an_owner_switch_off_by_default(qapp, agent_http):
     window, page = settings_page(qapp, agent_http)
-    window.server_screen.row = {**window.server_screen.row, "edition": "bedrock"}
-    page.row = window.server_screen.row
-    page.load()
+    # The fake server is Java. Every refresh of the server list shows the
+    # agent's row again (and rebuilds the pages when it changes), so keep
+    # this server Bedrock for the window's whole life, then open Settings anew.
+    shown = window.server_screen.show_row
+    window.server_screen.show_row = lambda row: shown({**row, "edition": "bedrock"})
+    window.server_screen.show_row(window.server_screen.row)
+    page = open_page(qapp, window, "Settings")
     words = "Update Bedrock by itself"
     wait_for(qapp, lambda: words in [b.text() for b in page.findChildren(QtWidgets.QCheckBox)])
     frame = card_of(page, "Bedrock updates")
