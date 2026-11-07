@@ -347,7 +347,7 @@ def test_crossplay_adds_a_bedrock_join_through_geyser(tmp_path):
         ]
         signed_in(agent)
         geyser = diagnose.joins(ctx)[1]
-        assert diagnose._name(ctx, geyser) == ".Steve_Gamer"  # how Floodgate shows it
+        assert diagnose.player_name(ctx, geyser) == ".Steve_Gamer"  # how Floodgate shows it
     finally:
         agent.db.close()
 
@@ -361,7 +361,9 @@ def test_a_bedrock_server_joins_as_a_bedrock_player(tmp_path):
         path.write_text(path.read_text(encoding="utf-8") + "online-mode=false\n", encoding="utf-8")
         assert [(j.edition, j.microsoft) for j in diagnose.joins(ctx)] == [("bedrock", False)]
         signed_in(agent)
-        assert diagnose._name(ctx, diagnose.Join("x", "bedrock", 19132, True)) == "Steve Gamer"
+        assert (
+            diagnose.player_name(ctx, diagnose.Join("x", "bedrock", 19132, True)) == "Steve Gamer"
+        )
     finally:
         agent.db.close()
 
@@ -551,5 +553,196 @@ def test_the_desktop_app_signs_in_with_microsoft(qapp, agent_http, monkeypatch, 
     assert dialog.sign_out.isVisible() and not dialog.sign_in.isVisible()
     dialog.sign_out.click()
     wait_for(qapp, lambda: dialog.sign_in.isVisible(), timeout=30)
+    dialog.close()
+    window.close()
+
+
+# ------------------------------------------------- the changes (part 3)
+async def diagnose_round(core, ctx, before=None, pick="all"):
+    """One run, or (with ``before``) the round after picking its changes."""
+    from agent import diagnosefix
+
+    fixes = diagnosefix.picked(ctx, before, pick) if before else None
+    out = diagnose.Run(ctx, "admin", before=before)
+    _job, result = await core.jobs.run(
+        "diagnose", "Diagnose", lambda job: diagnose.run(out, job, fixes)
+    )
+    return result
+
+
+async def test_a_server_stopped_by_the_eula_gets_it_offered_then_joins(core, monkeypatch, tmp_path):
+    monkeypatch.setattr(diagnose, "LEAVE_GRACE", 0)
+    monkeypatch.setenv("FAKE_CHECK_EULA", "1")
+    stand_in(monkeypatch, tmp_path, ALL_OK)
+    ctx = core.get_server("survival")
+    offline_mode(ctx)
+    first = await asyncio.wait_for(diagnose_round(core, ctx), 60)  # not START_WAIT
+    assert first["lines"][0]["ok"] is False
+    assert [(c["key"], c["safe"]) for c in first["changes"]] == [("eula", False)]
+
+    second = await diagnose_round(core, ctx, first)
+    assert second["round"] == 2
+    assert "eula=true" in (ctx.config.server_dir / "eula.txt").read_text()
+    assert all(line["ok"] is True for line in second["lines"])
+    assert second["done"] == [
+        {
+            "title": "Accept the Minecraft EULA",
+            "safe": False,
+            "outcome": "kept",
+            "detail": "Kept: that problem is gone.",
+        }
+    ]
+    assert second["changes"] == []  # nothing new: the run ends
+
+
+async def test_more_memory_that_didnt_help_is_put_back(core, monkeypatch, tmp_path):
+    from agent import memory
+
+    monkeypatch.setenv("FAKE_CRASH_ON_START", "1")  # runs out of memory whatever it gets
+    monkeypatch.setattr(memory, "total_ram_mb", lambda: 16384)
+    stand_in(monkeypatch, tmp_path, ALL_OK)
+    ctx = core.get_server("survival")
+    offline_mode(ctx)
+    ctx.config.set("server.jvm_args", ["-Xms1G", "-Xmx2G"])
+    first = await diagnose_round(core, ctx)
+    assert [c["title"] for c in first["changes"]] == ["Give the server more memory (2 GB to 3 GB)"]
+    assert first["changes"][0]["safe"] is True
+
+    second = await diagnose_round(core, ctx, first, pick="safe")
+    assert second["done"][0]["outcome"] == "put_back"
+    assert list(ctx.config.server.jvm_args) == ["-Xms1G", "-Xmx2G"]
+    assert second["changes"] == []  # tried once, never offered again
+
+
+async def test_no_more_memory_when_the_pc_has_no_room(core, monkeypatch, tmp_path):
+    from agent import memory
+
+    monkeypatch.setenv("FAKE_CRASH_ON_START", "1")
+    monkeypatch.setattr(memory, "total_ram_mb", lambda: 2048)
+    stand_in(monkeypatch, tmp_path, ALL_OK)
+    ctx = core.get_server("survival")
+    offline_mode(ctx)
+    ctx.config.set("server.jvm_args", ["-Xmx2G"])
+    assert (await diagnose_round(core, ctx))["changes"] == []
+
+
+NOT_LISTED = [
+    {"step": "connect", "ok": True},
+    {"step": "login", "ok": False, "kick": "You are not white-listed on this server!"},
+]
+
+
+async def test_the_owner_turned_away_by_the_whitelist_is_added(core, monkeypatch, tmp_path):
+    monkeypatch.setattr(diagnose, "LEAVE_GRACE", 0)
+    stand_in(monkeypatch, tmp_path, NOT_LISTED)
+    signed_in(core)
+    ctx = core.get_server("survival")
+    (ctx.config.server_dir / "whitelist.json").write_text("[]", encoding="utf-8")
+    sent: list[str] = []
+
+    async def send(action, name, reason="", **kw):
+        sent.append(f"{action} {name}")
+
+    monkeypatch.setattr(ctx.player_actions, "send", send)
+    first = await diagnose_round(core, ctx)
+    assert first["changes"] == [
+        {
+            "key": "whitelist Steve",
+            "title": "Add Steve to the whitelist",
+            "why": "The server turned your account (Steve) away because it isn't on the whitelist.",
+            "safe": False,
+        }
+    ]
+    stand_in(monkeypatch, tmp_path, ALL_OK)
+    second = await diagnose_round(core, ctx, first)
+    assert sent == ["whitelist_add Steve"]
+    assert second["done"][0]["outcome"] == "kept"
+    assert ctx.backups.changes.undo_stack()[0]["title"] == "Diagnose changes"
+
+
+async def test_apply_safe_leaves_risky_changes_and_one_that_didnt_help_goes_back(
+    core, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(diagnose, "LEAVE_GRACE", 0)
+    stand_in(monkeypatch, tmp_path, NOT_LISTED)
+    signed_in(core)
+    ctx = core.get_server("survival")
+    sent: list[str] = []
+
+    async def send(action, name, reason="", **kw):
+        sent.append(f"{action} {name}")
+
+    monkeypatch.setattr(ctx.player_actions, "send", send)
+    first = await diagnose_round(core, ctx)
+    from agent import diagnosefix
+
+    assert diagnosefix.picked(ctx, first, "safe") == []  # whitelisting is risky
+    second = await diagnose_round(core, ctx, first)  # still turned away
+    assert sent == ["whitelist_add Steve", "whitelist_remove Steve"]
+    assert second["done"][0]["outcome"] == "put_back"
+
+
+async def test_a_server_that_doesnt_answer_gets_a_restart(core, monkeypatch, tmp_path):
+    monkeypatch.setattr(diagnose, "LEAVE_GRACE", 0)
+    stand_in(monkeypatch, tmp_path, [{"step": "connect", "ok": False, "error": "ETIMEDOUT"}])
+    ctx = core.get_server("survival")
+    offline_mode(ctx)
+    first = await diagnose_round(core, ctx)
+    assert [(c["key"], c["safe"]) for c in first["changes"]] == [("restart", True)]
+    pid = ctx.server.pid
+    second = await diagnose_round(core, ctx, first, pick="safe")
+    assert ctx.server.pid != pid
+    assert second["done"][0]["outcome"] == "no_help"
+    assert second["changes"] == []
+
+
+def test_deny_all_makes_nothing(multi_client):
+    core = multi_client.app.state.core
+    ctx = core.get_server("survival")
+    path = "/api/servers/survival/server/diagnose/changes"
+    assert multi_client.post(path, json={"pick": "all"}).status_code == 409  # nothing waiting
+    risky = {"key": "eula", "title": "Accept the Minecraft EULA", "why": "", "safe": False}
+    run = diagnose.Run(ctx, "admin")
+    run.finish()
+    run.result["changes"] = [risky]
+    answer = multi_client.post(path, json={"pick": "none"})
+    assert answer.status_code == 200 and answer.json()["job_id"] is None
+    shown = multi_client.get("/api/servers/survival/server/diagnose").json()
+    assert shown["changes"] == []
+    assert shown["done"][0]["outcome"] == "denied"
+    assert not (ctx.config.server_dir / "eula.txt").exists()
+
+
+def test_the_desktop_app_offers_the_changes_and_applies_them(
+    qapp, agent_http, monkeypatch, tmp_path
+):
+    pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is in requirements-dev")
+    from desktop.diagnose import DiagnoseWindow
+
+    from .test_desktop_app import open_server, open_window, shown_text, sign_in, wait_for
+
+    monkeypatch.setattr(diagnose, "LEAVE_GRACE", 0)
+    monkeypatch.setenv("FAKE_CHECK_EULA", "1")
+    stand_in(monkeypatch, tmp_path, ALL_OK)
+    offline_mode(agent_http.agent.app.state.core.servers["survival"])
+    window = open_window(qapp, agent_http)
+    sign_in(qapp, window)
+    wait_for(qapp, lambda: "Survival" in shown_text(window))
+    open_server(qapp, window, "Survival")
+    window.server_screen.header.diagnose.click()
+    # An earlier test's window can still be in the list, closed.
+    dialog = next(
+        w for w in qapp.topLevelWidgets() if isinstance(w, DiagnoseWindow) and w.isVisible()
+    )
+    wait_for(qapp, lambda: dialog.picks["all"].isVisible(), timeout=60)
+    words = shown_text(dialog)
+    assert "Risky changes" in words and "Accept the Minecraft EULA" in words
+    assert not dialog.picks["safe"].isEnabled()  # nothing safe to apply
+    assert not dialog.again.isVisible()
+    dialog.picks["all"].click()
+    wait_for(qapp, lambda: "Kept: that problem is gone." in shown_text(dialog), timeout=60)
+    wait_for(qapp, lambda: dialog.again.isVisible(), timeout=60)
+    assert "✓  Leave" in shown_text(dialog)
+    assert not dialog.picks["all"].isVisible()
     dialog.close()
     window.close()

@@ -2729,6 +2729,22 @@ class DiagnoseLine(Open):
     detail: str | None
 
 
+class DiagnoseChange(Open):
+    key: str
+    title: str = Field(description="What changes, e.g. 'Accept the Minecraft EULA'")
+    why: str
+    safe: bool = Field(description="False: a risky change, made only by Apply all")
+
+
+class DiagnoseDone(Open):
+    title: str
+    safe: bool
+    outcome: str = Field(
+        description="kept, put_back (didn't help), no_help (nothing to put back), failed or denied"
+    )
+    detail: str
+
+
 class Diagnosis(Open):
     running: bool
     started_at: float | None
@@ -2738,6 +2754,12 @@ class Diagnosis(Open):
     sign_in: bool = Field(
         default=False, description="A join wasn't tried: nobody signed in with Microsoft yet"
     )
+    round: int = Field(default=1, description="1, then one more after each Apply")
+    changes: list[DiagnoseChange] = Field(
+        default_factory=list,
+        description="Offered, waiting for POST /server/diagnose/changes (Safe ones first)",
+    )
+    done: list[DiagnoseDone] = Field(default_factory=list)
 
 
 class DiagnoseStarted(Open):

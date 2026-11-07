@@ -298,6 +298,16 @@ Java name, the gamertag and, during a sign-in, the code to type). Sign out
 deletes the file. A join that would kick the owner out (they're playing as
 that account) asks first.
 
+After a run, Diagnose offers changes only for problems that run saw
+(`agent/diagnosefix.py`): Safe (restart, 1 GB more memory when the PC has
+room) and Risky (accept the EULA, whitelist or unban the owner's own
+account). Nothing changes until someone picks Apply all, Apply safe or Deny
+all; Apply all is owner only when a risky change is listed. The picked
+changes run through the safe-change routine (one backup of the files they
+touch, one Undo), the joins run again, and a change that didn't help is put
+back. A change tried once is never offered again in that run. Nothing
+deletes a world, a mod or a backup.
+
 ### Chunker world conversion, after a click
 
 Making a Java copy of a Bedrock server (or a Bedrock copy of a Java one)

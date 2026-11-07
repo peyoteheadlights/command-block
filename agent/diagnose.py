@@ -10,8 +10,11 @@ The joins so far, all from this PC: an offline-mode server as the
 ``CommandBlock`` test player; an online-mode Java server with the owner's
 Java account, a Bedrock server (and Bedrock players through Geyser) with the
 owner's Xbox account, after "Sign in with Microsoft" (agent/microsoft.py).
-The other ways in (LAN, Tailscale, the internet, playit) and the list of
-fixes come later.
+The other ways in (LAN, Tailscale, the internet, playit) come later.
+
+After the joins, the changes that may fix what failed are offered
+(agent/diagnosefix.py). Applying them runs the joins again as the next
+round of the same run, keeping its list of changes made.
 
 The last result is kept on the server (``ctx.diagnosis``) and updated while
 it runs, so the apps can show the list live.
@@ -51,6 +54,7 @@ STEP_WORDS = {
 }
 # Kept a little after the test player leaves, so its "left" line is skipped too.
 LEAVE_GRACE = 5.0
+SERVER_GROUP = "The server"
 SIGN_IN_FIRST = "Not checked: this join needs your Microsoft account. Sign in with Microsoft first."
 
 
@@ -68,7 +72,8 @@ class Join:
 class Run:
     """One Diagnose run's list, shared live through ``ctx.diagnosis``."""
 
-    def __init__(self, ctx: ServerContext, by: str):
+    def __init__(self, ctx: ServerContext, by: str, before: dict[str, Any] | None = None):
+        """``before``: the round this one follows, after its changes were picked."""
         self.ctx = ctx
         self.result: dict[str, Any] = {
             "running": True,
@@ -78,6 +83,13 @@ class Run:
             "lines": [],
             # True when a join wasn't tried because nobody signed in with Microsoft.
             "sign_in": False,
+            "round": before["round"] + 1 if before else 1,
+            # Offered changes waiting for Apply all / Apply safe / Deny all.
+            "changes": [],
+            # What happened to each change picked or denied, every round.
+            "done": list(before["done"]) if before else [],
+            # Keys of changes already picked or denied: never offered again.
+            "tried": list(before["tried"]) if before else [],
         }
         ctx.diagnosis = self.result
 
@@ -107,7 +119,7 @@ def _on_whitelist(ctx: ServerContext, name: str) -> bool:
 
 async def _get_online(ctx: ServerContext, run: Run, job: JobHandle) -> bool:
     server = ctx.server
-    group = "The server"
+    group = SERVER_GROUP
     if server.state == ServerState.ONLINE:
         return True
     if server.state in (ServerState.OFFLINE, ServerState.CRASHED):
@@ -130,7 +142,7 @@ async def _get_online(ctx: ServerContext, run: Run, job: JobHandle) -> bool:
         )
         return False
     job.step("Waiting for the server to be online")
-    if not await server.wait_online(timeout=START_WAIT):
+    if not await _online_or_stopped(ctx):
         run.line(
             group,
             "Start the server",
@@ -140,6 +152,21 @@ async def _get_online(ctx: ServerContext, run: Run, job: JobHandle) -> bool:
         return False
     run.line(group, "Start the server", True, started)
     return True
+
+
+async def _online_or_stopped(ctx: ServerContext) -> bool:
+    """Wait until the server is online (True), or stops while starting, or
+    takes too long (False). A server that stops at once (the EULA) isn't
+    waited on for ten minutes."""
+    online = asyncio.ensure_future(ctx.server.wait_online(timeout=START_WAIT))
+    stopped = asyncio.ensure_future(ctx.server.wait_exit(timeout=START_WAIT))
+    try:
+        await asyncio.wait({online, stopped}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        stopped.cancel()
+        if not online.done():
+            online.cancel()
+    return online.done() and not online.cancelled() and online.result()
 
 
 def joins(ctx: ServerContext) -> list[Join]:
@@ -163,7 +190,7 @@ def joins(ctx: ServerContext) -> list[Join]:
     return found
 
 
-def _name(ctx: ServerContext, join: Join) -> str | None:
+def player_name(ctx: ServerContext, join: Join) -> str | None:
     """The name the server sees for this join, or None when it isn't known."""
     if not join.microsoft:
         return TEST_PLAYER
@@ -183,7 +210,7 @@ def owner_playing(ctx: ServerContext) -> str | None:
         return None
     online = {p["username"].lower() for p in ctx.players.online()}
     for join in joins(ctx):
-        name = _name(ctx, join) if join.microsoft else None
+        name = player_name(ctx, join) if join.microsoft else None
         if name and name.lower() in online:
             return name
     return None
@@ -205,7 +232,7 @@ def _not_checked(ctx: ServerContext, join: Join) -> str | None:
 
 async def _join(ctx: ServerContext, run: Run, job: JobHandle, join: Join) -> None:
     host = server_ip(ctx)
-    name = _name(ctx, join)
+    name = player_name(ctx, join)
     added = False
     if name:
         ctx.players.ignored.add(name)
@@ -273,9 +300,15 @@ def _why(step: dict[str, Any]) -> str | None:
     return None
 
 
-async def run(out: Run, job: JobHandle) -> dict[str, Any]:
+async def run(out: Run, job: JobHandle, fixes: list | None = None) -> dict[str, Any]:
+    """One round: make the picked ``fixes`` (agent/diagnosefix.py) if any,
+    join, then put back what didn't help and offer what's new."""
+    from . import diagnosefix
+
     ctx = out.ctx
     try:
+        if fixes and not await diagnosefix.make(out, fixes, job):
+            return out.result
         planned = []
         for join in joins(ctx):
             why = _not_checked(ctx, join)
@@ -288,6 +321,7 @@ async def run(out: Run, job: JobHandle) -> dict[str, Any]:
             await ctx.server.send_command(f"say {NOTICE}", internal=True)
             for join in planned:
                 await _join(ctx, out, job, join)
+        await diagnosefix.review(out, fixes or [])
     finally:
         out.finish()
     return out.result

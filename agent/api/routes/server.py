@@ -4,6 +4,7 @@ performance, health, worlds and TPS monitoring."""
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -227,6 +228,50 @@ async def server_diagnose(
         user=principal.user,
     )
     audit(ctx, request, "server_diagnose")
+    return {"job_id": job.id}
+
+
+class DiagnoseChangesForm(BaseModel):
+    # "all", "safe", or "none" (Deny all).
+    pick: Literal["all", "safe", "none"]
+
+
+@router.post("/server/diagnose/changes", response_model=DiagnoseStarted)
+async def server_diagnose_changes(
+    form: DiagnoseChangesForm,
+    request: Request,
+    principal: Principal = Depends(require(SERVER_DIAGNOSE)),
+    ctx=Depends(get_server),
+):
+    """Apply all, Apply safe or Deny all on the changes the last Diagnose
+    offered. Applying makes them (one backup, one Undo), then the joins run
+    again and a change that didn't help is put back. Follow it with GET
+    /server/diagnose. Risky changes: owner only."""
+    from ... import diagnose, diagnosefix
+
+    result = ctx.diagnosis or {}
+    if result.get("running"):
+        raise HTTPException(status_code=409, detail="Diagnose server is still running.")
+    if not result.get("changes"):
+        raise HTTPException(status_code=409, detail="There are no changes waiting.")
+    risky = any(not change["safe"] for change in result["changes"])
+    if form.pick == "all" and risky and not principal.is_owner:
+        raise HTTPException(
+            status_code=403, detail="Only the owner can make risky changes. Apply safe instead."
+        )
+    audit(ctx, request, "server_diagnose_changes", detail=form.pick)
+    if form.pick == "none":
+        diagnosefix.deny(result)
+        return {"job_id": None}
+    fixes = diagnosefix.picked(ctx, result, form.pick)
+    started = diagnose.Run(ctx, principal.user, before=result)
+    job = ctx.core.jobs.start(
+        "diagnose",
+        f"Diagnosing {ctx.name}",
+        lambda handle: diagnose.run(started, handle, fixes),
+        server_id=ctx.server_id,
+        user=principal.user,
+    )
     return {"job_id": job.id}
 
 

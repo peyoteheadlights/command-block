@@ -3,6 +3,10 @@
 The agent does the work (agent/diagnose.py) and keeps the list; this window
 asks for it once a second while the run lasts, then stops asking.
 
+When the run finds changes that may fix what failed, they are listed Safe
+and Risky with Apply all, Apply safe and Deny all (agent/diagnosefix.py).
+Applying runs the joins again; the list then also says what each change did.
+
 At the top: the owner's Microsoft account, which online-mode and Bedrock
 joins use, with Sign in with Microsoft (a code to type on Microsoft's page,
 agent/microsoft.py) or Sign out.
@@ -62,6 +66,13 @@ class DiagnoseWindow(QDialog):
         column.addStretch()
         row = QHBoxLayout()
         row.addStretch()
+        self.picks = {}
+        for pick in ("all", "safe", "none"):
+            button = push(text(f"diagnose.apply_{pick}"), "" if pick == "all" else "plain")
+            button.clicked.connect(lambda _=False, pick=pick: self.apply(pick))
+            button.hide()
+            row.addWidget(button)
+            self.picks[pick] = button
         self.again = push(text("diagnose.again"))
         self.again.clicked.connect(self.start)
         self.again.hide()
@@ -83,6 +94,18 @@ class DiagnoseWindow(QDialog):
         self.window_.run(
             lambda: agent.call("POST", f"/servers/{sid}/server/diagnose", {"go_ahead": go_ahead}),
             self.started,
+            self.failed,
+        )
+
+    def apply(self, pick: str) -> None:
+        for button in self.picks.values():
+            button.hide()
+        self.again.hide()
+        self.status.setText(text("diagnose.running"))
+        agent, sid = self.window_.agent, self.server_id
+        self.window_.run(
+            lambda: agent.call("POST", f"/servers/{sid}/server/diagnose/changes", {"pick": pick}),
+            lambda _answer: self.ask() if pick == "none" else self.timer.start(),
             self.failed,
         )
 
@@ -179,12 +202,27 @@ class DiagnoseWindow(QDialog):
                 words += f"\n     {line['detail']}"
             kind = "problem" if line["ok"] is False else ("muted" if line["ok"] is None else "")
             self.add(label(words, kind))
+        if result.get("done"):
+            self.add(label(text("diagnose.made"), name="h2"))
+        for done in result.get("done") or []:
+            mark = "✓" if done["outcome"] == "kept" else "–"
+            self.add(label(f"{mark}  {done['title']}\n     {done['detail']}", "muted"))
+        changes = [] if result.get("running") else result.get("changes") or []
+        for safe in (True, False):
+            group = [c for c in changes if c["safe"] is safe]
+            if group:
+                self.add(label(text("diagnose.safe" if safe else "diagnose.risky"), name="h2"))
+            for change in group:
+                self.add(label(f"•  {change['title']}\n     {change['why']}"))
         if result.get("running"):
             self.status.setText(text("diagnose.running"))
             return
         self.timer.stop()
-        self.status.setText(text("diagnose.done"))
-        self.again.show()
+        self.status.setText(text("diagnose.offer" if changes else "diagnose.done"))
+        for button in self.picks.values():
+            button.setVisible(bool(changes))
+        self.picks["safe"].setEnabled(any(c["safe"] for c in changes))
+        self.again.setVisible(not changes)
 
     def add(self, widget: QLabel) -> None:
         self.list.addWidget(widget)
