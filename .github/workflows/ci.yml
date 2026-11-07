@@ -48,7 +48,7 @@ jobs:
   unit-tests:
     name: Unit tests (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30  # Windows takes about 17 minutes, sometimes more
+    timeout-minutes: 45  # Windows takes about 30 minutes now
     strategy:
       fail-fast: false
       matrix:
