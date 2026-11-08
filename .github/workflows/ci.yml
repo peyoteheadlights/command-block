@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# A new push to the same branch or PR stops the older run that is still
+# going. Runs on main always finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   lint:
     name: Lint and type check
