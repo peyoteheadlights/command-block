@@ -25,6 +25,8 @@ enum ServerRoute: Hashable {
     case settings(String)
     /// Quests and events (the Discord bot's).
     case quests(String)
+    /// Diagnose server.
+    case diagnose(String)
     /// The "+" on All servers.
     case add
 }
@@ -56,6 +58,8 @@ final class ServerPages {
     let setup: SetupPages
     /// Quests and events.
     let quests: QuestPages
+    /// Diagnose server.
+    let diagnose: DiagnosePage
 
     init(serverId: String, client: @escaping () -> AgentClient?, noted: @escaping (AgentError) -> Void,
          listChanged: @escaping () async -> Void = {}) {
@@ -66,6 +70,7 @@ final class ServerPages {
         content = ContentPages(serverId: serverId, client: client, noted: noted)
         setup = SetupPages(serverId: serverId, client: client, noted: noted, listChanged: listChanged)
         quests = QuestPages(serverId: serverId, client: client, noted: noted)
+        diagnose = DiagnosePage(serverId: serverId, client: client, noted: noted)
     }
 
     // MARK: - Console

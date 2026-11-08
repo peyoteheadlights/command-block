@@ -306,9 +306,12 @@ def test_only_the_documented_places_start_a_program():
         "process.py",  # launching Minecraft itself
         "install.py",  # the Forge/NeoForge/Quilt installer (documented exception)
         "chunker.py",  # Chunker world conversion, after a click (documented exception)
+        "joinbot.py",  # Diagnose server's test player, after a click (documented exception)
         "serveruser.py",  # icacls: the separate Windows user's folder rights
         "java.py",  # asking the installed Java for its version
-        "tailscale.py",  # asking Tailscale for this PC's address
+        "tailscale.py",  # asking Tailscale for this PC's address, Diagnose's Tailscale back on
+        "firewall.py",  # Diagnose server's firewall rule, after a click (documented exception)
+        "headlessmc.py",  # Diagnose server's join with all mods, after a click (documented exception)
         "certs.py",  # making this app's own HTTPS certificate
         "autostart.py",  # the Windows entry that starts this app at sign-in
         # The installer runs as Administrator from setup.exe, never

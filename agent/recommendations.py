@@ -66,6 +66,8 @@ class Facts:
     tailscale_down: bool = False
     mods: list[dict[str, Any]] = field(default_factory=list)  # installed, as list_installed
     online_at: float | None = None  # when the server last came online, None when off
+    # What the answer check found while the server runs (agent/monitoring/answering.py).
+    not_answering: dict[str, Any] | None = None
     # The Discord bot's first problem (agent/discord/bot.py), None when fine or off.
     discord: dict[str, Any] | None = None
     # The server's type and what its console last printed (None: not yet).
@@ -635,7 +637,29 @@ def addon_suggestions(f: Facts) -> list[Recommendation]:
     return [_suggestion(f, i, reason) for i in faster] + [_suggestion(f, i, None) for i in picks]
 
 
+def not_answering(f: Facts) -> Recommendation | None:
+    """Online, but three checks in a row got no answer. Says what was seen
+    and what the app already did about it."""
+    found = f.not_answering
+    if not found:
+        return None
+    return Recommendation(
+        id="not_answering",
+        title="The server isn't answering",
+        reason=" ".join([found["what"], *found["why"]]),
+        evidence=found["fix"],
+        action={"label": "Restart", "page": "overview"},
+        fingerprint=f"answering:{found['since']}",
+        details={
+            **found,
+            "fix": {"kind": "restart", "label": "Restart"},
+            "source": "server list ping on the game port and a console list, once a minute",
+        },
+    )
+
+
 RULES: tuple[Rule, ...] = (
+    not_answering,
     security_advisories,
     known_bad_files,
     tailscale_stopped,
@@ -724,6 +748,7 @@ def gather(ctx, addons: dict[str, Any] | None = None) -> Facts:
         tailscale_down=bool(getattr(getattr(ctx.core, "tailscale", None), "down", False)),
         mods=installed,
         online_at=status.get("online_at") if status.get("state") == "ONLINE" else None,
+        not_answering=ctx.answering.problem if status.get("state") == "ONLINE" else None,
         discord=ctx.core.discord.problem() if getattr(ctx.core, "discord", None) else None,
         type_id=server_type.id,
         type_name=server_type.name,

@@ -2691,6 +2691,11 @@ class SyncTaken(Open):
     taken: int
 
 
+class SyncPing(Open):
+    connected: bool | None = Field(description="TCP took the connection; null for UDP")
+    answer: dict[str, Any] | None = Field(description="The server's own reply, null for none")
+
+
 class SyncHello(Open):
     pc: str
     signing_key: str
@@ -2716,3 +2721,94 @@ class StoreView(Open):
 
 class StoreChecked(StoreView):
     remind: list[str] = Field(description="Packages the app didn't make, seen for the first time")
+
+
+class DiagnoseLine(Open):
+    group: str = Field(
+        description="What the line belongs to, e.g. 'Join from this PC as CommandBlock'"
+    )
+    what: str
+    ok: bool | None = Field(
+        description="True worked, False failed, null not checked (detail says why)"
+    )
+    detail: str | None
+
+
+class DiagnoseChange(Open):
+    key: str
+    title: str = Field(description="What changes, e.g. 'Accept the Minecraft EULA'")
+    why: str
+    safe: bool = Field(description="False: a risky change, made only by Apply all")
+
+
+class DiagnoseDone(Open):
+    title: str
+    safe: bool
+    outcome: str = Field(
+        description="kept, put_back (didn't help), no_help (nothing to put back), failed or denied"
+    )
+    detail: str
+
+
+class DiagnoseKnown(Open):
+    id: str
+    say: str = Field(description="What Diagnose recognised, in plain words")
+    link: str | None = Field(description="An https page about it; shown only, never opened")
+    change: str | None = Field(description="The title of the change offered for it, if any")
+
+
+class Diagnosis(Open):
+    running: bool
+    started_at: float | None
+    finished_at: float | None
+    by: str | None
+    lines: list[DiagnoseLine]
+    sign_in: bool = Field(
+        default=False, description="A join wasn't tried: nobody signed in with Microsoft yet"
+    )
+    round: int = Field(default=1, description="1, then one more after each Apply")
+    changes: list[DiagnoseChange] = Field(
+        default_factory=list,
+        description="Offered, waiting for POST /server/diagnose/changes (Safe ones first)",
+    )
+    done: list[DiagnoseDone] = Field(default_factory=list)
+    mods: bool = Field(default=False, description="The join with all mods runs, every round")
+    sign_in_mods: bool = Field(
+        default=False,
+        description="The join with all mods wasn't tried: nobody signed in to HeadlessMC yet",
+    )
+    known: list[DiagnoseKnown] = Field(
+        default_factory=list, description="Known problems this round saw, one line each"
+    )
+
+
+class DiagnoseStarted(Open):
+    job_id: str | None = Field(description="null when nothing started: see ask")
+    ask: str | None = Field(
+        default=None,
+        description="Not started: the owner is playing and a join would kick them out. "
+        "Ask this, then POST again with go_ahead",
+    )
+    ask_mods: str | None = Field(
+        default=None,
+        description="Not started: a mod server. Ask this, then POST again with mods true or false",
+    )
+
+
+class MicrosoftStatus(Open):
+    signed_in: bool
+    java_name: str | None = Field(
+        description="Minecraft: Java Edition name, if the account has one"
+    )
+    gamertag: str | None = Field(description="Xbox gamertag, if it could be read")
+    code: str | None = Field(description="While signing in: the code to type on Microsoft's page")
+    url: str | None = Field(description="While signing in: where to type it")
+    error: str | None = Field(description="Why the last sign-in didn't finish")
+
+
+class HeadlessMcStatus(Open):
+    signed_in: bool
+    name: str | None = Field(description="The Minecraft name HeadlessMC signed in with")
+    code: str | None = Field(description="While signing in: the code to type on Microsoft's page")
+    url: str | None = Field(description="While signing in: the page to open (holds the code)")
+    error: str | None = Field(description="Why the last sign-in didn't finish")

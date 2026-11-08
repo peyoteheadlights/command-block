@@ -9,6 +9,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.builtins.nullable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -204,6 +205,17 @@ class AgentClient(
         get("${server(serverId)}/logs?lines=${lines.coerceIn(1, 500)}", ConsoleLog.serializer())
 
     /** Empties the agent's console view; Minecraft's log files stay. */
+    /** The last Diagnose server run, or the one running; null before the first. */
+    suspend fun diagnosis(serverId: String): Diagnosis? =
+        get("${server(serverId)}/server/diagnose", Diagnosis.serializer().nullable)
+
+    suspend fun startDiagnose(serverId: String, goAhead: Boolean, mods: Boolean?): DiagnoseStarted =
+        call(post("${server(serverId)}/server/diagnose", Diagnose.startBody(goAhead, mods)), DiagnoseStarted.serializer())
+
+    /** Apply all ("all"), Apply safe ("safe") or Deny all ("none"). */
+    suspend fun diagnoseChanges(serverId: String, pick: String): DiagnoseStarted =
+        call(post("${server(serverId)}/server/diagnose/changes", Diagnose.pickBody(pick)), DiagnoseStarted.serializer())
+
     suspend fun clearConsole(serverId: String): Ok =
         call(post("${server(serverId)}/logs/clear", JsonObject(emptyMap())), Ok.serializer())
 

@@ -35,6 +35,13 @@ ACCOUNT = "account.self"  # sign out, rotate or read one's own session
 SERVER_VIEW = "server.view"  # state, players online, performance, backups list
 CONSOLE_READ = "console.read"  # the console, chat log, Activity and crashes
 SERVER_CONTROL = "server.control"  # start, stop, restart, save the world
+# Diagnose server: a test player joins (and a stopped server is started).
+# The owner can tick it for a moderator or a Discord role; risky changes
+# stay the owner's (agent/api/routes/server.py).
+SERVER_DIAGNOSE = "server.diagnose"
+# Sign in with Microsoft for Diagnose server's joins, and sign out. Owner only:
+# it is the owner's own game account.
+MICROSOFT_ACCOUNT = "microsoft.account"
 CONSOLE_SEND = "console.send"  # type commands into the Minecraft console
 PLAYERS_MANAGE = "players.manage"  # whitelist, kick, ban and unban
 # Making someone an op (or taking it away) is its own permission: an op can
@@ -82,6 +89,8 @@ ALL = frozenset(
         SERVER_VIEW,
         CONSOLE_READ,
         SERVER_CONTROL,
+        SERVER_DIAGNOSE,
+        MICROSOFT_ACCOUNT,
         CONSOLE_SEND,
         PLAYERS_MANAGE,
         PLAYERS_OP,
@@ -122,6 +131,7 @@ SERVER_PERMISSIONS = frozenset(
         SERVER_VIEW,
         CONSOLE_READ,
         SERVER_CONTROL,
+        SERVER_DIAGNOSE,
         CONSOLE_SEND,
         PLAYERS_MANAGE,
         PLAYERS_OP,
@@ -149,7 +159,8 @@ MODERATOR_ACCOUNT = frozenset({ACCOUNT, SETTINGS_VIEW, SYSTEM_VIEW})
 # The switches, grouped as the apps show them. Seeing the server is not a
 # switch: it comes with anything ticked.
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("server", (SERVER_CONTROL, CONSOLE_READ, CONSOLE_SEND)),
+    # Diagnose server is in no level: the owner ticks it on purpose.
+    ("server", (SERVER_CONTROL, SERVER_DIAGNOSE, CONSOLE_READ, CONSOLE_SEND)),
     ("players", (PLAYERS_MANAGE, CHAT_SEND, PLAYERS_OP)),
     ("addons", (MODS_MANAGE,)),
     ("backups", (BACKUPS_CREATE, BACKUPS_RESTORE, BACKUPS_DOWNLOAD, BACKUPS_DELETE, WORLD_REPLACE)),

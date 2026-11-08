@@ -128,6 +128,9 @@ fun Main(vm: AppViewModel) {
                     onRemoved = { nav.popBackStack("servers", inclusive = false) },
                 )
             }
+            composable("server/{id}/diagnose") { back ->
+                DiagnoseScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+            }
             composable("server/{id}/quests") { back ->
                 QuestsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
             }

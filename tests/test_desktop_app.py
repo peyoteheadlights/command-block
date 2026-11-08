@@ -478,6 +478,18 @@ def test_a_narrow_window_puts_the_right_panel_under_the_overview(qapp, agent_htt
     )
 
 
+def test_the_side_panel_does_not_keep_the_window_wide(qapp, agent_http):
+    window = signed_in_on(qapp, agent_http)
+    screen = window.server_screen
+    window.resize(1400, 800)
+    wait_for(qapp, lambda: screen.side.indexOf(screen.panel) >= 0)
+    # Windows fonts and buttons are wider: a wide header plus the side panel
+    # went over 1100, so the window could never get narrow enough to move it.
+    screen.header.setMinimumWidth(900)
+    qapp.processEvents()
+    assert screen.minimumSizeHint().width() < 1100
+
+
 def test_every_control_has_a_name_and_can_be_reached_with_tab(qapp, agent_http):
     window = signed_in_on(qapp, agent_http)
     controls = [

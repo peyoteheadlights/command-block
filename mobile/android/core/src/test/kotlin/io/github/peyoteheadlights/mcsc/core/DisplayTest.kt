@@ -19,6 +19,20 @@ class DisplayTest {
     }
 
     @Test
+    fun `a running server that doesn't answer never reads Online`() {
+        assertEquals("Not answering", s.t(Display.state("ONLINE", answering = false).key))
+        assertEquals(Tone.DANGER, Display.state("ONLINE", answering = false).tone)
+        assertEquals("Online", s.t(Display.state("ONLINE", answering = null).key))
+        assertEquals("Offline", s.t(Display.state("OFFLINE", answering = false).key))
+    }
+
+    @Test
+    fun `the answering check is read from the server list`() {
+        val row = AgentJson.decodeFromString(ServerRow.serializer(), """{"id": "s", "name": "S", "state": "ONLINE", "answering": {"ok": false, "checked_at": 1.0}}""")
+        assertEquals(false, row.answering?.ok)
+    }
+
+    @Test
     fun `durations and players`() {
         assertEquals("40s", Display.duration(s, 40.9))
         assertEquals("5m", Display.duration(s, 300.0))

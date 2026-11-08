@@ -658,6 +658,15 @@ class SyncChangesRequest(BaseModel):
     records: list[dict[str, Any]] = Field(max_length=5000)
 
 
+class SyncPingRequest(BaseModel):
+    """From another of the owner's PCs, for Diagnose server: does this game
+    port answer from here? Home network and Tailscale addresses only."""
+
+    protocol: Literal["tcp", "raknet"]
+    host: str = Field(max_length=15)
+    port: int = Field(ge=1, le=65535)
+
+
 class BotLinkRequest(BaseModel):
     """From the Bot PC, over a Bot link (agent/discord/botpc.py)."""
 

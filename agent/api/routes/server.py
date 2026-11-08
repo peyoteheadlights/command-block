@@ -4,8 +4,10 @@ performance, health, worlds and TPS monitoring."""
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from ... import joinguard
 from ...minecraft.commands import CommandError, validate
@@ -16,6 +18,7 @@ from ...security.auth import Principal
 from ...security.permissions import (
     CONSOLE_SEND,
     SERVER_CONTROL,
+    SERVER_DIAGNOSE,
     SERVER_VIEW,
     SETTINGS_SERVER,
     require,
@@ -27,6 +30,8 @@ from ..responses import (
     CommandCheck,
     CommandSent,
     CrashBlockCleared,
+    DiagnoseStarted,
+    Diagnosis,
     Performance,
     Requested,
     ServerAction,
@@ -185,6 +190,89 @@ async def server_restart(
         "state": ctx.server.state.value,
         "startup_confirmed": ctx.server.startup_confirmed,
     }
+
+
+class DiagnoseForm(BaseModel):
+    # The owner said yes to "a join kicks you out for about a minute".
+    go_ahead: bool = False
+    # The join with all mods: yes or no. Not given on a mod server: ask_mods.
+    mods: bool | None = None
+
+
+@router.post("/server/diagnose", response_model=DiagnoseStarted)
+async def server_diagnose(
+    request: Request,
+    form: DiagnoseForm | None = None,
+    principal: Principal = Depends(require(SERVER_DIAGNOSE)),
+    ctx=Depends(get_server),
+):
+    """Diagnose server: a test player joins and every step is listed. A
+    stopped server is started. Follow it with GET /server/diagnose. When the
+    owner is playing and a join uses their account, nothing starts and
+    ``ask`` says so; POST again with go_ahead. On a mod server ``ask_mods``
+    asks about the join with all mods first; POST again with mods."""
+    from ... import diagnose, fullmods
+
+    if (ctx.diagnosis or {}).get("running"):
+        raise HTTPException(status_code=409, detail="Diagnose server is already running.")
+    playing = diagnose.owner_playing(ctx)
+    if playing and not (form and form.go_ahead):
+        return {
+            "job_id": None,
+            "ask": f"You're playing on {ctx.name} as {playing}. The test joins with your "
+            "account, so it kicks you out for about a minute. Go ahead?",
+        }
+    if (form is None or form.mods is None) and fullmods.wanted(ctx):
+        return {"job_id": None, "ask_mods": fullmods.ASK}
+    # running from now: a second click is refused
+    job = diagnose.start(ctx, principal.user, mods=bool(form and form.mods))
+    audit(ctx, request, "server_diagnose")
+    return {"job_id": job.id}
+
+
+class DiagnoseChangesForm(BaseModel):
+    # "all", "safe", or "none" (Deny all).
+    pick: Literal["all", "safe", "none"]
+
+
+@router.post("/server/diagnose/changes", response_model=DiagnoseStarted)
+async def server_diagnose_changes(
+    form: DiagnoseChangesForm,
+    request: Request,
+    principal: Principal = Depends(require(SERVER_DIAGNOSE)),
+    ctx=Depends(get_server),
+):
+    """Apply all, Apply safe or Deny all on the changes the last Diagnose
+    offered. Applying makes them (one backup, one Undo), then the joins run
+    again and a change that didn't help is put back. Follow it with GET
+    /server/diagnose. Risky changes: owner only."""
+    from ... import diagnose, diagnosefix
+
+    result = ctx.diagnosis or {}
+    if result.get("running"):
+        raise HTTPException(status_code=409, detail="Diagnose server is still running.")
+    if not result.get("changes"):
+        raise HTTPException(status_code=409, detail="There are no changes waiting.")
+    risky = any(not change["safe"] for change in result["changes"])
+    if form.pick == "all" and risky and not principal.is_owner:
+        raise HTTPException(
+            status_code=403, detail="Only the owner can make risky changes. Apply safe instead."
+        )
+    audit(ctx, request, "server_diagnose_changes", detail=form.pick)
+    if form.pick == "none":
+        diagnosefix.deny(result)
+        return {"job_id": None}
+    fixes = diagnosefix.picked(ctx, result, form.pick)
+    job = diagnose.start(ctx, principal.user, before=result, fixes=fixes)
+    return {"job_id": job.id}
+
+
+@router.get("/server/diagnose", response_model=Diagnosis | None)
+async def server_diagnosis(
+    principal: Principal = Depends(require(SERVER_DIAGNOSE)), ctx=Depends(get_server)
+):
+    """The last Diagnose server result, or the one running (its lines so far)."""
+    return ctx.diagnosis
 
 
 @router.post("/server/restart-now", response_model=ServerAction)

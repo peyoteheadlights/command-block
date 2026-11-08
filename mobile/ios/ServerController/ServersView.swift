@@ -87,6 +87,8 @@ struct ServersListView: View {
                     ServerSettingsView(serverId: id)
                 case .quests(let id):
                     QuestsView(serverId: id)
+                case .diagnose(let id):
+                    DiagnoseView(serverId: id)
                 case .add:
                     AddServerView()
                 }
@@ -161,7 +163,7 @@ struct ServerRowView: View {
     var body: some View {
         let state = fresh ? row.state : States.UNKNOWN
         let players: Int? = fresh ? row.playersOnline : nil
-        let words = Display.state(state)
+        let words = Display.state(state, answering: fresh ? row.answering?.ok : nil)
         HStack(spacing: 12) {
             ColorBadge(hex: row.color, size: 16)
             VStack(alignment: .leading, spacing: 4) {

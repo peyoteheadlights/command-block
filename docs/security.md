@@ -259,6 +259,89 @@ install.py` is the only place that does it, and the rules are:
 list of every file in the agent that starts a program at all: a new one
 fails that test until it is added on purpose.
 
+### Diagnose server's test player, after a click
+
+"Diagnose server" joins the server with a test player: Mineflayer (Java) and
+bedrock-protocol (Bedrock), Node.js libraries (MIT), run by the Node.js that
+ships with the app in `tools/diagnose`. The release build downloads node.exe
+and the npm packages pinned in `bot/package-lock.json`
+(`scripts/build_bot.py`), checks each against its pinned checksum (Node's
+SHA-256, npm's sha512), and unpacks them itself, so npm and package install
+scripts never run; nothing is downloaded when it runs. The one package npm
+takes from GitHub (prismarine-xbox-services, which has no checksum to check)
+is kept in `bot/vendor` instead, at the commit the lock file names.
+`agent/joinbot.py` is the only place that starts it, and only inside a run
+someone started with `server.diagnose` (owner only for now), or a "Sign in
+with Microsoft" the owner clicked (`microsoft.account`, owner only):
+
+- the command is a list (`[node.exe, join.js]`), never through a shell. What
+  to do goes in on stdin as one JSON line, never on the command line (which
+  other programs on the PC can read). Host and port come from the server's own
+  settings, the name is the fixed `CommandBlock` or the owner's signed-in
+  account, the chat line is made by the agent;
+- only its JSON lines on stdout are read, and it is killed after 4 minutes
+  (15 minutes while a sign-in waits for its code to be typed). It runs as the
+  agent's user, joins only the server's own address, and exits when the join
+  is done.
+
+### The owner's Microsoft sign-in
+
+Online-mode Java servers and Bedrock servers can only be joined with a real
+account, so Diagnose server uses the owner's own, after they sign in once with
+a device code (`agent/microsoft.py`). The test player (prismarine-auth) talks
+to Microsoft directly. The tokens it gets back are kept only on this PC, in
+`microsoft.bin`, encrypted with DPAPI for the agent's Windows account like the
+panel and store keys, and handed to the test player on stdin for each join; it
+never writes them to disk itself. They are never sent to Firebase, Discord or
+the phones, and no API answer holds them (`GET /api/microsoft` gives only the
+Java name, the gamertag and, during a sign-in, the code to type). Sign out
+deletes the file. A join that would kick the owner out (they're playing as
+that account) asks first.
+
+After a run, Diagnose offers changes only for problems that run saw
+(`agent/diagnosefix.py`): Safe (restart, 1 GB more memory when the PC has
+room) and Risky (accept the EULA, whitelist or unban the owner's own
+account). Nothing changes until someone picks Apply all, Apply safe or Deny
+all; Apply all is owner only when a risky change is listed. The picked
+changes run through the safe-change routine (one backup of the files they
+touch, one Undo), the joins run again, and a change that didn't help is put
+back. A change tried once is never offered again in that run. Nothing
+deletes a world, a mod or a backup.
+
+The other ways in (`agent/waysin.py`) only ask whether the game port answers:
+from this PC on its home network and Tailscale addresses, from the owner's
+other PC (Your PCs, `POST /api/sync/ping`, sync key only, home network and
+Tailscale addresses only, never a name), and from the internet through
+mcsrvstat.us for the address the owner typed. Two more changes come from
+them: "Turn Tailscale back on" (safe; `tailscale up` with the desktop app's
+flags, only when Tailscale is signed in but switched off, `tailscale down`
+puts it back) and "Let port N through Windows Firewall" (risky; only when the
+port answers on this PC but not from outside, and no rule of ours is there).
+The firewall rule is house rule 2's Diagnose exception: `agent/firewall.py`
+runs `System32\netsh.exe` with a fixed argument list as Administrator
+(Windows asks first; No means not made), and the rule's name is made from the
+server's id, protocol and port, so nothing typed reaches it. Router ports
+aren't opened (UPnP comes later): the list says which port to forward.
+
+The join with all mods (`agent/fullmods.py`) runs the real Minecraft game
+through HeadlessMC (MIT, `agent/headlessmc.py`), only after the owner said
+yes in a Diagnose they started (house rule 2's Diagnose exception). Its
+Windows launcher is downloaded from HeadlessMC's GitHub releases at a pinned
+version, checked against a pinned SHA-256; GitHub's paths stay closed to it
+outside that one download. It downloads the game, its mod loader and Java
+itself. The command is a list, never a shell; the version, the loader and
+the address come from the server's own settings. Everything it keeps is
+inside `headlessmc/` in the agent's data folder (its XDG folders point
+there), and the game it starts is stopped with it when a try ends. Its
+Microsoft sign-in is HeadlessMC's own (Mark's pick): HeadlessMC keeps it in
+its own file in that folder, not encrypted by us; Sign out deletes it. Only
+its name and the sign-in page reach the apps (`GET /api/headlessmc`,
+`microsoft.account`, owner only). The two changes it offers, another version
+of the mod the game won't start with (safe, from the site the mod came from
+through the normal update, checksum included) or turning that mod off
+(risky), stop the server while they're made and go through the safe-change
+routine with a backup of the mods folder. Nothing is deleted.
+
 ### Chunker world conversion, after a click
 
 Making a Java copy of a Bedrock server (or a Bedrock copy of a Java one)
@@ -774,7 +857,11 @@ key, separate from the update key, and refused as a whole if the
 signature, serial (it only goes up), size (256 KB), shape or any link
 (https only) is wrong. It can only add warnings, known bad file hashes
 (installs of those are refused) and newer Java rows; links in it are shown,
-never fetched. Until the real data key exists the built-in key is a test key
+never fetched. Its known problems for Diagnose server
+(`agent/knownproblems.py`) are a short pattern (200 characters, must
+compile, only ever searched with, on text cut to 2000 characters), a plain
+sentence and the name of a change the app already has; data can't add a
+new kind of change, and each change still checks the server and asks first. Until the real data key exists the built-in key is a test key
 whose private half was never kept, so every copy refuses every file and
 says "Couldn't check for safety notes".
 

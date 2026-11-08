@@ -23,6 +23,23 @@ version 3 (`licenses/LGPL-3.0.txt`, which builds on `licenses/GPL-3.0.txt`).
   HarfBuzz and libpng), listed with their licenses at
   https://doc.qt.io/qt-6.8/licenses-used-in-qt.html.
 
+## Diagnose server's test player
+
+Diagnose server joins with Mineflayer (https://github.com/PrismarineJS/mineflayer,
+MIT License) and bedrock-protocol (https://github.com/PrismarineJS/bedrock-protocol,
+MIT License), and the other npm packages pinned in `bot/package-lock.json`
+(MIT, BSD, Apache 2.0, ISC, 0BSD, Unlicense, CC0, and MPL 2.0 for
+mediabunny, shipped unchanged as its own source; each package's own license
+file ships with it in `tools/diagnose/node_modules`). prismarine-xbox-services
+(MIT) is kept unchanged in `bot/vendor` at the commit the lock file names. They run on Node.js for Windows
+(https://nodejs.org, MIT License; its `LICENSE` file, which also lists the
+licenses of the libraries inside node.exe, ships as `tools/diagnose/LICENSE`).
+
+The join with all mods runs the Minecraft game through HeadlessMC
+(https://github.com/headlesshq/headlessmc, MIT License). It isn't shipped:
+it is downloaded (checked against a pinned checksum) only when the owner
+says yes to the join with all mods or signs in for it.
+
 ## Chunker
 
 Making a Java copy of a Bedrock world (or the other way round) uses

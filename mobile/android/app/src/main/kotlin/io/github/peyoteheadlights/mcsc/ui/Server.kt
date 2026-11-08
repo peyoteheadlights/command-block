@@ -74,7 +74,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
         item {
             val colors = LocalColors.current
             Card(Modifier.padding(top = 8.dp)) {
-                Item(t(Display.state(state).key), subtitle = Display.uptime(vm.strings, state, status?.uptime))
+                Item(t(Display.state(state, status?.answering?.ok).key), subtitle = Display.uptime(vm.strings, state, status?.uptime))
                 if (state == States.RESTART_PENDING) Note(t("mobile.server.restart_pending"))
                 listOfNotNull(status?.serverTypeName ?: row?.typeName, status?.minecraftVersion ?: row?.minecraftVersion)
                     .joinToString(" ").takeIf { it.isNotBlank() }
@@ -123,6 +123,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                 // Mods, Plugins or Packs by server type; none for a type that takes neither.
                 Content.kind(row)?.takeIf { it != ContentKind.NONE }?.let { kind -> Item(t(kind.titleKey), onClick = { onOpen("content") }) }
                 Item(t("page.game_settings"), onClick = { onOpen("game") })
+                if (vm.canDo(Permissions.SERVER_DIAGNOSE)) Item(t("action.diagnose"), onClick = { onOpen("diagnose") })
                 if (vm.canDo(Permissions.QUESTS_MANAGE)) Item(t("page.quests"), onClick = { onOpen("quests") })
                 if (ServerForm.visible(vm.me)) Item(t("page.server_settings"), onClick = { onOpen("settings") })
             }

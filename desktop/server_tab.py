@@ -9,7 +9,7 @@ import math
 import time
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -82,6 +82,8 @@ PAGE_CLASSES: dict[str, type[Page]] = {
 
 
 def state_words(row: dict) -> str:
+    if row.get("state") == "ONLINE" and (row.get("answering") or {}).get("ok") is False:
+        return text("state.not_answering")
     return text(STATE_WORDS.get(row.get("state", ""), "state.unknown"))
 
 
@@ -124,6 +126,8 @@ class Header(QFrame):
         self.undo.clicked.connect(lambda: window.move_change("undo"))
         self.restart = QPushButton(text("action.restart"))
         self.restart.clicked.connect(lambda: window.server_action(self.row["id"], "restart"))
+        self.diagnose = QPushButton(text("action.diagnose"))
+        self.diagnose.clicked.connect(self.open_diagnose)
         self.main = QPushButton()
         self.main.setProperty("kind", "primary")
         self.main.setProperty("big", True)
@@ -135,7 +139,7 @@ class Header(QFrame):
         self.redo = self.menu.addAction("")
         self.redo.triggered.connect(lambda: window.move_change("redo"))
         self.more.setMenu(self.menu)
-        for widget in (self.undo, self.restart, self.main, self.more):
+        for widget in (self.undo, self.diagnose, self.restart, self.main, self.more):
             top.addWidget(widget)
         column.addLayout(top)
         self.chips = QHBoxLayout()
@@ -169,6 +173,11 @@ class Header(QFrame):
         self.show_notice()
         outer.addLayout(column, 1)
 
+    def open_diagnose(self) -> None:
+        from .diagnose import DiagnoseWindow
+
+        DiagnoseWindow(self.window_, self.row["id"], self.row["name"]).show()
+
     def start_or_stop(self) -> None:
         running = self.row.get("state") in ("ONLINE", *BUSY)
         self.window_.server_action(self.row["id"], "stop" if running else "start")
@@ -189,6 +198,7 @@ class Header(QFrame):
         control = self.window_.may(row["id"], "server.control")
         self.main.setVisible(control)
         self.restart.setVisible(state == "ONLINE" and control)
+        self.diagnose.setVisible(self.window_.may(row["id"], "server.diagnose"))
         self.more.setAccessibleName(text("desktop.more"))
         while self.chips.count():
             old = self.chips.takeAt(0).widget()
@@ -356,7 +366,7 @@ class ServerScreen(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(band)
-        body = QHBoxLayout(band)
+        body = self.body = QHBoxLayout(band)
         body.setContentsMargins(14, 14, 14, 14)
         body.setSpacing(14)
         center = QVBoxLayout()
@@ -510,6 +520,14 @@ class ServerScreen(QWidget):
         self.panel.setFixedWidth(260) if wide else self.panel.setMaximumWidth(16777215)
         if not wide:
             self.panel.setMinimumWidth(0)
+
+    def minimumSizeHint(self) -> QSize:
+        # The side panel only stays while the window is wide, so it must not
+        # keep the window from getting narrow enough to move it under.
+        hint = super().minimumSizeHint()
+        if self.side.indexOf(self.panel) >= 0:
+            hint.setWidth(hint.width() - self.panel.width() - self.body.spacing())
+        return hint
 
     def resizeEvent(self, event) -> None:
         self.place_panel()

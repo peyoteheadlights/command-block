@@ -138,6 +138,7 @@ class Notes:
     server_types: list[dict[str, Any]] = field(default_factory=list)
     look_alikes: list[dict[str, Any]] = field(default_factory=list)
     recommended_addons: list[dict[str, Any]] = field(default_factory=list)
+    diagnose_problems: list[Any] = field(default_factory=list)
     # Entries marked for a newer app than this one.
     skipped: int = 0
 
@@ -308,6 +309,25 @@ def _recommended(row: dict) -> dict[str, Any]:
     }
 
 
+def _diagnose_problem(row: dict) -> Any:
+    """Ratchet: only places Diagnose already reads and changes it already
+    has. The pattern must compile; it is only ever searched with."""
+    from . import knownproblems
+
+    checked = {
+        "id": _match(row, "id", _ID),
+        "where": row.get("where"),
+        "pattern": row.get("pattern"),
+        "say": _text(row, "say", 300),
+        "link": _link(row, "link") if "link" in row else "",
+        "change": row.get("change", ""),
+    }
+    try:
+        return knownproblems.read(checked)
+    except ValueError as exc:
+        raise NotesRefused(f"The notes file has a bad '{exc}'.") from exc
+
+
 def load_shipped() -> None:
     """The recommended add-ons from the notes file shipped with the app,
     used until a signed one arrives. Only that list: the shipped file is
@@ -359,6 +379,7 @@ def parse(document: bytes, highest_serial: int, now: float, app_version: str) ->
     kinds, d = _entries(body, "server_types", _server_type, app_version)
     alikes, e = _entries(body, "look_alikes", _look_alike, app_version)
     recommended, f = _entries(body, "recommended_addons", _recommended, app_version)
+    problems, g = _entries(body, "diagnose_problems", _diagnose_problem, app_version)
     today = dt.datetime.fromtimestamp(now, dt.UTC).date()
     return Notes(
         serial=serial,
@@ -371,7 +392,8 @@ def parse(document: bytes, highest_serial: int, now: float, app_version: str) ->
         server_types=kinds,
         look_alikes=alikes,
         recommended_addons=recommended,
-        skipped=a + b + c + d + e + f,
+        diagnose_problems=problems,
+        skipped=a + b + c + d + e + f + g,
     )
 
 
@@ -509,12 +531,14 @@ class SafetyNotes:
         return self.status()
 
     def _apply(self, notes: Notes) -> None:
+        from . import knownproblems
         from .minecraft import java
         from .minecraft.java import MINECRAFT_JAVA_REQUIREMENTS, parse_minecraft
 
         self.notes = notes
         BAD_FILES.clear()
         BAD_FILES.update({row["sha512"]: row for row in notes.known_bad_files})
+        knownproblems.FROM_NOTES[:] = notes.diagnose_problems
         LOOK_ALIKES.clear()
         for row in notes.look_alikes:
             key = (row["source"], row["project"], row["type"])

@@ -51,7 +51,11 @@ public enum Display {
         States.UNKNOWN: StateWords(key: "state.unknown", tone: .neutral),
     ]
 
-    public static func state(_ name: String?) -> StateWords {
+    /// answering false: running but the game port doesn't answer (agent's watchdog).
+    public static func state(_ name: String?, answering: Bool? = nil) -> StateWords {
+        if name == States.ONLINE && answering == false {
+            return StateWords(key: "state.not_answering", tone: .danger)
+        }
         if let name = name, let words = STATES[name] {
             return words
         }

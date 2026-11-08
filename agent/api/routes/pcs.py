@@ -7,9 +7,13 @@ a join code and the owner's password), never with a sign-in.
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ... import waysin
 from ...discord.botpc import LINK_HEADER
+from ...monitoring import answering
 from ...security.auth import AccountError, AuthError, Principal
 from ...security.permissions import ACCOUNT, SECURITY_MANAGE, check_bot_link, require
 from ...yourpcs import KEY_HEADER, PC_HEADER, PcError, Refused
@@ -22,9 +26,16 @@ from ..responses import (
     PcList,
     SyncChanges,
     SyncHello,
+    SyncPing,
     SyncTaken,
 )
-from .models import BotLinkRequest, PcJoinRequest, SyncChangesRequest, SyncJoinRequest
+from .models import (
+    BotLinkRequest,
+    PcJoinRequest,
+    SyncChangesRequest,
+    SyncJoinRequest,
+    SyncPingRequest,
+)
 
 router = APIRouter()
 
@@ -134,6 +145,16 @@ async def sync_join(payload: SyncJoinRequest, request: Request, core=Depends(get
         return core.pcs.request_join(payload.model_dump(), client_ip(request))
     except PcError as exc:
         raise _said(exc) from exc
+
+
+@router.post("/sync/ping", response_model=SyncPing)
+async def sync_ping(payload: SyncPingRequest, request: Request, core=Depends(get_core)):
+    """Diagnose server on another of the owner's PCs: does this game port
+    answer from here? Only home network and Tailscale addresses."""
+    _peer(request, core)
+    if not waysin.may_ping(payload.host):
+        raise HTTPException(status_code=400, detail="Only home network and Tailscale addresses.")
+    return await asyncio.to_thread(answering.ping, payload.protocol, payload.host, payload.port)
 
 
 @router.get("/sync/hello", response_model=SyncHello)

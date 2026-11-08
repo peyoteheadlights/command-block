@@ -267,6 +267,7 @@ def test_every_route_declares_its_permission():
         "/api/sync/join",
         "/api/sync/hello",
         "/api/sync/changes",
+        "/api/sync/ping",  # Diagnose server asking from another PC (agent/waysin.py)
         # The Bot PC passing on what Discord asked: a Bot link (agent/discord/botpc.py).
         "/api/sync/bot/{what}",
     }

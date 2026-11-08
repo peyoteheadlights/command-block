@@ -36,6 +36,7 @@ from .minecraft.crash import CrashReporter
 from .minecraft.playeractions import PlayerActions
 from .minecraft.process import MinecraftServer, ServerError
 from .mods.manager import ModManager
+from .monitoring.answering import AnswerWatch
 from .monitoring.metrics import MetricsMonitor
 from .monitoring.players import PlayerTracker
 from .monitoring.tps import TpsMonitor
@@ -99,6 +100,10 @@ class ServerContext:
         self.chat = ChatLog()
         self.autosleep = AutoSleep(self)
         self.spam = watchers.ChatSpam(self)
+        # Online and really answering, or online and stuck.
+        self.answering = AnswerWatch(self)
+        # Diagnose server's last (or running) result (agent/diagnose.py).
+        self.diagnosis: dict[str, Any] | None = None
 
         self.server.signal_hook = self._console_signals
         self.server.crash_hook = self.crashes.collect
@@ -265,6 +270,7 @@ class ServerContext:
             self._update_check_loop(), name=f"mod-updates-{self.server_id}"
         )
         self.autosleep.start()
+        self.answering.start()
 
     async def autostart(self) -> None:
         if not self.config.server.autostart_minecraft:
@@ -307,6 +313,7 @@ class ServerContext:
         if self._update_task:
             self._update_task.cancel()
         await self.autosleep.stop()
+        await self.answering.stop()
         await self.metrics.stop()
         await self.tps.stop()
         await self.scheduler.stop()
@@ -330,6 +337,7 @@ class ServerContext:
         status["job"] = running.to_dict() if running else None
         status["agent"] = self.core.agent_status(self)
         status["sleep"] = self.autosleep.status()
+        status["answering"] = self.answering.status()
         return status
 
     def summary(self) -> dict[str, Any]:
@@ -378,6 +386,7 @@ class ServerContext:
             "directory": status["directory"],
             "default": self.server_id == self.core.config.default_server_id,
             "recent_crashes": status["recent_crashes"],
+            "answering": self.answering.status(),
         }
 
 
@@ -442,6 +451,14 @@ class AgentCore:
         from .rented import RentedServers
 
         self.rented = RentedServers(self)
+        # The owner's Microsoft sign-in, for Diagnose server (agent/microsoft.py).
+        from .microsoft import Microsoft
+
+        self.microsoft = Microsoft(config.data_dir)
+        # HeadlessMC and its own sign-in, for the join with all mods (agent/headlessmc.py).
+        from .headlessmc import HeadlessMc
+
+        self.headlessmc = HeadlessMc(config.data_dir)
         self.discord: Any = None
         # The bot posts alerts in its alerts channel (and the webhook steps aside).
         self.notifier.bot = lambda: self.discord
@@ -703,6 +720,8 @@ class AgentCore:
             await ctx.stop()
         await self.guard.stop()
         await self.rented.stop()
+        self.microsoft.cancel()
+        self.headlessmc.cancel()
         await self.pcs.stop()
         self.keepawake.stop()
         await self.notifier.stop()

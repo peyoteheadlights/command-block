@@ -730,7 +730,7 @@ def test_a_custom_jar_is_never_shown_as_checked(multi_client, tmp_path):
     assert made["verified"] is False and made["server"]["custom_jar"] is True
     version = multi_client.get("/api/servers/fork/version").json()
     assert version["minecraft_version"] is None and version["pending_version"] is None
-    assert "checked" not in str(made).lower().replace("unchecked", "")
+    assert "checked" not in str(made).lower().replace("unchecked", "").replace("checked_at", "")
 
 
 def test_speed_ups_need_a_measured_reason():

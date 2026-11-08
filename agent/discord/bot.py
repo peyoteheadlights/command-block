@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from .. import levels, store
+from .. import diagnose, levels, store
 from ..config import PROJECT_ROOT
 from ..events import OWNER_ONLY_EVENTS, Event
 from ..game_events import ANSWERS
@@ -67,6 +67,10 @@ POSTS_KEY = "discord_status_posts"  # status channel id -> {"message", "words"}
 LIVE_FIRST = 5.0  # seconds after logging in (the Discord servers arrive first)
 LIVE_EVERY = 60.0  # seconds between status message and presence checks
 START_COOLDOWN = 300.0  # seconds between starts of one server from Discord
+# /diagnose: how often its result is read, and when to stop waiting (Discord
+# lets a reply be changed for 15 minutes).
+DIAGNOSE_EVERY = 2.0
+DIAGNOSE_WAIT = 14 * 60.0
 BATCH = 1.0  # seconds game lines are gathered before they're posted
 REFUSED = "\N{NO ENTRY SIGN}"  # the reaction on a message that didn't go into the game
 STORE_SEEN_KEY = "discord_store_seen"  # guild id -> member id -> Store rank roles given
@@ -1621,6 +1625,7 @@ def alert_buttons(event: Event, ctx: ServerContext) -> list[dict]:
         "player_left": ("ban",),
         "server_crashed": ("restart",),
         "crash_loop": ("restart",),
+        "server_not_answering": ("restart",),
         "low_tps": ("restart",),
         "high_mspt": ("restart",),
         "backup_failed": ("backup",),
@@ -1874,6 +1879,63 @@ async def restart(bot: Bot, call: Call) -> str:
             f"{ctx.name} stopped but didn't come back up. The owner can see why in Command Block."
         )
     return f"{ctx.name} is restarting."
+
+
+async def diagnose_server(bot: Bot, call: Call) -> str:
+    """/diagnose: the same run as the apps' button. Discord can't be asked
+    "kick the owner?" or "the join with all mods too?", so a playing owner
+    refuses it and the join with all mods is left to the apps. The changes
+    it finds are applied in the apps (risky ones by the owner)."""
+    ctx = call.ctx
+    assert ctx is not None
+    if (ctx.diagnosis or {}).get("running"):
+        raise Refused(f"Diagnose server is already running on {ctx.name}.")
+    if diagnose.owner_playing(ctx):
+        raise Refused(
+            f"The owner is playing on {ctx.name}, and the test joins with their account, "
+            "so it would kick them out. Try again when they're off."
+        )
+    diagnose.start(ctx, call.principal.user)
+    bot.spawn(_diagnose_summary(ctx, bot.edit_reply(call.interaction)))
+    return (
+        f"Testing {ctx.name}: a test player joins the ways the server is shared. "
+        "The summary comes here when it's done (a few minutes)."
+    )
+
+
+async def _diagnose_summary(ctx: ServerContext, edit: Callable[[str], None]) -> None:
+    waited = 0.0
+    while (ctx.diagnosis or {}).get("running") and waited < DIAGNOSE_WAIT:
+        await asyncio.sleep(DIAGNOSE_EVERY)
+        waited += DIAGNOSE_EVERY
+    edit(diagnose_words(ctx.name, ctx.diagnosis or {}))
+
+
+def diagnose_words(name: str, result: dict[str, Any]) -> str:
+    """The summary for Discord: one line per way in, the known problems and
+    how many changes wait. Each line's detail stays in the apps: it can hold
+    addresses and what the server said."""
+    if result.get("running"):
+        return f"Still testing {name}. The owner and moderators see the rest in Command Block."
+    groups: dict[str, list[bool | None]] = {}
+    for line in result.get("lines") or []:
+        groups.setdefault(line["group"], []).append(line["ok"])
+    out = [f"Diagnose server on {name}:"]
+    for group, oks in groups.items():
+        if False in oks:
+            out.append(f"\N{CROSS MARK} {group}: failed")
+        elif None in oks:
+            out.append(f"\N{WHITE QUESTION MARK ORNAMENT} {group}: not checked")
+        else:
+            out.append(f"\N{WHITE HEAVY CHECK MARK} {group}: worked")
+    out += [f"- {known['say']}" for known in result.get("known") or []]
+    changes = len(result.get("changes") or [])
+    if changes:
+        out.append(
+            f"{changes} change{'s' if changes != 1 else ''} may fix it. "
+            "Apply them in Command Block (risky ones only the owner)."
+        )
+    return "\n".join(out)
 
 
 async def backup(bot: Bot, call: Call) -> str:
@@ -2452,6 +2514,13 @@ COMMANDS: dict[str, Command] = {
             "Start the Minecraft server (if your Discord role may)",
             P.SERVER_CONTROL,
             start,
+            slow=True,
+        ),
+        Command(
+            "diagnose",
+            "Test joining the Minecraft server and see what stops players (if your role may)",
+            P.SERVER_DIAGNOSE,
+            diagnose_server,
             slow=True,
         ),
         Command(

@@ -73,7 +73,7 @@ struct ServerView: View {
     private func header(_ palette: Palette) -> some View {
         // Nothing old is shown as current: without a fresh read, Unknown.
         let state = status?.state ?? States.UNKNOWN
-        let words = Display.state(state)
+        let words = Display.state(state, answering: status?.answering?.ok)
         return card(palette) {
             HStack(alignment: .center, spacing: 12) {
                 ColorBadge(hex: row?.color, size: 18)
@@ -206,6 +206,9 @@ struct ServerView: View {
                 screenLink(model.t(kind.titleKey), ServerRoute.content(serverId), palette)
             }
             screenLink(model.t("page.game_settings"), ServerRoute.game(serverId), palette)
+            if model.can(Permissions.SERVER_DIAGNOSE) {
+                screenLink(model.t("action.diagnose"), ServerRoute.diagnose(serverId), palette)
+            }
             if model.can(Permissions.QUESTS_MANAGE) {
                 screenLink(model.t("page.quests"), ServerRoute.quests(serverId), palette)
             }

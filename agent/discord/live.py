@@ -101,7 +101,10 @@ def status_message(ctx: ServerContext, shared: str | None) -> str:
     running clock in it (Discord shows <t:...:R> as "2 hours ago" itself),
     so it only changes when something real does."""
     state = ctx.server.state.value
-    lines = [f"**{ctx.name}** is {state_words(state)}"]
+    words = state_words(state)
+    if state == "ONLINE" and ctx.answering.problem:
+        words = f"running but not answering: {ctx.answering.problem['what']}"
+    lines = [f"**{ctx.name}** is {words}"]
     if state == "ONLINE":
         if ctx.players.verified:
             names = sorted((p["username"] for p in ctx.players.online()), key=str.lower)
