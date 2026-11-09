@@ -59,7 +59,7 @@ This is a student project I've been working on as a hobby for my personal use, a
 
 ## Planned features
 
-This app is in no way done and will be supported for a good long while. Here's everything that's been planned so far (no dates, it's a hobby project):
+This app is in no way done and will be supported for a good long while. Here's everything that's been planned so far:
 
 **Discord bot** (a lot is in already: setup, Discord role permissions, status and alerts, starting, account linking, the chat bridge, /stats, Levels with Level roles, a weekly leaderboard, quests with rewards, and events and polls, see [docs/discord.md](docs/discord.md))
 
