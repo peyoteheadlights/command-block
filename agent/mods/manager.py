@@ -40,7 +40,7 @@ from ..security.paths import (
     safe_filename,
     safe_join,
 )
-from . import checks
+from . import checks, store
 from .curseforge import Blocked, CurseForgeClient, file_prints
 from .dependencies import PLATFORM_IDS, DependencyResolver
 from .github import GitHubReleases
@@ -172,6 +172,8 @@ class ModManager:
         self.github = GitHubReleases(config)
         self.curseforge = CurseForgeClient(config)
         self.deps = DependencyResolver(self)
+        # One copy of each jar, shared by every server (agent/mods/store.py).
+        self.store = store.for_config(db, config)
         self._cache: tuple[float, list[ModInfo]] | None = None
 
     # ------------------------------------------------------------------
@@ -619,7 +621,7 @@ class ModManager:
         while target.exists():
             target = folder / f"{stamp}-{counter}-{base_name}"
             counter += 1
-        shutil.copy2(path, target)
+        self.store.place(path, target)
         self.db.insert(
             "mod_versions",
             {
@@ -634,6 +636,27 @@ class ModManager:
             },
         )
         return target
+
+    def place_jar(self, source: Path, target: Path) -> None:
+        """Put a checked jar into the server's folder through the store,
+        and remember whether it could be linked (the Mods page says so when
+        this server's files are stored separately)."""
+        linked = self.store.place(source, target)
+        self.db.set_setting("mods_stored_separately", not linked)
+
+    async def _download(self, site: AddonSource, version: dict[str, Any]) -> tuple[bytes, str, str]:
+        """The site's file, from the store when it's already there (no
+        download, same checks after), else downloaded and checked."""
+        file = version.get("file") or {}
+        name = file.get("filename")
+        kept = name and self.store.find(
+            sha256=file.get("sha256"), sha1=file.get("sha1"), sha512=file.get("sha512")
+        )
+        if not kept:
+            return await site.download(version)
+        safe_filename(name, JAR_EXT)
+        data = await asyncio.to_thread(kept.read_bytes)
+        return data, name, hashlib.sha256(data).hexdigest()
 
     def versions_for(self, mod_id: str) -> list[dict[str, Any]]:
         rows = self.db.query(
@@ -721,7 +744,7 @@ class ModManager:
             )
 
         try:
-            data, filename, sha256 = await site.download(version)
+            data, filename, sha256 = await self._download(site, version)
         except Blocked as exc:
             self.need_you(exc.need)
             raise
@@ -747,7 +770,7 @@ class ModManager:
                 self.archive(target, old, source="replaced-on-install")
                 replaced = old.to_dict()
                 target.unlink()
-            temp.replace(target)
+            self.place_jar(temp, target)
         finally:
             if temp.exists():
                 temp.unlink(missing_ok=True)
@@ -956,7 +979,7 @@ class ModManager:
                 old = read_mod_jar(target)
                 self.archive(target, old, source="replaced-on-upload")
                 target.unlink()
-            temp.replace(target)
+            self.place_jar(temp, target)
         finally:
             temp.unlink(missing_ok=True)
         installed = read_mod_jar(target)
@@ -1301,7 +1324,7 @@ class ModManager:
                 f"{mod.name} is already this version ({version['version_number']}), "
                 "so nothing was changed."
             )
-        data, new_filename, sha256 = await site.download(version)
+        data, new_filename, sha256 = await self._download(site, version)
         refuse_known_bad(data, new_filename)
         archived = self.archive(old_path, mod, source="pre-update")
         target = safe_join(self.mods_dir, new_filename, allowed_extensions=JAR_EXT)
@@ -1314,12 +1337,13 @@ class ModManager:
             probe = read_mod_jar(temp, compute_hash=False)
             self._check_loader(probe, discarded=False)
             old_path.unlink()
-            temp.replace(target)
+            self.place_jar(temp, target)
         except Exception:
             temp.unlink(missing_ok=True)
             if not old_path.exists():  # put the old jar back
-                shutil.copy2(archived, old_path)
+                self.place_jar(archived, old_path)
             raise
+        temp.unlink(missing_ok=True)
         installed = read_mod_jar(target)
         installed.sha256 = sha256
         self.archive(target, installed, source=version["file"]["url"])
@@ -1382,7 +1406,7 @@ class ModManager:
             self.archive(current_path, current, source="pre-rollback")
             current_path.unlink()
         target = safe_join(self.mods_dir, row["filename"], allowed_extensions=JAR_EXT)
-        shutil.copy2(source, target)
+        self.place_jar(source, target)
         restored = read_mod_jar(target)
         self.record(
             "rollback",

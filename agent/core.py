@@ -435,6 +435,10 @@ class AgentCore:
         # server software (agent/softwarecheck.py).
         self.notes = SafetyNotes(self)
         self.software = SoftwareCheck(self)
+        # One copy of each mod file: the daily share and tidy (agent/mods/store.py).
+        from .mods.store import Upkeep
+
+        self.mod_files = Upkeep(self)
         # Moves the agent onto Tailscale and checks it every minute after.
         self.tailscale = TailscaleWatch(self)
         self.wake = Wake(self)
@@ -574,6 +578,7 @@ class AgentCore:
         await self.updates.start()
         self.notes.start()
         self.software.start()
+        self.mod_files.start()
         self.tailscale.start()
         self.wake.start()
         self.guard.start()
@@ -707,6 +712,7 @@ class AgentCore:
         await self.updates.stop()
         await self.notes.stop()
         await self.software.stop()
+        self.mod_files.stop()
         self.tailscale.stop()
         self.wake.stop()
         if self.discord is not None:

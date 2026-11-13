@@ -109,17 +109,21 @@ public struct ModList: Decodable, Equatable, Sendable {
     /// Nil until the server has started once.
     public var minecraftVersion: String?
     public var serverState: String
+    /// The server's drive can't link to the shared store, so its jars are copies.
+    public var storedSeparately: Bool
 
     enum CodingKeys: String, CodingKey {
         case mods
         case minecraftVersion = "minecraft_version"
         case serverState = "server_state"
+        case storedSeparately = "stored_separately"
     }
 
-    public init(mods: [Mod] = [], minecraftVersion: String? = nil, serverState: String = States.UNKNOWN) {
+    public init(mods: [Mod] = [], minecraftVersion: String? = nil, serverState: String = States.UNKNOWN, storedSeparately: Bool = false) {
         self.mods = mods
         self.minecraftVersion = minecraftVersion
         self.serverState = serverState
+        self.storedSeparately = storedSeparately
     }
 
     public init(from decoder: Decoder) throws {
@@ -127,6 +131,7 @@ public struct ModList: Decodable, Equatable, Sendable {
         mods = c.each(.mods)
         minecraftVersion = c.maybe(.minecraftVersion)
         serverState = c.value(.serverState, States.UNKNOWN)
+        storedSeparately = c.value(.storedSeparately, false)
     }
 }
 

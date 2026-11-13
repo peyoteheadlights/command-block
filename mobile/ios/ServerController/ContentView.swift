@@ -166,6 +166,9 @@ struct ContentView: View {
             ProblemCard(problem: problem, palette: palette) { await content.loadMods() }
         }
         if let list = read.value {
+            if list.storedSeparately {
+                Hint(text: model.t("mods.stored_separately"), palette: palette)
+            }
             if changes == .ready {
                 Presses(presses: [
                     Press(

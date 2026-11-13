@@ -502,7 +502,12 @@ def forget(core: AgentCore, token: str) -> None:
 # ----------------------------------------------------------------------
 # putting a pack's files in place
 # ----------------------------------------------------------------------
-async def _download_all(pack: Pack, folder: Path, job: JobHandle | None) -> list[dict[str, Any]]:
+async def _download_all(
+    pack: Pack, folder: Path, job: JobHandle | None, mods: Any = None
+) -> list[dict[str, Any]]:
+    """Each file the pack lists, checked. A .jar already in the shared
+    store (agent/mods/store.py) isn't downloaded again; every jar ends up
+    linked from the store."""
     wanted = pack.downloads
     total = sum(f.size or 0 for f in wanted)
     if job:
@@ -515,6 +520,28 @@ async def _download_all(pack: Pack, folder: Path, job: JobHandle | None) -> list
     for item in wanted:
         assert item.url and (item.sha512 or item.sha1)
         target = check_archive_member(folder, item.path)
+        jar = mods is not None and target.suffix.lower() == ".jar"
+        kept = jar and mods.store.find(sha1=item.sha1, sha512=item.sha512)
+        if kept:
+            bad = notes.known_bad(await asyncio.to_thread(kept.read_bytes))
+            if bad:
+                raise ModpackError(f"{item.name} is on the list of known bad files ({bad['why']}).")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(mods.place_jar, kept, target)
+            size = target.stat().st_size
+            fetched.append(
+                {
+                    "path": item.path,
+                    "file": target.name,
+                    "size": size,
+                    "source": "store",
+                    "verified": True,
+                    "checked_with": "sha256",
+                }
+            )
+            if job and item.size:
+                job.advance(item.size)
+            continue
         spec = FileSpec(
             url=downloads.check_url(item.url),
             name=item.name,
@@ -532,13 +559,17 @@ async def _download_all(pack: Pack, folder: Path, job: JobHandle | None) -> list
         if bad:
             got.path.unlink(missing_ok=True)
             raise ModpackError(f"{item.name} is on the list of known bad files ({bad['why']}).")
+        if jar:
+            await asyncio.to_thread(mods.place_jar, got.path, got.path)
         fetched.append({"path": item.path, **got.to_dict()})
         if job and item.size:
             job.advance(item.size)
     return fetched
 
 
-def _extract_overrides(pack: Pack, archive: Path, folder: Path, advance=None) -> list[str]:
+def _extract_overrides(
+    pack: Pack, archive: Path, folder: Path, advance=None, mods: Any = None
+) -> list[str]:
     written: list[str] = []
     with zipfile.ZipFile(archive) as zf:
         for member, relative in _override_members(zf, pack.folders):
@@ -550,7 +581,13 @@ def _extract_overrides(pack: Pack, archive: Path, folder: Path, advance=None) ->
             temp = target.with_name(f".{target.name}.part")
             with zf.open(member) as source, open(temp, "wb") as out:
                 shutil.copyfileobj(source, out, 1024 * 1024)
-            temp.replace(target)
+            if mods is not None and target.suffix.lower() == ".jar":
+                try:  # a jar the pack carries itself is shared too
+                    mods.place_jar(temp, target)
+                finally:
+                    temp.unlink(missing_ok=True)
+            else:
+                temp.replace(target)
             written.append(relative)
             if advance:
                 advance(1)
@@ -558,14 +595,15 @@ def _extract_overrides(pack: Pack, archive: Path, folder: Path, advance=None) ->
 
 
 async def put_in_place(
-    pack: Pack, archive: Path, folder: Path, job: JobHandle | None
+    pack: Pack, archive: Path, folder: Path, job: JobHandle | None, mods: Any = None
 ) -> dict[str, Any]:
-    """Download the pack's mods and extract its overrides into ``folder``."""
-    fetched = await _download_all(pack, folder, job)
+    """Download the pack's mods and extract its overrides into ``folder``.
+    With ``mods`` (the server's ModManager) jars go through the shared store."""
+    fetched = await _download_all(pack, folder, job, mods)
     if job:
         job.step("Copying the pack's other files", total=pack.overrides, unit="files")
     written = await asyncio.to_thread(
-        _extract_overrides, pack, archive, folder, job.advance if job else None
+        _extract_overrides, pack, archive, folder, job.advance if job else None, mods
     )
     return {"downloaded": fetched, "overrides": written}
 
@@ -610,7 +648,7 @@ async def import_new(
         raise ModpackError(pack.problems[0])
 
     async def after_install(ctx: ServerContext, folder: Path, job: JobHandle | None) -> dict:
-        result = await put_in_place(pack, archive, folder, job)
+        result = await put_in_place(pack, archive, folder, job, ctx.mods)
         ok, detail = check_in_place(pack, folder, result)
         if not ok:
             raise ModpackError(f"The import couldn't be checked: {detail}")
@@ -695,7 +733,7 @@ async def import_into(ctx: ServerContext, token: str, user: str = "system") -> d
         new_files = [rel for rel in targets if not (folder / rel).exists()]
         try:
             moved = await asyncio.to_thread(_move_content_aside, ctx)
-            result = await put_in_place(pack, archive, folder, job)
+            result = await put_in_place(pack, archive, folder, job, ctx.mods)
             ok, detail = await asyncio.to_thread(check_in_place, pack, folder, result)
             if not ok:
                 raise ModpackError(f"The import couldn't be checked: {detail}")
