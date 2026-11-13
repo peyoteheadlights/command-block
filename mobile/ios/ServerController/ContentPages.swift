@@ -345,6 +345,27 @@ final class ContentPages {
         }
     }
 
+    /// Modpacks found by name on Modrinth and CurseForge; picking one reads it like a file.
+    private(set) var packsFound: ModSearch? = nil
+
+    func findPacks(_ query: String, _ strings: Strings) async {
+        let query = query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return }
+        await work("find_pack", strings) { [weak self] client, _ in
+            self?.packsFound = try await client.searchModpacks(query: query)
+            return nil
+        }
+    }
+
+    func readFound(_ hit: ModrinthHit, _ strings: Strings) async {
+        await work("modpack", strings) { [weak self] client, id in
+            self?.modpack = try await client.fetchModpack(hit, serverId: id)
+            self?.packsFound = nil
+            self?.sheet = .modpack
+            return nil
+        }
+    }
+
     /// No import after all: the PC forgets the pack it read.
     func cancelModpack() {
         guard let token = modpack?.token else { return }

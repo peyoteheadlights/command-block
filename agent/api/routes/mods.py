@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from functools import partial
 from itertools import zip_longest
 from typing import Any
 
@@ -118,13 +119,24 @@ async def search_mods(
     # Modrinth and Hangar (plugin servers) or CurseForge (mod servers) side
     # by side, each named. Their files share no checksum, so the same add-on
     # can show twice; installing it twice is refused by its hash.
+    sites = (mods.modrinth, other)
+    return await side_by_side(
+        [(site.label, partial(site.search, q, minecraft_version=version)) for site in sites],
+        limit,
+        offset,
+    )
+
+
+async def side_by_side(searches: list[tuple[str, Any]], limit: int, offset: int) -> dict:
+    """Two sites' results taken in turn, each named. ``searches`` are
+    (site name, search taking limit and offset). One site down is said in
+    ``problems``; both down is the first one's error."""
     # shortcut: each site fills half the page, so once one runs out the
     # pages get shorter and the other's offset can repeat a few results.
     half, start = max(1, limit // 2), max(0, offset) // 2
-    sites = (mods.modrinth, other)
-    names = [site.label for site in sites]
+    names = [name for name, _ in searches]
     answers = await asyncio.gather(
-        *(site.search(q, minecraft_version=version, limit=half, offset=start) for site in sites),
+        *(search(limit=half, offset=start) for _, search in searches),
         return_exceptions=True,
     )
     for answer in answers:

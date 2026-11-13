@@ -334,6 +334,11 @@ class CurseForgeModpackRequest(BaseModel):
     server_id: str = Field(default="", max_length=64)
 
 
+class ModrinthModpackRequest(BaseModel):
+    project: str = Field(pattern=r"^[A-Za-z0-9_.\-]{1,64}$", description="Modrinth id or slug")
+    server_id: str = Field(default="", max_length=64)
+
+
 class ModpackIntoRequest(BaseModel):
     token: str = Field(min_length=32, max_length=32)
     confirm: bool = False

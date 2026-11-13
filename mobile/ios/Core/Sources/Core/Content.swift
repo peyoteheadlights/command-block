@@ -309,6 +309,26 @@ public enum Modpacks {
         return out
     }
 
+    /// Where a found modpack is read from.
+    public static func site(_ hit: ModrinthHit) -> String {
+        hit.source == "curseforge" ? "curseforge" : "modrinth"
+    }
+
+    /// A found modpack on one line under its name: site, loader and newest Minecraft
+    /// version, downloads, and what Modrinth was told it holds.
+    public static func about(_ strings: Strings, _ hit: ModrinthHit) -> String {
+        let madeFor = (hit.loaders + [hit.minecraftVersion].compactMap { $0 }).joined(separator: " ")
+        var parts = [hit.sourceName ?? "", madeFor]
+        if let downloads = hit.downloads {
+            let grouped = NumberFormatter()
+            grouped.numberStyle = .decimal
+            grouped.locale = Locale(identifier: "en_US")
+            parts.append(strings.t("pack.downloads", ["count": grouped.string(from: NSNumber(value: downloads)) ?? "\(downloads)"]))
+        }
+        if hit.serverSide == "unsupported" { parts.append(strings.t("pack.players_only")) }
+        return (parts + hit.disclosures).filter { !$0.isEmpty }.joined(separator: "  ·  ")
+    }
+
     public static func fileStatus(_ file: ModpackFile) -> StateWords {
         switch file.status {
         case "download": return StateWords(key: "pack.status_download", tone: .success)

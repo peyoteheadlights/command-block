@@ -36,12 +36,14 @@ from urllib.parse import urlencode, urlparse
 from .. import downloads
 from ..security.paths import PathSafetyError, safe_filename
 from .hangar import Pace
+from .modrinth import LOADER_NAMES, newest
 from .sources import NotFound, SourceError
 
 log = logging.getLogger("msc.curseforge")
 
 MODS, MODPACKS = 6, 4471  # CurseForge's class ids
 LOADERS = {"forge": 1, "fabric": 4, "quilt": 5, "neoforge": 6}
+LOADER_IDS = {number: name for name, number in LOADERS.items()}
 GOOD_STATUS = {4, 10}  # Approved, Released; never Rejected, Malware or Deleted
 MALWARE = 6
 RELEASE_TYPES = {1: "release", 2: "beta", 3: "alpha"}
@@ -305,6 +307,14 @@ class CurseForgeClient:
             "downloads": int(m["downloadCount"]) if m.get("downloadCount") is not None else None,
             "categories": [c.get("name") for c in m.get("categories") or [] if isinstance(c, dict)],
             "game_versions": sorted({str(i.get("gameVersion")) for i in indexes}),
+            "minecraft_version": newest([i.get("gameVersion") for i in indexes]),
+            "loaders": sorted(
+                {
+                    LOADER_NAMES[LOADER_IDS[i["modLoader"]]]
+                    for i in indexes
+                    if i.get("modLoader") in LOADER_IDS
+                }
+            ),
             "icon_url": (m.get("logo") or {}).get("thumbnailUrl"),
             "page": page_of(m),
             # False: the author keeps other apps from downloading its files.

@@ -548,16 +548,32 @@ def test_a_pack_this_app_cant_set_up_is_refused_before_anything(fabric, relay):
     assert not any(RELAY in a for a in relay.asked), "refused before CurseForge is asked"
 
 
-def test_a_curseforge_pack_picked_on_curseforge(fabric, relay):
+def modrinth_modpacks(monkeypatch, hits=None, down=False):
+    """Modrinth's search answering modpacks only, for any loader."""
+    from agent.mods.modrinth import ModrinthClient, ModrinthError
+
+    async def send(self, method, path, **sent):
+        facets = json.loads(sent["params"]["facets"])
+        assert path == "/search" and facets == [["project_type:modpack"]]
+        if down:
+            raise ModrinthError("Couldn't reach Modrinth.")
+        return {"hits": hits if hits is not None else [{"project_id": "mr-cozy", "slug": "cozy"}]}
+
+    monkeypatch.setattr(ModrinthClient, "_send", send)
+
+
+def test_a_curseforge_pack_picked_on_curseforge(fabric, relay, monkeypatch):
     client, headers, _ = fabric
+    modrinth_modpacks(monkeypatch)
     relay.add(900, "Cozy Pack")["classId"] = 4471
     zipped = cf_pack([(394468, 5001)])
-    entry = relay.file(900, 9001, "cozy", "1.4", tags=[MC], data=zipped)
+    entry = relay.file(900, 9001, "cozy", "1.4", tags=[MC, "Fabric"], data=zipped)
     entry["fileName"] = "Cozy Pack-1.4.zip"
     relay.blobs["/files/9001/Cozy Pack-1.4.zip"] = zipped
     entry["downloadUrl"] = "https://edge.forgecdn.net/files/9001/Cozy Pack-1.4.zip"
-    found = client.get("/api/modpacks/curseforge/search?q=cozy", headers=headers).json()
-    assert [h["project_id"] for h in found["hits"]] == ["curseforge:900"]
+    found = client.get("/api/modpacks/search?q=cozy", headers=headers).json()
+    assert [h["project_id"] for h in found["hits"]] == ["mr-cozy", "curseforge:900"]
+    assert found["hits"][1]["loaders"] == ["Fabric"] and found["hits"][1]["minecraft_version"] == MC
     read = client.post(
         "/api/modpacks/curseforge",
         json={"project": "curseforge:900", "server_id": "test"},
@@ -566,3 +582,34 @@ def test_a_curseforge_pack_picked_on_curseforge(fabric, relay):
     assert read["pack"]["name"] == "Cozy Pack" and read["pack"]["download_count"] == 1
     assert client.delete(f"/api/modpacks/{read['token']}", headers=headers).status_code == 200
     assert modpack.READ == {}
+
+
+def test_modpack_search_shows_what_each_pack_is_and_says_when_a_site_is_down(
+    fabric, relay, monkeypatch
+):
+    client, headers, _ = fabric
+    hit = {
+        "project_id": "1KVo5zza",
+        "slug": "fo",
+        "title": "Fabulously Optimized",
+        "project_type": "modpack",
+        "categories": ["fabric", "optimization"],
+        "versions": ["1.21.9", "1.21.10", "1.20.1", "24w33a"],
+        "environment": ["client_only"],
+        "disclosure_types": ["advertisements", "ai_content", "something_new"],
+    }
+    modrinth_modpacks(monkeypatch, [hit])
+    relay.state = "down"
+    found = client.get("/api/modpacks/search?q=fab", headers=headers).json()
+    shown = found["hits"][0]
+    assert shown["source_name"] == "Modrinth" and shown["page"] == "https://modrinth.com/modpack/fo"
+    assert shown["loaders"] == ["Fabric"] and shown["minecraft_version"] == "1.21.10"
+    assert shown["server_side"] == "unsupported", "a players-only pack is said to be one"
+    assert shown["disclosures"] == ["Shows ads", "Made with AI", "Something new"]
+    assert found["problems"] == ["CurseForge isn't available right now."]
+
+
+def test_modpack_search_needs_the_add_ons_permission(fabric, relay, monkeypatch):
+    client, _, _ = fabric
+    modrinth_modpacks(monkeypatch, down=True)
+    assert client.get("/api/modpacks/search?q=fab").status_code == 401

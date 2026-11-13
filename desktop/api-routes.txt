@@ -113,7 +113,8 @@ GET /api/servers/{server_id}/mods/search
 GET /api/servers/{server_id}/mods/project/{project}
 POST /api/servers/{server_id}/mods/upload
 POST /api/modpacks/inspect
-GET /api/modpacks/curseforge/search
+GET /api/modpacks/search
+POST /api/modpacks/modrinth
 POST /api/modpacks/curseforge
 DELETE /api/modpacks/{token}
 POST /api/servers/{server_id}/modpack

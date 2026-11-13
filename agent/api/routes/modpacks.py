@@ -5,16 +5,24 @@ existing one (per server)."""
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
 from ... import modpack
 from ...mods.curseforge import MODPACKS, CurseForgeClient
+from ...mods.modrinth import ModrinthClient
 from ...security.auth import Principal
 from ...security.permissions import MODS_MANAGE, SERVERS_MANAGE, SETTINGS_SERVER, require
 from ..deps import audit, get_core, get_server
 from ..responses import ModpackImported, ModpackInspected, ModSearch, Ok, ServerCreated
-from .models import CurseForgeModpackRequest, ModpackIntoRequest, ModpackNewRequest
+from .models import (
+    CurseForgeModpackRequest,
+    ModpackIntoRequest,
+    ModpackNewRequest,
+    ModrinthModpackRequest,
+)
+from .mods import side_by_side
 
 # Agent-wide: reading a pack, and making a new server from it.
 global_router = APIRouter()
@@ -65,17 +73,42 @@ def _inspected(core, token: str, pack: modpack.Pack, server_id: str) -> dict:
     return result
 
 
-@global_router.get("/modpacks/curseforge/search", response_model=ModSearch)
-async def search_curseforge_modpacks(
+@global_router.get("/modpacks/search", response_model=ModSearch)
+async def search_modpacks(
     q: str = "",
     limit: int = 20,
     offset: int = 0,
     principal: Principal = Depends(require(MODS_MANAGE)),
     core=Depends(get_core),
 ):
-    """CurseForge's modpacks, most popular first, through our relay."""
-    client = CurseForgeClient(core.config)
-    return await client.search(q, limit=limit, offset=offset, kind=MODPACKS)
+    """Modrinth's and CurseForge's modpacks side by side, each named. Picking
+    one reads it (``POST /modpacks/modrinth`` or ``/modpacks/curseforge``)."""
+    modrinth, curseforge = ModrinthClient(core.config), CurseForgeClient(core.config)
+    try:
+        return await side_by_side(
+            [
+                (modrinth.label, partial(modrinth.search, q, loaders=(), project_type="modpack")),
+                (curseforge.label, partial(curseforge.search, q, kind=MODPACKS)),
+            ],
+            limit,
+            offset,
+        )
+    finally:
+        await modrinth.close()
+
+
+@global_router.post("/modpacks/modrinth", response_model=ModpackInspected)
+async def fetch_modrinth_modpack(
+    payload: ModrinthModpackRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    core=Depends(get_core),
+):
+    """Download a Modrinth modpack's newest release and say what it holds,
+    as for an uploaded pack. Nothing on a server changes yet."""
+    token, pack = await modpack.from_modrinth(core, payload.project)
+    audit(core, request, "modpack_inspect", target=pack.name)
+    return _inspected(core, token, pack, payload.server_id)
 
 
 @global_router.post("/modpacks/curseforge", response_model=ModpackInspected)
