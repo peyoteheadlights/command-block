@@ -141,6 +141,7 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
         if (read.problem == null) item { Note(t("mobile.common.loading")) }
         return
     }
+    if (list.storedSeparately) item { Note(t("mods.stored_separately"), color = LocalColors.current.text2) }
 
     if (changes == Changes.READY) {
         item {

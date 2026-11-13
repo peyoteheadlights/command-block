@@ -1102,6 +1102,9 @@ class ModList(Open):
     )
     server_state: str
     updates_checked_at: float | None = None
+    stored_separately: bool = Field(
+        False, description="This server's jars are copies: its drive can't link to the shared store"
+    )
 
 
 class ModChanged(Open):
@@ -2331,12 +2334,21 @@ class SettingsSecrets(Open):
     api_token_configured: bool
 
 
+class ModStorage(Open):
+    """The shared mod and plugin files (agent/mods/store.py), read from disk."""
+
+    files: int
+    on_disk: int = Field(description="Bytes the shared files really use")
+    saved: int = Field(description="Bytes more they'd use if each server had its own copy")
+
+
 class SettingsView(Open):
     """The PC's settings, with passwords and links left out (they stay in .env)."""
 
     config: dict[str, Any]
     editable: list[str] = Field(description="Key prefixes PUT /settings accepts")
     secrets: SettingsSecrets
+    mod_storage: ModStorage | None = None
 
 
 class SettingsSaved(Open):

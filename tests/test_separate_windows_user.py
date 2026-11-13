@@ -94,6 +94,31 @@ async def test_on_starts_the_server_as_the_separate_user_with_its_folder_opened(
     assert not ctx.server.running
 
 
+async def test_shared_mod_files_are_read_only_for_the_separate_user(core, windows, monkeypatch):
+    """A hard link has one set of rights for every name: the stored file
+    says "no writing" for the account, and the store folder is read + run."""
+    from agent.mods.store import folder
+
+    from .test_mods import make_jar
+
+    denied: list[Path] = []
+    monkeypatch.setattr(serveruser, "deny_writes", lambda path: denied.append(path) or True)
+    ctx = core.servers["survival"]
+    jar = make_jar(ctx.config.mods_dir / "early.jar", "early")
+    ctx.mods.place_jar(jar, jar)  # stored while the setting was still off
+    assert denied == []
+    turn_on(core.config)
+    late = make_jar(ctx.config.mods_dir / "late.jar", "late")
+    ctx.mods.place_jar(late, late)
+    assert len(denied) == 1
+
+    await ctx.server.start()
+    assert await ctx.server.wait_online(20)
+    assert len(denied) == 2  # the early file caught up before the start
+    assert (folder(ctx.config), "RX") in windows.granted
+    await ctx.server.stop()
+
+
 async def test_a_missing_starter_service_refuses_to_start_and_never_starts_as_the_owner(
     core, windows, monkeypatch
 ):

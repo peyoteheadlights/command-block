@@ -285,4 +285,18 @@ final class PcSettingsTests: XCTestCase {
         let removed = try await c.removeOldCopy()
         XCTAssertEqual(PcUpdate.oldCopyRemoved(strings, removed), strings.t("oldcopy.removed_kept", ["count": 2]))
     }
+
+    func testSharedModFilesSayTheirRealDiskUse() throws {
+        XCTAssertNil(PcSettings.modFiles(strings, view)) // an older agent doesn't say
+        let shared = try JSONDecoder().decode(PcSettingsView.self, from: Data("""
+            {"config": {}, "secrets": {}, "mod_storage": {"files": 3, "on_disk": 1048576, "saved": 2097152}}
+            """.utf8))
+        XCTAssertEqual(PcSettings.modFiles(strings, shared), strings.t("modfiles.usage", ["used": "1.0 MB", "saved": "2.0 MB"]))
+        let empty = try JSONDecoder().decode(PcSettingsView.self, from: Data("""
+            {"config": {}, "secrets": {}, "mod_storage": {"files": 0, "on_disk": 0, "saved": 0}}
+            """.utf8))
+        XCTAssertEqual(PcSettings.modFiles(strings, empty), strings.t("modfiles.none"))
+        let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [], "server_state": "OFFLINE", "stored_separately": true}"#.utf8))
+        XCTAssertTrue(list.storedSeparately)
+    }
 }

@@ -531,6 +531,10 @@ class MinecraftServer:
             try:
                 # As the owner, or as the separate Windows user when that's
                 # on (agent/serveruser.py). Never the owner as a fallback.
+                if serveruser.is_on(self.config):
+                    from ..mods import store
+
+                    await asyncio.to_thread(store.for_config(self.db, self.config).lock_missing)
                 self.process = await serveruser.start(
                     self.config,
                     cmd,
