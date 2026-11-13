@@ -49,6 +49,7 @@ import io.github.peyoteheadlights.mcsc.core.Mod
 import io.github.peyoteheadlights.mcsc.core.ModFit
 import io.github.peyoteheadlights.mcsc.core.ModList
 import io.github.peyoteheadlights.mcsc.core.ModVersion
+import io.github.peyoteheadlights.mcsc.core.SameJob
 import io.github.peyoteheadlights.mcsc.core.Modpacks
 import io.github.peyoteheadlights.mcsc.core.Permissions
 import io.github.peyoteheadlights.mcsc.core.States
@@ -146,6 +147,7 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
     }
     if (list.storedSeparately) item { Note(t("mods.stored_separately"), color = LocalColors.current.text2) }
     list.fit?.let { fit -> item { StillFitCard(vm, content, list, fit, kind, changes == Changes.READY && idle) } }
+    if (list.overlaps.isNotEmpty()) item { SameJobCard(vm, content, list, changes == Changes.READY && idle) }
 
     if (changes == Changes.READY) {
         item {
@@ -585,6 +587,25 @@ private fun StillFitCard(vm: AppViewModel, content: ContentPages, list: ModList,
                     Press(t("fit.hide"), { content.hideFit(strings) }),
                 ),
             )
+        }
+    }
+}
+
+/** The same mod twice, or mods that do the same job: which one to turn off
+ * when the facts say. Turn off has Undo like the mod's own row. */
+@Composable
+private fun SameJobCard(vm: AppViewModel, content: ContentPages, list: ModList, ready: Boolean) {
+    val strings = vm.strings
+    SectionTitle(t("same.title"))
+    Card {
+        for (overlap in list.overlaps) {
+            Item(overlap.say, subtitle = overlap.why)
+            if (!vm.canDo(Permissions.MODS_MANAGE)) continue
+            for (row in SameJob.turnOff(overlap)) {
+                val mod = list.mods.firstOrNull { it.filename == row.filename && it.enabled } ?: continue
+                Item("${row.name} ${row.version}")
+                Presses(listOf(Press(t("mods.turn_off"), { content.setEnabled(mod, false, strings) }, enabled = ready)))
+            }
         }
     }
 }

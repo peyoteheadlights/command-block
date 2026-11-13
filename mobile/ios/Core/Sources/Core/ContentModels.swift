@@ -113,20 +113,23 @@ public struct ModList: Decodable, Equatable, Sendable {
     public var storedSeparately: Bool
     /// The "Still fit?" card after a mod or version change; nil: nothing to show.
     public var fit: ModFit?
+    /// The same mod twice, or mods that do the same job.
+    public var overlaps: [Overlap]
 
     enum CodingKeys: String, CodingKey {
-        case mods, fit
+        case mods, fit, overlaps
         case minecraftVersion = "minecraft_version"
         case serverState = "server_state"
         case storedSeparately = "stored_separately"
     }
 
-    public init(mods: [Mod] = [], minecraftVersion: String? = nil, serverState: String = States.UNKNOWN, storedSeparately: Bool = false, fit: ModFit? = nil) {
+    public init(mods: [Mod] = [], minecraftVersion: String? = nil, serverState: String = States.UNKNOWN, storedSeparately: Bool = false, fit: ModFit? = nil, overlaps: [Overlap] = []) {
         self.mods = mods
         self.minecraftVersion = minecraftVersion
         self.serverState = serverState
         self.storedSeparately = storedSeparately
         self.fit = fit
+        self.overlaps = overlaps
     }
 
     public init(from decoder: Decoder) throws {
@@ -136,6 +139,81 @@ public struct ModList: Decodable, Equatable, Sendable {
         serverState = c.value(.serverState, States.UNKNOWN)
         storedSeparately = c.value(.storedSeparately, false)
         fit = c.maybe(.fit)
+        overlaps = c.each(.overlaps)
+    }
+}
+
+/// One mod in an `Overlap`. `turnOff`: the pick isn't this one.
+public struct OverlapMod: Decodable, Equatable, Identifiable, Sendable {
+    public var filename: String
+    public var modId: String
+    public var name: String
+    public var version: String
+    public var turnOff: Bool
+    /// An installed mod that needs this one, "" when none.
+    public var neededBy: String
+
+    public var id: String { filename }
+
+    enum CodingKeys: String, CodingKey {
+        case filename, name, version
+        case modId = "mod_id"
+        case turnOff = "turn_off"
+        case neededBy = "needed_by"
+    }
+
+    public init(filename: String, modId: String = "", name: String = "", version: String = "", turnOff: Bool = false, neededBy: String = "") {
+        self.filename = filename
+        self.modId = modId
+        self.name = name
+        self.version = version
+        self.turnOff = turnOff
+        self.neededBy = neededBy
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        filename = try c.decode(String.self, forKey: .filename)
+        modId = c.value(.modId, "")
+        name = c.value(.name, "")
+        version = c.value(.version, "")
+        turnOff = c.value(.turnOff, false)
+        neededBy = c.value(.neededBy, "")
+    }
+}
+
+/// The same mod twice ("same_mod"), mods on the notes file's same-job list
+/// ("same_job") or a site saying two don't work together ("site_says").
+public struct Overlap: Decodable, Equatable, Identifiable, Sendable {
+    public var kind: String
+    public var why: String
+    /// The file to keep, "" when nothing says which.
+    public var keep: String
+    /// "Keep 0.5.2, turn off 0.5.1", or "Keep the one you use".
+    public var say: String
+    public var mods: [OverlapMod]
+
+    public var id: String { mods.map(\.filename).joined(separator: "|") }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, why, keep, say, mods
+    }
+
+    public init(kind: String = "", why: String = "", keep: String = "", say: String = "", mods: [OverlapMod] = []) {
+        self.kind = kind
+        self.why = why
+        self.keep = keep
+        self.say = say
+        self.mods = mods
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = c.value(.kind, "")
+        why = c.value(.why, "")
+        keep = c.value(.keep, "")
+        say = c.value(.say, "")
+        mods = c.each(.mods)
     }
 }
 

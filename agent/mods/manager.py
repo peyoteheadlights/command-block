@@ -30,7 +30,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from .. import savedlists
+from .. import notes, savedlists
 from ..events import Event, EventBus
 from ..minecraft.properties import FILENAME, FormError, PropertiesFile, world_folder
 from ..security.paths import (
@@ -40,7 +40,7 @@ from ..security.paths import (
     safe_filename,
     safe_join,
 )
-from . import checks, store
+from . import checks, overlap, store
 from .curseforge import Blocked, CurseForgeClient, file_prints
 from .dependencies import PLATFORM_IDS, DependencyResolver
 from .github import GitHubReleases
@@ -112,8 +112,6 @@ def checked(source: str | None) -> dict[str, Any]:
 
 def refuse_known_bad(data: bytes, filename: str) -> None:
     """Refuse a file the signed safety notes list as known bad (agent/notes.py)."""
-    from .. import notes
-
     bad = notes.known_bad(data)
     if bad:
         raise ModError(
@@ -245,6 +243,17 @@ class ModManager:
             )
             if source == "modrinth":
                 record["modrinth_project"] = version.get("project_id")
+            # What the site says this version doesn't work with, for the
+            # "same job" rows (agent/mods/overlap.py).
+            incompatible = [
+                d["project_id"]
+                for d in version.get("dependencies") or []
+                if d.get("type") == "incompatible" and d.get("project_id")
+            ]
+            # Modrinth's answer is saved even when empty, so the catch-up
+            # (fit.catch_up) knows this one was asked.
+            if incompatible or source == "modrinth":
+                record["incompatible"] = incompatible
         self.db.set_setting(f"mod_source:{mod_id}", record)
 
     async def match_on_hangar(self, mod: ModInfo) -> None:
@@ -470,6 +479,7 @@ class ModManager:
         return {
             "per_mod": per_mod,
             "problems": problems,
+            "overlaps": self.overlaps(enabled),
             "minecraft_version": mc_version,
             "fabric_loader": loader_version,
             "loader_version": loader_version,
@@ -493,6 +503,19 @@ class ModManager:
                 "only known after the server has started once.",
             ],
         }
+
+    def overlaps(self, enabled: list[ModInfo] | None = None) -> list[dict[str, Any]]:
+        """The same mod twice and add-ons that do the same job, each with
+        which one to keep when the facts say (agent/mods/overlap.py)."""
+        if enabled is None:
+            enabled = [m for m in self.scan(use_cache=True) if m.enabled]
+        return overlap.find(
+            enabled,
+            self.origin,
+            self.record_of,
+            notes.same_job(self.server_type.id),
+            self.server.mc_version or (self.server.pending_version or {}).get("minecraft_version"),
+        )
 
     def missing_dependencies(self) -> list[dict[str, Any]]:
         checks = self.check_all()

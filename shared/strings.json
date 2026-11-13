@@ -632,6 +632,7 @@
 "fit.no_fit": ["No version that fits yet", "No fitting version"],
 "fit.cant_tell": ["Can't tell", "Can't tell"],
 "fit.hide": ["Hide", "Hide"],
+"same.title": ["Doing the same job", "Doing the same job"],
 "mods.stored_separately": ["This server is on another drive, so its mods are stored separately.", "Server folder is on another drive: its jars are copies, not links to the shared store."],
 "modfiles.title": ["Mod and plugin files", "Shared mod storage"],
 "modfiles.usage": ["Mods and plugins use {used} on disk ({saved} saved by sharing).", "Shared jars: {used} on disk, {saved} saved by hard links."],

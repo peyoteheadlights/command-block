@@ -51,6 +51,33 @@ data class ModList(
     @SerialName("stored_separately") val storedSeparately: Boolean = false,
     /** The "Still fit?" card after a mod or version change; null: nothing to show. */
     val fit: ModFit? = null,
+    /** The same mod twice, or mods that do the same job. */
+    val overlaps: List<Overlap> = emptyList(),
+)
+
+/** One mod in an [Overlap]. [turnOff]: the pick isn't this one. */
+@Serializable
+data class OverlapMod(
+    val filename: String,
+    @SerialName("mod_id") val modId: String = "",
+    val name: String = "",
+    val version: String = "",
+    @SerialName("turn_off") val turnOff: Boolean = false,
+    /** An installed mod that needs this one, "" when none. */
+    @SerialName("needed_by") val neededBy: String = "",
+)
+
+/** The same mod twice ("same_mod"), mods on the notes file's same-job list
+ * ("same_job") or a site saying two don't work together ("site_says"). */
+@Serializable
+data class Overlap(
+    val kind: String = "",
+    val why: String = "",
+    /** The file to keep, "" when nothing says which. */
+    val keep: String = "",
+    /** "Keep 0.5.2, turn off 0.5.1", or "Keep the one you use". */
+    val say: String = "",
+    val mods: List<OverlapMod> = emptyList(),
 )
 
 /** One mod on the "Still fit?" card: what the mods or its site said. For
