@@ -25,6 +25,8 @@ import io.github.peyoteheadlights.mcsc.core.ModpackInspected
 import io.github.peyoteheadlights.mcsc.core.ModrinthHit
 import io.github.peyoteheadlights.mcsc.core.PickedFile
 import io.github.peyoteheadlights.mcsc.core.Strings
+import io.github.peyoteheadlights.mcsc.core.ModFit
+import io.github.peyoteheadlights.mcsc.core.StillFit
 import io.github.peyoteheadlights.mcsc.core.UpdateAll
 import io.github.peyoteheadlights.mcsc.core.UpdateAllPlan
 import kotlinx.coroutines.CoroutineScope
@@ -197,6 +199,18 @@ class ContentPages(
                 Read(problem = Message.of(e))
             }
         }
+    }
+
+    /** "Change these" on the Still fit? card: Update all's list, filled from the card. */
+    fun openFit(fit: ModFit) {
+        val read = StillFit.plan(fit)
+        ticked = UpdateAll.ticked(read)
+        plan = Read(read)
+    }
+
+    fun hideFit(strings: Strings) = work("hide_fit", strings, reload = ::loadMods) {
+        it.hideFit(serverId)
+        null
     }
 
     fun tick(filename: String, on: Boolean) {

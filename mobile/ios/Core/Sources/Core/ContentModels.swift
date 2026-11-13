@@ -111,19 +111,22 @@ public struct ModList: Decodable, Equatable, Sendable {
     public var serverState: String
     /// The server's drive can't link to the shared store, so its jars are copies.
     public var storedSeparately: Bool
+    /// The "Still fit?" card after a mod or version change; nil: nothing to show.
+    public var fit: ModFit?
 
     enum CodingKeys: String, CodingKey {
-        case mods
+        case mods, fit
         case minecraftVersion = "minecraft_version"
         case serverState = "server_state"
         case storedSeparately = "stored_separately"
     }
 
-    public init(mods: [Mod] = [], minecraftVersion: String? = nil, serverState: String = States.UNKNOWN, storedSeparately: Bool = false) {
+    public init(mods: [Mod] = [], minecraftVersion: String? = nil, serverState: String = States.UNKNOWN, storedSeparately: Bool = false, fit: ModFit? = nil) {
         self.mods = mods
         self.minecraftVersion = minecraftVersion
         self.serverState = serverState
         self.storedSeparately = storedSeparately
+        self.fit = fit
     }
 
     public init(from decoder: Decoder) throws {
@@ -132,6 +135,78 @@ public struct ModList: Decodable, Equatable, Sendable {
         minecraftVersion = c.maybe(.minecraftVersion)
         serverState = c.value(.serverState, States.UNKNOWN)
         storedSeparately = c.value(.storedSeparately, false)
+        fit = c.maybe(.fit)
+    }
+}
+
+/// One mod on the "Still fit?" card: what the mods or its site said. For
+/// one that needs a change, `from`, `to` and `versionId` are filled.
+public struct FitRow: Decodable, Equatable, Identifiable, Sendable {
+    public var modId: String
+    public var name: String
+    public var filename: String
+    public var why: String
+    public var from: String
+    public var to: String
+    public var versionId: String?
+
+    public var id: String { filename }
+
+    enum CodingKeys: String, CodingKey {
+        case name, filename, why, from, to
+        case modId = "mod_id"
+        case versionId = "version_id"
+    }
+
+    public init(modId: String = "", name: String = "", filename: String, why: String = "", from: String = "", to: String = "", versionId: String? = nil) {
+        self.modId = modId
+        self.name = name
+        self.filename = filename
+        self.why = why
+        self.from = from
+        self.to = to
+        self.versionId = versionId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        modId = c.value(.modId, "")
+        name = c.value(.name, "")
+        filename = try c.decode(String.self, forKey: .filename)
+        why = c.value(.why, "")
+        from = c.value(.from, "")
+        to = c.value(.to, "")
+        versionId = c.maybe(.versionId)
+    }
+}
+
+public struct ModFit: Decodable, Equatable, Sendable {
+    /// What changed: "Create 6.0" or "Minecraft 1.21.4".
+    public var about: String
+    public var needsChange: [FitRow]
+    public var noFit: [FitRow]
+    public var cantTell: [FitRow]
+
+    enum CodingKeys: String, CodingKey {
+        case about
+        case needsChange = "needs_change"
+        case noFit = "no_fit"
+        case cantTell = "cant_tell"
+    }
+
+    public init(about: String = "", needsChange: [FitRow] = [], noFit: [FitRow] = [], cantTell: [FitRow] = []) {
+        self.about = about
+        self.needsChange = needsChange
+        self.noFit = noFit
+        self.cantTell = cantTell
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        about = c.value(.about, "")
+        needsChange = c.each(.needsChange)
+        noFit = c.each(.noFit)
+        cantTell = c.each(.cantTell)
     }
 }
 
