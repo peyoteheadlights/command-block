@@ -273,7 +273,8 @@ Both saves keep a safety backup of the old file and answer with `changed`,
 | GET | `/api/servers/{id}/duplicate` | A suggested name and folder for a copy |
 | POST | `/api/servers/{id}/duplicate` | `{"name", "directory", "world": "copy" \| "fresh"}`. Runs as a job; the copy gets the next free port and an unused color |
 | POST | `/api/modpacks/inspect` | Multipart upload of a `.mrpack` (`?server_id=` adds `into`, what importing into that server would do). Reads it and answers with a `token` and the `pack`: versions, every file with `download`, `client_only` or `refused` and why, `problems`, `can_import`. Changes nothing |
-| GET | `/api/modpacks/curseforge/search?q=` | CurseForge modpacks, most popular first |
+| GET | `/api/modpacks/search?q=` | Modrinth's and CurseForge's modpacks side by side, each with `source_name`, `loaders`, the newest `minecraft_version`, `server_side` (`unsupported`: made for players' games only) and Modrinth's `disclosures` ("Shows ads"). A site that's down is named in `problems` |
+| POST | `/api/modpacks/modrinth` | `{"project": "<id or slug>", "server_id"}`: downloads the Modrinth pack's newest release (Modrinth's CDN only, SHA-512 checked) and answers as `inspect` does |
 | POST | `/api/modpacks/curseforge` | `{"project": "curseforge:<id>", "server_id"}`: downloads the pack's newest release and answers as `inspect` does (a CurseForge pack's `.zip` can be uploaded to `inspect` too). Its files may also be `needs_you` |
 | DELETE | `/api/modpacks/{token}` | Throw an uploaded pack away |
 | POST | `/api/modpacks/{token}/new-server` | Make a new server from the pack: `{"name", "directory", "eula_accepted": true}` |

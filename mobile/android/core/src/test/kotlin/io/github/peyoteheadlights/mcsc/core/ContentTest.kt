@@ -252,6 +252,31 @@ class ContentTest {
         assertEquals(Tone.DANGER, Modpacks.fileStatus(ModpackFile(status = "refused")).tone)
     }
 
+    @Test
+    fun `a found modpack says its site, loader, version, downloads and what it holds`() = runBlocking {
+        val hit = ModrinthHit(
+            projectId = "xyz", title = "Pack", downloads = 1234, sourceName = "Modrinth",
+            loaders = listOf("Fabric"), minecraftVersion = "1.21.10", serverSide = "unsupported",
+            disclosures = listOf("Shows ads"),
+        )
+        assertEquals(
+            "Modrinth  ·  Fabric 1.21.10  ·  1,234 downloads  ·  Made for players' games, not servers  ·  Shows ads",
+            Modpacks.about(strings, hit),
+        )
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"hits": [{"project_id": "curseforge:9", "slug": "curseforge:9", "title": "Cozy", "source": "curseforge", "source_name": "CurseForge", "loaders": ["Forge"]}], "total": 1, "problems": ["Modrinth isn't available right now."]}"""))
+            val found = c.searchModpacks("cozy pack")
+            assertEquals("Modrinth isn't available right now.", found.problems.single())
+            assertEquals("/api/modpacks/search?q=cozy%20pack&limit=20", agent.server.takeRequest().path)
+            agent.server.enqueue(agent.json("""{"token": "t", "pack": {"name": "Cozy", "can_import": true}}"""))
+            assertEquals("Cozy", c.fetchModpack(found.hits.single(), null).pack.name)
+            val sent = agent.server.takeRequest()
+            assertEquals("/api/modpacks/curseforge", sent.path)
+            assertEquals("""{"project":"curseforge:9","server_id":""}""", sent.body.readUtf8())
+        }
+    }
+
     // ------------------------------------------------------------ game settings
     private fun setting(key: String, kind: String, value: kotlinx.serialization.json.JsonElement?, set: Boolean = value != null, default: String = "", readOnly: String? = null) =
         GameSetting(key = key, kind = kind, value = value, set = set, minecraftDefault = default, readOnly = readOnly)

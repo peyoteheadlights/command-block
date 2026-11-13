@@ -163,3 +163,44 @@ def test_a_server_folder_is_read_then_brought_in(qapp, agent_http, tmp_path):
         30,
     )
     assert (tmp_path / "Copy" / "fabric-server-launch.jar").is_file()
+
+
+def test_a_modpack_found_by_name_is_read_before_anything_is_made(
+    qapp, agent_http, monkeypatch, tmp_path
+):
+    import hashlib
+    import json
+
+    from agent.mods.modrinth import ModrinthClient
+
+    from .test_modpack import make_pack
+
+    data = make_pack(tmp_path / "p.mrpack").read_bytes()
+    url = "https://cdn.modrinth.com/data/xyz/versions/v2/test-pack.mrpack"
+    hit = {"project_id": "xyz", "title": "Test Pack", "categories": ["fabric"]}
+    hit |= {"versions": [MC], "downloads": 1234, "disclosure_types": ["advertisements"]}
+    file = {"url": url, "filename": "test-pack.mrpack", "primary": True, "size": len(data)}
+    file["hashes"] = {"sha512": hashlib.sha512(data).hexdigest()}
+
+    async def modrinth(self, method, path, **sent):
+        if path == "/search":
+            assert json.loads(sent["params"]["facets"]) == [["project_type:modpack"]]
+            return {"hits": [hit]}
+        return [{"id": "v2", "version_type": "release", "files": [file]}]
+
+    def cdn(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "cdn.modrinth.com":
+            return httpx.Response(200, content=data)
+        raise httpx.ConnectError("CurseForge is down in this test", request=request)
+
+    monkeypatch.setattr(ModrinthClient, "_send", modrinth)
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(cdn))
+    window, screen = plus_tab(qapp, agent_http)
+    button(screen, "From a modpack").click()
+    picks = []
+    window.pick = lambda title, body, choices: picks.append(choices) or 0
+    screen.pack_box.setText("test")
+    button(screen, "Find a modpack").click()
+    wait_for(qapp, lambda: "Test Pack 1.2.0" in shown_text(screen), 20)
+    assert picks == [[f"Test Pack  ·  Modrinth  ·  Fabric {MC}  ·  1,234 downloads  ·  Shows ads"]]
+    assert button(screen, "Create server")

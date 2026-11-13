@@ -891,6 +891,42 @@ async def from_curseforge(core: AgentCore, project: str) -> tuple[str, Pack]:
         raise
 
 
+async def from_modrinth(core: AgentCore, project: str) -> tuple[str, Pack]:
+    """Download a Modrinth modpack's newest release (sha512 checked, from
+    Modrinth's CDN only) as an upload, then read it like one."""
+    from .mods.modrinth import ModrinthClient
+
+    client = ModrinthClient(core.config)
+    try:
+        version = await client.latest_for(project, None, loaders=())
+    except SourceError as exc:
+        raise ModpackError(str(exc)) from exc
+    finally:
+        await client.close()
+    file = (version or {}).get("file") or {}
+    if not file.get("url") or not str(file.get("filename") or "").endswith(".mrpack"):
+        raise ModpackError("Modrinth has no modpack file of that project to download.")
+    if urlparse(file["url"]).hostname not in DOWNLOAD_HOSTS or not file.get("sha512"):
+        raise ModpackError("That modpack file can't be checked, so it wasn't downloaded.")
+    token, path = new_upload(core)
+    spec = FileSpec(
+        url=file["url"],
+        name=path.name,
+        sha512=file["sha512"],
+        size=file.get("size"),
+        allow_unverified=False,
+        max_bytes=MAX_PACK_BYTES,
+    )
+    try:
+        await downloads.download(spec, path.parent)
+        return token, await read(core, token, path)
+    except BaseException as exc:
+        forget(core, token)
+        if isinstance(exc, DownloadError):
+            raise ModpackError(str(exc)) from exc
+        raise
+
+
 def _event(pack: Pack, server_name: str, summary: dict[str, Any]) -> Event:
     return Event(
         type="modpack_imported",
