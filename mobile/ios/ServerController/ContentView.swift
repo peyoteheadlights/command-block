@@ -33,6 +33,7 @@ struct ContentView: View {
     @State private var asking: ContentConfirm?
     @State private var picking: Picking?
     @State private var query = ""
+    @State private var packQuery = ""
     @State private var web: WebLink?
 
     private var content: ContentPages { model.pages(serverId).content }
@@ -521,6 +522,32 @@ struct ContentView: View {
                 Press(title: model.t("mobile.content.modpack_choose"), enabled: busy == nil) { picking = .modpack },
             ], palette: palette)
             Hint(text: model.t("pack.into_intro"), palette: palette)
+            TextField(model.t("pack.find_placeholder"), text: Binding(get: { packQuery }, set: { packQuery = String($0.prefix(100)) }))
+                .textFieldStyle(.roundedBorder)
+            Presses(presses: [
+                Press(title: model.t(busy == "find_pack" ? "mods.searching" : "pack.find"),
+                      enabled: busy == nil && !packQuery.trimmingCharacters(in: .whitespaces).isEmpty) {
+                    let strings = model.strings
+                    let query = packQuery
+                    Task { await content.findPacks(query, strings) }
+                },
+            ], palette: palette)
+            if let found = content.packsFound {
+                ForEach(found.problems, id: \.self) { Hint(text: $0, palette: palette) }
+                Hint(text: model.t(found.hits.isEmpty ? "mods.nothing_found" : "pack.find_pick"), palette: palette)
+                ForEach(found.hits) { hit in
+                    Button {
+                        let strings = model.strings
+                        Task { await content.readFound(hit, strings) }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(hit.title).foregroundStyle(palette.textPrimary)
+                            Hint(text: Modpacks.about(model.strings, hit), palette: palette)
+                        }
+                    }
+                    .disabled(busy != nil)
+                }
+            }
         }
     }
 

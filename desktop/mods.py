@@ -106,6 +106,58 @@ def pack_lines(pack: dict) -> list[str]:
     return lines + refused
 
 
+def pack_choice(hit: dict) -> str:
+    """One modpack search result on one line: site, loader and newest
+    Minecraft version, downloads, and what Modrinth was told it holds."""
+    made_for = " ".join([*(hit.get("loaders") or []), hit.get("minecraft_version") or ""]).strip()
+    parts = [
+        hit.get("title") or "",
+        hit.get("source_name") or "",
+        made_for,
+    ]
+    if hit.get("downloads") is not None:
+        parts.append(text("pack.downloads", count=f"{hit['downloads']:,}"))
+    if hit.get("server_side") == "unsupported":
+        parts.append(text("pack.players_only"))
+    parts += hit.get("disclosures") or []
+    return "  ·  ".join(p for p in parts if p)
+
+
+def find_pack(window: Any, query: str, server_id: str, say: Callable, read: Callable) -> None:
+    """Search Modrinth and CurseForge modpacks, pick one, and read it like a
+    file (``read`` gets what the agent read). Nothing changes on a server."""
+    agent = window.agent
+
+    def offer(found: dict) -> None:
+        hits = found.get("hits") or []
+        problems = " ".join(found.get("problems") or [])
+        if not hits:
+            say(" ".join([text("mods.nothing_found"), problems]).strip())
+            return
+        say(problems)
+        picked = window.pick(
+            text("pack.find"), text("pack.find_pick"), [pack_choice(h) for h in hits]
+        )
+        if picked is None:
+            return
+        hit = hits[picked]
+        body = {"project": hit["project_id"], "server_id": server_id}
+        site = "curseforge" if hit.get("source") == "curseforge" else "modrinth"
+        say(text("pack.reading"))
+        window.run(
+            lambda: agent.call("POST", f"/modpacks/{site}", body, slow=True),
+            read,
+            lambda exc: say(str(exc)),
+        )
+
+    say(text("mods.searching"))
+    window.run(
+        lambda: agent.call("GET", f"/modpacks/search?q={quote(query)}&limit=10"),
+        offer,
+        lambda exc: say(str(exc)),
+    )
+
+
 def names(items: list[dict], key: str = "title") -> str:
     return ", ".join(str(i.get(key) or i.get("name") or "") for i in items)
 
@@ -312,9 +364,9 @@ class ModsPage(Page):
             (title_of(self.pack_card).setText, "pack.into_title"),
             (pack_intro.setText, "pack.into_intro"),
             (choose.setText, "mobile.content.modpack_choose"),
-            (self.pack_box.setPlaceholderText, "desktop.mods.pack_find_placeholder"),
-            (self.pack_box.setAccessibleName, "desktop.mods.pack_find_placeholder"),
-            (find.setText, "desktop.mods.pack_find"),
+            (self.pack_box.setPlaceholderText, "pack.find_placeholder"),
+            (self.pack_box.setAccessibleName, "pack.find_placeholder"),
+            (find.setText, "pack.find"),
             (title_of(self.needs_you_card).setText, "desktop.mods.needs_you"),
             (self.needs_you_words.setText, "desktop.mods.needs_you_intro"),
             (title_of(self.history_card).setText, "mods.change_history"),
@@ -1372,36 +1424,10 @@ class ModsPage(Page):
         )
 
     def find_pack(self) -> None:
-        """A CurseForge modpack by name: pick one, then it's read like a file."""
+        """A modpack by name: pick one, then it's read like a file."""
         query = self.pack_box.text().strip()
-        if not query:
-            return
-        sid, agent = self.row["id"], self.window_.agent
-
-        def offer(found: dict) -> None:
-            hits = found.get("hits") or []
-            if not hits:
-                self.say(text("mods.nothing_found"))
-                return
-            picked = self.window_.pick(
-                text("desktop.mods.pack_find"),
-                text("desktop.mods.pack_pick"),
-                [f"{h.get('title')}  ·  {h.get('downloads') or 0:,}" for h in hits],
-            )
-            if picked is None:
-                return
-            body = {"project": hits[picked]["project_id"], "server_id": sid}
-            self.say(text("pack.reading"))
-            self.run_here(
-                lambda: agent.call("POST", "/modpacks/curseforge", body, slow=True),
-                self.confirm_pack,
-            )
-
-        self.say(text("mods.searching"))
-        self.run_here(
-            lambda: agent.call("GET", f"/modpacks/curseforge/search?q={quote(query)}&limit=10"),
-            offer,
-        )
+        if query:
+            find_pack(self.window_, query, self.row["id"], self.say, self.confirm_pack)
 
     def confirm_pack(self, read: dict) -> None:
         pack, token, into = read["pack"], read["token"], read.get("into") or {}

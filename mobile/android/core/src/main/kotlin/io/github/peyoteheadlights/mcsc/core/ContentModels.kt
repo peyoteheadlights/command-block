@@ -182,12 +182,23 @@ data class ModrinthHit(
     val downloads: Long? = null,
     @SerialName("icon_url") val iconUrl: String? = null,
     val page: String? = null,
+    /** "modrinth" or "curseforge", and the site's name as shown. */
+    val source: String? = null,
+    @SerialName("source_name") val sourceName: String? = null,
+    /** Modpacks: "Fabric", "Forge"..., the newest Minecraft version, "unsupported" when it's
+     *  made for players' games only, and what Modrinth was told it holds ("Shows ads"). */
+    val loaders: List<String> = emptyList(),
+    @SerialName("minecraft_version") val minecraftVersion: String? = null,
+    @SerialName("server_side") val serverSide: String? = null,
+    val disclosures: List<String> = emptyList(),
 )
 
 @Serializable
 data class ModSearch(
     val hits: List<ModrinthHit> = emptyList(),
     val total: Int? = null,
+    /** A site that couldn't be asked: "CurseForge isn't available right now." */
+    val problems: List<String> = emptyList(),
 )
 
 @Serializable

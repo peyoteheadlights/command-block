@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -115,10 +116,15 @@ class ModrinthClient:
         loaders: tuple[str, ...] | None = None,
         limit: int = 20,
         offset: int = 0,
+        project_type: str | None = None,
     ) -> dict[str, Any]:
+        """Mods (or plugins) for this server; with ``project_type``
+        "modpack", modpacks for any loader unless ``loaders`` says which."""
         loaders = self.loaders if loaders is None else loaders
         facets: list[list[str]] = []
-        if self.project_kind == "mod":
+        if project_type:
+            facets.append([f"project_type:{project_type}"])
+        elif self.project_kind == "mod":
             facets.append(["project_type:mod"])
         if loaders:
             # Inside one list Modrinth reads the facets as "any of these".
@@ -150,7 +156,12 @@ class ModrinthClient:
                     "follows": hit.get("follows"),
                     "categories": hit.get("categories", []),
                     "versions": hit.get("versions", []),
+                    "minecraft_version": newest(hit.get("versions")),
+                    "loaders": [
+                        LOADER_NAMES[c] for c in hit.get("categories", []) if c in LOADER_NAMES
+                    ],
                     "latest_version": hit.get("latest_version"),
+                    "disclosures": disclosures(hit.get("disclosure_types")),
                     **sides(hit),
                     "icon_url": hit.get("icon_url"),
                     "license": hit.get("license"),
@@ -373,6 +384,45 @@ def _by_hash(data: Any) -> dict[str, dict[str, Any]]:
         for sha, v in data.items()
         if isinstance(v, dict)
     }
+
+
+LOADER_NAMES = {"fabric": "Fabric", "quilt": "Quilt", "forge": "Forge", "neoforge": "NeoForge"}
+
+# What a project told Modrinth it holds (Modrinth's rules since 2026-08),
+# in plain words. One Modrinth adds later is shown by its own name.
+DISCLOSURES = {
+    "ai_content": "Made with AI",
+    "ai_content_code": "Code made with AI",
+    "ai_content_text": "Text made with AI",
+    "advertisements": "Shows ads",
+    "paid_features": "Paid features",
+    "telemetry": "Collects usage data",
+    "telemetry_opt_in": "Collects usage data if you say yes",
+    "telemetry_always_active": "Always collects usage data",
+    "archived": "No longer updated",
+    "epilepsy_triggers": "Flashing lights",
+    "system_interactions": "Reaches outside Minecraft",
+    "derivative_work": "Based on someone else's work",
+}
+
+
+def disclosures(found: Any) -> list[str]:
+    if not isinstance(found, list):
+        return []
+    return [
+        DISCLOSURES.get(d) or d.replace("_", " ").capitalize()
+        for d in found
+        if isinstance(d, str) and d
+    ]
+
+
+def newest(versions: Any) -> str | None:
+    """The newest Minecraft release in a list ("1.21.10" after "1.21.9"),
+    or None when there's none to tell."""
+    from ..servertypes.versions import version_key
+
+    releases = [v for v in versions or [] if isinstance(v, str) and re.fullmatch(r"[\d.]+", v)]
+    return max(releases, key=version_key) if releases else None
 
 
 # Modrinth's ``environment`` values (it replaced the project's client_side
