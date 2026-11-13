@@ -652,6 +652,11 @@ final class AppModel {
             if pages.links != nil || pages.whitelist != nil {
                 Task { await pages.loadCommunity() }
             }
+        // The Still fit? check finished a few seconds after the change.
+        case "mod_fit":
+            if pages.content.mods.value != nil {
+                Task { await pages.content.loadMods() }
+            }
         case "quest_claim", "quest_suggested", "event_attendance":
             if pages.quests.page.value != nil {
                 Task { await pages.quests.load() }

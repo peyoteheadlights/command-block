@@ -231,6 +231,24 @@ public enum Install {
 }
 
 /// Update all's list and what is sent.
+/// The "Still fit?" card: its first line, and "Change these" as an Update all.
+public enum StillFit {
+    public static func lead(_ strings: Strings, _ fit: ModFit, plugins: Bool) -> String {
+        let word = plugins ? "plugin" : "mod"
+        let count = fit.needsChange.count
+        return count > 0
+            ? strings.tn("fit.lead", count: count, ["word": word, "about": fit.about])
+            : strings.t("fit.lead_none", ["word": word, "about": fit.about])
+    }
+
+    /// The mods to change, shown and sent the way Update all's own list is (all ticked).
+    public static func plan(_ fit: ModFit) -> UpdateAllPlan {
+        UpdateAllPlan(updates: fit.needsChange.map {
+            UpdateAllRow(modId: $0.modId, name: $0.name, filename: $0.filename, installedVersion: $0.from, latestVersion: $0.to, versionId: $0.versionId)
+        })
+    }
+}
+
 public enum UpdateAll {
     /// Offered when the last check found a newer version of any mod.
     public static func offered(_ list: ModList?) -> Bool {

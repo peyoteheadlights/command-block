@@ -204,6 +204,21 @@ final class ContentTests: XCTestCase {
         XCTAssertFalse(UpdateAll.offered(nil))
     }
 
+    func testTheStillFitCardReadsTheAgentsAnswerAndChangesTheseAsOneUpdateAll() throws {
+        let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [], "server_state": "OFFLINE", "fit": {"about": "Create 6.0", "needs_change": [{"mod_id": "r", "name": "Rails", "filename": "r.jar", "why": "Rails needs Create below 6", "from": "1.0", "to": "2.0", "version_id": "R2"}], "no_fit": [{"mod_id": "g", "name": "Gamma", "filename": "g.jar", "why": "No version for Minecraft 1.21.4 yet"}], "cant_tell": []}}"#.utf8))
+        let fit = try XCTUnwrap(list.fit)
+        XCTAssertEqual(StillFit.lead(s, fit, plugins: false), "1 mod needs a different version to go with Create 6.0.")
+        var none = fit
+        none.needsChange = []
+        XCTAssertEqual(StillFit.lead(s, none, plugins: true), "Some plugins may not go with Create 6.0.")
+        let plan = StillFit.plan(fit)
+        XCTAssertEqual(UpdateAll.ticked(plan), ["r.jar"])
+        let body = String(data: try AgentClient.encode(UpdateAll.body(plan, ticked: UpdateAll.ticked(plan))), encoding: .utf8)
+        XCTAssertEqual(body, #"{"mods":[{"filename":"r.jar","version_id":"R2"}]}"#)
+        XCTAssertEqual(fit.noFit.first?.why, "No version for Minecraft 1.21.4 yet")
+        XCTAssertNil(ModList().fit)
+    }
+
     func testUpdateAllSaysWhyItCantStartAndWhatItDid() {
         var running = plan
         running.serverRunning = true

@@ -694,6 +694,10 @@ class AgentClient(
     suspend fun updateAll(serverId: String, body: JsonObject): UpdateAllResult =
         call(post("${server(serverId)}/mods/update-all", body), UpdateAllResult.serializer(), slow = true)
 
+    /** Hides the "Still fit?" card until the next change checks again. */
+    suspend fun hideFit(serverId: String): Ok =
+        call(post("${server(serverId)}/mods/fit/hide", JsonObject(emptyMap())), Ok.serializer())
+
     /** Modrinth results that fit this server's type and Minecraft version. */
     suspend fun searchMods(serverId: String, query: String, offset: Int = 0): ModSearch =
         get("${server(serverId)}/mods/search?q=${path(query)}&limit=$SEARCH_PAGE&offset=${offset.coerceAtLeast(0)}", ModSearch.serializer())

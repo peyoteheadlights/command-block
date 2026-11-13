@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLineEdit,
     QMenu,
@@ -132,6 +133,30 @@ class ModsPage(Page):
         # Its jars are copies: the server folder's drive can't link to the store.
         self.separate = label(text("mods.stored_separately"), "sub")
         self.column.addWidget(self.separate)
+
+        # Still fit?: after a mod or version change, the mods that need a
+        # different version (ticked, run as one Update all), the ones with
+        # none and the ones nothing said about (agent/mods/fit.py).
+        self.fit_card, layout = card(text("fit.title"))
+        self.fit_words = label(kind="sub")
+        self.fit_rows = QVBoxLayout()
+        self.fit_ticks: list[tuple[QCheckBox, dict]] = []
+        self.fit_change = push(text("fit.change"), "primary")
+        self.fit_change.clicked.connect(self.change_fit)
+        hide = push(text("fit.hide"), "plain")
+        hide.clicked.connect(
+            lambda: self.ask("POST", "/mods/fit/hide", lambda _r: self.changed(), self.said)
+        )
+        self.fit_buttons = QWidget()
+        line = QHBoxLayout(self.fit_buttons)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.addWidget(self.fit_change)
+        line.addWidget(hide)
+        line.addStretch()
+        layout.addWidget(self.fit_words)
+        layout.addLayout(self.fit_rows)
+        layout.addWidget(self.fit_buttons)
+        self.column.addWidget(self.fit_card)
 
         # CurseForge mods whose authors keep them from other apps: their
         # page, and the window takes the file when it's dropped.
@@ -255,6 +280,7 @@ class ModsPage(Page):
             self.stop_row,
             self.problems,
             self.needs_you_card,
+            self.fit_card,
             self.missing_card,
             self.more,
             self.copy,
@@ -396,6 +422,7 @@ class ModsPage(Page):
         ]:
             button.setEnabled(self.can_change)
         self.update_all_ready()
+        self.show_fit(data.get("fit"))
         needs = data.get("needs_you") or []
         self.needs_you_card.setVisible(bool(needs))
         refill(self.needs_you_rows, [self.need_row(n) for n in needs])
@@ -698,6 +725,68 @@ class ModsPage(Page):
 
         self.ask("GET", f"/mods/impact?filename={quote(mod['filename'])}", ask_first, self.said)
 
+    # ------------------------------------------------------------ Still fit?
+    def show_fit(self, fit: dict | None) -> None:
+        self.fit_card.setVisible(bool(fit))
+        if not fit:
+            return
+        word = "plugin" if self.row.get("content") == "plugins" else "mod"
+        count = len(fit.get("needs_change") or [])
+        self.fit_words.setText(
+            text(
+                "fit.lead.one" if count == 1 else "fit.lead.other",
+                count=count,
+                word=word,
+                about=fit.get("about") or "",
+            )
+            if count
+            else text("fit.lead_none", word=word, about=fit.get("about") or "")
+        )
+        rows: list[QWidget] = []
+        self.fit_ticks = []
+        for item in fit.get("needs_change") or []:
+            tick = QCheckBox(f"{item['name']}   {item['from']} → {item['to']}")
+            tick.setChecked(True)
+            tick.setEnabled(self.can_change)
+            self.fit_ticks.append((tick, item))
+            rows += [tick, label(item["why"], "sub")]
+        for key, items in (("fit.no_fit", "no_fit"), ("fit.cant_tell", "cant_tell")):
+            if fit.get(items):
+                rows.append(label(text(key), "step"))
+            for item in fit.get(items) or []:
+                rows.append(self.fit_row(item, off=items == "no_fit"))
+        refill(self.fit_rows, rows)
+        self.fit_buttons.setVisible(self.may("mods.manage"))
+        self.fit_change.setVisible(bool(count))
+        self.fit_change.setEnabled(self.can_change)
+
+    def fit_row(self, item: dict, off: bool) -> QWidget:
+        row = QWidget()
+        row.setProperty("kind", "row")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(12, 8, 8, 8)
+        words = QVBoxLayout()
+        words.addWidget(label(item["name"], "step"))
+        words.addWidget(label(item["why"], "sub"))
+        h.addLayout(words, 1)
+        if off and self.may("mods.manage"):
+            turn = push(text("mods.turn_off"))
+            turn.setAccessibleName(f"{turn.text()}: {item['name']}")
+            turn.setEnabled(self.can_change)
+            turn.clicked.connect(lambda: self.turn(item["filename"], False))
+            h.addWidget(turn)
+        return row
+
+    def change_fit(self) -> None:
+        wanted = [
+            {"filename": item["filename"], "version_id": item["version_id"]}
+            for tick, item in self.fit_ticks
+            if tick.isChecked()
+        ]
+        if wanted:
+            self.fit_change.setEnabled(False)
+            self.run_update_all(wanted)
+
     # ------------------------------------------------------------ Update all
     def update_all_ready(self) -> None:
         self.update_all.setEnabled(self.can_change and bool(self.data.get("mods")))
@@ -743,10 +832,15 @@ class ModsPage(Page):
         if not ticked:
             self.update_all_ready()
             return
-        wanted = [
-            {"filename": updates[i]["filename"], "version_id": updates[i]["version_id"]}
-            for i in ticked
-        ]
+        self.run_update_all(
+            [
+                {"filename": updates[i]["filename"], "version_id": updates[i]["version_id"]}
+                for i in ticked
+            ]
+        )
+
+    def run_update_all(self, wanted: list[dict]) -> None:
+        """One Update all for ``wanted``: one backup first, one Undo after."""
 
         def done(result: dict) -> None:
             count = len(result.get("updated") or [])
