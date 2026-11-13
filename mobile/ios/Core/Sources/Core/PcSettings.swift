@@ -28,13 +28,30 @@ public struct SettingsSecrets: Decodable, Equatable, Sendable {
 public struct PcSettingsView: Decodable, Equatable, Sendable {
     public var config: [String: JSONValue]
     public var secrets: SettingsSecrets
+    /// The shared mod and plugin files (agent/mods/store.py); nil from an older agent.
+    public var modStorage: ModStorage?
 
-    enum CodingKeys: String, CodingKey { case config, secrets }
+    enum CodingKeys: String, CodingKey {
+        case config, secrets
+        case modStorage = "mod_storage"
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         config = try c.decodeIfPresent([String: JSONValue].self, forKey: .config) ?? [:]
         secrets = try c.decodeIfPresent(SettingsSecrets.self, forKey: .secrets) ?? SettingsSecrets()
+        modStorage = try? c.decodeIfPresent(ModStorage.self, forKey: .modStorage)
+    }
+}
+
+public struct ModStorage: Decodable, Equatable, Sendable {
+    public var files: Int
+    public var onDisk: Int64
+    public var saved: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case files, saved
+        case onDisk = "on_disk"
     }
 }
 
@@ -477,6 +494,16 @@ public enum PcSettings {
             return (result.rejected.keys.sorted().compactMap { result.rejected[$0] }.joined(separator: " "), false)
         }
         return (strings.t("settings.saved"), true)
+    }
+
+    /// Real disk use of the shared mod files; nil when the agent doesn't say.
+    public static func modFiles(_ strings: Strings, _ view: PcSettingsView) -> String? {
+        guard let usage = view.modStorage else { return nil }
+        if usage.files == 0 { return strings.t("modfiles.none") }
+        return strings.t("modfiles.usage", [
+            "used": Display.bytes(strings, usage.onDisk),
+            "saved": Display.bytes(strings, usage.saved),
+        ])
     }
 
     /// The line under "Keep the PC awake": what Windows does now.

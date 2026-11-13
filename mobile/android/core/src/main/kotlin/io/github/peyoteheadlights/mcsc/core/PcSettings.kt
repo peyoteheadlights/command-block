@@ -22,7 +22,19 @@ data class SettingsSecrets(
 )
 
 @Serializable
-data class PcSettingsView(val config: JsonObject = JsonObject(emptyMap()), val secrets: SettingsSecrets = SettingsSecrets())
+data class PcSettingsView(
+    val config: JsonObject = JsonObject(emptyMap()),
+    val secrets: SettingsSecrets = SettingsSecrets(),
+    /** The shared mod and plugin files (agent/mods/store.py); null from an older agent. */
+    @SerialName("mod_storage") val modStorage: ModStorage? = null,
+)
+
+@Serializable
+data class ModStorage(
+    val files: Int = 0,
+    @SerialName("on_disk") val onDisk: Long = 0,
+    val saved: Long = 0,
+)
 
 @Serializable
 data class SettingsSaved(
@@ -238,6 +250,13 @@ object PcSettings {
     fun saved(strings: Strings, result: SettingsSaved): Pair<String, Boolean> = when {
         result.rejected.isNotEmpty() -> result.rejected.values.joinToString(" ") to false
         else -> strings.t("settings.saved") to true
+    }
+
+    /** Real disk use of the shared mod files; null when the agent doesn't say. */
+    fun modFiles(strings: Strings, view: PcSettingsView): String? {
+        val usage = view.modStorage ?: return null
+        if (usage.files == 0) return strings.t("modfiles.none")
+        return strings.t("modfiles.usage", "used" to Display.bytes(strings, usage.onDisk), "saved" to Display.bytes(strings, usage.saved))
     }
 
     /** The line under "Keep the PC awake": what Windows does now. */

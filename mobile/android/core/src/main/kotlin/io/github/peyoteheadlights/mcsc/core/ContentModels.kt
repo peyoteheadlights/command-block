@@ -47,6 +47,8 @@ data class ModList(
     /** Null until the server has started once. */
     @SerialName("minecraft_version") val minecraftVersion: String? = null,
     @SerialName("server_state") val serverState: String = "UNKNOWN",
+    /** The server's drive can't link to the shared store, so its jars are copies. */
+    @SerialName("stored_separately") val storedSeparately: Boolean = false,
 )
 
 @Serializable

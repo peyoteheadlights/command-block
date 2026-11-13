@@ -494,3 +494,12 @@ def test_all_servers_groups_other_pcs_servers_by_pc(qapp, agent_http):
     screen.show_all()
     qapp.processEvents()
     assert "Can't reach x:1." in shown_text(screen)
+
+
+def test_shared_mod_files_show_real_disk_use():
+    from desktop.gear import mod_files_words
+    from desktop.words import text
+
+    assert mod_files_words({"files": 0, "on_disk": 0, "saved": 0}) == text("modfiles.none")
+    words = mod_files_words({"files": 2, "on_disk": 3 * 1024**2, "saved": 5 * 1024**3})
+    assert words == text("modfiles.usage", used="3.0 MB", saved="5.0 GB")

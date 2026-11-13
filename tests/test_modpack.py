@@ -357,3 +357,33 @@ async def test_a_failed_import_undoes_every_folder_the_pack_wrote(core, tmp_path
     assert (base / "kubejs" / "startup.js").read_text() == "mine\n"
     assert not (base / "brand-new").exists()
     assert not (ctx.config.mods_dir / "lithium.jar").exists()
+
+
+async def test_a_packs_jars_are_shared_and_not_downloaded_twice(core, tmp_path, requests_made):
+    """A pack's mods go through the shared store: the second server that
+    uses the same pack links the stored file instead of downloading it."""
+    import os
+
+    first = await modpack.import_new(
+        core,
+        upload(core, make_pack(tmp_path / "p.mrpack")),
+        name="First",
+        directory=str(tmp_path / "First"),
+        eula_accepted=True,
+    )
+    downloads_before = sum("cdn.modrinth.com" in url for url in requests_made)
+    await modpack.import_new(
+        core,
+        upload(core, make_pack(tmp_path / "p.mrpack")),
+        name="Second",
+        directory=str(tmp_path / "Second"),
+        eula_accepted=True,
+    )
+    assert sum("cdn.modrinth.com" in url for url in requests_made) == downloads_before
+    one, two = (
+        tmp_path / "First" / "mods" / "lithium.jar",
+        tmp_path / "Second" / "mods" / "lithium.jar",
+    )
+    assert two.read_bytes() == LITHIUM
+    assert os.path.samefile(one, two)
+    assert core.get_server(first["server_id"]).mods.store.usage()["files"] == 1
