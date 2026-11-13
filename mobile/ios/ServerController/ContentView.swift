@@ -147,6 +147,37 @@ struct ContentView: View {
         return nil
     }
 
+    // MARK: - Doing the same job
+
+    /// The same mod twice, or mods that do the same job: which one to turn
+    /// off when the facts say. Turn off has Undo like the mod's own row.
+    @ViewBuilder
+    private func sameJobCard(_ content: ContentPages, _ list: ModList, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        let manage = model.can(Permissions.MODS_MANAGE)
+        SectionTitle(text: model.t("same.title"), palette: palette)
+        CardBox(palette: palette) {
+            ForEach(list.overlaps) { overlap in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: overlap.say).foregroundStyle(palette.textPrimary)
+                    Hint(text: overlap.why, palette: palette)
+                    if manage {
+                        ForEach(SameJob.turnOff(overlap)) { row in
+                            if let mod = list.mods.first(where: { $0.filename == row.filename && $0.enabled }) {
+                                Text(verbatim: "\(row.name) \(row.version)").foregroundStyle(palette.textPrimary)
+                                Presses(presses: [
+                                    Press(title: model.t("mods.turn_off"), enabled: ready) {
+                                        Task { await content.setEnabled(mod, false, strings) }
+                                    },
+                                ], palette: palette)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Still fit?
 
     /// After a mod or version change: the ones to change (one Update all), the
@@ -224,6 +255,9 @@ struct ContentView: View {
             }
             if let fit = list.fit {
                 stillFitCard(content, list, fit, kind, ready: changes == .ready && idle, palette)
+            }
+            if !list.overlaps.isEmpty {
+                sameJobCard(content, list, ready: changes == .ready && idle, palette)
             }
             if changes == .ready {
                 Presses(presses: [

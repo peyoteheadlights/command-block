@@ -16,7 +16,7 @@ uses come first; the rest of the older routes are listed in
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -1117,6 +1117,27 @@ class ModFit(Open):
     checked_at: float | None = None
 
 
+class OverlapMod(Open):
+    filename: str
+    mod_id: str
+    name: str
+    version: str
+    turn_off: bool = Field(
+        description="Suggested to turn off: there is a pick and it isn't this one"
+    )
+    needed_by: str = Field(description="An installed mod that needs this one, '' when none")
+
+
+class Overlap(Open):
+    """The same mod twice, or add-ons that do the same job (agent/mods/overlap.py)."""
+
+    kind: Literal["same_mod", "same_job", "site_says"]
+    why: str
+    keep: str = Field(description="The file to keep, '' when nothing says which")
+    say: str = Field(description='"Keep 0.5.2, turn off 0.5.1" or "Keep the one you use"')
+    mods: list[OverlapMod]
+
+
 class ModList(Open):
     mods: list[Mod]
     needs_you: list[NeedsYou] = []
@@ -1130,6 +1151,7 @@ class ModList(Open):
         False, description="This server's jars are copies: its drive can't link to the shared store"
     )
     fit: ModFit | None = Field(None, description='The "Still fit?" card, null when nothing to show')
+    overlaps: list[Overlap] = []
 
 
 class ModChanged(Open):

@@ -71,6 +71,7 @@ async def list_mods(principal: Principal = Depends(require(SERVER_VIEW)), ctx=De
     return {
         "mods": mods,
         "problems": checks["problems"],
+        "overlaps": checks["overlaps"],
         "claim": checks["claim"],
         "claim_note": checks["claim_note"],
         "limitations": checks["limitations"],

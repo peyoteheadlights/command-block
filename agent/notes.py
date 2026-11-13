@@ -25,6 +25,10 @@ start and once a day. What it may hold:
     (agent/suggestions.py), with the facts the research found: whether it
     changes gameplay and whether players need it too. Each is only
     offered, checked against the server first, and never added by itself.
+  * ``same_job``: hand-checked groups of 2-10 add-ons that do the same job
+    (two web maps), the server types it applies to, a short reason and an
+    optional usual pick. Two on one server get a "Keep one, turn off the
+    other" row (agent/mods/overlap.py); nothing is turned off by itself.
 
 Data can only add warnings or blocks. It never runs anything and never
 removes a check. The file is refused as a whole, and the last good one
@@ -105,6 +109,11 @@ PLAYED_BY = ("friends", "kids", "community")
 # Such an entry is only suggested where it applies, never as "Good to have".
 ROLES = ("", "login", "antibot", "proxy")
 
+# The "these do the same job" groups, from the last good notes file (or
+# the copy shipped with the app until one arrives). Read by
+# agent/mods/overlap.py through same_job().
+SAME_JOB: list[dict[str, Any]] = []
+
 # SHA-512 -> entry, from the last good notes file. Read by the mod and
 # plugin installer (agent/mods/manager.py) and modpack import.
 BAD_FILES: dict[str, dict[str, Any]] = {}
@@ -116,6 +125,8 @@ _SHA512 = re.compile(r"^[0-9a-f]{128}$")
 # An add-on id as the apps send it: Modrinth's own, or "hangar:<id>",
 # "curseforge:<id>".
 _PROJECT = re.compile(r"^(?:(hangar|curseforge):)?[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+# A jar's own mod id (plugin.yml's name, fabric.mod.json's id).
+_JAR_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+\-]{0,63}$")
 _APP_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 # Plain text: no control characters and nothing that could be read as markup.
@@ -138,6 +149,7 @@ class Notes:
     server_types: list[dict[str, Any]] = field(default_factory=list)
     look_alikes: list[dict[str, Any]] = field(default_factory=list)
     recommended_addons: list[dict[str, Any]] = field(default_factory=list)
+    same_job: list[dict[str, Any]] = field(default_factory=list)
     diagnose_problems: list[Any] = field(default_factory=list)
     # Entries marked for a newer app than this one.
     skipped: int = 0
@@ -309,6 +321,44 @@ def _recommended(row: dict) -> dict[str, Any]:
     }
 
 
+def _same_job(row: dict) -> dict[str, Any]:
+    """Ratchet: only ids of the sites the app already installs from, short
+    text, and data only: a pick is only ever suggested, never acted on.
+
+    An add-on no site the app uses has (an old plugin copied in by hand)
+    may be listed by its jar's mod id alone, with three limits, because a
+    jar can call itself anything: it only ever matches a jar the app
+    didn't install from a site (agent/mods/overlap.py), it can't be the
+    usual pick (the app never suggests keeping a jar it can't check), and
+    each group needs at least one add-on from a site."""
+    types = _choices(row, "types", tuple(t for t in TYPES if t != "bedrock"), len(TYPES))
+    rows = row.get("addons")
+    if not types or not isinstance(rows, list) or not 2 <= len(rows) <= 10:
+        raise NotesRefused("The notes file has a bad 'types' or 'addons'.")
+    addons = []
+    for addon in rows:
+        ids = addon.get("ids") if isinstance(addon, dict) else None
+        if (
+            not isinstance(ids, list)
+            or not 0 < len(ids) <= 5
+            or not all(isinstance(i, str) and _JAR_ID.match(i) for i in ids)
+        ):
+            raise NotesRefused("The notes file has a bad 'addons'.")
+        project = _project(addon)[1] if "project" in addon else ""
+        addons.append({"project": project, "ids": [i.lower() for i in ids]})
+    if not any(a["project"] for a in addons):
+        raise NotesRefused("The notes file has a 'same_job' group with no add-on from a site.")
+    pick = row.get("usual_pick", "")
+    if pick and pick not in [a["project"] for a in addons if a["project"]]:
+        raise NotesRefused("The notes file has a bad 'usual_pick'.")
+    return {"types": types, "addons": addons, "why": _text(row, "why", 120), "usual_pick": pick}
+
+
+def same_job(type_id: str) -> list[dict[str, Any]]:
+    """The hand-checked "these do the same job" groups for this type."""
+    return [g for g in SAME_JOB if type_id in g["types"]]
+
+
 def _diagnose_problem(row: dict) -> Any:
     """Ratchet: only places Diagnose already reads and changes it already
     has. The pattern must compile; it is only ever searched with."""
@@ -329,8 +379,8 @@ def _diagnose_problem(row: dict) -> Any:
 
 
 def load_shipped() -> None:
-    """The recommended add-ons from the notes file shipped with the app,
-    used until a signed one arrives. Only that list: the shipped file is
+    """The recommended add-ons and same-job groups from the notes file
+    shipped with the app, used until a signed one arrives. Only those: the shipped file is
     as old as the app, so its warnings could read as current."""
     try:
         found = parse(SHIPPED.read_bytes(), 0, time.time(), __version__)
@@ -338,6 +388,7 @@ def load_shipped() -> None:
         log.warning("the shipped notes file couldn't be read", exc_info=True)
         return
     RECOMMENDED[:] = found.recommended_addons
+    SAME_JOB[:] = found.same_job
 
 
 def look_alikes(source: str | None, project: str | None, type_id: str) -> list[dict[str, str]]:
@@ -380,6 +431,7 @@ def parse(document: bytes, highest_serial: int, now: float, app_version: str) ->
     alikes, e = _entries(body, "look_alikes", _look_alike, app_version)
     recommended, f = _entries(body, "recommended_addons", _recommended, app_version)
     problems, g = _entries(body, "diagnose_problems", _diagnose_problem, app_version)
+    same, h = _entries(body, "same_job", _same_job, app_version)
     today = dt.datetime.fromtimestamp(now, dt.UTC).date()
     return Notes(
         serial=serial,
@@ -393,7 +445,8 @@ def parse(document: bytes, highest_serial: int, now: float, app_version: str) ->
         look_alikes=alikes,
         recommended_addons=recommended,
         diagnose_problems=problems,
-        skipped=a + b + c + d + e + f + g,
+        same_job=same,
+        skipped=a + b + c + d + e + f + g + h,
     )
 
 
@@ -545,6 +598,8 @@ class SafetyNotes:
             LOOK_ALIKES[key] = LOOK_ALIKES.get(key, []) + row["look_alikes"]
         if notes.recommended_addons:  # a file without any keeps the shipped list
             RECOMMENDED[:] = notes.recommended_addons
+        if notes.same_job:  # the same for the same-job groups
+            SAME_JOB[:] = notes.same_job
         newest = max(threshold for threshold, _ in MINECRAFT_JAVA_REQUIREMENTS)
         rows = [(parse_minecraft(r["minecraft"]), r["java"]) for r in notes.java]
         # Data can only add rows newer than the built-in table's newest.

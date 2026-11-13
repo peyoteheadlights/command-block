@@ -260,6 +260,14 @@ object StillFit {
     )
 }
 
+/** The "Doing the same job" rows. */
+object SameJob {
+    /** The mods that get a Turn off button: with a pick, the others; with
+     * none, each one no other mod needs, so the owner keeps the one they use. */
+    fun turnOff(overlap: Overlap): List<OverlapMod> =
+        overlap.mods.filter { it.neededBy.isEmpty() && (overlap.keep.isEmpty() || it.turnOff) }
+}
+
 /** A modpack import's steps, as the confirmation lists them. */
 object Modpacks {
     fun steps(strings: Strings, inspected: ModpackInspected): List<String> {
