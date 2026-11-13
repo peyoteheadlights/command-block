@@ -158,6 +158,13 @@ class ModsPage(Page):
         layout.addWidget(self.fit_buttons)
         self.column.addWidget(self.fit_card)
 
+        # The same mod twice, or mods that do the same job, with which one
+        # to turn off when the facts say (agent/mods/overlap.py).
+        self.same_card, layout = card(text("same.title"))
+        self.same_rows = QVBoxLayout()
+        layout.addLayout(self.same_rows)
+        self.column.addWidget(self.same_card)
+
         # CurseForge mods whose authors keep them from other apps: their
         # page, and the window takes the file when it's dropped.
         self.needs_you_card, layout = card("")
@@ -281,6 +288,7 @@ class ModsPage(Page):
             self.problems,
             self.needs_you_card,
             self.fit_card,
+            self.same_card,
             self.missing_card,
             self.more,
             self.copy,
@@ -423,6 +431,7 @@ class ModsPage(Page):
             button.setEnabled(self.can_change)
         self.update_all_ready()
         self.show_fit(data.get("fit"))
+        self.show_same(data.get("overlaps") or [])
         needs = data.get("needs_you") or []
         self.needs_you_card.setVisible(bool(needs))
         refill(self.needs_you_rows, [self.need_row(n) for n in needs])
@@ -775,6 +784,35 @@ class ModsPage(Page):
             turn.setEnabled(self.can_change)
             turn.clicked.connect(lambda: self.turn(item["filename"], False))
             h.addWidget(turn)
+        return row
+
+    # ------------------------------------------------------------ same job
+    def show_same(self, overlaps: list[dict]) -> None:
+        self.same_card.setVisible(bool(overlaps))
+        rows: list[QWidget] = []
+        for item in overlaps:
+            rows += [label(item["say"], "step"), label(item["why"], "sub")]
+            for mod in item["mods"]:
+                # With a pick, Turn off on the others; without one, on each
+                # that no other mod needs, so the owner keeps the one they use.
+                if not self.may("mods.manage") or mod["needed_by"]:
+                    continue
+                if item["keep"] and not mod["turn_off"]:
+                    continue
+                rows.append(self.same_row(mod, main=bool(item["keep"])))
+        refill(self.same_rows, rows)
+
+    def same_row(self, mod: dict, main: bool) -> QWidget:
+        row = QWidget()
+        row.setProperty("kind", "row")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(12, 8, 8, 8)
+        h.addWidget(label(f"{mod['name']} {mod['version']}", "step"), 1)
+        turn = push(text("mods.turn_off"), "primary" if main else "")
+        turn.setAccessibleName(f"{turn.text()}: {mod['name']} {mod['version']}")
+        turn.setEnabled(self.can_change)
+        turn.clicked.connect(lambda: self.turn(mod["filename"], False))
+        h.addWidget(turn)
         return row
 
     def change_fit(self) -> None:

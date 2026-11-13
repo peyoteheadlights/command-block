@@ -98,9 +98,39 @@ class Later:
             self.task.cancel()
 
 
+async def catch_up(mods) -> None:
+    """Modrinth mods installed before the app saved what their version
+    doesn't work with (for the "Doing the same job" card): asked all at
+    once by the sha1 the store saved, then never again."""
+    missing: dict[str, ModInfo] = {}
+    for mod in mods.scan(use_cache=True):
+        if (
+            mod.enabled
+            and mods.source_of(mod) == "modrinth"
+            and "incompatible" not in mods.record_of(mod)
+        ):
+            missing[_hashes(mods, mod)["sha1"]] = mod
+    if not missing:
+        return
+    try:
+        found = await mods.modrinth.installed_versions(list(missing))
+    except ModrinthError:
+        log.info("couldn't ask Modrinth what older mods don't work with", exc_info=True)
+        return
+    for sha1, mod in missing.items():
+        record = mods.record_of(mod)
+        record["incompatible"] = [
+            d["project_id"]
+            for d in (found.get(sha1) or {}).get("dependencies") or []
+            if d.get("type") == "incompatible" and d.get("project_id")
+        ]
+        mods.db.set_setting(f"mod_source:{mod.mod_id}", record)
+
+
 async def refresh(ctx: ServerContext, about: str, mod_ids: set[str] | None) -> None:
     """Check, save the answer for the Mods page and tell the apps. A check
     that fails is logged; the card is only cleared, never made up."""
+    await catch_up(ctx.mods)
     try:
         result = await check_fit(ctx, about, mod_ids)
     except Exception:

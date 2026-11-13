@@ -230,6 +230,15 @@ public enum Install {
     }
 }
 
+/// The "Doing the same job" rows.
+public enum SameJob {
+    /// The mods that get a Turn off button: with a pick, the others; with
+    /// none, each one no other mod needs, so the owner keeps the one they use.
+    public static func turnOff(_ overlap: Overlap) -> [OverlapMod] {
+        overlap.mods.filter { $0.neededBy.isEmpty && (overlap.keep.isEmpty || $0.turnOff) }
+    }
+}
+
 /// Update all's list and what is sent.
 /// The "Still fit?" card: its first line, and "Change these" as an Update all.
 public enum StillFit {

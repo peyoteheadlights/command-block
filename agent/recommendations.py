@@ -88,6 +88,8 @@ class Facts:
     addons: dict[str, Any] | None = None
     speed_ups: dict[str, Any] = field(default_factory=dict)
     played_by: str = ""
+    # The same mod twice, or add-ons that do the same job (agent/mods/overlap.py).
+    overlaps: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -507,6 +509,29 @@ def known_bad_files(f: Facts) -> Recommendation | None:
     )
 
 
+def overlapping_mods(f: Facts) -> Recommendation | None:
+    if not f.overlaps:
+        return None
+    first = f.overlaps[0]
+    names = " and ".join(m["name"] for m in first["mods"][:2])
+    count = len(f.overlaps)
+    return Recommendation(
+        id="overlapping_mods",
+        title=(
+            f"{first['mods'][0]['name']} is here twice"
+            if first["kind"] == "same_mod"
+            else f"{names} do the same job"
+        )
+        + (f" (and {count - 1} more)" if count > 1 else ""),
+        reason=first["why"],
+        evidence=first["say"],
+        action={"label": "Open mods", "page": "mods"},
+        fingerprint="overlaps:"
+        + ",".join(sorted(m["filename"] for o in f.overlaps for m in o["mods"])),
+        details={"overlaps": f.overlaps, "source": "the jars, the safety notes' same-job list"},
+    )
+
+
 def _version_fix(f: Facts, minecraft: str, loader: str | None) -> dict[str, Any]:
     """The button runs the normal version change: backup first, one Undo."""
     return {
@@ -676,6 +701,7 @@ RULES: tuple[Rule, ...] = (
     auto_restart_off,
     install_spark,
     mod_updates,
+    overlapping_mods,
     newer_build,
     newer_minecraft,
     addon_suggestions,
@@ -765,6 +791,7 @@ def gather(ctx, addons: dict[str, Any] | None = None) -> Facts:
         addons=addons,
         speed_ups=suggestions.speed_ups(ctx, addons, technical=False) if addons else {},
         played_by=ctx.config.server.played_by,
+        overlaps=ctx.mods.overlaps(),
     )
 
 
