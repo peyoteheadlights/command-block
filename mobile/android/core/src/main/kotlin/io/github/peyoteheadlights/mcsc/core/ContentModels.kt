@@ -49,6 +49,30 @@ data class ModList(
     @SerialName("server_state") val serverState: String = "UNKNOWN",
     /** The server's drive can't link to the shared store, so its jars are copies. */
     @SerialName("stored_separately") val storedSeparately: Boolean = false,
+    /** The "Still fit?" card after a mod or version change; null: nothing to show. */
+    val fit: ModFit? = null,
+)
+
+/** One mod on the "Still fit?" card: what the mods or its site said. For
+ * one that needs a change, [from], [to] and [versionId] are filled. */
+@Serializable
+data class FitRow(
+    @SerialName("mod_id") val modId: String = "",
+    val name: String = "",
+    val filename: String,
+    val why: String = "",
+    val from: String = "",
+    val to: String = "",
+    @SerialName("version_id") val versionId: String? = null,
+)
+
+@Serializable
+data class ModFit(
+    /** What changed: "Create 6.0" or "Minecraft 1.21.4". */
+    val about: String = "",
+    @SerialName("needs_change") val needsChange: List<FitRow> = emptyList(),
+    @SerialName("no_fit") val noFit: List<FitRow> = emptyList(),
+    @SerialName("cant_tell") val cantTell: List<FitRow> = emptyList(),
 )
 
 @Serializable

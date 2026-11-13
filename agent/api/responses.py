@@ -1093,6 +1093,30 @@ class NeedsYou(Open):
     page: str | None = Field(None, description="Its CurseForge page; null when not known now")
 
 
+class FitRow(Open):
+    mod_id: str
+    name: str
+    filename: str
+    why: str = Field(description="What the mods or the site said, in plain words")
+
+
+class FitChange(FitRow):
+    from_: str = Field(alias="from", description="The installed version")
+    to: str = Field(description="The version that fits")
+    version_id: str = Field(description="Send with filename to /mods/update-all")
+
+
+class ModFit(Open):
+    """The "Still fit?" card: only what the mods and sites said, never a guess."""
+
+    about: str = Field(description='What changed, e.g. "Create 6.0" or "Minecraft 1.21.4"')
+    minecraft_version: str | None = None
+    needs_change: list[FitChange] = Field(description="Ticked list for Change these")
+    no_fit: list[FitRow] = Field(description="No version fits; Turn off is offered")
+    cant_tell: list[FitRow] = Field(description="Nothing said either way")
+    checked_at: float | None = None
+
+
 class ModList(Open):
     mods: list[Mod]
     needs_you: list[NeedsYou] = []
@@ -1105,6 +1129,7 @@ class ModList(Open):
     stored_separately: bool = Field(
         False, description="This server's jars are copies: its drive can't link to the shared store"
     )
+    fit: ModFit | None = Field(None, description='The "Still fit?" card, null when nothing to show')
 
 
 class ModChanged(Open):

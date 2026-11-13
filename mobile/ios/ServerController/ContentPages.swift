@@ -193,6 +193,21 @@ final class ContentPages {
         }
     }
 
+    /// "Change these" on the Still fit? card: Update all's list, filled from the card.
+    func openFit(_ fit: ModFit) {
+        let read = StillFit.plan(fit)
+        ticked = UpdateAll.ticked(read)
+        plan = PageRead(value: read)
+        sheet = .updateAll
+    }
+
+    func hideFit(_ strings: Strings) async {
+        await work("hide_fit", strings, reload: loadMods) { client, id in
+            try await client.hideFit(serverId: id)
+            return nil
+        }
+    }
+
     func updateAll(_ strings: Strings) async {
         guard let read = plan?.value else { return }
         let body = UpdateAll.body(read, ticked: ticked)
