@@ -1546,8 +1546,8 @@ private struct PackUpdateSheet: View {
 }
 
 /// Name, version, "Leave out server-only mods", the players' loader on a
-/// plugin server, the config files to put in, and "Required to join"
-/// (greyed until the join check exists).
+/// plugin server, the config files to put in, "Required to join" and the
+/// chat line (both need the Companion mod on the server).
 private struct MakeModpackSheet: View {
     let content: ContentPages
 
@@ -1559,6 +1559,8 @@ private struct MakeModpackSheet: View {
     @State private var loader = "fabric"
     @State private var configs: Set<String> = []
     @State private var required = false
+    @State private var chatOn = true
+    @State private var chatText = ""
 
     var body: some View {
         let strings = model.strings
@@ -1580,10 +1582,15 @@ private struct MakeModpackSheet: View {
                     Text(verbatim: model.t("make.leave_out_hint")).font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
-                    // Greyed until the join check (the Companion mod) exists.
+                    // Needs the Companion mod on the server, which does the join check.
                     Toggle(model.t("make.required"), isOn: $required).disabled(!options.requiredToJoin)
-                    if !options.requiredToJoin {
-                        Text(verbatim: model.t("make.required_later")).font(.footnote).foregroundStyle(.secondary)
+                    Text(verbatim: model.t(options.requiredToJoin ? "make.required_hint" : "make.required_later"))
+                        .font(.footnote).foregroundStyle(.secondary)
+                    if options.requiredToJoin {
+                        Toggle(model.t("make.chat_line"), isOn: $chatOn).disabled(required)
+                        TextField(model.t("make.chat_line"), text: $chatText).disabled(required)
+                            .onChange(of: chatText) { _, new in chatText = String(new.prefix(300)) }
+                        Text(verbatim: model.t("make.chat_line_hint")).font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 Section(model.t(options.configs.isEmpty ? "make.no_configs" : "make.configs")) {
@@ -1601,6 +1608,9 @@ private struct MakeModpackSheet: View {
                 name = options.name
                 version = options.version
                 loader = options.playersLoaders.first?.id ?? "fabric"
+                required = options.requiredToJoin && options.requiredOn
+                chatOn = options.chatLine.on
+                chatText = options.chatLine.text
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1613,7 +1623,11 @@ private struct MakeModpackSheet: View {
                             version: String(version.trimmingCharacters(in: .whitespaces).prefix(32)),
                             leaveOutServerOnly: leaveOut,
                             configs: options.configs.map(\.path).filter { configs.contains($0) },
-                            playersLoader: loader
+                            playersLoader: loader,
+                            required: required,
+                            // Left empty: the agent's own wording.
+                            chatLine: options.requiredToJoin && !chatText.trimmingCharacters(in: .whitespaces).isEmpty
+                                ? ChatLine(on: chatOn, text: chatText.trimmingCharacters(in: .whitespaces)) : nil
                         )
                         Task { await content.makeModpack(answers, strings) }
                     }

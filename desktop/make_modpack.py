@@ -36,8 +36,8 @@ if TYPE_CHECKING:
 
 class MakeDialog(QDialog):
     """Name, version, "Leave out server-only mods", the players' loader on
-    a plugin server, the config files to put in, and "Required to join"
-    (greyed until the join check exists)."""
+    a plugin server, the config files to put in, "Required to join" and
+    the chat line (both need the Companion mod on the server)."""
 
     def __init__(self, parent: QWidget, options: dict) -> None:
         super().__init__(parent)
@@ -60,11 +60,29 @@ class MakeDialog(QDialog):
         self.leave_out.setChecked(True)
         column.addWidget(self.leave_out)
         column.addWidget(label(text("make.leave_out_hint"), "sub"))
-        required = QCheckBox(text("make.required"))
-        required.setEnabled(bool((options.get("required_to_join") or {}).get("available")))
-        column.addWidget(required)
-        if not required.isEnabled():
-            column.addWidget(label(text("make.required_later"), "sub"))
+        join = options.get("required_to_join") or {}
+        chat = options.get("chat_line") or {}
+        self.required = QCheckBox(text("make.required"))
+        self.required.setEnabled(bool(join.get("available")))
+        self.required.setChecked(bool(join.get("available") and join.get("on")))
+        column.addWidget(self.required)
+        column.addWidget(
+            label(
+                text("make.required_hint" if join.get("available") else "make.required_later"),
+                "sub",
+            )
+        )
+        self.chat_on = QCheckBox(text("make.chat_line"))
+        self.chat_on.setChecked(bool(chat.get("on", True)))
+        self.chat_text = QLineEdit(chat.get("text") or "")
+        self.chat_text.setMaxLength(300)
+        for widget in (self.chat_on, self.chat_text, label(text("make.chat_line_hint"), "sub")):
+            widget.setVisible(bool(join.get("available")))
+            column.addWidget(widget)
+        self.required.toggled.connect(self.chat_on.setDisabled)
+        self.required.toggled.connect(self.chat_text.setDisabled)
+        self.chat_on.setDisabled(self.required.isChecked())
+        self.chat_text.setDisabled(self.required.isChecked())
 
         configs = options.get("configs") or []
         column.addWidget(label(text("make.configs" if configs else "make.no_configs")))
@@ -95,6 +113,11 @@ class MakeDialog(QDialog):
             "leave_out_server_only": self.leave_out.isChecked(),
             "configs": [path for tick, path in self.configs if tick.isChecked()],
             "players_loader": self.loader.currentData() or "fabric",
+            "required": self.required.isChecked(),
+            # Left empty: the agent's own wording.
+            "chat_line": {"on": self.chat_on.isChecked(), "text": self.chat_text.text().strip()}
+            if self.chat_text.text().strip()
+            else None,
         }
 
 

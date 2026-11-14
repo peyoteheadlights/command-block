@@ -371,6 +371,13 @@ class ModpackUpdateRequest(BaseModel):
     own_jars: bool = False
 
 
+class ModpackChatLine(BaseModel):
+    """The line players without the modpack see when it isn't required."""
+
+    on: bool = True
+    text: str = Field(min_length=1, max_length=300)
+
+
 class ModpackMakeRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     version: str = Field(min_length=1, max_length=32)
@@ -379,6 +386,9 @@ class ModpackMakeRequest(BaseModel):
     configs: list[str] = Field(default_factory=list, max_length=2000)
     # For a plugin or plain server: the loader players' mods are for.
     players_loader: str = Field(default="fabric", pattern=r"^[a-z]{1,16}$")
+    # Needs the Companion mod on the server (agent/companion.py).
+    required: bool = False
+    chat_line: ModpackChatLine | None = None
 
 
 class ModpackPostRequest(BaseModel):
