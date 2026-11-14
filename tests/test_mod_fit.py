@@ -315,3 +315,35 @@ def test_mods_list_carries_the_card_and_hide_clears_it(fabric):  # noqa: F811
 )
 def test_sides_come_from_environment(data, client_side, server_side):
     assert sides(data) == {"client_side": client_side, "server_side": server_side}
+
+
+async def test_a_change_during_a_running_check_is_checked_with_it(ctx, manager, monkeypatch):  # noqa: F811
+    asked, hold = [], asyncio.Event()
+
+    async def refresh(_ctx, about, ids):
+        asked.append(ids)
+        await hold.wait()
+
+    monkeypatch.setattr(fit, "WAIT", 0.01)
+    monkeypatch.setattr(fit, "refresh", refresh)
+    later = fit.Later(ctx)
+    later.heard(Event(type="version_changed", data={"minecraft_version": "1.21.4"}))
+    await asyncio.sleep(0.05)  # the full check is running now
+    later.heard(Event(type="mod_installed", data={"mod": {"mod_id": "x", "version": "1"}}))
+    hold.set()
+    await asyncio.sleep(0.05)
+    assert asked == [None, None], "the version change is still checked in full"
+
+
+async def test_a_small_check_keeps_the_rest_of_the_card(ctx, manager):  # noqa: F811
+    mods = folder(manager)
+    make_jar(mods / "create.jar", "create", "6.0.0")
+    make_jar(mods / "rails.jar", "rails", "1.0.0", depends={"create": "<6"})
+    make_jar(mods / "other.jar", "other", "1.0.0")
+    use(manager, FakeModrinth())
+    row = {"mod_id": "other", "name": "Other", "filename": "other.jar", "why": "x"}
+    manager.db.set_setting(fit.SETTING, {**fit.empty("Minecraft 1.20.1"), "no_fit": [row]})
+
+    card = await fit.check_fit(ctx, "Create 6.0.0", {"create"})
+
+    assert [r["mod_id"] for r in card["no_fit"]] == ["rails", "other"]
