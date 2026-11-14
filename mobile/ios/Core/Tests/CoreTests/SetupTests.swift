@@ -577,7 +577,7 @@ final class SetupTests: XCTestCase {
         StubAgent.json(#"{"ok": true, "server_id": "pack", "name": "Pack", "directory": "D:/Pack", "job_id": "j", "server": {"id": "pack", "name": "Pack", "state": "OFFLINE"}}"#)
         _ = try await c.modpackServer(token: "abc", name: "Pack", directory: "D:/Pack", memoryMb: nil, color: nil, eulaAccepted: true)
         XCTAssertEqual(path(3), "/api/modpacks/abc/new-server")
-        XCTAssertEqual(body(3), #"{"directory":"D:/Pack","eula_accepted":true,"name":"Pack"}"#)
+        XCTAssertEqual(body(3), #"{"directory":"D:/Pack","eula_accepted":true,"name":"Pack","own_jars":false}"#)
         StubAgent.json(#"{"jobs": []}"#)
         _ = try await c.runningJobs()
         XCTAssertEqual(StubAgent.requests[4].request.url?.query, "running=true")
