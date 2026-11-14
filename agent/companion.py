@@ -82,9 +82,14 @@ def on_server(mods: Any) -> bool:
     return any(m.enabled and m.mod_id in (MOD_ID, PLUGIN_NAME) for m in mods.scan())
 
 
-def players_file(name: str, version: str) -> str:
-    """The players' half, put in the modpack's client-overrides/."""
-    return json.dumps({"format": FORMAT, "modpack": {"name": name, "version": version}}, indent=1)
+def players_file(name: str, version: str, files: list[str]) -> str:
+    """The players' half, put in the modpack's client-overrides/. ``files``
+    are the modpack's mod jars: an update may replace only these, never
+    the player's own mods."""
+    return json.dumps(
+        {"format": FORMAT, "modpack": {"name": name, "version": version}, "files": files},
+        indent=1,
+    )
 
 
 def write(
@@ -127,6 +132,29 @@ def write(
     temp.write_text(json.dumps(data, indent=1), encoding="utf-8")
     os.replace(temp, target)
     return target
+
+
+def relink(server_dir: Path, content: str | None, made: dict[str, Any], link: str | None) -> None:
+    """The download link changed (on, off or new): put the new one in the
+    server's settings, so players' Companions download from a link that
+    works. The mod reads it at its next start."""
+    relative = {"mods": MODS_FILE, "plugins": PLUGIN_FILE}.get(content or "")
+    target = server_dir / relative if relative else None
+    if target is None or not target.is_file() or not is_inside(server_dir, target.parent):
+        return
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return  # a file we can't read is left for the next make to replace
+    chat_line = made.get("chat_line") or {"on": True, "text": CHAT_LINE_DEFAULT}
+    data["download_link"] = link
+    data["chat_line"] = {
+        "on": bool(chat_line["on"]),
+        "text": chat_text(chat_line["text"], made["name"], made["version"], link),
+    }
+    temp = target.with_name(f".{target.name}.part")
+    temp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    os.replace(temp, target)
 
 
 def player_files(base: Path, items: list[Any]) -> list[dict[str, Any]]:
