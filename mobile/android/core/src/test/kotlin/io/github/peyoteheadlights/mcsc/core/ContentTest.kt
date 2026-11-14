@@ -224,6 +224,32 @@ class ContentTest {
     }
 
     @Test
+    fun `a linked modpack's card and modpack update's question`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val list = json.decodeFromString(
+            ModList.serializer(),
+            """{"mods": [{"filename": "mine.jar", "added_by_you": true}], "server_state": "OFFLINE", "modpack": {"name": "Test Pack", "site": "Modrinth", "version": "1.2.0", "update": {"version_id": "v2", "version": "1.3.0"}, "added_by_you": 1}}""",
+        )
+        val pack = list.modpack!!
+        assertEquals(
+            listOf("Made from Test Pack 1.2.0 on Modrinth.", "Version 1.3.0 is out.", "1 mod was added by you. Modpack update keeps it."),
+            LinkedPacks.lines(strings, pack),
+        )
+        assertEquals("A new version is out.", LinkedPacks.lines(strings, pack.copy(update = LinkedModpackUpdate("cf:1-2"), addedByYou = 0))[1])
+        assertEquals(true, list.mods.single().addedByYou)
+        val preview = json.decodeFromString(
+            ModpackUpdatePreview.serializer(),
+            """{"token": "t", "pack": {"name": "Test Pack", "type_name": "Fabric"}, "changes": {"to_version": "1.3.0", "added": ["ferrite.jar"], "removed": [], "newer": [{"name": "l2.jar", "from": "l.jar", "to": "l2.jar"}], "added_by_you": ["mine.jar"], "configs_changed_by_you": [], "version_change": true, "minecraft_version": "1.21.1", "problems": []}}""",
+        )
+        assertEquals(
+            listOf("Newer: l.jar → l2.jar", "Added: ferrite.jar", "Kept, added by you: mine.jar"),
+            LinkedPacks.changes(strings, preview.changes),
+        )
+        assertEquals("The server is set up as Fabric 1.21.1 first.", LinkedPacks.steps(strings, preview).last())
+        assertNull(ModList().modpack)
+    }
+
+    @Test
     fun `update all says why it can't start and what it did`() {
         assertEquals(strings.t("mobile.content.stop_first"), UpdateAll.blocked(strings, plan.copy(serverRunning = true)))
         assertEquals("Wait for Backing up to finish first.", UpdateAll.blocked(strings, plan.copy(blockedBy = "Backing up")))

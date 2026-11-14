@@ -54,7 +54,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from . import downloads, notes, servertypes
+from . import downloads, linkedpack, notes, servertypes
 from .downloads import DownloadError, FileSpec
 from .events import Event
 from .mods.curseforge import GOOD_STATUS, LOADERS, Blocked, CurseForgeClient, version_of
@@ -121,6 +121,10 @@ OPTIONAL = "optional"  # the pack turns it off
 # A CurseForge pack, read and asked about, until it is imported. In memory
 # only: CurseForge's answers are never saved.
 READ: dict[str, Pack] = {}
+# Where a pack picked on a site came from (site, project, version), by
+# upload token, so the server it goes into is linked to it.
+ORIGIN: dict[str, dict[str, Any]] = {}
+MODRINTH_DATA = re.compile(r"^/data/([A-Za-z0-9]{1,64})/")
 
 
 class ModpackError(RuntimeError):
@@ -139,6 +143,10 @@ class PackFile:
     sha1: str | None = field(default=None, repr=False)
     url: str | None = field(default=None, repr=False)
     need: dict[str, Any] | None = None  # what "Needs you" shows
+    # The exact file, for Modpack update's diff (agent/linkedpack.py): its
+    # SHA-512 on Modrinth, "curseforge:<project>-<file>" on CurseForge.
+    key: str | None = field(default=None, repr=False)
+    project: str | None = field(default=None, repr=False)  # the mod's project on its site
 
 
 @dataclass
@@ -166,7 +174,7 @@ class Pack:
         files = []
         for f in self.files:
             entry = asdict(f)
-            for hidden in ("sha512", "sha1", "url", "need"):
+            for hidden in ("sha512", "sha1", "url", "need", "key", "project"):
                 entry.pop(hidden, None)
             files.append(entry)
         return {
@@ -235,6 +243,9 @@ def _check_file(entry: Any) -> PackFile:
         found.status, found.reason = REFUSED, "it isn't on Modrinth's download site"
         return found
     found.sha512, found.url = sha512.lower(), modrinth[0]
+    found.key = found.sha512
+    project = MODRINTH_DATA.match(urlparse(found.url).path)
+    found.project = project.group(1) if project else None
     return found
 
 
@@ -393,7 +404,12 @@ def _curseforge_file(entry: Any) -> PackFile:
     if not isinstance(project, int) or not isinstance(file_id, int):
         return PackFile(path="?", name="?", size=None, status=REFUSED, reason="not readable")
     found = PackFile(
-        path=f"{project}-{file_id}", name=f"CurseForge {project}", size=None, status=PENDING
+        path=f"{project}-{file_id}",
+        name=f"CurseForge {project}",
+        size=None,
+        status=PENDING,
+        key=f"curseforge:{project}-{file_id}",
+        project=f"curseforge:{project}",
     )
     if entry.get("required") is False:
         found.status, found.reason = OPTIONAL, "the pack turns it off"
@@ -495,6 +511,7 @@ def new_upload(core: AgentCore) -> tuple[str, Path]:
 
 def forget(core: AgentCore, token: str) -> None:
     READ.pop(token, None)
+    ORIGIN.pop(token, None)
     if TOKEN_RE.match(token or ""):
         (upload_folder(core) / f"{token}.mrpack").unlink(missing_ok=True)
 
@@ -568,13 +585,20 @@ async def _download_all(
 
 
 def _extract_overrides(
-    pack: Pack, archive: Path, folder: Path, advance=None, mods: Any = None
+    pack: Pack,
+    archive: Path,
+    folder: Path,
+    advance=None,
+    mods: Any = None,
+    skip: frozenset[str] = frozenset(),
 ) -> list[str]:
     written: list[str] = []
     with zipfile.ZipFile(archive) as zf:
         for member, relative in _override_members(zf, pack.folders):
             top = relative.split("/", 1)[0]
             if top in CLIENT_ONLY or Path(relative).suffix.lower() in EXECUTABLE_EXTENSIONS:
+                continue
+            if relative in skip:
                 continue
             target = check_archive_member(folder, relative, zip_member_is_symlink(member))
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -595,15 +619,21 @@ def _extract_overrides(
 
 
 async def put_in_place(
-    pack: Pack, archive: Path, folder: Path, job: JobHandle | None, mods: Any = None
+    pack: Pack,
+    archive: Path,
+    folder: Path,
+    job: JobHandle | None,
+    mods: Any = None,
+    skip: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
-    """Download the pack's mods and extract its overrides into ``folder``.
-    With ``mods`` (the server's ModManager) jars go through the shared store."""
+    """Download the pack's mods and extract its overrides into ``folder``
+    (all but ``skip``). With ``mods`` (the server's ModManager) jars go
+    through the shared store."""
     fetched = await _download_all(pack, folder, job, mods)
     if job:
         job.step("Copying the pack's other files", total=pack.overrides, unit="files")
     written = await asyncio.to_thread(
-        _extract_overrides, pack, archive, folder, job.advance if job else None, mods
+        _extract_overrides, pack, archive, folder, job.advance if job else None, mods, skip
     )
     return {"downloaded": fetched, "overrides": written}
 
@@ -668,8 +698,9 @@ async def import_new(
         after_install=after_install,
         title=f"Creating {name.strip()} from the {pack.name} modpack",
     )
-    forget(core, token)
     ctx = core.get_server(result["server_id"])
+    await linkedpack.remember(ctx, pack, token, archive)
+    forget(core, token)
     _list_needs(ctx, pack)
     await ctx.bus.publish(_event(pack, ctx.name, result.get("modpack") or {}))
     return result
@@ -762,6 +793,7 @@ async def import_into(ctx: ServerContext, token: str, user: str = "system") -> d
     job, outcome = await ctx.core.jobs.run(
         "modpack", title, run, server_id=ctx.server_id, risky=True, user=user
     )
+    await linkedpack.remember(ctx, pack, token, archive)
     forget(ctx.core, token)
     _list_needs(ctx, pack)
     summary = _summary(pack, outcome, outcome["detail"])
@@ -865,14 +897,21 @@ def _list_needs(ctx: ServerContext, pack: Pack) -> None:
             ctx.mods.need_you(item.need)
 
 
-async def from_curseforge(core: AgentCore, project: str) -> tuple[str, Pack]:
-    """Download a CurseForge modpack's newest release (sha1 checked) as an
-    upload, then read it like one."""
+async def from_curseforge(
+    core: AgentCore, project: str, version_id: str | None = None
+) -> tuple[str, Pack]:
+    """Download a CurseForge modpack's newest release (or ``version_id``,
+    sha1 checked) as an upload, then read it like one."""
     from .mods.curseforge import MODPACKS
 
     client = CurseForgeClient(core.config)
     try:
-        version = await client.latest_for(project, None, kind=MODPACKS)
+        if version_id:
+            version = await client.version(version_id)
+            if version["project_id"] != project:
+                raise ModpackError("That file isn't part of this modpack.")
+        else:
+            version = await client.latest_for(project, None, kind=MODPACKS)
         if not version:
             raise ModpackError("CurseForge has no file of that modpack to download.")
         token, path = new_upload(core)
@@ -883,6 +922,7 @@ async def from_curseforge(core: AgentCore, project: str) -> tuple[str, Pack]:
         raise ModpackError(str(exc)) from exc
     try:
         await downloads.download(replace(spec, max_bytes=MAX_PACK_BYTES), path.parent)
+        ORIGIN[token] = linkedpack.origin("curseforge", version)
         return token, await read(core, token, path)
     except BaseException as exc:
         forget(core, token)
@@ -891,14 +931,22 @@ async def from_curseforge(core: AgentCore, project: str) -> tuple[str, Pack]:
         raise
 
 
-async def from_modrinth(core: AgentCore, project: str) -> tuple[str, Pack]:
-    """Download a Modrinth modpack's newest release (sha512 checked, from
-    Modrinth's CDN only) as an upload, then read it like one."""
+async def from_modrinth(
+    core: AgentCore, project: str, version_id: str | None = None
+) -> tuple[str, Pack]:
+    """Download a Modrinth modpack's newest release (or ``version_id``;
+    sha512 checked, from Modrinth's CDN only) as an upload, then read it
+    like one."""
     from .mods.modrinth import ModrinthClient
 
     client = ModrinthClient(core.config)
     try:
-        version = await client.latest_for(project, None, loaders=())
+        if version_id:
+            version = await client.version(version_id)
+            if version.get("project_id") != project:
+                raise ModpackError("That file isn't part of this modpack.")
+        else:
+            version = await client.latest_for(project, None, loaders=())
     except SourceError as exc:
         raise ModpackError(str(exc)) from exc
     finally:
@@ -919,6 +967,7 @@ async def from_modrinth(core: AgentCore, project: str) -> tuple[str, Pack]:
     )
     try:
         await downloads.download(spec, path.parent)
+        ORIGIN[token] = linkedpack.origin("modrinth", version)
         return token, await read(core, token, path)
     except BaseException as exc:
         forget(core, token)

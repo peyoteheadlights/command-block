@@ -39,6 +39,8 @@ data class Mod(
     val status: String? = null,
     val issues: List<ModIssue> = emptyList(),
     @SerialName("update_available") val updateAvailable: ModUpdate? = null,
+    /** On a linked modpack's server: true when the modpack didn't put it there. */
+    @SerialName("added_by_you") val addedByYou: Boolean? = null,
 )
 
 @Serializable
@@ -53,7 +55,54 @@ data class ModList(
     val fit: ModFit? = null,
     /** The same mod twice, or mods that do the same job. */
     val overlaps: List<Overlap> = emptyList(),
+    /** The modpack this server came from; null: not linked. */
+    val modpack: LinkedModpack? = null,
 )
+
+@Serializable
+data class LinkedModpackUpdate(
+    @SerialName("version_id") val versionId: String,
+    /** Empty for CurseForge, whose names aren't kept. */
+    val version: String = "",
+)
+
+@Serializable
+data class LinkedModpack(
+    val name: String = "",
+    /** Modrinth or CurseForge. */
+    val site: String = "",
+    val version: String = "",
+    val update: LinkedModpackUpdate? = null,
+    @SerialName("added_by_you") val addedByYou: Int = 0,
+)
+
+@Serializable
+data class NewerMod(val name: String = "", val from: String = "", val to: String = "")
+
+/** What Modpack update changes, compared by file hash. */
+@Serializable
+data class ModpackChanges(
+    @SerialName("from_version") val fromVersion: String = "",
+    @SerialName("to_version") val toVersion: String = "",
+    val added: List<String> = emptyList(),
+    val removed: List<String> = emptyList(),
+    val newer: List<NewerMod> = emptyList(),
+    @SerialName("added_by_you") val addedByYou: List<String> = emptyList(),
+    @SerialName("configs_changed_by_you") val configsChangedByYou: List<String> = emptyList(),
+    @SerialName("version_change") val versionChange: Boolean = false,
+    @SerialName("minecraft_version") val minecraftVersion: String = "",
+    val problems: List<String> = emptyList(),
+)
+
+@Serializable
+data class ModpackUpdatePreview(
+    val token: String,
+    val pack: Modpack = Modpack(),
+    val changes: ModpackChanges = ModpackChanges(),
+)
+
+@Serializable
+data class ModpackUpdated(val undo: Undo? = null)
 
 /** One mod in an [Overlap]. [turnOff]: the pick isn't this one. */
 @Serializable

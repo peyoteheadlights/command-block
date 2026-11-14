@@ -118,6 +118,9 @@ POST /api/modpacks/modrinth
 POST /api/modpacks/curseforge
 DELETE /api/modpacks/{token}
 POST /api/servers/{server_id}/modpack
+POST /api/servers/{server_id}/modpack/update/preview
+POST /api/servers/{server_id}/modpack/update
+DELETE /api/servers/{server_id}/modpack/link
 POST /api/servers/{server_id}/mods/needs-you/dismiss
 GET /api/servers/{server_id}/addons
 POST /api/servers/{server_id}/addons/upload

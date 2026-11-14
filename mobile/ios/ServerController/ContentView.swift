@@ -179,6 +179,37 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Linked modpack
+
+    /// The modpack this server came from: Modpack update and Unlink.
+    @ViewBuilder
+    private func linkedPackCard(_ content: ContentPages, _ pack: LinkedModpack, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        SectionTitle(text: model.t("linked.title"), palette: palette)
+        CardBox(palette: palette) {
+            ForEach(LinkedPacks.lines(strings, pack), id: \.self) { line in
+                Text(verbatim: line).foregroundStyle(palette.textPrimary)
+            }
+            if model.can(Permissions.MODS_MANAGE) {
+                Presses(presses: (pack.update != nil && model.can(Permissions.SETTINGS_SERVER) ? [
+                    Press(title: model.t("linked.update"), enabled: ready) {
+                        Task { await content.previewPackUpdate(pack.update?.versionId, strings) }
+                    },
+                ] : []) + [
+                    Press(title: model.t("linked.unlink"), danger: true, enabled: ready) {
+                        asking = ContentConfirm(
+                            title: strings.t("linked.unlink_title", ["name": pack.name]),
+                            body: strings.t("linked.unlink_body"),
+                            confirm: strings.t("linked.unlink")
+                        ) {
+                            Task { await content.unlinkPack(strings) }
+                        }
+                    },
+                ], palette: palette)
+            }
+        }
+    }
+
     // MARK: - Still fit?
 
     /// After a mod or version change: the ones to change (one Update all), the
@@ -253,6 +284,9 @@ struct ContentView: View {
         if let list = read.value {
             if list.storedSeparately {
                 Hint(text: model.t("mods.stored_separately"), palette: palette)
+            }
+            if let pack = list.modpack {
+                linkedPackCard(content, pack, ready: changes == .ready && idle, palette)
             }
             if let fit = list.fit {
                 stillFitCard(content, list, fit, kind, ready: changes == .ready && idle, palette)
@@ -422,6 +456,11 @@ struct ContentView: View {
                 Text(verbatim: newer)
                     .font(.footnote)
                     .foregroundStyle(palette.accentInk)
+            }
+            if mod.addedByYou == true {
+                Text(verbatim: model.t("linked.added_by_you"))
+                    .font(.footnote)
+                    .foregroundStyle(palette.textSecondary)
             }
             if model.technical {
                 Hint(text: Content.technical(strings, mod), palette: palette)
@@ -741,6 +780,8 @@ struct ContentView: View {
             MissingSheet(content: content)
         case .modpack:
             ModpackSheet(content: content)
+        case .packUpdate:
+            PackUpdateSheet(content: content)
         }
     }
 }
@@ -1071,6 +1112,59 @@ private struct MissingSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(model.t("mods.install_confirm")) {
                         Task { await content.installMissing(strings) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// What Modpack update changes, then Modpack update.
+private struct PackUpdateSheet: View {
+    let content: ContentPages
+
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var usePackConfigs = false
+
+    var body: some View {
+        let strings = model.strings
+        if let read = content.packUpdate {
+            let problems = read.changes.problems
+            List {
+                if !problems.isEmpty {
+                    Section(model.t("pack.cant_import")) {
+                        ForEach(problems, id: \.self) { problem in
+                            Text(verbatim: problem).foregroundStyle(.red)
+                        }
+                    }
+                } else {
+                    Section {
+                        ForEach(LinkedPacks.changes(strings, read.changes), id: \.self) { line in
+                            Text(verbatim: line)
+                        }
+                        if !read.changes.configsChangedByYou.isEmpty {
+                            Toggle(model.t("linked.use_pack_configs"), isOn: $usePackConfigs)
+                        }
+                    }
+                    Section {
+                        ForEach(LinkedPacks.steps(strings, read), id: \.self) { step in
+                            Text(verbatim: step)
+                        }
+                    }
+                }
+            }
+            .navigationTitle(strings.t("linked.update_title", ["name": read.pack.name, "version": read.changes.toVersion]))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(model.t("mobile.common.cancel")) { dismiss() }
+                }
+                if problems.isEmpty {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(model.t("linked.update")) {
+                            Task { await content.updatePack(usePackConfigs: usePackConfigs, strings) }
+                        }
                     }
                 }
             }

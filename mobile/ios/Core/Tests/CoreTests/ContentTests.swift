@@ -213,6 +213,20 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(ModList().overlaps, [])
     }
 
+    func testALinkedModpacksCardAndModpackUpdatesQuestion() throws {
+        let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [{"filename": "mine.jar", "added_by_you": true}], "server_state": "OFFLINE", "modpack": {"name": "Test Pack", "site": "Modrinth", "version": "1.2.0", "update": {"version_id": "v2", "version": "1.3.0"}, "added_by_you": 1}}"#.utf8))
+        var pack = try XCTUnwrap(list.modpack)
+        XCTAssertEqual(LinkedPacks.lines(s, pack), ["Made from Test Pack 1.2.0 on Modrinth.", "Version 1.3.0 is out.", "1 mod was added by you. Modpack update keeps it."])
+        pack.update = LinkedModpackUpdate(versionId: "cf:1-2")
+        pack.addedByYou = 0
+        XCTAssertEqual(LinkedPacks.lines(s, pack)[1], "A new version is out.")
+        XCTAssertEqual(list.mods.first?.addedByYou, true)
+        let preview = try JSONDecoder().decode(ModpackUpdatePreview.self, from: Data(#"{"token": "t", "pack": {"name": "Test Pack", "type_name": "Fabric"}, "changes": {"to_version": "1.3.0", "added": ["ferrite.jar"], "removed": [], "newer": [{"name": "l2.jar", "from": "l.jar", "to": "l2.jar"}], "added_by_you": ["mine.jar"], "configs_changed_by_you": [], "version_change": true, "minecraft_version": "1.21.1", "problems": []}}"#.utf8))
+        XCTAssertEqual(LinkedPacks.changes(s, preview.changes), ["Newer: l.jar → l2.jar", "Added: ferrite.jar", "Kept, added by you: mine.jar"])
+        XCTAssertEqual(LinkedPacks.steps(s, preview).last, "The server is set up as Fabric 1.21.1 first.")
+        XCTAssertNil(ModList().modpack)
+    }
+
     func testTheStillFitCardReadsTheAgentsAnswerAndChangesTheseAsOneUpdateAll() throws {
         let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [], "server_state": "OFFLINE", "fit": {"about": "Create 6.0", "needs_change": [{"mod_id": "r", "name": "Rails", "filename": "r.jar", "why": "Rails needs Create below 6", "from": "1.0", "to": "2.0", "version_id": "R2"}], "no_fit": [{"mod_id": "g", "name": "Gamma", "filename": "g.jar", "why": "No version for Minecraft 1.21.4 yet"}], "cant_tell": []}}"#.utf8))
         let fit = try XCTUnwrap(list.fit)
