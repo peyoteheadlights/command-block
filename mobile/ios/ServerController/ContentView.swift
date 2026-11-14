@@ -376,7 +376,7 @@ struct ContentView: View {
                 }
             }
             if kind != .packs {
-                playersOnly(content, list.playerOnly, kind, changes, palette)
+                playersOnly(content, list.playerOnly, list.playerOnlyOptions, kind, changes, palette)
             }
 
             if changes == .ready {
@@ -517,7 +517,9 @@ struct ContentView: View {
 
     /// The player-only folder: mods, resource packs and shader packs the server never loads.
     @ViewBuilder
-    private func playersOnly(_ content: ContentPages, _ files: [PlayerFile], _ kind: ContentKind, _ changes: Changes, _ palette: Palette) -> some View {
+    private func playersOnly(
+        _ content: ContentPages, _ files: [PlayerFile], _ options: PlayerOnlyOptions, _ kind: ContentKind, _ changes: Changes, _ palette: Palette
+    ) -> some View {
         let manage = changes != .notAllowed
         let idle = content.busy == nil
         if manage || !files.isEmpty {
@@ -534,7 +536,20 @@ struct ContentView: View {
                         .filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.footnote)
                         .foregroundStyle(palette.textSecondary)
-                    if manage {
+                    if file.changed {
+                        Text(verbatim: model.t("sides.changed")).font(.footnote).foregroundStyle(palette.tone(.warning))
+                    }
+                    if file.missing {
+                        Text(verbatim: model.t("sides.missing")).font(.footnote).foregroundStyle(palette.tone(.warning))
+                        if manage && file.site == "modrinth" {
+                            Presses(presses: [
+                                Press(title: model.t("sides.get_again"), enabled: idle) {
+                                    let strings = model.strings
+                                    Task { await content.fetchForPlayers(file.filename, strings) }
+                                },
+                            ], palette: palette)
+                        }
+                    } else if manage {
                         Presses(presses: (file.kind == "mod" && kind == .mods ? [
                             Press(title: model.t("sides.move_to_server"), enabled: changes == .ready && idle) {
                                 let strings = model.strings
@@ -561,6 +576,22 @@ struct ContentView: View {
                     Presses(presses: [
                         Press(title: model.t("sides.players_add"), enabled: idle) { picking = .players },
                     ], palette: palette)
+                }
+                if model.can(Permissions.SETTINGS_SERVER) {
+                    Toggle(model.t("sides.option_backup"), isOn: Binding(get: { options.backup }, set: { on in
+                        var changed = options
+                        changed.backup = on
+                        let strings = model.strings
+                        Task { await content.setPlayerOnlyOptions(changed, strings) }
+                    }))
+                    .disabled(!idle)
+                    Toggle(model.t("sides.option_skip_listed"), isOn: Binding(get: { options.skipListed }, set: { on in
+                        var changed = options
+                        changed.skipListed = on
+                        let strings = model.strings
+                        Task { await content.setPlayerOnlyOptions(changed, strings) }
+                    }))
+                    .disabled(!idle || !options.backup)
                 }
             }
         }

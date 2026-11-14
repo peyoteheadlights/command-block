@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 from ..changes import ChangeHistory
 from ..events import Event, EventBus
 from ..minecraft.properties import world_folders
+from ..mods import sides
 from ..safechange import SafeChange, run_safe_change
 from ..security.paths import (
     PathSafetyError,
@@ -138,6 +139,11 @@ class BackupManager:
             for folder in sorted(world_folders(self.config.server_dir, self.config.server_type)):
                 if folder not in includes:
                     includes.append(folder)
+            # The Server / Players / Both marks and, unless turned off, the
+            # player-only folder (agent/mods/sides.py).
+            for extra in sides.backup_names(self.db):
+                if extra not in includes:
+                    includes.append(extra)
         base = self.config.server_dir
         found = []
         for name in includes:
@@ -322,6 +328,10 @@ class BackupManager:
                     log.warning("could not flush the world before backup", exc_info=True)
 
             members = await asyncio.to_thread(self._collect, sources)
+            # Player-only files Modrinth lists, when the owner chose to get
+            # them again after a restore instead of keeping copies.
+            skipped = sides.backup_skips(self.config, self.db)
+            members = [m for m in members if m not in skipped]
             used = {m.relative_to(self.config.server_dir).parts[0] for m in members}
             empty = [s for s in sources if s.is_dir() and s.name not in used]
             if job:

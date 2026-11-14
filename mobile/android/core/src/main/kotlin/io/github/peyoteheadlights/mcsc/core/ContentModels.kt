@@ -64,6 +64,7 @@ data class ModList(
     val modpack: LinkedModpack? = null,
     /** The player-only folder: kept for the modpack, never loaded by the server. */
     @SerialName("player_only") val playerOnly: List<PlayerFile> = emptyList(),
+    @SerialName("player_only_options") val playerOnlyOptions: PlayerOnlyOptions = PlayerOnlyOptions(),
     /** A mod needs one that sits on the other side. */
     @SerialName("odd_setups") val oddSetups: List<OddSetup> = emptyList(),
 )
@@ -76,6 +77,19 @@ data class PlayerFile(
     /** mod or pack (a resource pack or shader pack). */
     val kind: String = "",
     @SerialName("size_bytes") val sizeBytes: Long = 0,
+    /** Not the file the app first saw: changed outside it. */
+    val changed: Boolean = false,
+    /** The app added it, but it's gone (Get it again when [site] is modrinth). */
+    val missing: Boolean = false,
+    val site: String? = null,
+)
+
+@Serializable
+data class PlayerOnlyOptions(
+    /** Back up the player-only folder. */
+    val backup: Boolean = true,
+    /** Leave out files Modrinth lists; got again by hash after a restore. */
+    @SerialName("skip_listed") val skipListed: Boolean = false,
 )
 
 @Serializable

@@ -236,7 +236,10 @@ server never loads, and leaving players moves it back; needs the server
 stopped for a move), `POST /api/mods/player-only/upload` (multipart: a mod,
 resource pack or shader pack for players only; `confirm=true` for a file no
 site lists), `POST /api/mods/player-only/remove` (`{"filename"}`, to the
-trash). `GET /api/mods` gives each mod `side` and `side_from`, plus
+trash), `POST /api/mods/player-only/fetch` (`{"filename"}`: a missing file
+Modrinth lists, downloaded again and checked by its SHA-512),
+`POST /api/mods/player-only/options` (`{"backup": true, "skip_listed":
+false}`, needs `settings.server`). `GET /api/mods` gives each mod `side` and `side_from`, plus
 `player_only` and `odd_setups`,
 `GET /api/mods/updates?refresh=`, `POST /api/mods/update`,
 `GET /api/mods/versions/{mod_id}`, `POST /api/mods/rollback`,

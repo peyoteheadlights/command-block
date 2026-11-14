@@ -20,7 +20,14 @@ from ...mods.dependencies import DependencyError
 from ...mods.sources import SourceError, split
 from ...mods.updateall import update_all
 from ...security.auth import AuthError, Principal
-from ...security.permissions import MODS_MANAGE, SERVER_VIEW, check, check_server, require
+from ...security.permissions import (
+    MODS_MANAGE,
+    SERVER_VIEW,
+    SETTINGS_SERVER,
+    check,
+    check_server,
+    require,
+)
 from ..deps import audit, get_core, get_server
 from ..errors import DOMAIN_ERRORS, audit_failure, respond_as
 from ..responses import (
@@ -47,6 +54,7 @@ from ..responses import (
     ModVersions,
     Ok,
     PlayerFileAdded,
+    PlayerOnlyOptions,
     Suggestions,
     UpdateAllPlan,
     UpdateAllResult,
@@ -62,6 +70,7 @@ from .models import (
     ModRollbackRequest,
     ModSideRequest,
     ModUpdateRequest,
+    PlayerOnlyOptionsRequest,
     UpdateAllRequest,
 )
 
@@ -98,6 +107,7 @@ async def list_mods(principal: Principal = Depends(require(SERVER_VIEW)), ctx=De
         "fit": ctx.db.get_setting(fit.SETTING),
         "modpack": linkedpack.card(ctx, mods),
         "player_only": sides.player_files(ctx),
+        "player_only_options": sides.options(ctx),
         "odd_setups": sides.odd_setups(ctx, mods),
     }
 
@@ -140,6 +150,43 @@ async def add_player_file(
         )
     audit(ctx, request, "mod_player_add", target=file.filename)
     return {"ok": True, **result}
+
+
+@router.post("/mods/player-only/fetch", response_model=PlayerFileAdded)
+async def fetch_player_file(
+    payload: ModFileRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Get a missing player-only file again from Modrinth, by its hash."""
+    with audit_failure(ctx, request, "mod_player_fetch", target=payload.filename):
+        result = await ctx.mod_change(
+            f"Getting {payload.filename} again",
+            lambda: sides.fetch_again(ctx, payload.filename, principal.user),
+            principal.user,
+        )
+    audit(ctx, request, "mod_player_fetch", target=payload.filename)
+    return {"ok": True, **result}
+
+
+@router.post("/mods/player-only/options", response_model=PlayerOnlyOptions)
+async def player_only_options(
+    payload: PlayerOnlyOptionsRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    """Back up the player-only folder or not, and leave out the files
+    Modrinth lists (got again by hash after a restore)."""
+    result = sides.set_options(ctx, payload.backup, payload.skip_listed)
+    audit(
+        ctx,
+        request,
+        "mod_player_options",
+        detail=f"backup={payload.backup} skip_listed={payload.skip_listed}",
+    )
+    return result
 
 
 @router.post("/mods/player-only/remove", response_model=Ok)

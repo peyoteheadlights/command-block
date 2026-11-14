@@ -135,12 +135,14 @@ public struct ModList: Decodable, Equatable, Sendable {
     public var modpack: LinkedModpack?
     /// The player-only folder: kept for the modpack, never loaded by the server.
     public var playerOnly: [PlayerFile] = []
+    public var playerOnlyOptions = PlayerOnlyOptions()
     /// A mod needs one that sits on the other side.
     public var oddSetups: [OddSetup] = []
 
     enum CodingKeys: String, CodingKey {
         case mods, fit, overlaps, modpack
         case playerOnly = "player_only"
+        case playerOnlyOptions = "player_only_options"
         case oddSetups = "odd_setups"
         case minecraftVersion = "minecraft_version"
         case serverState = "server_state"
@@ -166,6 +168,7 @@ public struct ModList: Decodable, Equatable, Sendable {
         overlaps = c.each(.overlaps)
         modpack = c.maybe(.modpack)
         playerOnly = c.each(.playerOnly)
+        playerOnlyOptions = c.value(.playerOnlyOptions, PlayerOnlyOptions())
         oddSetups = c.each(.oddSetups)
     }
 }
@@ -177,10 +180,15 @@ public struct PlayerFile: Decodable, Equatable, Identifiable, Sendable {
     public var version: String
     /// mod or pack (a resource pack or shader pack).
     public var kind: String
+    /// Not the file the app first saw: changed outside it.
+    public var changed: Bool = false
+    /// The app added it, but it's gone ("Get it again" when `site` is modrinth).
+    public var missing: Bool = false
+    public var site: String?
 
     public var id: String { filename }
 
-    enum CodingKeys: String, CodingKey { case filename, name, version, kind }
+    enum CodingKeys: String, CodingKey { case filename, name, version, kind, changed, missing, site }
 
     public init(filename: String, name: String = "", version: String = "", kind: String = "") {
         self.filename = filename
@@ -195,6 +203,32 @@ public struct PlayerFile: Decodable, Equatable, Identifiable, Sendable {
         name = c.value(.name, "")
         version = c.value(.version, "")
         kind = c.value(.kind, "")
+        changed = c.value(.changed, false)
+        missing = c.value(.missing, false)
+        site = c.maybe(.site)
+    }
+}
+
+/// The player-only folder's two backup options.
+public struct PlayerOnlyOptions: Codable, Equatable, Sendable {
+    public var backup: Bool
+    /// Leave out files Modrinth lists; got again by hash after a restore.
+    public var skipListed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case backup
+        case skipListed = "skip_listed"
+    }
+
+    public init(backup: Bool = true, skipListed: Bool = false) {
+        self.backup = backup
+        self.skipListed = skipListed
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        backup = c.value(.backup, true)
+        skipListed = c.value(.skipListed, false)
     }
 }
 

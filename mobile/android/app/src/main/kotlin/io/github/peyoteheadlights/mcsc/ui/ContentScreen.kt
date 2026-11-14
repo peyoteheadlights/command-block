@@ -54,6 +54,7 @@ import io.github.peyoteheadlights.mcsc.core.Modpacks
 import io.github.peyoteheadlights.mcsc.core.LinkedModpack
 import io.github.peyoteheadlights.mcsc.core.LinkedPacks
 import io.github.peyoteheadlights.mcsc.core.PlayerFile
+import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
 import io.github.peyoteheadlights.mcsc.core.Sides
 import io.github.peyoteheadlights.mcsc.core.Permissions
 import io.github.peyoteheadlights.mcsc.core.States
@@ -199,7 +200,7 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
             }
         }
     }
-    if (kind != ContentKind.PACKS) playersOnly(vm, content, list.playerOnly, kind, changes, ask)
+    if (kind != ContentKind.PACKS) playersOnly(vm, content, list.playerOnly, list.playerOnlyOptions, kind, changes, ask)
 
     if (changes == Changes.READY) {
         item { SectionTitle(t("mobile.content.search_title")) }
@@ -324,7 +325,15 @@ private fun ModCard(vm: AppViewModel, content: ContentPages, mod: Mod, changes: 
 }
 
 /** The player-only folder: mods, resource packs and shader packs the server never loads. */
-private fun LazyListScope.playersOnly(vm: AppViewModel, content: ContentPages, files: List<PlayerFile>, kind: ContentKind, changes: Changes, ask: (ContentAsk) -> Unit) {
+private fun LazyListScope.playersOnly(
+    vm: AppViewModel,
+    content: ContentPages,
+    files: List<PlayerFile>,
+    options: PlayerOnlyOptions,
+    kind: ContentKind,
+    changes: Changes,
+    ask: (ContentAsk) -> Unit,
+) {
     val manage = changes != Changes.NOT_ALLOWED
     if (files.isEmpty() && !manage) return
     item { SectionTitle(t("sides.players_title")) }
@@ -341,6 +350,14 @@ private fun LazyListScope.playersOnly(vm: AppViewModel, content: ContentPages, f
             for (file in files) {
                 val name = file.name.ifBlank { file.filename }
                 Item(name, subtitle = listOf(file.version, t(if (file.kind == "mod") "sides.kind_mod" else "sides.kind_pack"), file.filename).filter { it.isNotBlank() }.joinToString(" · "))
+                if (file.changed) Note(t("sides.changed"), color = LocalColors.current.warning)
+                if (file.missing) {
+                    Note(t("sides.missing"), color = LocalColors.current.warning)
+                    if (manage && file.site == "modrinth") {
+                        Presses(listOf(Press(t("sides.get_again"), { content.fetchForPlayers(file.filename, strings) }, enabled = idle)))
+                    }
+                    continue
+                }
                 if (manage) {
                     Presses(
                         listOfNotNull(
@@ -357,6 +374,20 @@ private fun LazyListScope.playersOnly(vm: AppViewModel, content: ContentPages, f
             }
             if (content.busy == "players") Note(t("mobile.content.reading"))
             if (manage) Presses(listOf(Press(t("sides.players_add"), pick, enabled = idle)))
+            if (vm.canDo(Permissions.SETTINGS_SERVER)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+                    Checkbox(checked = options.backup, enabled = idle, onCheckedChange = { content.setPlayerOnlyOptions(options.copy(backup = it), strings) })
+                    Text(t("sides.option_backup"))
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+                    Checkbox(
+                        checked = options.skipListed,
+                        enabled = idle && options.backup,
+                        onCheckedChange = { content.setPlayerOnlyOptions(options.copy(skipListed = it), strings) },
+                    )
+                    Text(t("sides.option_skip_listed"))
+                }
+            }
         }
     }
 }

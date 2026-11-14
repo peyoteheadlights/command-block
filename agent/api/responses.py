@@ -1173,6 +1173,16 @@ class PlayerFile(Open):
     kind: str = Field(description="mod or pack (a resource pack or shader pack)")
     size_bytes: int
     mod_id: str | None = None
+    changed: bool = Field(False, description="Not the file the app first saw (changed outside it)")
+    missing: bool = Field(False, description="The app added it, but it's gone (Get it again)")
+    site: str | None = Field(None, description="modrinth or curseforge when a site lists it")
+
+
+class PlayerOnlyOptions(Open):
+    backup: bool = Field(True, description="Back up the player-only folder")
+    skip_listed: bool = Field(
+        False, description="Leave out files Modrinth lists; got again by hash after a restore"
+    )
 
 
 class OddSetup(Open):
@@ -1185,6 +1195,7 @@ class ModList(Open):
     player_only: list[PlayerFile] = Field(
         [], description="The player-only folder: Players-only mods, resource and shader packs"
     )
+    player_only_options: PlayerOnlyOptions | None = None
     odd_setups: list[OddSetup] = Field(
         [], description="A mod needs one that sits on the other side"
     )
