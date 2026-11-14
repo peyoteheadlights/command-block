@@ -6,6 +6,8 @@ test_dependency_resolution, whose downloads are real jar files."""
 
 from __future__ import annotations
 
+import hashlib
+
 import httpx
 import pytest
 
@@ -828,3 +830,86 @@ def test_a_found_modpack_is_read_from_its_own_site_with_a_site_that_is_down_said
         {"project": "curseforge:900", "server_id": "survival"},
     )
     assert "Modrinth isn't available right now." in said and read == [{"pack": "read"}]
+
+
+def test_a_linked_modpack_card_updates_and_unlinks(qapp, agent_http, monkeypatch, tmp_path):
+    from agent import linkedpack, modpack
+
+    from .test_modpack import make_pack
+
+    with_mods(agent_http)
+    ctx = core_of(agent_http).servers["survival"]
+    alpha = mods_folder(agent_http) / "alpha.jar"
+    sha256 = hashlib.sha256(alpha.read_bytes()).hexdigest()
+    entry = {"path": "mods/alpha.jar", "key": "a" * 128, "project": "A", "sha256": sha256}
+    linkedpack._save(
+        ctx,
+        {
+            "site": "modrinth",
+            "project": "xyz",
+            "version_id": "v1",
+            "version": "1.2.0",
+            "name": "Test Pack",
+            "files": [entry],
+            "overrides": {},
+        },
+    )
+    ctx.db.set_setting(
+        linkedpack.UPDATE_SETTING,
+        {"for": "v1", "version_id": "v2", "version": "1.3.0", "checked_at": 9e12},
+    )
+    sent = []
+
+    async def preview(ctx, version_id=None):
+        sent.append(("preview", version_id))
+        return {
+            "token": "0" * 32,
+            "pack": modpack.inspect(make_pack(tmp_path / "p.mrpack")).to_dict(),
+            "changes": {
+                "from_version": "1.2.0",
+                "to_version": "1.3.0",
+                "added": ["ferrite.jar"],
+                "removed": [],
+                "newer": [{"name": "alpha-2.jar", "from": "alpha.jar", "to": "alpha-2.jar"}],
+                "added_by_you": ["gamma.jar"],
+                "configs_changed_by_you": ["config/alpha.toml"],
+                "version_change": False,
+                "minecraft_version": "1.21.1",
+                "problems": [],
+            },
+        }
+
+    async def update(ctx, token, use_pack_configs=False, user="system"):
+        sent.append(("update", use_pack_configs))
+        return {
+            "job_id": "j1",
+            "changes": (await preview(ctx))["changes"],
+            "kept_configs": [],
+            "version_change": False,
+            "undo": None,
+        }
+
+    monkeypatch.setattr(linkedpack, "preview", preview)
+    monkeypatch.setattr(linkedpack, "update", update)
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: "Version 1.3.0 is out." in shown_text(page))
+    shown = shown_text(page)
+    assert "Made from Test Pack 1.2.0 on Modrinth." in shown
+    assert "2 mods were added by you. Modpack update keeps them." in shown
+    assert "Added by you" in shown
+
+    seen = ticks(window, pick=[0])
+    wait_for(qapp, lambda: button(page, "Modpack update").isEnabled())
+    button(page, "Modpack update").click()
+    wait_for(qapp, lambda: "Test Pack is now on 1.3.0" in page.note.text(), 30)
+    title, body, choices = seen[0]
+    assert title == "Update Test Pack to 1.3.0?"
+    assert "Newer: alpha.jar → alpha-2.jar" in body and "Added: ferrite.jar" in body
+    assert "Kept, added by you: gamma.jar" in body
+    assert choices == [("Use the modpack's config files instead of mine", False)]
+    assert sent == [("preview", "v2"), ("update", True), ("preview", None)]
+
+    asked(window)
+    button(page, "Unlink").click()
+    wait_for(qapp, lambda: not page.linked_card.isVisible())
+    assert linkedpack.read_link(ctx) is None

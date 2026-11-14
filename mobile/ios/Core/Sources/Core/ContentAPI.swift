@@ -138,6 +138,23 @@ extension AgentClient {
         return try await call("POST", content(serverId) + "/modpack", body: body, slow: true, as: ModpackImported.self)
     }
 
+    /// Downloads the linked modpack's new version and says what Modpack update changes.
+    public func previewModpackUpdate(serverId: String, versionId: String?) async throws -> ModpackUpdatePreview {
+        let body = try AgentClient.encode(PreviewBody(versionId: versionId))
+        return try await call("POST", content(serverId) + "/modpack/update/preview", body: body, slow: true, as: ModpackUpdatePreview.self)
+    }
+
+    /// Modpack update: one backup, all or nothing, one Undo.
+    public func updateModpack(serverId: String, token: String, usePackConfigs: Bool) async throws {
+        let body = try AgentClient.encode(UpdateBody(token: token, usePackConfigs: usePackConfigs, confirm: true))
+        _ = try await call("POST", content(serverId) + "/modpack/update", body: body, slow: true, as: Ok.self)
+    }
+
+    /// Unlink: the server keeps its mods and stops following the modpack.
+    public func unlinkModpack(serverId: String) async throws {
+        _ = try await call("DELETE", content(serverId) + "/modpack/link", as: Ok.self)
+    }
+
     /// A Bedrock server's behavior and resource packs.
     public func addons(serverId: String) async throws -> AddonList {
         try await call("GET", content(serverId) + "/addons", as: AddonList.self)
@@ -261,6 +278,21 @@ extension AgentClient {
             try c.encode(project, forKey: .project)
             try c.encode(versionId, forKey: .versionId)
             try c.encode(installDependencies, forKey: .installDependencies)
+        }
+    }
+
+    private struct PreviewBody: Encodable {
+        let versionId: String?
+        enum CodingKeys: String, CodingKey { case versionId = "version_id" }
+    }
+
+    private struct UpdateBody: Encodable {
+        let token: String
+        let usePackConfigs: Bool
+        let confirm: Bool
+        enum CodingKeys: String, CodingKey {
+            case token, confirm
+            case usePackConfigs = "use_pack_configs"
         }
     }
 

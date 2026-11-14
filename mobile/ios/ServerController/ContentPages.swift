@@ -29,7 +29,7 @@ struct Found {
 
 /// A sheet the add-ons screen shows: one at a time.
 enum ContentSheet: String, Identifiable {
-    case updateAll, project, missing, modpack
+    case updateAll, project, missing, modpack, packUpdate
 
     var id: String { rawValue }
 }
@@ -227,6 +227,7 @@ final class ContentPages {
         project = nil
         missingPlan = nil
         cancelModpack()
+        cancelPackUpdate()
     }
 
     // MARK: - Modrinth
@@ -382,6 +383,43 @@ final class ContentPages {
         await work("modpack", strings, reload: loadMods) { client, id in
             let done = try await client.importModpack(serverId: id, token: read.token)
             return Said(text: strings.t("mobile.content.modpack_done", ["name": done.name.isEmpty ? read.pack.name : done.name]), good: true)
+        }
+    }
+
+    // MARK: - Linked modpack
+
+    private(set) var packUpdate: ModpackUpdatePreview? = nil
+
+    /// Gets the new version; nothing changes until Modpack update is pressed.
+    func previewPackUpdate(_ versionId: String?, _ strings: Strings) async {
+        await work("modpack", strings) { [weak self] client, id in
+            self?.packUpdate = try await client.previewModpackUpdate(serverId: id, versionId: versionId)
+            self?.sheet = .packUpdate
+            return nil
+        }
+    }
+
+    func cancelPackUpdate() {
+        guard let token = packUpdate?.token else { return }
+        packUpdate = nil
+        guard let client = client() else { return }
+        Task { try? await client.forgetModpack(token: token) }
+    }
+
+    func updatePack(usePackConfigs: Bool, _ strings: Strings) async {
+        guard let read = packUpdate else { return }
+        sheet = nil
+        packUpdate = nil
+        await work("modpack", strings, reload: loadMods) { client, id in
+            try await client.updateModpack(serverId: id, token: read.token, usePackConfigs: usePackConfigs)
+            return Said(text: strings.t("linked.updated", ["name": read.pack.name, "version": read.changes.toVersion]), good: true)
+        }
+    }
+
+    func unlinkPack(_ strings: Strings) async {
+        await work("unlink", strings, reload: loadMods) { client, id in
+            try await client.unlinkModpack(serverId: id)
+            return nil
         }
     }
 

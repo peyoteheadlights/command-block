@@ -1075,6 +1075,9 @@ class Mod(Open):
     checked_with: str | None = Field(
         None, description="sha1 for CurseForge, a weaker check than the other sites use"
     )
+    added_by_you: bool | None = Field(
+        None, description="On a linked modpack's server: not from the modpack. Null: not linked"
+    )
 
 
 class ModProblem(ModIssue):
@@ -1138,6 +1141,22 @@ class Overlap(Open):
     mods: list[OverlapMod]
 
 
+class LinkedModpackUpdate(Open):
+    version_id: str = Field(description="Send to /modpack/update/preview")
+    version: str
+
+
+class LinkedModpack(Open):
+    """The modpack this server came from (agent/linkedpack.py)."""
+
+    name: str
+    site: str = Field(description="Modrinth or CurseForge")
+    version: str
+    update: LinkedModpackUpdate | None = Field(None, description="Null: none known")
+    checked_at: float | None = None
+    added_by_you: int = Field(description="How many mods aren't from the modpack (kept)")
+
+
 class ModList(Open):
     mods: list[Mod]
     needs_you: list[NeedsYou] = []
@@ -1151,6 +1170,7 @@ class ModList(Open):
         False, description="This server's jars are copies: its drive can't link to the shared store"
     )
     fit: ModFit | None = Field(None, description='The "Still fit?" card, null when nothing to show')
+    modpack: LinkedModpack | None = Field(None, description="Null: not linked to a modpack")
     overlaps: list[Overlap] = []
 
 
@@ -1758,6 +1778,42 @@ class ModpackImported(Open):
     job_id: str | None = None
     modpack: dict[str, Any]
     version_change: bool | None = None
+    undo: Undo | None = None
+
+
+class NewerMod(Open):
+    name: str
+    from_: str = Field(alias="from")
+    to: str
+
+
+class ModpackChanges(Open):
+    """What Modpack update changes, compared by file hash."""
+
+    from_version: str
+    to_version: str
+    added: list[str]
+    removed: list[str]
+    newer: list[NewerMod]
+    added_by_you: list[str] = Field(description="Mods not from the modpack: kept")
+    configs_changed_by_you: list[str] = Field(description="Kept unless use_pack_configs is sent")
+    version_change: bool
+    minecraft_version: str
+    problems: list[str]
+
+
+class ModpackUpdatePreview(Open):
+    token: str
+    pack: Modpack
+    changes: ModpackChanges
+
+
+class ModpackUpdated(Open):
+    ok: bool
+    job_id: str | None = None
+    changes: ModpackChanges
+    kept_configs: list[str]
+    version_change: bool
     undo: Undo | None = None
 
 
