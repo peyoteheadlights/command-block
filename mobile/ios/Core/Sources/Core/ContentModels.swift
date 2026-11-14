@@ -1698,3 +1698,91 @@ public struct DownloadLink: Decodable, Equatable, Sendable {
         restartNeeded = c.value(.restartNeeded, false)
     }
 }
+
+/// Sign in with Modrinth on the PC. The token itself never reaches the phone.
+public struct ModrinthAccount: Decodable, Equatable, Sendable {
+    public var available: Bool
+    public var signedIn: Bool
+    public var username: String?
+    public var ranOut: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case available, username
+        case signedIn = "signed_in"
+        case ranOut = "ran_out"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = c.value(.available, false)
+        signedIn = c.value(.signedIn, false)
+        username = c.maybe(.username)
+        ranOut = c.value(.ranOut, false)
+    }
+}
+
+public struct ModrinthSignInStarted: Decodable, Equatable, Sendable {
+    public var url: String
+}
+
+public struct ModrinthMade: Decodable, Equatable, Sendable {
+    public var name: String
+    public var version: String
+}
+
+public struct ModrinthOwnProject: Decodable, Equatable, Sendable {
+    public var slug: String
+    public var title: String?
+    public var url: String
+}
+
+public struct ModrinthUpload: Decodable, Equatable, Sendable {
+    public var version: String
+}
+
+/// An own jar in the newest modpack; `url` once it is on Modrinth.
+public struct ModrinthJar: Decodable, Equatable, Sendable, Identifiable {
+    public var path: String
+    public var name: String
+    public var url: String?
+    public var id: String { path }
+}
+
+public struct ModrinthServerProject: Decodable, Equatable, Sendable {
+    public var url: String
+}
+
+public struct ModrinthOlder: Decodable, Equatable, Sendable {
+    public var listed: String
+    public var newest: String
+}
+
+/// The "Put it on Modrinth" card. `address`: the address typed for friends.
+public struct ModrinthShare: Decodable, Equatable, Sendable {
+    public var account: ModrinthAccount?
+    public var made: ModrinthMade?
+    public var project: ModrinthOwnProject?
+    public var uploads: [ModrinthUpload]
+    public var ownJars: [ModrinthJar]
+    public var serverProject: ModrinthServerProject?
+    public var older: ModrinthOlder?
+    public var address: String?
+
+    enum CodingKeys: String, CodingKey {
+        case account, made, project, uploads, older, address
+        case ownJars = "own_jars"
+        case serverProject = "server_project"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        account = c.maybe(.account)
+        made = c.maybe(.made)
+        project = c.maybe(.project)
+        uploads = c.value(.uploads, [])
+        ownJars = c.value(.ownJars, [])
+        serverProject = c.maybe(.serverProject)
+        older = c.maybe(.older)
+        address = c.maybe(.address)
+    }
+}

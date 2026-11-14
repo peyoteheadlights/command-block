@@ -35,6 +35,7 @@ from .download_link import LinkCard
 from .editor import GuideWindow, pick_file
 from .fixes import install
 from .make_modpack import MakeCard
+from .modrinth_card import ModrinthCard
 from .overview import card, title_of
 from .ui import Page, clock, label, push, refill, size
 from .words import mode, text
@@ -230,6 +231,9 @@ class ModsPage(Page):
         # The download link and the server resource pack.
         self.link_card = LinkCard(self)
         self.column.addWidget(self.link_card.frame)
+        # Sign in with Modrinth and put the modpack on it.
+        self.modrinth_card = ModrinthCard(self)
+        self.column.addWidget(self.modrinth_card.frame)
 
         # Still fit?: after a mod or version change, the mods that need a
         # different version (ticked, run as one Update all), the ones with
@@ -555,6 +559,7 @@ class ModsPage(Page):
         self.show_linked(data.get("modpack"))
         self.make_card.show(self.row)
         self.link_card.show(self.row)
+        self.modrinth_card.show(self.row)
         self.show_sides(data)
         self.show_fit(data.get("fit"))
         self.show_same(data.get("overlaps") or [])

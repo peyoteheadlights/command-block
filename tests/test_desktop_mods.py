@@ -1120,3 +1120,58 @@ def test_turn_on_the_download_link_and_add_a_resource_pack(qapp, agent_http, mon
     wait_for(qapp, lambda: not page.link_card.data.get("on"), 20)
     assert "Turn on the download link so players' games can get it." in shown_text(page)
     assert "resource-pack=\n" in props.read_text()
+
+
+# ---------------------------------------------------------------- Put it on Modrinth
+def test_sign_in_with_modrinth_and_upload_the_modpack(qapp, agent_http, monkeypatch):
+    import re
+    import threading
+    import urllib.request
+
+    from agent import downloads, modpackmake
+    from desktop import make_modpack, modrinth_card
+
+    from .test_curseforge import FakeCurseForge
+    from .test_modrinth_share import FakeModrinthSite
+
+    with_mods(agent_http)
+    site = FakeModrinthSite(FakeCurseForge())
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(site))
+
+    async def no_sites(ctx, items):
+        return None
+
+    async def versions(ctx, items, players_loader):
+        return {"minecraft": "1.21.1", "fabric-loader": "0.16.5"}
+
+    monkeypatch.setattr(modpackmake, "_look_up", no_sites)
+    monkeypatch.setattr(modpackmake, "_dependencies", versions)
+    monkeypatch.setattr(make_modpack.MakeDialog, "exec", lambda dialog: 1)
+    typed = ["friends-pack", "Our friends' pack"]
+    monkeypatch.setattr(modrinth_card.QInputDialog, "getText", lambda *a, **k: (typed.pop(0), True))
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc)
+    card = page.modrinth_card
+    wait_for(qapp, lambda: card.frame.isVisibleTo(page) and card.data, 20)
+    assert "Not signed in to Modrinth." in shown_text(page)
+
+    button(page, "Sign in with Modrinth").click()
+    wait_for(qapp, lambda: pc.opened, 20)
+    state = re.search(r"state=([^&]+)", pc.opened[-1]).group(1)
+    assert f".pc{card.catcher.port}." in state, "the way back is this computer's own address"
+    back = f"http://127.0.0.1:{card.catcher.port}/modrinth?state={state}&code=good-code"
+    seen: list[bytes] = []
+    threading.Thread(target=lambda: seen.append(urllib.request.urlopen(back).read())).start()
+    wait_for(qapp, lambda: "Signed in to Modrinth as mark." in shown_text(page), 20)
+    assert b"You can close this tab" in seen[0]
+
+    button(page, "Make a modpack…").click()
+    wait_for(qapp, lambda: "is ready" in shown_text(page), 30)
+    wait_for(qapp, lambda: (card.data.get("made") or {}).get("version") == "1", 20)
+    button(page, "Upload Survival 1").click()
+    wait_for(qapp, lambda: "press Submit for review" in page.note.text(), 30)
+    assert site.projects[0]["slug"] == "friends-pack" and site.projects[0]["is_draft"]
+    assert "https://modrinth.com/modpack/friends-pack" in shown_text(page)
+
+    button(page, "Sign out of Modrinth").click()
+    wait_for(qapp, lambda: "Not signed in to Modrinth." in shown_text(page), 20)
