@@ -40,6 +40,15 @@ extension AgentClient {
         _ = try await upload(content(serverId) + "/mods/player-only/upload?confirm=true", file, as: Ok.self)
     }
 
+    /// A missing player-only file, downloaded again from Modrinth and checked by its hash.
+    public func fetchForPlayers(serverId: String, filename: String) async throws {
+        _ = try await call("POST", content(serverId) + "/mods/player-only/fetch", body: try fileBody(filename), as: Ok.self)
+    }
+
+    public func setPlayerOnlyOptions(serverId: String, options: PlayerOnlyOptions) async throws {
+        _ = try await call("POST", content(serverId) + "/mods/player-only/options", body: try AgentClient.encode(options), as: PlayerOnlyOptions.self)
+    }
+
     public func removeForPlayers(serverId: String, filename: String) async throws {
         _ = try await call("POST", content(serverId) + "/mods/player-only/remove", body: try fileBody(filename), as: Ok.self)
     }

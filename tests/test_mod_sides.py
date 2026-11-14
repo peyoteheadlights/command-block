@@ -73,7 +73,7 @@ def test_a_mark_comes_from_the_jar_and_says_so(ctx):
     assert found["d"] == ("both", "unknown")
 
 
-def test_the_sites_sides_beat_the_jar_and_the_owners_beat_both(ctx):
+async def test_the_sites_sides_beat_the_jar_and_the_owners_beat_both(ctx):
     make_jar(ctx.mods.mods_dir / "lithium.jar", "lithium")
     ctx.mods.db.set_setting(
         "mod_source:lithium",
@@ -85,7 +85,7 @@ def test_the_sites_sides_beat_the_jar_and_the_owners_beat_both(ctx):
         },
     )
     assert marks(ctx)["lithium"] == ("server", "modrinth")
-    ctx.mods.db.set_setting("mod_side:lithium", "both")
+    await sides.set_side(ctx, "lithium.jar", "both", "owner")
     assert marks(ctx)["lithium"] == ("both", "you")
 
 
@@ -360,3 +360,160 @@ def test_the_link_remembers_the_modpacks_own_side_for_each_file(tmp_path):
         key="k" * 128,
     )
     assert linkedpack._file_entry(tmp_path, item)["side"] == "server"
+
+
+# ---------------------------------------------------------------- marks in the server folder
+async def test_marks_live_in_a_file_in_the_server_folder_and_survive_an_update(ctx):
+    make_jar(ctx.mods.mods_dir / "alpha-1.0.jar", "alpha")
+    await sides.set_side(ctx, "alpha-1.0.jar", "server", "owner")
+    saved = json.loads((ctx.config.server_dir / sides.MARKS_FILE).read_text())
+    assert saved == {"alpha": "server"}
+    (ctx.mods.mods_dir / "alpha-1.0.jar").unlink()
+    make_jar(ctx.mods.mods_dir / "alpha-2.0.jar", "alpha", version="2.0")
+    assert marks(ctx)["alpha"] == ("server", "you")  # kept by mod id
+
+
+async def test_two_jars_with_one_id_get_their_own_marks(ctx):
+    make_jar(ctx.mods.mods_dir / "a1.jar", "alpha")
+    make_jar(ctx.mods.mods_dir / "a2.jar", "alpha")
+    await sides.set_side(ctx, "a2.jar", "server", "owner")
+    rows = ctx.mods.list_installed()
+    sides.add_marks(ctx, rows)
+    found = {r["filename"]: r["side_from"] for r in rows}
+    assert found == {"a1.jar": "file", "a2.jar": "you"}
+
+
+def test_a_broken_or_odd_marks_file_is_left_out(ctx):
+    make_jar(ctx.mods.mods_dir / "a.jar", "alpha")
+    path = ctx.config.server_dir / sides.MARKS_FILE
+    path.write_text("not json")
+    assert marks(ctx)["alpha"] == ("both", "file")
+    path.write_text(json.dumps({"alpha": "everyone", "x" * 400: "server"}))
+    assert sides.read_marks(ctx.config) == {}
+    path.write_text(json.dumps(["alpha"]))
+    assert sides.read_marks(ctx.config) == {}
+
+
+def test_backups_take_the_marks_and_the_folder_unless_turned_off(ctx):
+    assert sides.backup_names(ctx.db) == [sides.MARKS_FILE, sides.FOLDER]
+    sides.set_options(ctx, backup=False, skip_listed=False)
+    assert sides.backup_names(ctx.db) == [sides.MARKS_FILE]
+
+
+# ---------------------------------------------------------------- the folder kept safe
+async def test_the_folder_is_locked_from_the_servers_user_when_that_is_on(
+    ctx, monkeypatch, tmp_path
+):
+    from agent import serveruser
+
+    locked = []
+    monkeypatch.setattr(serveruser, "is_on", lambda config: True)
+    monkeypatch.setattr(serveruser, "deny_all", lambda path: locked.append(path) or True)
+    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    assert locked == [ctx.config.server_dir / sides.FOLDER]
+    sides.lock(ctx.config)  # before each server start
+    assert len(locked) == 2
+
+
+async def test_a_file_changed_outside_the_app_is_pointed_out(ctx):
+    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    assert [f["changed"] for f in sides.player_files(ctx)] == [False]
+    path = ctx.config.server_dir / sides.FOLDER / "a.zip"
+    path.write_bytes(zip_bytes({"pack.mcmeta": "{}", "evil.txt": "x"}))
+    assert [f["changed"] for f in sides.player_files(ctx)] == [True]
+    # One first seen here (a copied server) is taken as it is, then watched.
+    other = ctx.config.server_dir / sides.FOLDER / "b.zip"
+    other.write_bytes(zip_bytes({"pack.mcmeta": "{}"}))
+    assert {f["filename"]: f["changed"] for f in sides.player_files(ctx)}["b.zip"] is False
+    other.write_bytes(zip_bytes({"pack.mcmeta": "{}", "x": "y"}))
+    assert {f["filename"]: f["changed"] for f in sides.player_files(ctx)}["b.zip"] is True
+
+
+async def test_touching_a_file_without_changing_it_isnt_a_change(ctx):
+    import os
+
+    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    path = ctx.config.server_dir / sides.FOLDER / "a.zip"
+    os.utime(path, (1, 1))
+    assert [f["changed"] for f in sides.player_files(ctx)] == [False]
+
+
+async def test_files_modrinth_lists_can_be_left_out_and_got_again(ctx, monkeypatch):
+    import hashlib
+
+    from agent import downloads
+
+    data = zip_bytes({"pack.mcmeta": "{}"})
+
+    async def known(mods, sent):
+        return ("modrinth", {"project_id": "x"}) if sent == data else None
+
+    monkeypatch.setattr(sides, "known_source", known)
+    await sides.add(ctx, "faithful.zip", data, "owner")
+    await sides.add(ctx, "mine.zip", zip_bytes({"shaders/a.fsh": "x"}), "owner", confirm=True)
+    path = ctx.config.server_dir / sides.FOLDER / "faithful.zip"
+    assert sides.backup_skips(ctx.config, ctx.db) == set()
+    sides.set_options(ctx, backup=True, skip_listed=True)
+    assert sides.backup_skips(ctx.config, ctx.db) == {path}  # mine.zip is still backed up
+
+    path.unlink()  # as after a restore that left it out
+    missing = {f["filename"]: f for f in sides.player_files(ctx)}["faithful.zip"]
+    assert missing["missing"] is True and missing["site"] == "modrinth"
+    sha512 = hashlib.sha512(data).hexdigest()
+
+    async def file_url(sha):
+        assert sha == sha512
+        return "https://cdn.modrinth.com/data/x/versions/y/faithful.zip"
+
+    async def fetched(spec):
+        assert spec.sha512 == sha512 and spec.allow_unverified is False
+        return data, None
+
+    ctx.mods.modrinth.file_url = file_url
+    monkeypatch.setattr(downloads, "download_bytes", fetched)
+    await sides.fetch_again(ctx, "faithful.zip", "owner")
+    assert path.read_bytes() == data
+    assert [f["missing"] for f in sides.player_files(ctx)] == [False, False]
+
+
+async def test_only_a_missing_modrinth_file_is_got_again(ctx, monkeypatch):
+    async def unknown(mods, data):
+        return None
+
+    monkeypatch.setattr(sides, "known_source", unknown)
+    await sides.add(ctx, "mine.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", confirm=True)
+    with pytest.raises(ModError, match="isn't missing"):
+        await sides.fetch_again(ctx, "mine.zip", "owner")
+    (ctx.config.server_dir / sides.FOLDER / "mine.zip").unlink()
+    with pytest.raises(ModError, match="isn't on Modrinth"):
+        await sides.fetch_again(ctx, "mine.zip", "owner")
+    with pytest.raises(PathSafetyError):
+        await sides.fetch_again(ctx, "../x.zip", "owner")
+
+
+async def test_removing_forgets_the_file(ctx):
+    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    await sides.remove(ctx, "a.zip", "owner")
+    assert sides.player_files(ctx) == []  # not shown as missing
+
+
+async def test_a_real_backup_holds_the_marks_and_player_files_and_skips_listed_ones(ctx):
+    from agent.backups.manager import BackupManager
+
+    mods = ctx.mods
+    make_jar(mods.mods_dir / "a.jar", "alpha")
+    await sides.set_side(ctx, "a.jar", "server", "owner")
+    await sides.add(ctx, "faithful.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    backups = BackupManager(mods.config, mods.bus, mods.db, mods.server)
+
+    def names(result):
+        with zipfile.ZipFile(result["path"]) as zf:
+            return set(zf.namelist())
+
+    held = names(await backups.create(user="owner"))
+    assert sides.MARKS_FILE in held and "player-only/faithful.zip" in held
+    sides.set_options(ctx, backup=True, skip_listed=True)
+    assert "player-only/faithful.zip" not in names(await backups.create(user="owner"))
+    sides.set_options(ctx, backup=False, skip_listed=False)
+    held = names(await backups.create(user="owner"))
+    assert sides.MARKS_FILE in held and not any(n.startswith("player-only") for n in held)

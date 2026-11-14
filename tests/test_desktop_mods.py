@@ -964,3 +964,46 @@ def test_marks_move_a_mod_to_players_only_and_back(qapp, agent_http, tmp_path):
     wait_for(qapp, lambda: "Minimap is now marked Both." in page.note.text(), 20)
     assert (folder / "map.jar").is_file()
     wait_for(qapp, lambda: "For: Both (set by you)" in shown_text(page))
+
+
+def test_player_files_backup_options_and_get_it_again(qapp, agent_http, tmp_path, monkeypatch):
+    import zipfile
+
+    from agent import downloads
+    from agent.mods import sides
+
+    with_mods(agent_http)
+    ctx = core_of(agent_http).servers["survival"]
+    pack = tmp_path / "faithful.zip"
+    with zipfile.ZipFile(pack, "w") as zf:
+        zf.writestr("pack.mcmeta", "{}")
+    data = pack.read_bytes()
+
+    async def known(mods, sent):
+        return "modrinth", {"project_id": "x"}
+
+    async def file_url(sha512):
+        return "https://cdn.modrinth.com/data/x/versions/y/faithful.zip"
+
+    async def fetched(spec):
+        return data, None
+
+    monkeypatch.setattr(sides, "known_source", known)
+    monkeypatch.setattr(downloads, "download_bytes", fetched)
+    ctx.mods.modrinth.file_url = file_url
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc)
+    pc.picked = str(pack)
+    wait_for(qapp, lambda: button(page, "Add for players").isEnabled())
+    button(page, "Add for players").click()
+    wait_for(qapp, lambda: "faithful.zip was added for players." in page.note.text(), 20)
+
+    wait_for(qapp, lambda: page.back_up_players.isChecked() and page.skip_listed.isVisible())
+    page.skip_listed.click()
+    wait_for(qapp, lambda: sides.options(ctx)["skip_listed"] is True)
+
+    (ctx.config.server_dir / "player-only" / "faithful.zip").unlink()  # left out, then restored
+    page.changed()
+    wait_for(qapp, lambda: can(page, "Get it again", "faithful"))
+    row_button(page, "Get it again", "faithful").click()
+    wait_for(qapp, lambda: (ctx.config.server_dir / "player-only" / "faithful.zip").is_file(), 20)

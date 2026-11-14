@@ -214,7 +214,7 @@ final class ContentTests: XCTestCase {
     }
 
     func testServerPlayersAndBothSayWhereTheMarkCameFrom() throws {
-        let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [{"filename": "a.jar", "side": "both", "side_from": "unknown", "loader": "forge"}, {"filename": "b.jar", "side": "server", "side_from": "modrinth"}, {"filename": "p.jar", "side": "server", "side_from": "file", "loader": "paper"}], "server_state": "OFFLINE", "player_only": [{"filename": "map.jar", "name": "Minimap", "kind": "mod", "size_bytes": 10}], "odd_setups": [{"filename": "a.jar", "text": "Alpha needs Beta."}]}"#.utf8))
+        let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [{"filename": "a.jar", "side": "both", "side_from": "unknown", "loader": "forge"}, {"filename": "b.jar", "side": "server", "side_from": "modrinth"}, {"filename": "p.jar", "side": "server", "side_from": "file", "loader": "paper"}], "server_state": "OFFLINE", "player_only": [{"filename": "map.jar", "name": "Minimap", "kind": "mod", "size_bytes": 10, "changed": true}, {"filename": "f.zip", "missing": true, "site": "modrinth"}], "player_only_options": {"backup": true, "skip_listed": true}, "odd_setups": [{"filename": "a.jar", "text": "Alpha needs Beta."}]}"#.utf8))
         let a = list.mods[0], b = list.mods[1], plugin = list.mods[2]
         XCTAssertEqual(Sides.words(s, a), "For: Both (not sure, the mod doesn't say)")
         XCTAssertEqual(Sides.words(s, b), "For: Server (from Modrinth)")
@@ -223,6 +223,10 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(Sides.picks(b), ["players", "both"])
         XCTAssertEqual(Sides.picks(plugin), [])
         XCTAssertEqual(list.playerOnly.first?.name, "Minimap")
+        XCTAssertEqual(list.playerOnly.map(\.changed), [true, false])
+        XCTAssertEqual(list.playerOnly.map(\.missing), [false, true])
+        XCTAssertEqual(list.playerOnlyOptions, PlayerOnlyOptions(backup: true, skipListed: true))
+        XCTAssertEqual(ModList().playerOnlyOptions, PlayerOnlyOptions())
         XCTAssertEqual(list.oddSetups.first?.text, "Alpha needs Beta.")
         XCTAssertTrue(Sides.accepts("Faithful.ZIP"))
         XCTAssertFalse(Sides.accepts("pack.mrpack"))

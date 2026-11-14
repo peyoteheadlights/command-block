@@ -319,6 +319,12 @@ class ModsPage(Page):
         line.addWidget(self.add_for_players)
         line.addStretch()
         layout.addLayout(line)
+        # Two backup options for the folder (owner's server settings).
+        self.back_up_players = QCheckBox(text("sides.option_backup"))
+        self.skip_listed = QCheckBox(text("sides.option_skip_listed"))
+        for box in (self.back_up_players, self.skip_listed):
+            box.clicked.connect(self.save_player_options)
+            layout.addWidget(box)
         self.column.addWidget(self.player_only_card)
 
         # What friends add to their own game; never put on the server.
@@ -875,6 +881,11 @@ class ModsPage(Page):
         self.player_only_card.setVisible(bool(files) or manage)
         self.add_for_players.setVisible(manage)
         self.add_for_players.setEnabled(manage)
+        chosen = data.get("player_only_options") or {}
+        for box, key in ((self.back_up_players, "backup"), (self.skip_listed, "skip_listed")):
+            box.setChecked(bool(chosen.get(key, key == "backup")))
+            box.setVisible(self.may("settings.server"))
+        self.skip_listed.setEnabled(self.back_up_players.isChecked())
         refill(
             self.player_only_rows,
             [self.player_only_row(f) for f in files] or [label(text("sides.players_none"), "sub")],
@@ -894,7 +905,18 @@ class ModsPage(Page):
                 "  ·  ".join(p for p in (item.get("version"), kind, item["filename"]) if p), "sub"
             )
         )
+        if item.get("changed"):
+            words.addWidget(label(text("sides.changed"), "problem"))
+        if item.get("missing"):
+            words.addWidget(label(text("sides.missing"), "problem"))
         h.addLayout(words, 1)
+        if item.get("missing"):
+            if self.may("mods.manage") and item.get("site") == "modrinth":
+                again = push(text("sides.get_again"), "primary")
+                again.setAccessibleName(f"{again.text()}: {name}")
+                again.clicked.connect(lambda: self.fetch_for_players(item))
+                h.addWidget(again)
+            return row
         mods_server = self.row.get("content") == "mods"
         if self.may("mods.manage") and item.get("kind") == "mod" and mods_server:
             back = push(text("sides.move_to_server"), "plain")
@@ -953,6 +975,35 @@ class ModsPage(Page):
             ),
             done,
             failed,
+        )
+
+    def fetch_for_players(self, item: dict) -> None:
+        name = item.get("name") or item["filename"]
+
+        def done(_result: dict) -> None:
+            self.say(text("sides.players_added", name=name))
+            self.changed()
+
+        self.ask(
+            "POST",
+            "/mods/player-only/fetch",
+            done,
+            self.said,
+            body={"filename": item["filename"]},
+            slow=True,
+        )
+
+    def save_player_options(self) -> None:
+        self.skip_listed.setEnabled(self.back_up_players.isChecked())
+        self.ask(
+            "POST",
+            "/mods/player-only/options",
+            lambda _r: self.say(text("sides.options_saved")),
+            self.said,
+            body={
+                "backup": self.back_up_players.isChecked(),
+                "skip_listed": self.skip_listed.isChecked(),
+            },
         )
 
     def remove_for_players(self, item: dict) -> None:

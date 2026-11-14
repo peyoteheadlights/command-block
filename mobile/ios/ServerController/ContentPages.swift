@@ -403,6 +403,20 @@ final class ContentPages {
         }
     }
 
+    func fetchForPlayers(_ filename: String, _ strings: Strings) async {
+        await work("fetch:" + filename, strings, reload: loadMods) { client, id in
+            try await client.fetchForPlayers(serverId: id, filename: filename)
+            return Said(text: strings.t("sides.players_added", ["name": filename]), good: true)
+        }
+    }
+
+    func setPlayerOnlyOptions(_ options: PlayerOnlyOptions, _ strings: Strings) async {
+        await work("options", strings, reload: loadMods) { client, id in
+            try await client.setPlayerOnlyOptions(serverId: id, options: options)
+            return Said(text: strings.t("sides.options_saved"), good: true)
+        }
+    }
+
     func removeForPlayers(_ filename: String, _ strings: Strings) async {
         await work("remove:" + filename, strings, reload: loadMods) { client, id in
             try await client.removeForPlayers(serverId: id, filename: filename)
