@@ -384,6 +384,7 @@ class NotificationSettings(Section):
             "ops_changed": True,
             "lists_changed": True,
             "chat_spam": True,
+            "companion_checks": True,
             "join_protection": True,
             "your_pcs": True,
         }

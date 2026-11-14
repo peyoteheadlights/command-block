@@ -200,3 +200,9 @@ def test_a_bad_chat_line_is_refused(server, text):
     got = make(client, headers, chat_line={"on": True, "text": text})
     assert got.status_code in (400, 422), got.text
     assert not (server_dir(client) / companion.MODS_FILE).exists()
+
+
+def test_the_paper_plugin_also_turns_on_required_to_join(paper):
+    client, headers, folder = paper
+    (folder / "companion.jar").write_bytes(plugin_jar(companion.PLUGIN_NAME))
+    assert options(client, headers)["required_to_join"]["available"] is True

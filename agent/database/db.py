@@ -747,6 +747,16 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX stored_files_sha512 ON stored_files(sha512);
         """,
     ),
+    (
+        25,
+        # The Companion mod's last join check per player: the modpack
+        # version their game said it has (empty: none) and whether it passed.
+        """
+        ALTER TABLE players ADD COLUMN modpack_version TEXT;
+        ALTER TABLE players ADD COLUMN modpack_ok INTEGER;
+        ALTER TABLE players ADD COLUMN modpack_checked REAL;
+        """,
+    ),
 ]
 
 

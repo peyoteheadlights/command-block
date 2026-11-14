@@ -115,6 +115,12 @@ ADVANCEMENT_RE = re.compile(
     rf"^(?P<name>{PLAYER}) has (?:made the advancement|completed the challenge|reached the goal)"
     r" \[[^\]]+\]$"
 )
+# The Companion mod's line after each join check (Fabric and NeoForge log it
+# under their own logger name; Paper puts the plugin's name in front).
+COMPANION_RE = re.compile(
+    rf"^(?:\[CommandBlockCompanion\] )?Companion check: (?P<name>{PLAYER}) "
+    r"(?P<result>passed|failed), modpack (?P<version>[\w.+?-]{1,32})$"
+)
 UUID_RE = re.compile(rf"^UUID of player (?P<name>{PLAYER}) is (?P<uuid>[0-9a-fA-F-]{{32,36}})")
 STOPPING_RE = re.compile(r"(Stopping the server|Stopping server|Saving worlds|Server closed)")
 PORT_RE = re.compile(r"Starting Minecraft server on (?P<host>[^:\s]*):(?P<port>\d+)")
@@ -289,6 +295,8 @@ class ParsedSignals:
     # and the header of a "list" answer, whose names come on the next line.
     started: bool = False
     list_header: tuple[int, int] | None = None
+    # (name, passed, the modpack version they have or None): the Companion's check.
+    companion_check: tuple[str, bool, str | None] | None = None
     extras: dict = field(default_factory=dict)
 
 
@@ -340,6 +348,13 @@ def extract_signals(line: ConsoleLine, dialect: str = "java") -> ParsedSignals:
     if m := PORT_RE.search(text):
         sig.port = int(m.group("port"))
     said = text.strip()
+    if m := COMPANION_RE.match(said):
+        version = m.group("version")
+        sig.companion_check = (
+            m.group("name"),
+            m.group("result") == "passed",
+            None if version == "-" else version,
+        )
     if m := UUID_RE.match(said):
         sig.player_uuid = (m.group("name"), m.group("uuid"))
     if m := PLAYER_LIST_RE.match(said):
