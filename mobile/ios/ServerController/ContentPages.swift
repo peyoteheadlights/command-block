@@ -487,6 +487,7 @@ final class ContentPages {
         makeOptions = nil
         await work("make", strings) { [weak self] client, id in
             self?.made = try await client.makeModpack(serverId: id, answers)
+            await self?.loadLink() // the modpack's download link, if it's on
             return nil
         }
     }
@@ -522,7 +523,70 @@ final class ContentPages {
         guard let made = made else { return }
         await work("discord", strings) { client, id in
             let posted = try await client.postModpack(serverId: id, token: made.token)
-            return Said(text: strings.t("make.posted", ["count": posted.posted]), good: true)
+            return Said(text: strings.t(posted.asLink ? "make.posted_link" : "make.posted", ["count": posted.posted]), good: true)
+        }
+    }
+
+    // MARK: - Download link
+
+    /// The download link and the server resource pack, once read.
+    private(set) var link: DownloadLink? = nil
+    /// Set while "Use a link…" asks for the pack's link and SHA-1.
+    var askingPackLink = false
+
+    /// Read on its own, not as a "work": the mods list may be loading at the same time.
+    func loadLink() async {
+        guard let client = client() else { return }
+        do {
+            link = try await client.downloadLink(serverId: serverId)
+        } catch let problem as AgentError {
+            noted(problem)
+        } catch {}
+    }
+
+    func switchLink(_ on: Bool, _ strings: Strings) async {
+        await work("link", strings) { [weak self] client, id in
+            self?.link = try await client.setDownloadLink(serverId: id, on: on)
+            return nil
+        }
+    }
+
+    func newLink(_ strings: Strings) async {
+        await work("link", strings) { [weak self] client, id in
+            self?.link = try await client.newDownloadLink(serverId: id)
+            return nil
+        }
+    }
+
+    func uploadPack(_ file: PickedFile, _ strings: Strings) async {
+        defer { try? FileManager.default.removeItem(at: file.url) }
+        let required = link?.resourcePack?.required ?? false
+        await work("pack", strings) { [weak self] client, id in
+            self?.link = try await client.uploadResourcePack(serverId: id, file: file, required: required)
+            return nil
+        }
+    }
+
+    func setPackLink(_ url: String, _ sha1: String, _ strings: Strings) async {
+        askingPackLink = false
+        let required = link?.resourcePack?.required ?? false
+        await work("pack", strings) { [weak self] client, id in
+            self?.link = try await client.setResourcePackLink(serverId: id, url: url, sha1: sha1, required: required)
+            return nil
+        }
+    }
+
+    func setPackRequired(_ required: Bool, _ strings: Strings) async {
+        await work("pack", strings) { [weak self] client, id in
+            self?.link = try await client.setResourcePackRequired(serverId: id, required: required)
+            return nil
+        }
+    }
+
+    func removePack(_ strings: Strings) async {
+        await work("pack", strings) { [weak self] client, id in
+            self?.link = try await client.removeResourcePack(serverId: id)
+            return nil
         }
     }
 

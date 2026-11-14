@@ -841,6 +841,39 @@ class AgentClient(
     suspend fun postModpack(serverId: String, token: String): ModpackPosted =
         call(post("${server(serverId)}/modpack/made/discord", buildJsonObject { put("token", token) }), ModpackPosted.serializer())
 
+    /** The download link and the server resource pack. */
+    suspend fun downloadLink(serverId: String): DownloadLink =
+        get("${server(serverId)}/download-link", DownloadLink.serializer())
+
+    /** Turns the download link on (a new link) or off (the old link stops). Owner only. */
+    suspend fun setDownloadLink(serverId: String, on: Boolean): DownloadLink =
+        call(post("${server(serverId)}/download-link", buildJsonObject { put("on", on) }), DownloadLink.serializer(), slow = true)
+
+    /** A new link: the old one stops working at once. */
+    suspend fun newDownloadLink(serverId: String): DownloadLink =
+        call(post("${server(serverId)}/download-link/new", buildJsonObject {}), DownloadLink.serializer(), slow = true)
+
+    /** A resource pack (.zip) picked on the phone, served by the download link. */
+    suspend fun uploadResourcePack(serverId: String, file: PickedFile, required: Boolean): DownloadLink =
+        call(upload("${server(serverId)}/resource-pack/upload?required=$required", file), DownloadLink.serializer(), slow = true)
+
+    /** A resource pack someone else hosts, with the site's SHA-1 when it gives one. */
+    suspend fun setResourcePackLink(serverId: String, url: String, sha1: String, required: Boolean): DownloadLink {
+        val body = buildJsonObject {
+            put("url", url)
+            put("sha1", sha1)
+            put("required", required)
+        }
+        return call(post("${server(serverId)}/resource-pack", body), DownloadLink.serializer(), slow = true)
+    }
+
+    /** "Players must accept the resource pack". */
+    suspend fun setResourcePackRequired(serverId: String, required: Boolean): DownloadLink =
+        call(post("${server(serverId)}/resource-pack", buildJsonObject { put("required", required) }), DownloadLink.serializer(), slow = true)
+
+    suspend fun removeResourcePack(serverId: String): DownloadLink =
+        call(request("${server(serverId)}/resource-pack").delete().build(), DownloadLink.serializer(), slow = true)
+
     /** A Bedrock server's behavior and resource packs. */
     suspend fun addons(serverId: String): AddonList = get("${server(serverId)}/addons", AddonList.serializer())
 

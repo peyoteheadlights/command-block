@@ -592,6 +592,54 @@ class ContentTest {
     }
 
     @Test
+    fun `the download link turns on and the resource pack is sent, set by link and removed`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"on": false, "why_not": null, "listening": false, "modpack_url": null, "speed_cap_bytes": 4194304, "resource_pack": null, "max_pack_bytes": 262144000}"""))
+            val off = c.downloadLink("s")
+            assertEquals("/api/servers/s/download-link", agent.server.takeRequest().path)
+            assertEquals(listOf("No resource pack."), DownloadLinks.packLines(strings, off))
+            assertTrue(DownloadLinks.lines(strings, off, owner = false).single().contains("owner"))
+
+            val on = """{"on": true, "listening": true, "modpack_url": "http://100.64.0.1:25590/abc/modpack.mrpack", "speed_cap_bytes": 4194304, "resource_pack": {"source": "file", "filename": "Textures.zip", "url": "http://100.64.0.1:25590/abc/resource-pack.zip", "sha1": "aa", "size_bytes": 2048, "required": true, "served": true}, "max_pack_bytes": 262144000, "restart_needed": true}"""
+            agent.server.enqueue(agent.json(on))
+            val link = c.setDownloadLink("s", true)
+            val switched = agent.server.takeRequest()
+            assertEquals("POST", switched.method)
+            assertEquals("""{"on":true}""", switched.body.readUtf8())
+            val lines = DownloadLinks.lines(strings, link, owner = true)
+            assertTrue(lines[0], lines[0].endsWith("/abc/modpack.mrpack"))
+            val pack = DownloadLinks.packLines(strings, link)
+            assertTrue(pack[0], pack[0].startsWith("Textures.zip") && pack[0].contains("served by the download link"))
+            assertTrue(pack.last().startsWith("Restart the server"))
+
+            agent.server.enqueue(agent.json(on))
+            c.uploadResourcePack("s", PickedFile("Textures.zip", 2) { "PK".byteInputStream() }, required = true)
+            val sent = agent.server.takeRequest()
+            assertEquals("/api/servers/s/resource-pack/upload?required=true", sent.path)
+            assertTrue(sent.body.readUtf8().contains("Textures.zip"))
+
+            agent.server.enqueue(agent.json(on))
+            c.setResourcePackLink("s", "https://packs.example.com/t.zip", "", false)
+            assertEquals("""{"url":"https://packs.example.com/t.zip","sha1":"","required":false}""", agent.server.takeRequest().body.readUtf8())
+
+            agent.server.enqueue(agent.json(on))
+            c.setResourcePackRequired("s", false)
+            assertEquals("""{"required":false}""", agent.server.takeRequest().body.readUtf8())
+
+            agent.server.enqueue(agent.json("""{"on": true, "listening": true, "speed_cap_bytes": 1, "max_pack_bytes": 1}"""))
+            assertEquals(null, c.removeResourcePack("s").resourcePack)
+            val removed = agent.server.takeRequest()
+            assertEquals("DELETE", removed.method)
+            assertEquals("/api/servers/s/resource-pack", removed.path)
+
+            agent.server.enqueue(agent.json(on))
+            c.newDownloadLink("s")
+            assertEquals("/api/servers/s/download-link/new", agent.server.takeRequest().path)
+        }
+    }
+
+    @Test
     fun `bedrock packs and game settings are read and saved`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)
