@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 import urllib.error
 import urllib.request
 
 import pytest
 
-from agent import downloadlink, modpackmake
+from agent import companion, downloadlink, modpackmake
 from agent.minecraft.properties import PropertiesFile
 
 from .test_curseforge import fabric, relay  # noqa: F401
@@ -109,6 +110,23 @@ def test_new_link_and_off_stop_the_old_link_at_once(linked):
     # On again: another new link, never the old one back.
     again = switch(client, headers, True).json()["modpack_url"]
     assert again not in (old, new)
+
+
+def test_the_companion_settings_follow_the_link(linked):
+    client, headers = linked
+    make(client, headers)
+    where = client.app.state.core.mods.config.server_dir / companion.MODS_FILE
+
+    def settings():
+        return json.loads(where.read_text(encoding="utf-8"))
+
+    on = switch(client, headers, True).json()["modpack_url"]
+    assert settings()["download_link"] == on and on in settings()["chat_line"]["text"]
+    new = client.post(api(client, "download-link/new"), headers=headers).json()["modpack_url"]
+    assert settings()["download_link"] == new and on not in settings()["chat_line"]["text"]
+    switch(client, headers, False)
+    assert settings()["download_link"] is None
+    assert new not in settings()["chat_line"]["text"]
 
 
 def test_only_the_owner_turns_the_link_on(linked):
