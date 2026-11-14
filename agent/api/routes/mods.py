@@ -26,6 +26,7 @@ from ...security.permissions import (
     SETTINGS_SERVER,
     check,
     check_server,
+    may_add_own_jar,
     require,
 )
 from ..deps import audit, get_core, get_server
@@ -145,7 +146,14 @@ async def add_player_file(
     with audit_failure(ctx, request, "mod_player_add", target=file.filename):
         result = await ctx.mod_change(
             f"Adding {file.filename} for players",
-            lambda: sides.add(ctx, file.filename or "", data, principal.user, confirm=confirm),
+            lambda: sides.add(
+                ctx,
+                file.filename or "",
+                data,
+                principal.user,
+                confirm=confirm,
+                own_jar=may_add_own_jar(principal, ctx.server_id),
+            ),
             principal.user,
         )
     audit(ctx, request, "mod_player_add", target=file.filename)
@@ -341,7 +349,14 @@ async def upload_mod(
 ):
     data = await file.read(320 * 1024 * 1024)
     with audit_failure(ctx, request, "mod_upload", target=file.filename):
-        result = await add_file(ctx, file.filename or "", data, principal.user, confirm=confirm)
+        result = await add_file(
+            ctx,
+            file.filename or "",
+            data,
+            principal.user,
+            confirm=confirm,
+            own_jar=may_add_own_jar(principal, ctx.server_id),
+        )
     audit(ctx, request, "mod_upload", target=file.filename)
     return {"ok": True, **result}
 
@@ -366,7 +381,13 @@ async def mod_link_add(
     ctx=Depends(get_server),
 ):
     with audit_failure(ctx, request, "mod_link_add", target=payload.version_id):
-        result = await add_from_link(ctx, payload.version_id, principal.user, payload.confirm)
+        result = await add_from_link(
+            ctx,
+            payload.version_id,
+            principal.user,
+            payload.confirm,
+            own_jar=may_add_own_jar(principal, ctx.server_id),
+        )
     audit(ctx, request, "mod_link_add", target=result["installed"]["filename"])
     return {"ok": True, **result}
 

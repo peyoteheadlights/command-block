@@ -157,8 +157,9 @@ extension AgentClient {
         _ = try await call("DELETE", "/api/modpacks/" + AgentClient.pathSegment(token), as: Ok.self)
     }
 
-    public func importModpack(serverId: String, token: String) async throws -> ModpackImported {
-        let body = try AgentClient.encode(ImportBody(token: token, confirm: true))
+    /// `ownJars`: the pack's own jars were shown and said yes to.
+    public func importModpack(serverId: String, token: String, ownJars: Bool = false) async throws -> ModpackImported {
+        let body = try AgentClient.encode(ImportBody(token: token, confirm: true, ownJars: ownJars))
         return try await call("POST", content(serverId) + "/modpack", body: body, slow: true, as: ModpackImported.self)
     }
 
@@ -169,8 +170,8 @@ extension AgentClient {
     }
 
     /// Modpack update: one backup, all or nothing, one Undo.
-    public func updateModpack(serverId: String, token: String, usePackConfigs: Bool) async throws {
-        let body = try AgentClient.encode(ModpackUpdateBody(token: token, usePackConfigs: usePackConfigs, confirm: true))
+    public func updateModpack(serverId: String, token: String, usePackConfigs: Bool, ownJars: Bool = false) async throws {
+        let body = try AgentClient.encode(ModpackUpdateBody(token: token, usePackConfigs: usePackConfigs, confirm: true, ownJars: ownJars))
         _ = try await call("POST", content(serverId) + "/modpack/update", body: body, slow: true, as: Ok.self)
     }
 
@@ -314,15 +315,22 @@ extension AgentClient {
         let token: String
         let usePackConfigs: Bool
         let confirm: Bool
+        let ownJars: Bool
         enum CodingKeys: String, CodingKey {
             case token, confirm
             case usePackConfigs = "use_pack_configs"
+            case ownJars = "own_jars"
         }
     }
 
     private struct ImportBody: Encodable {
         let token: String
         let confirm: Bool
+        let ownJars: Bool
+        enum CodingKeys: String, CodingKey {
+            case token, confirm
+            case ownJars = "own_jars"
+        }
     }
 
     private struct FetchBody: Encodable {

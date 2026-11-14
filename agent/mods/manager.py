@@ -70,6 +70,11 @@ UNKNOWN_FILE = (
     "Modrinth, Hangar and CurseForge don't list this file, so the app can't tell what it "
     "is or who made it. Add it only if you trust where it came from."
 )
+# The same jar, for an account without "Add own .jar" (permissions.MODS_OWN_JAR).
+OWN_JAR_NEEDED = (
+    "Modrinth, Hangar and CurseForge don't list this jar, so adding it needs the "
+    '"Add own .jar" permission. Ask the owner.'
+)
 # A jar with one of these is a mod or plugin (agent/mods/jarinfo.py reads them).
 MOD_FILES = (
     "fabric.mod.json",

@@ -12,8 +12,14 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from ... import linkedpack, modpack
 from ...mods.curseforge import MODPACKS, CurseForgeClient
 from ...mods.modrinth import ModrinthClient
-from ...security.auth import Principal
-from ...security.permissions import MODS_MANAGE, SERVERS_MANAGE, SETTINGS_SERVER, require
+from ...security.auth import AuthError, Principal
+from ...security.permissions import (
+    MODS_MANAGE,
+    SERVERS_MANAGE,
+    SETTINGS_SERVER,
+    may_add_own_jar,
+    require,
+)
 from ..deps import audit, get_core, get_server
 from ..responses import (
     ModpackImported,
@@ -40,6 +46,14 @@ global_router = APIRouter()
 router = APIRouter()
 
 CHUNK = 1024 * 1024
+
+
+def _own_jars_allowed(principal: Principal, server_id: str | None, said_yes: bool) -> bool:
+    """A yes to a pack's own jars counts only from an account holding "Add
+    own .jar" on that server."""
+    if said_yes and not may_add_own_jar(principal, server_id):
+        raise AuthError(modpack.OWN_JARS_NEEDED, status=403)
+    return said_yes
 
 
 @global_router.post("/modpacks/inspect", response_model=ModpackInspected)
@@ -162,6 +176,7 @@ async def modpack_new_server(
         color=payload.color,
         eula_accepted=payload.eula_accepted,
         user=principal.user,
+        own_jars=_own_jars_allowed(principal, None, payload.own_jars),
     )
     audit(core, request, "modpack_new_server", target=result["server_id"])
     return {"ok": True, **result}
@@ -181,7 +196,12 @@ async def modpack_into_server(
             status_code=400,
             detail="This needs to be confirmed, because the server is stopped for it.",
         )
-    result = await modpack.import_into(ctx, payload.token, user=principal.user)
+    result = await modpack.import_into(
+        ctx,
+        payload.token,
+        user=principal.user,
+        own_jars=_own_jars_allowed(principal, ctx.server_id, payload.own_jars),
+    )
     audit(ctx, request, "modpack_import", detail=result["modpack"]["name"])
     return {"ok": True, **result}
 
@@ -213,7 +233,11 @@ async def update_modpack(
             detail="This needs to be confirmed, because the server is stopped for it.",
         )
     result = await linkedpack.update(
-        ctx, payload.token, use_pack_configs=payload.use_pack_configs, user=principal.user
+        ctx,
+        payload.token,
+        use_pack_configs=payload.use_pack_configs,
+        user=principal.user,
+        own_jars=_own_jars_allowed(principal, ctx.server_id, payload.own_jars),
     )
     audit(ctx, request, "modpack_update", detail=result["changes"]["to_version"])
     return {"ok": True, **result}

@@ -1811,6 +1811,8 @@ class Modpack(Open):
     download_bytes: int = 0
     client_only: list[str] = []
     skipped_overrides: list[str] = []
+    own_jars: list[str] = Field([], description='"Not checked by a site": needs own_jars sent')
+    plugins_to_get: list[str] = Field([], description="From command-block.json, get by hand")
     problems: list[str] = []
     can_import: bool
 
@@ -1850,6 +1852,7 @@ class ModpackChanges(Open):
     newer: list[NewerMod]
     added_by_you: list[str] = Field(description="Mods not from the modpack: kept")
     configs_changed_by_you: list[str] = Field(description="Kept unless use_pack_configs is sent")
+    new_own_jars: list[str] = Field([], description="New or changed own jars: needs own_jars sent")
     version_change: bool
     minecraft_version: str
     problems: list[str]

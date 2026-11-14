@@ -269,7 +269,7 @@ final class AddServerPages {
         do {
             let made = try await client.modpackServer(
                 token: read.token, name: name.trimmingCharacters(in: .whitespaces), directory: folder,
-                memoryMb: memoryMb, color: color, eulaAccepted: ruled
+                memoryMb: memoryMb, color: color, eulaAccepted: ruled, ownJars: !read.pack.ownJars.isEmpty
             )
             pack = nil
             await done(strings, made.serverId, made.name)

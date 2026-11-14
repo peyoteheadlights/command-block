@@ -1342,6 +1342,7 @@ private struct ModpackSheet: View {
                 if !pack.skippedOverrides.isEmpty {
                     Text(model.t("pack.skipped_extras", ["names": pack.skippedOverrides.joined(separator: ", ")]))
                 }
+                ForEach(Modpacks.notes(strings, pack), id: \.self) { Text(verbatim: $0).foregroundStyle(.orange) }
                 if pack.canImport {
                     Section(model.t("mobile.content.modpack_failed_note")) {
                         ForEach(Modpacks.steps(strings, inspected), id: \.self) { step in
