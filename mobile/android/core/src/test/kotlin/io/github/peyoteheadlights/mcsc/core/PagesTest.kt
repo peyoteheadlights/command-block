@@ -207,6 +207,14 @@ class PagesTest {
     }
 
     @Test
+    fun `the companion's last check shows which modpack a player has`() {
+        val strings = Strings(Shared.strings)
+        assertEquals(null, PlayerButtons.modpack(strings, KnownPlayer("Steve")))
+        assertEquals("Modpack 1.4", PlayerButtons.modpack(strings, KnownPlayer("Steve", modpackVersion = "1.4", modpackOk = 1)))
+        assertEquals("No modpack", PlayerButtons.modpack(strings, KnownPlayer("Alex", modpackVersion = "", modpackOk = 0)))
+    }
+
+    @Test
     fun `names are checked as the agent checks them`() {
         assertTrue(PlayerButtons.validName("Alex_99", "java"))
         assertTrue(PlayerButtons.validName(".BedrockGuy", null))

@@ -221,6 +221,10 @@ final class PagesTests: XCTestCase {
         XCTAssertEqual(PlayerButtons.forPlayer("Alex", online: true, page: page, canManage: false, canOp: true), [])
         XCTAssertEqual(PlayerButtons.tags("ALEX", page: page), ["players.tag_whitelisted"])
         XCTAssertEqual(PlayerButtons.removeFrom("ops"), "deop")
+        let checked = try! JSONDecoder().decode(KnownPlayer.self, from: Data(#"{"username": "Steve", "modpack_version": "1.4", "modpack_ok": 1}"#.utf8))
+        XCTAssertEqual(PlayerButtons.modpack(s, checked), "Modpack 1.4")
+        let never = try! JSONDecoder().decode(KnownPlayer.self, from: Data(#"{"username": "Alex"}"#.utf8))
+        XCTAssertNil(PlayerButtons.modpack(s, never))
         page.bans = false
         XCTAssertEqual(PlayerButtons.forPlayer("Steve", online: false, page: page, canManage: true, canOp: true), ["whitelist_add", "deop"])
     }

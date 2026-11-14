@@ -258,7 +258,8 @@ struct PlayersView: View {
                         Text(verbatim: known.username)
                             .font(.headline)
                             .foregroundStyle(palette.textPrimary)
-                        Text(([seen] + tags).joined(separator: " · "))
+                        let modpack = PlayerButtons.modpack(model.strings, known).map { [$0] } ?? []
+                        Text(([seen] + modpack + tags).joined(separator: " · "))
                             .font(.footnote)
                             .foregroundStyle(palette.textSecondary)
                         buttons(
