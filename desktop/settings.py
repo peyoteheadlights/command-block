@@ -436,6 +436,10 @@ class SettingsPage(Page):
         wake.setChecked(bool(server.get("start_on_join")))
         layout.addWidget(wake)
         layout.addWidget(label(text("serverset.wake_note"), "muted"))
+        if self.row.get("content"):  # the anti-cheat picker is on the Mods page
+            anticheat = push(text("desktop.protect.pick_anticheat"))
+            anticheat.clicked.connect(lambda: self.window_.open_page("Mods"))
+            layout.addWidget(anticheat, 0, Qt.AlignmentFlag.AlignLeft)
         size, home, limits = QComboBox(), QCheckBox(text("serverset.join_home_only")), {}
         if mode["technical"]:
             for value, words in (

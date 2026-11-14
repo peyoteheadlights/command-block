@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import downloads, gamesettings, notes
+from . import anticheat, downloads, gamesettings, notes
 from .minecraft.properties import FILENAME, FormError, PropertiesFile
 from .security import permissions as P
 
@@ -175,6 +175,7 @@ class Facts:
     join: dict[str, Any] | None = None  # Join protection's status (agent/joinguard.py)
     join_burst_seen: bool = False  # 15+ new names in one minute within 7 days
     proxy: list[dict[str, Any]] = field(default_factory=list)  # proxy add-ons for the type
+    anticheat: list[str] | None = None  # anti-cheats in; None: none runs on this type
 
     def prop(self, key: str, default: str) -> str:
         return ((self.properties or {}).get(key) or default).strip().lower()
@@ -209,6 +210,7 @@ def facts(ctx: ServerContext) -> Facts:
     offered = [e for e in notes.RECOMMENDED if server_type.id in e["types"]]
     ops = read_list(directory, "ops")["players"] if server_type.dialect == "java" else None
     security = ctx.core.config.security
+    addons = whitelist.installed(ctx)
     return Facts(
         edition=server_type.edition,
         type_id=server_type.id,
@@ -220,7 +222,7 @@ def facts(ctx: ServerContext) -> Facts:
         if port.port == server_type.default_port
         else None,
         ops=[o["name"] for o in ops] if ops is not None else None,
-        addons=whitelist.installed(ctx),
+        addons=addons,
         home=bool(joininfo.local_addresses()),
         tailscale=bool(joininfo.tailscale_address().get("connected")),
         router=ROUTER.mapped(ctx) if ROUTER.mapped else None,
@@ -239,6 +241,7 @@ def facts(ctx: ServerContext) -> Facts:
         join=ctx.core.guard.status(ctx),
         join_burst_seen=_burst_seen(ctx),
         proxy=[_addon(e) for e in offered if e.get("role") == "proxy"],
+        anticheat=anticheat.installed(addons) if anticheat.supported(server_type.id) else None,
     )
 
 
@@ -385,11 +388,25 @@ def lines(f: Facts) -> list[dict[str, Any]]:
         found.append(_line("log4shell", "worst", "log4shell", version=f.minecraft))
 
     found += _join(f)
+    found += _anticheat(f)
     found.append(_line("big_attacks", "info", "stop_and_close"))
     if java and f.spam.get("on"):
         found.append(_line("chat_spam", "info", technical=True, **f.spam))
     order = {level: i for i, level in enumerate(LEVELS)}
     return sorted(found, key=lambda line: order[line["level"]])
+
+
+def _anticheat(f: Facts) -> list[dict[str, Any]]:
+    """Which anti-cheat is in. The line's button opens the picker
+    (agent/anticheat.py); it names what's installed, never a verdict."""
+    if f.anticheat is None:
+        return []
+    if len(f.anticheat) > 1:
+        return [_line("anticheat_two", "problem", names=", ".join(f.anticheat))]
+    if f.anticheat:
+        return [_line("anticheat_on", "info", name=f.anticheat[0])]
+    community = f.played_by == "community"
+    return [_line("anticheat_none", "suggest" if community else "info")]
 
 
 def _join(f: Facts) -> list[dict[str, Any]]:
