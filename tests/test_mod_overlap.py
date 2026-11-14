@@ -273,3 +273,13 @@ async def test_mods_installed_before_get_what_modrinth_says_in_one_call(manager)
 
     await fit.catch_up(manager)  # asked once, never again
     assert len(fake.asked) == 1
+
+
+def test_a_group_with_no_usual_pick_never_picks_a_jar_from_a_file(manager, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(notes, "SAME_JOB", [notes._same_job({**MAPS, "usual_pick": ""})])
+    make_jar(folder(manager) / "bluemap.jar", "bluemap")
+    make_jar(folder(manager) / "dynmap.jar", "dynmap")
+    manager.remember("bluemap", "modrinth", {"project_id": "swbUV1cr"})
+    manager.db.set_setting("mod_source:dynmap", {"source": "file"})
+    [row] = manager.check_all()["overlaps"]
+    assert row["say"] == overlap.NO_PICK

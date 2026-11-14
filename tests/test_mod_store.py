@@ -13,7 +13,7 @@ from agent.events import EventBus
 from agent.minecraft.process import MinecraftServer
 from agent.mods import store as store_module
 from agent.mods.jarinfo import read_mod_jar
-from agent.mods.manager import ModManager
+from agent.mods.manager import ModError, ModManager
 from agent.mods.store import Store
 from tests.test_mods import make_jar
 
@@ -288,3 +288,38 @@ async def test_tidy_waits_while_a_job_runs(multi, monkeypatch):
     await store_module.upkeep(core)
     assert tidied == [1]
     core.db.close()
+
+
+def test_tidy_waits_for_a_file_being_placed(store, tmp_path, monkeypatch):
+    import threading
+
+    source = make_jar(tmp_path / "new.jar", "new")
+    target = tmp_path / "server" / "new.jar"
+    target.parent.mkdir()
+    link = Store._link
+    tidy = threading.Thread(target=store.tidy)
+
+    def link_after_tidy_tried(stored, to):
+        tidy.start()  # the stored file has no other name yet
+        tidy.join(0.2)
+        return link(stored, to)
+
+    monkeypatch.setattr(Store, "_link", staticmethod(link_after_tidy_tried))
+    assert store.place(source, target) is True
+    tidy.join()
+    assert target.read_bytes() == source.read_bytes()
+    assert store.find(sha256=hashlib.sha256(source.read_bytes()).hexdigest())
+
+
+async def test_a_shared_file_windows_wont_let_go_of_says_why(config, tmp_path, monkeypatch):
+    db = Database(config.database_path)
+    manager = manager_for(config, db)
+    await manager.install_local_file("cooltech.jar", jar_bytes(tmp_path, "cooltech"), user="t")
+
+    def locked(*_):
+        raise PermissionError(32, "The process cannot access the file")
+
+    monkeypatch.setattr(Path, "rename", locked)
+    with pytest.raises(ModError) as caught:
+        await manager.set_enabled("cooltech.jar", False, user="t")
+    assert "shared with another server" in str(caught.value)

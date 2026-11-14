@@ -46,8 +46,10 @@ def find(
         if len(found) < 2:
             continue
         paired.update(frozenset((a.mod_id, b.mod_id)) for a in found for b in found)
-        usual = next((m for m in found if projects[m.mod_id] == group["usual_pick"].lower()), None)
+        pick = group["usual_pick"].lower()
+        usual = next((m for m in found if pick and projects[m.mod_id] == pick), None)
         rows.append(_row("same_job", found, group["why"], enabled, minecraft, usual))
+    said = {m.mod_id: _incompatible(record(m)) for m in once}
     for mod in once:
         for other in once:
             pair = frozenset((mod.mod_id, other.mod_id))
@@ -55,7 +57,7 @@ def find(
                 other is not mod
                 and pair not in paired
                 and projects[other.mod_id]
-                and projects[other.mod_id] in _incompatible(record(mod))
+                and projects[other.mod_id] in said[mod.mod_id]
             ):
                 paired.add(pair)
                 site = LABELS.get(origin(mod)[0], "Its site")
