@@ -24,6 +24,18 @@ folder; changing it back moves it in again. Both need the server stopped.
 Server and Both only change the saved mark. A file is moved, never
 deleted, so a mistake is one more change away.
 
+Your marks are kept in a small file in the server folder (``MARKS_FILE``),
+so backups, Undo and copies of the server carry them. It is read strictly:
+anything odd is left out. A mark is kept by mod id (so it survives an
+update), or by mod id and file name when two jars share an id.
+
+The player-only folder is locked from the server's own Windows user when
+that is on (``lock``), and the agent keeps each file's hash (``RECORD``, in
+its own database the server can't reach), so a file changed outside the
+app is pointed out. Two options per server: back up the folder or not, and
+leave out files Modrinth lists (they are downloaded again by hash after a
+restore, with "Get it again").
+
 The odd-setup warnings read each jar's own "depends": a mod the server
 loads that needs one only players have, or a mod players get that needs
 one marked Server only.
@@ -31,7 +43,9 @@ one marked Server only.
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import logging
 import shutil
 import time
@@ -39,10 +53,11 @@ import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .. import downloads, serveruser
 from ..minecraft.properties import FormError
 from ..security.paths import assert_not_symlink, is_inside, safe_filename, safe_join
 from .addfrom import known_source
-from .jarinfo import DISABLED_SUFFIX, ModInfo, read_mod_jar, wrong_loader_reason
+from .jarinfo import DISABLED_SUFFIX, ModInfo, read_mod_jar, sha256_file, wrong_loader_reason
 from .manager import MAX_FILE_BYTES, UNKNOWN_FILE, ModError, refuse_known_bad
 from .modrinth import ModrinthError
 
@@ -53,6 +68,10 @@ if TYPE_CHECKING:
 log = logging.getLogger("msc.mods.sides")
 
 FOLDER = "player-only"
+MARKS_FILE = "command-block-sides.json"
+RECORD = "player_only_files"  # name -> sha256, sha512, site, size, mtime
+BACKUP = "player_only_backup"  # False: leave the folder out of backups
+SKIP_LISTED = "player_only_skip_listed"  # True: leave out files Modrinth lists
 SIDES = ("server", "players", "both")
 PLUGIN_LOADERS = {"paper", "bukkit"}
 MOD_FILES = (
@@ -70,8 +89,36 @@ class SideError(ModError):
 
 
 # ---------------------------------------------------------------- the marks
-def _setting(mod: ModInfo) -> str:
-    return f"mod_side:{mod.mod_id or mod.filename}"
+def _keys(mod: ModInfo) -> tuple[str, str]:
+    """(by id and file name, by id). The file name without ".disabled"."""
+    plain = mod.filename.removesuffix(DISABLED_SUFFIX)
+    return f"{mod.mod_id}:{plain}", mod.mod_id or plain
+
+
+def read_marks(config: Any) -> dict[str, str]:
+    """The owner's marks. The file sits in the server folder, so it is read
+    strictly: a key that isn't text or a value that isn't a side is left out."""
+    try:
+        data = json.loads((config.server_dir / MARKS_FILE).read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(k, str) and len(k) <= 300 and v in SIDES}
+
+
+def _save_mark(mods: ModManager, mod: ModInfo, side: str | None) -> None:
+    marks = read_marks(mods.config)
+    exact, by_id = _keys(mod)
+    marks.pop(exact, None)
+    marks.pop(by_id, None)
+    if side:
+        twins = [m for m in mods.scan() if m.mod_id == mod.mod_id and m.filename != mod.filename]
+        marks[exact if mod.mod_id and twins else by_id] = side
+    path = mods.config.server_dir / MARKS_FILE
+    temp = path.with_name(f".{MARKS_FILE}.part")
+    temp.write_text(json.dumps(marks, indent=1, sort_keys=True), "utf-8")
+    temp.replace(path)
 
 
 def from_site(record: dict[str, Any]) -> str | None:
@@ -107,13 +154,18 @@ def from_file(mod: ModInfo) -> str | None:
 
 
 def mark(
-    mods: ModManager, mod: ModInfo, pack_sides: dict[str, str] | None = None
+    mods: ModManager,
+    mod: ModInfo,
+    pack_sides: dict[str, str] | None = None,
+    marks: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """(side, where it came from) for a jar in mods/ or plugins/."""
     if mod.loader in PLUGIN_LOADERS:
         return "server", "file"  # plugins only ever run on the server
-    chosen = mods.db.get_setting(_setting(mod))
-    if chosen in SIDES:
+    marks = read_marks(mods.config) if marks is None else marks
+    exact, by_id = _keys(mod)
+    chosen = marks.get(exact) or marks.get(by_id)
+    if chosen:
         return chosen, "you"
     if pack_sides and mod.sha256 in pack_sides:
         return pack_sides[mod.sha256], "modpack"
@@ -143,10 +195,11 @@ def add_marks(ctx: ServerContext, rows: list[dict[str, Any]]) -> None:
     """Put ``side`` and ``side_from`` on the Mods page's rows."""
     by_file = {m.filename: m for m in ctx.mods.scan(use_cache=True)}
     from_pack_ = pack_sides(ctx)
+    marks = read_marks(ctx.config)
     for row in rows:
         mod = by_file.get(row["filename"])
         if mod:
-            row["side"], row["side_from"] = mark(ctx.mods, mod, from_pack_)
+            row["side"], row["side_from"] = mark(ctx.mods, mod, from_pack_, marks)
 
 
 async def catch_up(mods: ModManager) -> None:
@@ -202,28 +255,158 @@ def _kind(data: bytes) -> str | None:
     return None
 
 
+def lock(config: Any) -> None:
+    """Keep the server's own Windows user out of the player-only folder
+    (agent/serveruser.py). Done when the folder is made and before each
+    server start, so turning the separate user on later is covered too."""
+    where = config.server_dir / FOLDER
+    if serveruser.is_on(config) and where.is_dir():
+        serveruser.deny_all(where)
+
+
+def _note(ctx: ServerContext, path: Path, site: str | None, sha512: str | None = None) -> None:
+    """Remember a player-only file's hashes, in the agent's own database."""
+    record = ctx.mods.db.get_setting(RECORD) or {}
+    if sha512 is None:
+        sha512 = hashlib.sha512(path.read_bytes()).hexdigest()
+    stat = path.stat()
+    record[path.name] = {
+        "sha256": sha256_file(path),
+        "sha512": sha512,
+        "site": site,
+        "size": stat.st_size,
+        "mtime": stat.st_mtime,
+    }
+    ctx.mods.db.set_setting(RECORD, record)
+
+
+def _forget(ctx: ServerContext, name: str) -> None:
+    record = ctx.mods.db.get_setting(RECORD) or {}
+    if record.pop(name, None) is not None:
+        ctx.mods.db.set_setting(RECORD, record)
+
+
+def _changed(ctx: ServerContext, path: Path, known: dict[str, Any] | None) -> bool:
+    """True when a file isn't the one the app first saw. Hashed again only
+    when its size or time changed, so opening the page stays light."""
+    if not known:
+        # First seen here (a copied server, or put in by hand): taken as
+        # it is now. The server's own user can't write here (``lock``).
+        _note(ctx, path, None)
+        return False
+    stat = path.stat()
+    if stat.st_size == known.get("size") and stat.st_mtime == known.get("mtime"):
+        return False
+    if sha256_file(path) != known.get("sha256"):
+        return True
+    _note(ctx, path, known.get("site"), known.get("sha512"))  # only touched
+    return False
+
+
+def options(ctx: ServerContext) -> dict[str, bool]:
+    db = ctx.mods.db
+    return {
+        "backup": db.get_setting(BACKUP) is not False,
+        "skip_listed": db.get_setting(SKIP_LISTED) is True,
+    }
+
+
+def set_options(ctx: ServerContext, backup: bool, skip_listed: bool) -> dict[str, bool]:
+    ctx.mods.db.set_setting(BACKUP, backup)
+    ctx.mods.db.set_setting(SKIP_LISTED, skip_listed)
+    return options(ctx)
+
+
+def backup_names(db: Any) -> list[str]:
+    """What a backup takes from the server folder for this (agent/backups)."""
+    return [MARKS_FILE] + ([FOLDER] if db.get_setting(BACKUP) is not False else [])
+
+
+def backup_skips(config: Any, db: Any) -> set[Path]:
+    """Player-only files a backup leaves out: the ones Modrinth lists, when
+    the owner chose that. "Get it again" downloads them by hash."""
+    if db.get_setting(SKIP_LISTED) is not True:
+        return set()
+    record = db.get_setting(RECORD) or {}
+    return {
+        config.server_dir / FOLDER / name
+        for name, known in record.items()
+        if isinstance(known, dict) and known.get("site") == "modrinth"
+    }
+
+
 def player_files(ctx: ServerContext) -> list[dict[str, Any]]:
-    """What's in the player-only folder, for the Mods page."""
+    """What's in the player-only folder, for the Mods page: each file, a
+    file changed outside the app, and files the app knows that are gone
+    (after a restore that left out the ones Modrinth lists)."""
     where = ctx.config.server_dir / FOLDER if ctx.config.server_dir_configured else None
-    if not where or not where.is_dir():
-        return []
+    record = ctx.mods.db.get_setting(RECORD) or {}
     found = []
-    for entry in sorted(where.iterdir()):
+    seen = set()
+    for entry in sorted(where.iterdir()) if where and where.is_dir() else []:
         if not entry.is_file() or entry.is_symlink() or entry.suffix.lower() not in FILE_EXT:
             continue
+        seen.add(entry.name)
+        known = record.get(entry.name)
         row: dict[str, Any] = {
             "filename": entry.name,
             "size_bytes": entry.stat().st_size,
             "kind": "mod" if entry.suffix.lower() == ".jar" else "pack",
             "name": entry.stem,
             "version": "",
+            "changed": _changed(ctx, entry, known),
+            "missing": False,
+            "site": (known or {}).get("site"),
         }
         if row["kind"] == "mod":
             info = read_mod_jar(entry)
             row.update(name=info.name or info.mod_id or entry.stem, version=info.version)
             row["mod_id"] = info.mod_id
         found.append(row)
+    for name, known in sorted(record.items()):
+        if name not in seen and isinstance(known, dict):
+            found.append(
+                {
+                    "filename": name,
+                    "size_bytes": known.get("size") or 0,
+                    "kind": "mod" if name.lower().endswith(".jar") else "pack",
+                    "name": Path(name).stem,
+                    "version": "",
+                    "changed": False,
+                    "missing": True,
+                    "site": known.get("site"),
+                }
+            )
     return found
+
+
+async def fetch_again(ctx: ServerContext, filename: str, user: str) -> dict[str, Any]:
+    """Get a missing player-only file again from Modrinth: the exact file,
+    found and checked by the SHA-512 saved when it was added."""
+    mods = ctx.mods
+    where = folder(ctx)
+    target = safe_join(where, filename, allowed_extensions=FILE_EXT)
+    known = (mods.db.get_setting(RECORD) or {}).get(target.name)
+    if not isinstance(known, dict) or target.exists():
+        raise ModError(f"{filename} isn't missing.")
+    if known.get("site") != "modrinth" or not known.get("sha512"):
+        raise ModError(f"{filename} isn't on Modrinth, so it can't be downloaded again.")
+    url = await mods.modrinth.file_url(known["sha512"])
+    if not url:
+        raise ModError(f"Modrinth doesn't have {filename} any more.")
+    data, _ = await downloads.download_bytes(
+        downloads.FileSpec(
+            url=url, name=target.name, sha512=known["sha512"], allow_unverified=False
+        )
+    )
+    where.mkdir(parents=True, exist_ok=True)
+    lock(ctx.config)
+    temp = where / f".{target.name}.part"
+    temp.write_bytes(data)
+    temp.replace(target)
+    _note(ctx, target, "modrinth", known["sha512"])
+    mods.record("players_add", user, mod_name=target.name, source=url, detail="Downloaded again")
+    return {"added": target.name, "kind": "mod" if target.suffix == ".jar" else "pack"}
 
 
 def _player_mods(ctx: ServerContext) -> list[ModInfo]:
@@ -256,6 +439,7 @@ async def add(
         )
     where = folder(ctx)
     where.mkdir(parents=True, exist_ok=True)
+    lock(ctx.config)
     target = safe_join(where, filename, allowed_extensions=FILE_EXT)
     if target.exists():
         raise ModError(f"{filename} is already there, so nothing was changed.")
@@ -270,11 +454,13 @@ async def add(
                 reason = wrong_loader_reason(info, mods.server_type.accepts, mods.server_type.name)
                 if reason:
                     raise ModError(reason + " It wasn't added.")
-        if not confirm and not await known_source(mods, data):
+        listed = await known_source(mods, data)
+        if not confirm and not listed:
             raise FormError({"confirm": UNKNOWN_FILE})
         temp.replace(target)
     finally:
         temp.unlink(missing_ok=True)
+    _note(ctx, target, listed[0] if listed else None, hashlib.sha512(data).hexdigest())
     mods.record("players_add", user, mod_name=filename, source="upload", detail=f"Added {filename}")
     return {"added": filename, "kind": kind}
 
@@ -288,6 +474,7 @@ async def remove(ctx: ServerContext, filename: str, user: str) -> dict[str, Any]
     assert_not_symlink(path)
     trash = mods.trash_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{path.name}"
     shutil.move(str(path), str(trash))
+    _forget(ctx, path.name)
     mods.record("players_remove", user, mod_name=filename, detail=f"Moved to {trash.name}")
     return {"removed": filename}
 
@@ -310,7 +497,7 @@ async def set_side(ctx: ServerContext, filename: str, side: str, user: str) -> d
     if mod.loader in PLUGIN_LOADERS:
         raise SideError(f"{mod.name} is a plugin. Plugins only run on the server.")
     if side != "players":
-        mods.db.set_setting(_setting(mod), side)
+        _save_mark(mods, mod, side)
         mods.record("side", user, mod, detail=f"Marked {WORDS[side]}")
         return {"filename": name, "side": side, "moved": False}
 
@@ -321,12 +508,15 @@ async def set_side(ctx: ServerContext, filename: str, side: str, user: str) -> d
         raise ModError(f"That file isn't inside the {mods.server_type.content} folder.")
     where = folder(ctx)
     where.mkdir(parents=True, exist_ok=True)
+    lock(ctx.config)
     plain = path.name.removesuffix(DISABLED_SUFFIX)
     target = safe_join(where, plain, allowed_extensions={".jar"})
     if target.exists():
         raise ModError(f"{plain} is already in the player-only folder.")
     path.rename(target)
-    mods.db.set_setting(_setting(mod), None)
+    _save_mark(mods, mod, None)
+    source = mods.source_of(mod)
+    _note(ctx, target, source if source in ("modrinth", "curseforge") else None)
     mods._cache = None
     mods.record("side", user, mod, detail=f"Moved {plain} to Players only")
     return {"filename": plain, "side": side, "moved": True}
@@ -349,8 +539,9 @@ async def _bring_in(ctx: ServerContext, path: Path, side: str, user: str) -> dic
     if target.exists():
         raise ModError(f"{path.name} is already in the {mods.server_type.content} folder.")
     path.rename(target)
-    mods.db.set_setting(_setting(info), side)
+    _forget(ctx, path.name)
     mods._cache = None
+    _save_mark(mods, read_mod_jar(target), side)
     mods.record("side", user, info, detail=f"Moved {path.name} to {WORDS[side]}")
     return {"filename": path.name, "side": side, "moved": True}
 

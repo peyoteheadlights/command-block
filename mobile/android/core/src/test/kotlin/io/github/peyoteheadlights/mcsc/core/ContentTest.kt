@@ -228,7 +228,7 @@ class ContentTest {
         val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         val list = json.decodeFromString(
             ModList.serializer(),
-            """{"mods": [{"filename": "a.jar", "side": "both", "side_from": "unknown", "loader": "forge"}, {"filename": "b.jar", "side": "server", "side_from": "modrinth"}, {"filename": "p.jar", "side": "server", "side_from": "file", "loader": "paper"}], "server_state": "OFFLINE", "player_only": [{"filename": "map.jar", "name": "Minimap", "kind": "mod", "size_bytes": 10}], "odd_setups": [{"filename": "a.jar", "text": "Alpha needs Beta."}]}""",
+            """{"mods": [{"filename": "a.jar", "side": "both", "side_from": "unknown", "loader": "forge"}, {"filename": "b.jar", "side": "server", "side_from": "modrinth"}, {"filename": "p.jar", "side": "server", "side_from": "file", "loader": "paper"}], "server_state": "OFFLINE", "player_only": [{"filename": "map.jar", "name": "Minimap", "kind": "mod", "size_bytes": 10, "changed": true}, {"filename": "f.zip", "missing": true, "site": "modrinth"}], "player_only_options": {"backup": true, "skip_listed": true}, "odd_setups": [{"filename": "a.jar", "text": "Alpha needs Beta."}]}""",
         )
         val (a, b, plugin) = list.mods
         assertEquals("For: Both (not sure, the mod doesn't say)", Sides.words(strings, a))
@@ -237,7 +237,11 @@ class ContentTest {
         assertEquals(listOf("server", "players"), Sides.picks(a))
         assertEquals(listOf("players", "both"), Sides.picks(b))
         assertEquals(emptyList<String>(), Sides.picks(plugin))
-        assertEquals("Minimap", list.playerOnly.single().name)
+        assertEquals("Minimap", list.playerOnly.first().name)
+        assertEquals(true, list.playerOnly.first().changed)
+        assertEquals(listOf(false, true), list.playerOnly.map { it.missing })
+        assertEquals(PlayerOnlyOptions(backup = true, skipListed = true), list.playerOnlyOptions)
+        assertEquals(PlayerOnlyOptions(), ModList().playerOnlyOptions)
         assertEquals("Alpha needs Beta.", list.oddSetups.single().text)
         assertEquals(true, Sides.accepts("Faithful.ZIP"))
         assertEquals(false, Sides.accepts("pack.mrpack"))

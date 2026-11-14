@@ -26,6 +26,7 @@ import io.github.peyoteheadlights.mcsc.core.ModpackUpdatePreview
 import io.github.peyoteheadlights.mcsc.core.ModSearch
 import io.github.peyoteheadlights.mcsc.core.ModrinthHit
 import io.github.peyoteheadlights.mcsc.core.PickedFile
+import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
 import io.github.peyoteheadlights.mcsc.core.Strings
 import io.github.peyoteheadlights.mcsc.core.ModFit
 import io.github.peyoteheadlights.mcsc.core.StillFit
@@ -394,6 +395,16 @@ class ContentPages(
     fun uploadForPlayers(file: PickedFile, strings: Strings) = work("players", strings, reload = ::loadMods) {
         it.uploadForPlayers(serverId, file)
         Said(strings.t("sides.players_added", "name" to file.name), good = true)
+    }
+
+    fun fetchForPlayers(filename: String, strings: Strings) = work("fetch:$filename", strings, reload = ::loadMods) {
+        it.fetchForPlayers(serverId, filename)
+        Said(strings.t("sides.players_added", "name" to filename), good = true)
+    }
+
+    fun setPlayerOnlyOptions(options: PlayerOnlyOptions, strings: Strings) = work("options", strings, reload = ::loadMods) {
+        it.setPlayerOnlyOptions(serverId, options)
+        Said(strings.t("sides.options_saved"), good = true)
     }
 
     fun removeForPlayers(filename: String, strings: Strings) = work("remove:$filename", strings, reload = ::loadMods) {
