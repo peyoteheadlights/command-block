@@ -126,6 +126,10 @@ POST /api/servers/{server_id}/modpack
 POST /api/servers/{server_id}/modpack/update/preview
 POST /api/servers/{server_id}/modpack/update
 DELETE /api/servers/{server_id}/modpack/link
+GET /api/servers/{server_id}/modpack/make
+POST /api/servers/{server_id}/modpack/make
+POST /api/servers/{server_id}/modpack/made/discord
+GET /api/servers/{server_id}/modpack/made/{token} file
 POST /api/servers/{server_id}/mods/needs-you/dismiss
 GET /api/servers/{server_id}/addons
 POST /api/servers/{server_id}/addons/upload

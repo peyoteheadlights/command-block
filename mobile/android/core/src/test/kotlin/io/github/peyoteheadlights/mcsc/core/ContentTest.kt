@@ -554,6 +554,44 @@ class ContentTest {
     }
 
     @Test
+    fun `make a modpack sends the answers, then downloads it and posts it in discord`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"name": "Friends", "version": "2", "configs": [{"path": "config/a.toml", "size_bytes": 9}], "players_loaders": [{"id": "fabric", "name": "Fabric"}], "discord": true, "discord_limit_bytes": 10485760, "required_to_join": {"available": false}}"""))
+            val options = c.makeModpackOptions("s")
+            assertEquals("config/a.toml", options.configs.single().path)
+            assertEquals(false, options.requiredToJoin.available)
+            assertEquals("/api/servers/s/modpack/make", agent.server.takeRequest().path)
+
+            agent.server.enqueue(agent.json("""{"ok": true, "token": "t1", "filename": "Friends 2.mrpack", "files": 3, "size_bytes": 2048, "own_files": ["overrides/mods/x.jar"], "trust_note": "Only share it with people you trust.", "get_yourself": [{"name": "Secret Mod", "page": null}], "plugins_to_get": [], "left_out": ["Ledger"], "discord": true}"""))
+            val made = c.makeModpack("s", MakeModpack("Friends", "2", configs = listOf("config/a.toml")))
+            val sent = agent.server.takeRequest()
+            assertEquals("POST", sent.method)
+            assertEquals(
+                """{"name":"Friends","version":"2","leave_out_server_only":true,"configs":["config/a.toml"],"players_loader":"fabric"}""",
+                sent.body.readUtf8(),
+            )
+            val lines = MadeModpacks.lines(strings, made)
+            assertTrue(lines[0], lines[0].startsWith("Friends 2.mrpack is ready"))
+            assertTrue(lines[1], lines[1].contains("people you trust"))
+            assertTrue(lines.any { it.endsWith("Secret Mod") })
+            assertTrue(lines.any { it.endsWith("Ledger") })
+
+            agent.server.enqueue(MockResponse().setHeader("Content-Type", "application/zip").setBody("PK modpack"))
+            val out = java.io.ByteArrayOutputStream()
+            c.downloadModpack("s", made, out)
+            assertEquals("/api/servers/s/modpack/made/t1", agent.server.takeRequest().path)
+            assertEquals("PK modpack", out.toString())
+
+            agent.server.enqueue(agent.json("""{"ok": true, "posted": 1}"""))
+            assertEquals(1, c.postModpack("s", "t1").posted)
+            val posted = agent.server.takeRequest()
+            assertEquals("/api/servers/s/modpack/made/discord", posted.path)
+            assertEquals("""{"token":"t1"}""", posted.body.readUtf8())
+        }
+    }
+
+    @Test
     fun `bedrock packs and game settings are read and saved`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)

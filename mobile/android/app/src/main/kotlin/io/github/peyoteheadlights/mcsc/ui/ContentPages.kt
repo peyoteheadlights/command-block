@@ -21,7 +21,10 @@ import io.github.peyoteheadlights.mcsc.core.ModList
 import io.github.peyoteheadlights.mcsc.core.ModProject
 import io.github.peyoteheadlights.mcsc.core.ModVersion
 import io.github.peyoteheadlights.mcsc.core.ModVersions
+import io.github.peyoteheadlights.mcsc.core.MakeModpack
 import io.github.peyoteheadlights.mcsc.core.ModpackInspected
+import io.github.peyoteheadlights.mcsc.core.ModpackMade
+import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
 import io.github.peyoteheadlights.mcsc.core.ModpackUpdatePreview
 import io.github.peyoteheadlights.mcsc.core.ModSearch
 import io.github.peyoteheadlights.mcsc.core.ModrinthHit
@@ -32,8 +35,11 @@ import io.github.peyoteheadlights.mcsc.core.ModFit
 import io.github.peyoteheadlights.mcsc.core.StillFit
 import io.github.peyoteheadlights.mcsc.core.UpdateAll
 import io.github.peyoteheadlights.mcsc.core.UpdateAllPlan
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** A remove waiting for "yes", with what else needs the mod. */
 data class RemoveAsk(val mod: Mod, val impact: ModImpact)
@@ -444,6 +450,58 @@ class ContentPages(
     fun unlinkPack(strings: Strings) = work("unlink", strings, reload = ::loadMods) {
         it.unlinkModpack(serverId)
         null
+    }
+
+    // ------------------------------------------------------------ Make a modpack
+    /** Set while the Make a modpack question shows. */
+    var makeOptions: ModpackMakeOptions? by mutableStateOf(null)
+        private set
+
+    /** The modpack made last, with Share and Post in Discord. */
+    var made: ModpackMade? by mutableStateOf(null)
+        private set
+
+    fun askMakeModpack(strings: Strings) = work("make", strings) {
+        makeOptions = it.makeModpackOptions(serverId)
+        null
+    }
+
+    fun cancelMakeModpack() {
+        makeOptions = null
+    }
+
+    fun makeModpack(answers: MakeModpack, strings: Strings) {
+        makeOptions = null
+        work("make", strings) {
+            made = it.makeModpack(serverId, answers)
+            null
+        }
+    }
+
+    /** Downloads the modpack into [folder] (the old one there is cleared out) and opens the share menu. */
+    fun shareModpack(folder: File, strings: Strings, share: (File) -> Unit) = work("share", strings) { c ->
+        val pack = made ?: return@work null
+        val name = pack.filename.substringAfterLast('/').substringAfterLast('\\').ifBlank { "modpack.mrpack" }
+        val file = withContext(Dispatchers.IO) {
+            folder.mkdirs()
+            folder.listFiles()?.forEach { it.delete() }
+            val target = File(folder, name)
+            try {
+                target.outputStream().use { out -> c.downloadModpack(serverId, pack, out) }
+            } catch (e: Exception) {
+                target.delete()
+                throw e
+            }
+            target
+        }
+        share(file)
+        null
+    }
+
+    fun postModpack(strings: Strings) = work("discord", strings) {
+        val pack = made ?: return@work null
+        val posted = it.postModpack(serverId, pack.token)
+        Said(strings.t("make.posted", "count" to posted.posted), good = true)
     }
 
     // ------------------------------------------------------------ Bedrock packs

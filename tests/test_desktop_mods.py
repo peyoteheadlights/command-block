@@ -1019,3 +1019,66 @@ def test_player_files_backup_options_and_get_it_again(qapp, agent_http, tmp_path
     wait_for(qapp, lambda: can(page, "Get it again", "faithful"))
     row_button(page, "Get it again", "faithful").click()
     wait_for(qapp, lambda: (ctx.config.server_dir / "player-only" / "faithful.zip").is_file(), 20)
+
+
+# ---------------------------------------------------------------- Make a modpack
+def test_make_a_modpack_then_save_it_and_post_it_in_discord(
+    qapp, agent_http, monkeypatch, tmp_path
+):
+    import zipfile
+
+    from agent import modpackmake
+    from desktop import make_modpack
+
+    with_mods(agent_http)
+    ctx = core_of(agent_http).servers["survival"]
+    (ctx.config.server_dir / "config").mkdir(exist_ok=True)
+    (ctx.config.server_dir / "config" / "alpha.toml").write_text("speed = 2\n")
+
+    async def no_sites(ctx, items):  # the sites themselves have their own tests
+        return None
+
+    async def versions(ctx, items, players_loader):
+        return {"minecraft": "1.21.1", "fabric-loader": "0.16.5"}
+
+    posted = []
+
+    async def post(ctx, token, user="system"):
+        posted.append(token)
+        return {"posted": 1}
+
+    monkeypatch.setattr(modpackmake, "_look_up", no_sites)
+    monkeypatch.setattr(modpackmake, "_dependencies", versions)
+    monkeypatch.setattr(modpackmake, "_chat_channels", lambda ctx: ["c1"])
+    monkeypatch.setattr(modpackmake, "post_to_discord", post)
+    asked_with = []
+
+    def answer(dialog):
+        asked_with.append(dialog)
+        dialog.configs[0][0].setChecked(True)
+        return 1
+
+    monkeypatch.setattr(make_modpack.MakeDialog, "exec", answer)
+    pc = FakePC()
+    pc.save_to = str(tmp_path / "saved.mrpack")
+    window, page = mods_page(qapp, agent_http, pc)
+    assert page.make_card.frame.isVisibleTo(page)
+    button(page, "Make a modpack…").click()
+    wait_for(qapp, lambda: "is ready" in shown_text(page), 30)
+    dialog = asked_with[0]
+    assert dialog.leave_out.isChecked(), "ticked by default for friends"
+    assert dialog.body()["configs"] == ["config/alpha.toml"]
+    shown = shown_text(page)
+    assert "Only share it with people you trust." in shown, "Alpha and Gamma are own jars"
+    assert "Share it from the Modrinth App" in shown
+
+    button(page, "Save…").click()
+    wait_for(qapp, lambda: "Saved to" in page.note.text(), 20)
+    with zipfile.ZipFile(tmp_path / "saved.mrpack") as zf:
+        names = zf.namelist()
+    assert "overrides/config/alpha.toml" in names and "overrides/mods/alpha.jar" in names
+    assert "overrides/mods/beta.jar" not in names, "a turned-off mod stays out"
+
+    button(page, "Post in Discord").click()
+    wait_for(qapp, lambda: "Posted in 1 Discord" in page.note.text(), 20)
+    assert posted == [page.make_card.result["token"]]

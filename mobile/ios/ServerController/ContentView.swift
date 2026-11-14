@@ -126,6 +126,9 @@ struct ContentView: View {
                 sheetBody(content, sheet)
             }
         }
+        .sheet(item: $content.sharing, onDismiss: { content.finishSharing() }) { done in
+            ShareSheet(file: done.file)
+        }
         .task(id: serverId) {
             content.said = nil
             await reload(kind)
@@ -235,6 +238,41 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Make a modpack
+
+    /// Make a modpack from this server, then share it through the share
+    /// sheet or have the Discord bot post it.
+    @ViewBuilder
+    private func makeModpackCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        SectionTitle(text: model.t("make.title"), palette: palette)
+        CardBox(palette: palette) {
+            Text(verbatim: model.t("make.intro")).foregroundStyle(palette.textSecondary)
+            if let made = content.made {
+                ForEach(MadeModpacks.lines(strings, made), id: \.self) { line in
+                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                }
+            }
+            Presses(presses: [
+                Press(title: model.t("make.start"), enabled: ready) {
+                    Task { await content.askMakeModpack(strings) }
+                },
+            ] + (content.made == nil ? [] : [
+                Press(title: model.t("make.share"), enabled: ready) {
+                    Task { await content.shareModpack(strings) }
+                },
+            ]) + (content.made?.discord == true ? [
+                Press(title: model.t("make.discord"), enabled: ready) {
+                    Task { await content.postModpack(strings) }
+                },
+            ] : []), palette: palette)
+            if content.made != nil {
+                Text(verbatim: model.t("make.guide_title")).foregroundStyle(palette.textPrimary)
+                Text(verbatim: model.t("make.guide")).foregroundStyle(palette.textSecondary)
+            }
+        }
+    }
+
     // MARK: - Still fit?
 
     /// After a mod or version change: the ones to change (one Update all), the
@@ -312,6 +350,9 @@ struct ContentView: View {
             }
             if let pack = list.modpack {
                 linkedPackCard(content, pack, ready: changes == .ready && idle, palette)
+            }
+            if model.can(Permissions.MODS_MANAGE) {
+                makeModpackCard(content, ready: idle, palette)
             }
             if let fit = list.fit {
                 stillFitCard(content, list, fit, kind, ready: changes == .ready && idle, palette)
@@ -914,6 +955,8 @@ struct ContentView: View {
             ModpackSheet(content: content)
         case .packUpdate:
             PackUpdateSheet(content: content)
+        case .make:
+            MakeModpackSheet(content: content)
         }
     }
 }
@@ -1298,6 +1341,85 @@ private struct PackUpdateSheet: View {
                             Task { await content.updatePack(usePackConfigs: usePackConfigs, strings) }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Name, version, "Leave out server-only mods", the players' loader on a
+/// plugin server, the config files to put in, and "Required to join"
+/// (greyed until the join check exists).
+private struct MakeModpackSheet: View {
+    let content: ContentPages
+
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var version = ""
+    @State private var leaveOut = true
+    @State private var loader = "fabric"
+    @State private var configs: Set<String> = []
+    @State private var required = false
+
+    var body: some View {
+        let strings = model.strings
+        if let options = content.makeOptions {
+            Form {
+                Section {
+                    TextField(model.t("make.name"), text: $name)
+                    TextField(model.t("make.version"), text: $version)
+                    if !options.playersLoaders.isEmpty {
+                        Picker(model.t("make.loader"), selection: $loader) {
+                            ForEach(options.playersLoaders, id: \.id) { choice in
+                                Text(verbatim: choice.name).tag(choice.id)
+                            }
+                        }
+                    }
+                }
+                Section {
+                    Toggle(model.t("make.leave_out"), isOn: $leaveOut)
+                    Text(verbatim: model.t("make.leave_out_hint")).font(.footnote).foregroundStyle(.secondary)
+                }
+                Section {
+                    // Greyed until the join check (the Companion mod) exists.
+                    Toggle(model.t("make.required"), isOn: $required).disabled(!options.requiredToJoin)
+                    if !options.requiredToJoin {
+                        Text(verbatim: model.t("make.required_later")).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                Section(model.t(options.configs.isEmpty ? "make.no_configs" : "make.configs")) {
+                    ForEach(options.configs, id: \.path) { config in
+                        Toggle(config.path, isOn: Binding(
+                            get: { configs.contains(config.path) },
+                            set: { on in if on { configs.insert(config.path) } else { configs.remove(config.path) } }
+                        ))
+                    }
+                }
+            }
+            .navigationTitle(model.t("make.title"))
+            .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                name = options.name
+                version = options.version
+                loader = options.playersLoaders.first?.id ?? "fabric"
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(model.t("mobile.common.cancel")) { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(model.t("make.title")) {
+                        let answers = MakeModpack(
+                            name: String(name.trimmingCharacters(in: .whitespaces).prefix(64)),
+                            version: String(version.trimmingCharacters(in: .whitespaces).prefix(32)),
+                            leaveOutServerOnly: leaveOut,
+                            configs: options.configs.map(\.path).filter { configs.contains($0) },
+                            playersLoader: loader
+                        )
+                        Task { await content.makeModpack(answers, strings) }
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || version.isEmpty)
                 }
             }
         }
