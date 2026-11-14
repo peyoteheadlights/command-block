@@ -90,6 +90,8 @@ class Facts:
     played_by: str = ""
     # The same mod twice, or add-ons that do the same job (agent/mods/overlap.py).
     overlaps: list[dict[str, Any]] = field(default_factory=list)
+    # The Modrinth Server Project lists an older upload of ours (agent/modrinthshare.py).
+    modrinth_older: dict[str, Any] | None = None
 
 
 @dataclass
@@ -683,6 +685,22 @@ def not_answering(f: Facts) -> Recommendation | None:
     )
 
 
+def older_on_modrinth(f: Facts) -> Recommendation | None:
+    """Only when the Server Project lists one of our own earlier uploads."""
+    older = f.modrinth_older
+    if not older:
+        return None
+    return Recommendation(
+        id="older_on_modrinth",
+        title="Your Modrinth server page lists an older modpack",
+        reason="Players who press Play on Modrinth get the old version and may not be able to join.",
+        evidence=f"Modrinth lists version {older['listed']}; the newest you put up is {older['newest']}.",
+        action={"label": "Open mods", "page": "mods"},
+        fingerprint=f"modrinth_older:{older['listed']}:{older['newest']}",
+        details={"source": "Modrinth's v3 project page, read when the Modrinth card was opened"},
+    )
+
+
 RULES: tuple[Rule, ...] = (
     not_answering,
     security_advisories,
@@ -702,6 +720,7 @@ RULES: tuple[Rule, ...] = (
     install_spark,
     mod_updates,
     overlapping_mods,
+    older_on_modrinth,
     newer_build,
     newer_minecraft,
     addon_suggestions,
@@ -722,7 +741,7 @@ def evaluate(facts: Facts) -> list[Recommendation]:
 def gather(ctx, addons: dict[str, Any] | None = None) -> Facts:
     """Read one server's measured facts for the rules. ``addons`` is the
     last add-on suggestions check (agent/suggestions.py kept())."""
-    from . import suggestions
+    from . import modrinthshare, suggestions
 
     status = ctx.server.status()
     # The sampler's latest reading. Taking a fresh one here would restart
@@ -792,6 +811,7 @@ def gather(ctx, addons: dict[str, Any] | None = None) -> Facts:
         speed_ups=suggestions.speed_ups(ctx, addons, technical=False) if addons else {},
         played_by=ctx.config.server.played_by,
         overlaps=ctx.mods.overlaps(),
+        modrinth_older=modrinthshare.older(ctx),
     )
 
 

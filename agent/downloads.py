@@ -127,7 +127,7 @@ GITHUB_PATHS = {
 # Google's sign-in and Firebase hosts and CurseForge's file servers, which
 # also serve web pages and other files: only the links list, the Bedrock
 # server zips, Tailscale's Windows setup, Hangar's API and its plugin files,
-# the relay, the two sign-in calls, CurseForge's mod files and Tebex's two reads.
+# the relay and Sign in with Modrinth's function, the two sign-in calls, CurseForge's mod files and Tebex's two reads.
 SHARED_HOST_PATHS = {
     "net-secondary.web.minecraft-services.net": ("/api/v1.0/download/links",),
     "www.minecraft.net": ("/bedrockdedicatedserver/",),
@@ -135,7 +135,7 @@ SHARED_HOST_PATHS = {
     "pkgs.tailscale.com": ("/stable/tailscale-setup-",),
     "hangar.papermc.io": ("/api/v1/",),
     "hangarcdn.papermc.io": ("/plugins/",),
-    "europe-west1-command-block-d4526.cloudfunctions.net": ("/curseforge/",),
+    "europe-west1-command-block-d4526.cloudfunctions.net": ("/curseforge/", "/modrinth/"),
     "identitytoolkit.googleapis.com": ("/v1/accounts:signUp",),
     "securetoken.googleapis.com": ("/v1/token",),
     "edge.forgecdn.net": ("/files/",),
@@ -304,12 +304,14 @@ async def _send(
     headers: dict | None = None,
     method: str = "GET",
     content: bytes | None = None,
+    files: dict | None = None,
 ) -> tuple[httpx.Response, str]:
-    """GET (or POST ``content`` to) ``url``, following up to five redirects
-    between allowed hosts. A sign-in token never follows a redirect."""
+    """GET (or POST ``content``, or a multipart form of ``files``, to)
+    ``url``, following up to five redirects between allowed hosts. A sign-in
+    token never follows a redirect."""
     for _ in range(6):
         check_url(url)
-        request = client.build_request(method, url, headers=headers, content=content)
+        request = client.build_request(method, url, headers=headers, content=content, files=files)
         try:
             response = await client.send(request, stream=stream)
         except httpx.TimeoutException as exc:
@@ -327,7 +329,7 @@ async def _send(
                 for k, v in (headers or {}).items()
                 if k.lower() not in ("authorization", "x-tebex-secret")
             }
-            method, content = "GET", None
+            method, content, files = "GET", None, None
             continue
         # 304: unchanged since the ETag asked with (fetch_if_changed).
         if response.status_code >= 300 and response.status_code != 304:

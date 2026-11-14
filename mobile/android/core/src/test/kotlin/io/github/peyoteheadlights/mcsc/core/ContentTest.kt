@@ -640,6 +640,47 @@ class ContentTest {
     }
 
     @Test
+    fun `sign in with Modrinth comes back as mcsc link and the modpack goes up`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"url": "https://modrinth.com/auth/authorize?state=s1"}"""))
+            assertEquals("https://modrinth.com/auth/authorize?state=s1", c.modrinthSignIn().url)
+            val started = agent.server.takeRequest()
+            assertEquals("/api/modrinth/sign-in", started.path)
+            assertEquals("""{"return_to":"phone"}""", started.body.readUtf8())
+
+            assertEquals("abc" to "x.1.phone.y", ModrinthCards.cameBack("mcsc://modrinth?state=x.1.phone.y&code=abc"))
+            assertEquals(null, ModrinthCards.cameBack("mcsc://modrinth?state=x.1.phone.y&error=access_denied"))
+            assertEquals(null, ModrinthCards.cameBack("mcsc://server/abc?code=1&state=2"))
+            assertEquals(null, ModrinthCards.cameBack("https://modrinth?code=1&state=2"))
+
+            agent.server.enqueue(agent.json("""{"available": true, "signed_in": true, "username": "mark", "ran_out": false}"""))
+            assertTrue(c.modrinthFinish("abc", "x.1.phone.y").signedIn)
+            assertEquals("""{"code":"abc","state":"x.1.phone.y"}""", agent.server.takeRequest().body.readUtf8())
+
+            val card = """{"account": {"available": true, "signed_in": true, "username": "mark", "ran_out": false}, "made": {"name": "Friends", "version": "2"}, "project": {"id": "p1", "slug": "friends", "title": "Friends", "url": "https://modrinth.com/modpack/friends"}, "uploads": [{"version_id": "v2", "version": "2", "at": 1.0}], "own_jars": [{"path": "mods/a.jar", "name": "A", "side": "both", "slug": "a", "url": "https://modrinth.com/mod/a"}], "server_project": {"id": "s", "slug": "s", "url": "https://modrinth.com/server/s"}, "older": {"listed": "1", "newest": "2"}, "address": "play.example.org"}"""
+            agent.server.enqueue(agent.json(card))
+            val share = c.modrinthUpload("s", "friends", "Our pack")
+            assertEquals("/api/servers/s/modrinth/upload", agent.server.takeRequest().path)
+            val lines = ModrinthCards.lines(strings, share, owner = true)
+            assertEquals("Signed in to Modrinth as mark.", lines[0])
+            assertTrue(lines[1], lines[1].contains("https://modrinth.com/modpack/friends"))
+            assertTrue(lines.last().contains("https://modrinth.com/mod/a"))
+            val server = ModrinthCards.serverLines(strings, share)
+            assertTrue(server[1], server[1].contains("version 1"))
+            assertTrue(ModrinthCards.steps(strings, share).contains("play.example.org"))
+            assertEquals("our-friends-pack", ModrinthCards.slug("Our Friends' Pack!"))
+
+            agent.server.enqueue(agent.json(card))
+            c.modrinthOwnJar("s", "mods/a.jar", "a", "A mod")
+            assertEquals("""{"path":"mods/a.jar","slug":"a","summary":"A mod"}""", agent.server.takeRequest().body.readUtf8())
+            agent.server.enqueue(agent.json(card))
+            c.modrinthServerProject("s", "")
+            assertEquals("/api/servers/s/modrinth/server-project", agent.server.takeRequest().path)
+        }
+    }
+
+    @Test
     fun `bedrock packs and game settings are read and saved`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)

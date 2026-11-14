@@ -1,6 +1,7 @@
 import Core
 import Foundation
 import Observation
+import UIKit
 
 /// A remove waiting for "yes", with what else needs the mod.
 struct RemoveAsk: Identifiable {
@@ -488,6 +489,7 @@ final class ContentPages {
         await work("make", strings) { [weak self] client, id in
             self?.made = try await client.makeModpack(serverId: id, answers)
             await self?.loadLink() // the modpack's download link, if it's on
+            await self?.loadModrinth() // "Upload Friends 2"
             return nil
         }
     }
@@ -740,6 +742,73 @@ final class ContentPages {
 
     /// One button at a time: says what it did (or the agent's reason it
     /// didn't), then reads the screen again.
+    // MARK: - Put it on Modrinth
+
+    private(set) var modrinth: ModrinthShare? = nil
+    /// Asking the Modrinth address and summary: for the modpack (`jar` nil) or one own jar.
+    var askingModrinth: ModrinthAsk? = nil
+    /// Set while "Paste its link…" asks for the Server Project's link.
+    var askingServerLink = false
+
+    func loadModrinth() async {
+        guard let client = client() else { return }
+        do {
+            modrinth = try await client.modrinth(serverId: serverId)
+        } catch let problem as AgentError {
+            noted(problem)
+        } catch {}
+    }
+
+    /// Opens Modrinth's page in Safari; it comes back as mcsc://modrinth (AppModel.open).
+    func signInModrinth(_ strings: Strings) async {
+        await work("modrinth", strings) { client, _ in
+            let started = try await client.modrinthSignIn()
+            if let url = URL(string: started.url) { await UIApplication.shared.open(url) }
+            return Said(text: strings.t("modrinth.waiting"), good: true)
+        }
+    }
+
+    func finishModrinth(_ url: URL, _ strings: Strings) async {
+        guard let back = ModrinthCards.cameBack(url) else {
+            said = Said(text: strings.t("modrinth.said_no"), good: false)
+            return
+        }
+        await work("modrinth", strings) { [weak self] client, id in
+            _ = try await client.modrinthFinish(code: back.code, state: back.state)
+            self?.modrinth = try await client.modrinth(serverId: id)
+            return Said(text: strings.t("modrinth.welcome"), good: true)
+        }
+    }
+
+    func signOutModrinth(_ strings: Strings) async {
+        await work("modrinth", strings) { [weak self] client, id in
+            _ = try await client.modrinthSignOut()
+            self?.modrinth = try await client.modrinth(serverId: id)
+            return nil
+        }
+    }
+
+    func uploadToModrinth(_ slug: String, _ summary: String, _ strings: Strings) async {
+        let jar = askingModrinth?.jar
+        askingModrinth = nil
+        await work("modrinth", strings) { [weak self] client, id in
+            if let jar = jar {
+                self?.modrinth = try await client.modrinthOwnJar(serverId: id, path: jar.path, slug: slug, summary: summary)
+            } else {
+                self?.modrinth = try await client.modrinthUpload(serverId: id, slug: slug, summary: summary)
+            }
+            return Said(text: strings.t("modrinth.uploaded"), good: true)
+        }
+    }
+
+    func setServerProject(_ link: String, _ strings: Strings) async {
+        askingServerLink = false
+        await work("modrinth", strings) { [weak self] client, id in
+            self?.modrinth = try await client.modrinthServerProject(serverId: id, link: link)
+            return nil
+        }
+    }
+
     private func work(
         _ name: String,
         _ strings: Strings,
@@ -763,4 +832,11 @@ final class ContentPages {
         busy = nil
         await reload?()
     }
+}
+
+/// The Modrinth address and summary being asked: the modpack, or one own `jar`.
+struct ModrinthAsk: Identifiable {
+    let jar: ModrinthJar?
+    let name: String
+    var id: String { jar?.path ?? "modpack" }
 }

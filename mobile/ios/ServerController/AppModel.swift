@@ -120,6 +120,8 @@ final class AppModel {
 
     // Navigation.
     var tab: AppTab = .servers
+    /// mcsc://modrinth?..., the browser coming back from Sign in with Modrinth.
+    var modrinthReturn: URL? = nil
     var serversPath: [ServerRoute] = []
 
     init() {
@@ -855,6 +857,10 @@ final class AppModel {
 
     func open(_ url: URL) {
         guard url.scheme?.lowercased() == DeepLink.scheme else { return }
+        if url.host == "modrinth" { // Sign in with Modrinth coming back: the Mods screen finishes it
+            modrinthReturn = url
+            return
+        }
         tab = .servers
         if let id = DeepLink.serverId(from: url) {
             serversPath = [.server(id)]

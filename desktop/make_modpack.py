@@ -160,6 +160,7 @@ class MakeCard:
             self.page.say("")
             self.show_result()
             self.page.link_card.load()  # the modpack's download link, if it's on
+            self.page.modrinth_card.load()  # "Upload Friends 2"
 
         self.page.ask(
             "POST",

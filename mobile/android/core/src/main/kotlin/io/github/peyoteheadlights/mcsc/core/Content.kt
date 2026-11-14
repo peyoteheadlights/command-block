@@ -586,3 +586,63 @@ object DownloadLinks {
         return lines
     }
 }
+
+/** What the "Put it on Modrinth" card says. [owner]: may sign in and out. */
+object ModrinthCards {
+    fun lines(strings: Strings, share: ModrinthShare, owner: Boolean): List<String> {
+        val account = share.account
+        val lines = mutableListOf(
+            when {
+                !account.available -> strings.t("modrinth.not_available")
+                account.signedIn -> strings.t("modrinth.signed_in", "name" to (account.username ?: "?"))
+                account.ranOut -> strings.t("modrinth.ran_out")
+                else -> strings.t("modrinth.signed_out")
+            },
+        )
+        if (!owner) lines += strings.t("modrinth.owner_only")
+        share.project?.let { lines += strings.t("modrinth.project", "url" to it.url, "version" to (share.uploads.firstOrNull()?.version ?: "-")) }
+        if (share.made == null) lines += strings.t("modrinth.make_first")
+        for (jar in share.ownJars) jar.url?.let { lines += strings.t("modrinth.jar_up", "name" to jar.name, "url" to it) }
+        return lines
+    }
+
+    fun serverLines(strings: Strings, share: ModrinthShare): List<String> {
+        val lines = mutableListOf<String>()
+        when {
+            share.address == null -> lines += strings.t("modrinth.server_no_address")
+            share.serverProject != null -> lines += strings.t("modrinth.server_listed", "url" to share.serverProject.url)
+        }
+        share.older?.let { lines += strings.t("modrinth.server_older", "listed" to it.listed, "newest" to it.newest) }
+        return lines
+    }
+
+    fun steps(strings: Strings, share: ModrinthShare): String = strings.t(
+        "modrinth.server_steps",
+        "address" to (share.address ?: ""),
+        "project" to (share.project?.title?.ifBlank { null } ?: strings.t("modrinth.your_modpack")),
+        "version" to (share.uploads.firstOrNull()?.version ?: "-"),
+    )
+
+    /** A first try at the Modrinth address, which the person can change. */
+    fun slug(name: String): String =
+        name.lowercase().map { if (it in 'a'..'z' || it in '0'..'9') it else '-' }.joinToString("")
+            .split('-').filter { it.isNotEmpty() }.joinToString("-").take(64)
+
+    /** (code, state) from mcsc://modrinth?state=..&code=.., or null when
+     * Modrinth sent no code (the person said no) or it isn't that link. */
+    fun cameBack(link: String): Pair<String, String>? {
+        val uri = try {
+            java.net.URI(link)
+        } catch (e: java.net.URISyntaxException) {
+            return null
+        }
+        if (uri.scheme?.lowercase() != "mcsc" || uri.host != "modrinth") return null
+        val query = (uri.rawQuery ?: "").split('&').mapNotNull {
+            val at = it.indexOf('=')
+            if (at < 1) null else it.substring(0, at) to java.net.URLDecoder.decode(it.substring(at + 1), "UTF-8")
+        }.toMap()
+        val code = query["code"] ?: return null
+        val state = query["state"] ?: return null
+        return code to state
+    }
+}

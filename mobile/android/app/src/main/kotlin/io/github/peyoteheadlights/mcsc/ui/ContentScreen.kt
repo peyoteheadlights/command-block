@@ -59,6 +59,7 @@ import io.github.peyoteheadlights.mcsc.core.LinkedModpack
 import io.github.peyoteheadlights.mcsc.core.LinkedPacks
 import io.github.peyoteheadlights.mcsc.core.MadeModpacks
 import io.github.peyoteheadlights.mcsc.core.MakeModpack
+import io.github.peyoteheadlights.mcsc.core.ModrinthCards
 import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
 import io.github.peyoteheadlights.mcsc.core.PlayerFile
 import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
@@ -161,6 +162,7 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
     list.modpack?.let { pack -> item { LinkedPackCard(vm, content, pack, changes == Changes.READY && idle) } }
     if (vm.canDo(Permissions.MODS_MANAGE)) item { MakeModpackCard(vm, content, idle) }
     if (vm.canDo(Permissions.MODS_MANAGE)) item { DownloadLinkCard(vm, content, idle) }
+    if (vm.canDo(Permissions.MODS_MANAGE)) item { ModrinthCard(vm, content, idle) }
     list.fit?.let { fit -> item { StillFitCard(vm, content, list, fit, kind, changes == Changes.READY && idle) } }
     if (list.overlaps.isNotEmpty()) item { SameJobCard(vm, content, list, changes == Changes.READY && idle) }
 
@@ -624,6 +626,8 @@ private fun ContentDialogs(vm: AppViewModel, content: ContentPages, ask: (Conten
     content.packUpdate?.let { PackUpdateDialog(vm, content) }
     content.makeOptions?.let { options -> MakeModpackDialog(vm, content, options) }
     if (content.askingPackLink) PackLinkDialog(vm, content)
+    content.askingModrinth?.let { ask -> ModrinthProjectDialog(vm, content, ask) }
+    if (content.askingServerLink) ServerProjectDialog(vm, content)
 }
 
 /** A sheet-like question: a title, scrolling words, and one button plus Cancel. */
@@ -850,6 +854,98 @@ private fun DownloadLinkCard(vm: AppViewModel, content: ContentPages, idle: Bool
             ),
         )
         Note(t("pack.tailscale_only"))
+    }
+}
+
+/** Sign in with Modrinth, upload the modpack and own jars, the Server Project helper. */
+@Composable
+private fun ModrinthCard(vm: AppViewModel, content: ContentPages, idle: Boolean) {
+    val strings = vm.strings
+    val context = LocalContext.current
+    LaunchedEffect(content.serverId) { content.loadModrinth() }
+    LaunchedEffect(vm.modrinthReturn) {
+        vm.modrinthReturn?.let {
+            vm.modrinthReturn = null
+            content.finishModrinth(it, strings)
+        }
+    }
+    val share = content.modrinth ?: return
+    val owner = vm.canDo(Permissions.PC_SETTINGS)
+    val account = share.account
+    var showSteps by remember { mutableStateOf(false) }
+    SectionTitle(t("modrinth.title"))
+    Card {
+        Note(t("modrinth.intro"))
+        for (line in ModrinthCards.lines(strings, share, owner)) Note(line, color = LocalColors.current.text)
+        val made = share.made
+        Presses(
+            listOfNotNull(
+                Press(t("modrinth.sign_in"), { content.signInModrinth({ openLink(context, it) }, strings) }, enabled = idle)
+                    .takeIf { owner && account.available && !account.signedIn },
+                Press(
+                    if (made != null) strings.t("modrinth.upload_named", "name" to made.name, "version" to made.version) else t("modrinth.upload"),
+                    {
+                        if (share.project != null) content.uploadToModrinth("", "", strings)
+                        else content.askingModrinth = ModrinthAsk(null, made?.name ?: "")
+                    },
+                    enabled = idle && account.signedIn && made != null,
+                ),
+                Press(t("modrinth.own_jar"), {
+                    share.ownJars.firstOrNull { it.url == null }?.let { content.askingModrinth = ModrinthAsk(it, it.name) }
+                }, enabled = idle && account.signedIn).takeIf { share.ownJars.any { it.url == null } },
+                Press(t("modrinth.sign_out"), { content.signOutModrinth(strings) }, enabled = idle).takeIf { owner && account.signedIn },
+            ),
+        )
+        Note(t("modrinth.review_note"))
+        Note(t("modrinth.server_title"), color = LocalColors.current.text)
+        Note(t("modrinth.server_intro"))
+        for (line in ModrinthCards.serverLines(strings, share)) Note(line, color = LocalColors.current.text)
+        if (share.address != null) {
+            Presses(
+                listOf(
+                    Press(t("modrinth.server_how"), { showSteps = true }),
+                    Press(t("modrinth.server_paste"), { content.askingServerLink = true }, enabled = idle),
+                ),
+            )
+        }
+    }
+    if (showSteps) {
+        Question(strings.t("modrinth.server_title"), confirm = null, onConfirm = {}, onDismiss = { showSteps = false }) {
+            Text(ModrinthCards.steps(strings, share))
+        }
+    }
+}
+
+/** The Modrinth address and one-line summary of a new project. */
+@Composable
+private fun ModrinthProjectDialog(vm: AppViewModel, content: ContentPages, ask: ModrinthAsk) {
+    val strings = vm.strings
+    var slug by remember { mutableStateOf(ModrinthCards.slug(ask.name)) }
+    var summary by remember { mutableStateOf("") }
+    Question(
+        ask.jar?.name ?: strings.t("modrinth.title"),
+        confirm = strings.t("modrinth.upload"),
+        enabled = slug.isNotBlank() && summary.trim().length >= 3,
+        onConfirm = { content.uploadToModrinth(slug.trim(), summary.trim(), strings) },
+        onDismiss = { content.askingModrinth = null },
+    ) {
+        if (ask.jar != null) Note(t("modrinth.own_jar_pick"))
+        OutlinedTextField(value = slug, onValueChange = { slug = it.take(64) }, label = { Text(t("modrinth.slug_prompt")) }, singleLine = true)
+        OutlinedTextField(value = summary, onValueChange = { summary = it.take(256) }, label = { Text(t("modrinth.summary_prompt")) })
+    }
+}
+
+@Composable
+private fun ServerProjectDialog(vm: AppViewModel, content: ContentPages) {
+    val strings = vm.strings
+    var link by remember { mutableStateOf("") }
+    Question(
+        strings.t("modrinth.server_title"),
+        confirm = strings.t("modrinth.server_paste"),
+        onConfirm = { content.setServerProject(link.trim(), strings) },
+        onDismiss = { content.askingServerLink = false },
+    ) {
+        OutlinedTextField(value = link, onValueChange = { link = it.take(200) }, label = { Text(t("modrinth.server_paste_prompt")) }, singleLine = true)
     }
 }
 
