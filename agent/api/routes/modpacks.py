@@ -292,8 +292,8 @@ async def make_modpack(
     principal: Principal = Depends(require(MODS_MANAGE)),
     ctx=Depends(get_server),
 ):
-    """Make a modpack from this server, as a job. Nothing on the server
-    changes. Save it with GET /modpack/made/{token}."""
+    """Make a modpack from this server, as a job. On the server only the
+    Companion's settings file changes. Save it with GET /modpack/made/{token}."""
     result = await modpackmake.make(
         ctx,
         payload.name,
@@ -302,6 +302,8 @@ async def make_modpack(
         configs=payload.configs,
         players_loader=payload.players_loader,
         user=principal.user,
+        required=payload.required,
+        chat_line=payload.chat_line.model_dump() if payload.chat_line else None,
     )
     request.state.audited = True  # make writes its own audit row
     return {"ok": True, **result}

@@ -115,7 +115,7 @@ def test_a_made_modpack_reads_back_as_the_same_server(server, tmp_path):
     assert options["name"] and options["version"] == "1"
     assert {"path": "config/sodium.json", "size_bytes": 14} in options["configs"]
     assert options["players_loaders"] == [], "a Fabric server uses its own loader"
-    assert options["required_to_join"] == {"available": False}
+    assert options["required_to_join"] == {"available": False, "on": False}, "no Companion here"
 
     made = make(client, headers, leave_out_server_only=False, configs=["config/sodium.json"]).json()
     assert made["ok"], made

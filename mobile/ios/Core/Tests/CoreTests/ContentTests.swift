@@ -430,12 +430,28 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(body(1), #"{"project":"curseforge:9","server_id":""}"#)
     }
 
+    func testARequiredModpackAndItsChatLineAreSentWhenTheCompanionIsOnTheServer() async throws {
+        let c = client()
+        StubAgent.json(#"{"name": "Friends", "version": "2", "configs": [], "players_loaders": [], "discord": false, "discord_limit_bytes": 1, "required_to_join": {"available": true, "on": true}, "chat_line": {"on": false, "text": "Get {name}"}}"#)
+        let options = try await c.makeModpackOptions(serverId: "s")
+        XCTAssertTrue(options.requiredToJoin && options.requiredOn)
+        XCTAssertEqual(options.chatLine, ChatLine(on: false, text: "Get {name}"))
+
+        StubAgent.json(#"{"ok": true, "token": "t1", "filename": "Friends 2.mrpack", "files": 1, "size_bytes": 1}"#)
+        _ = try await c.makeModpack(serverId: "s", MakeModpack(name: "Friends", version: "2", required: true, chatLine: ChatLine(on: false, text: "Get {name}")))
+        XCTAssertEqual(
+            body(1),
+            #"{"chat_line":{"on":false,"text":"Get {name}"},"configs":[],"leave_out_server_only":true,"name":"Friends","players_loader":"fabric","required":true,"version":"2"}"#
+        )
+    }
+
     func testMakeAModpackSendsTheAnswersThenDownloadsItAndPostsItInDiscord() async throws {
         let c = client()
         StubAgent.json(#"{"name": "Friends", "version": "2", "configs": [{"path": "config/a.toml", "size_bytes": 9}], "players_loaders": [{"id": "fabric", "name": "Fabric"}], "discord": true, "discord_limit_bytes": 10485760, "required_to_join": {"available": false}}"#)
         let options = try await c.makeModpackOptions(serverId: "s")
         XCTAssertEqual(options.configs.first?.path, "config/a.toml")
         XCTAssertFalse(options.requiredToJoin)
+        XCTAssertEqual(options.chatLine, ChatLine())
         XCTAssertEqual(path(0), "/api/servers/s/modpack/make")
 
         StubAgent.json(#"{"ok": true, "token": "t1", "filename": "Friends 2.mrpack", "files": 3, "size_bytes": 2048, "own_files": ["overrides/mods/x.jar"], "trust_note": "Only share it with people you trust.", "get_yourself": [{"name": "Secret Mod", "page": null}], "plugins_to_get": [], "left_out": ["Ledger"], "discord": true}"#)
@@ -443,7 +459,7 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(method(1), "POST")
         XCTAssertEqual(
             body(1),
-            #"{"configs":["config/a.toml"],"leave_out_server_only":true,"name":"Friends","players_loader":"fabric","version":"2"}"#
+            #"{"configs":["config/a.toml"],"leave_out_server_only":true,"name":"Friends","players_loader":"fabric","required":false,"version":"2"}"#
         )
         let lines = MadeModpacks.lines(s, made)
         XCTAssertTrue(lines[0].hasPrefix("Friends 2.mrpack is ready"), lines[0])

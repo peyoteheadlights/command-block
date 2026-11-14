@@ -137,3 +137,66 @@ def test_too_many_files_writes_none_rather_than_a_cut_list(server, monkeypatch):
     made = make(client, headers, version="2").json()
     assert made["ok"], made
     assert not (server_dir(client) / companion.MODS_FILE).exists(), "an old list would be wrong"
+
+
+# ---------------------------------------------------------------- part 2: the join check
+def with_companion(client):
+    from .test_curseforge import fabric_jar
+
+    folder = server_dir(client) / "mods"
+    (folder / "companion.jar").write_bytes(fabric_jar(companion.MOD_ID, "0.1.0"))
+
+
+def options(client, headers):
+    return client.get(api(client, "modpack/make"), headers=headers).json()
+
+
+def test_required_to_join_is_offered_only_with_the_companion_on_the_server(server):
+    client, headers = server
+    assert options(client, headers)["required_to_join"]["available"] is False
+    refused = make(client, headers, required=True)
+    assert refused.status_code == 400
+    assert "Companion" in refused.json()["detail"]
+
+    with_companion(client)
+    got = options(client, headers)
+    assert got["required_to_join"] == {"available": True, "on": False}
+    assert got["chat_line"] == {"on": True, "text": companion.CHAT_LINE_DEFAULT}
+
+
+def test_a_required_modpack_says_so_and_carries_the_companion(server, tmp_path):
+    client, headers = server
+    with_companion(client)
+    # Even when the owner marked it server-only, players need it for the check.
+    marks = server_dir(client) / sides.MARKS_FILE
+    marks.write_text(json.dumps({"ledger": "server", companion.MOD_ID: "server"}))
+    made = make(client, headers, required=True).json()
+    assert made["ok"], made
+    got = settings(client)
+    assert got["required"] is True
+    assert "mods/companion.jar" in {f["path"] for f in got["files"]}
+    with zipfile.ZipFile(saved(client, headers, made, tmp_path)) as zf:
+        assert "overrides/mods/companion.jar" in zf.namelist()
+    # The next Make a modpack remembers it.
+    assert options(client, headers)["required_to_join"]["on"] is True
+
+
+def test_the_owner_rewords_or_turns_off_the_chat_line(server):
+    client, headers = server
+    with_companion(client)
+    make(client, headers, chat_line={"on": True, "text": "Grab {name} {version} first! {link}"})
+    got = settings(client)
+    assert got["chat_line"] == {"on": True, "text": "Grab Friends 1 first! "}
+    assert options(client, headers)["chat_line"]["text"] == "Grab {name} {version} first! {link}"
+
+    make(client, headers, version="2", chat_line={"on": False, "text": "x"})
+    assert settings(client)["chat_line"]["on"] is False
+
+
+@pytest.mark.parametrize("text", ["", "a" * 301, "line\nbreak", "{0.__class__}"])
+def test_a_bad_chat_line_is_refused(server, text):
+    client, headers = server
+    with_companion(client)
+    got = make(client, headers, chat_line={"on": True, "text": text})
+    assert got.status_code in (400, 422), got.text
+    assert not (server_dir(client) / companion.MODS_FILE).exists()

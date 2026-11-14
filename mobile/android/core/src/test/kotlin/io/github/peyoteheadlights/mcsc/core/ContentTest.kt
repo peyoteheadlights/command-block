@@ -578,6 +578,7 @@ class ContentTest {
             val options = c.makeModpackOptions("s")
             assertEquals("config/a.toml", options.configs.single().path)
             assertEquals(false, options.requiredToJoin.available)
+            assertEquals(true, options.chatLine.on)
             assertEquals("/api/servers/s/modpack/make", agent.server.takeRequest().path)
 
             agent.server.enqueue(agent.json("""{"ok": true, "token": "t1", "filename": "Friends 2.mrpack", "files": 3, "size_bytes": 2048, "own_files": ["overrides/mods/x.jar"], "trust_note": "Only share it with people you trust.", "get_yourself": [{"name": "Secret Mod", "page": null}], "plugins_to_get": [], "left_out": ["Ledger"], "discord": true}"""))
@@ -585,7 +586,7 @@ class ContentTest {
             val sent = agent.server.takeRequest()
             assertEquals("POST", sent.method)
             assertEquals(
-                """{"name":"Friends","version":"2","leave_out_server_only":true,"configs":["config/a.toml"],"players_loader":"fabric"}""",
+                """{"name":"Friends","version":"2","leave_out_server_only":true,"configs":["config/a.toml"],"players_loader":"fabric","required":false}""",
                 sent.body.readUtf8(),
             )
             val lines = MadeModpacks.lines(strings, made)
@@ -605,6 +606,23 @@ class ContentTest {
             val posted = agent.server.takeRequest()
             assertEquals("/api/servers/s/modpack/made/discord", posted.path)
             assertEquals("""{"token":"t1"}""", posted.body.readUtf8())
+        }
+    }
+
+    @Test
+    fun `a required modpack and its chat line are sent when the companion is on the server`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"name": "Friends", "version": "2", "configs": [], "players_loaders": [], "discord": false, "discord_limit_bytes": 1, "required_to_join": {"available": true, "on": true}, "chat_line": {"on": false, "text": "Get {name}"}}"""))
+            val options = c.makeModpackOptions("s")
+            assertEquals(RequiredToJoin(available = true, on = true), options.requiredToJoin)
+            assertEquals(ChatLine(on = false, text = "Get {name}"), options.chatLine)
+            agent.server.takeRequest()
+
+            agent.server.enqueue(agent.json("""{"ok": true, "token": "t1", "filename": "Friends 2.mrpack", "files": 1, "size_bytes": 1}"""))
+            c.makeModpack("s", MakeModpack("Friends", "2", required = true, chatLine = ChatLine(false, "Get {name}")))
+            val sent = agent.server.takeRequest().body.readUtf8()
+            assertTrue(sent, sent.endsWith(""""required":true,"chat_line":{"on":false,"text":"Get {name}"}}"""))
         }
     }
 

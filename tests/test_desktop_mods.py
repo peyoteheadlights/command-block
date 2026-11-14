@@ -1082,6 +1082,8 @@ def test_make_a_modpack_then_save_it_and_post_it_in_discord(
     dialog = asked_with[0]
     assert dialog.leave_out.isChecked(), "ticked by default for friends"
     assert dialog.body()["configs"] == ["config/alpha.toml"]
+    assert not dialog.required.isEnabled(), "no Companion on this server"
+    assert not dialog.chat_on.isVisibleTo(dialog)
     shown = shown_text(page)
     assert "Only share it with people you trust." in shown, "Alpha and Gamma are own jars"
     assert "Share it from the Modrinth App" in shown
@@ -1224,3 +1226,22 @@ def test_the_side_filter_and_on_all_servers(qapp, agent_http):
     wait_for(qapp, lambda: "Alpha" in shown_text(page) and "For: Both" in shown_text(page))
     page.everywhere.click()
     wait_for(qapp, lambda: can(page, "Remove", "Alpha"))
+
+
+def test_make_dialog_offers_required_and_the_chat_line_with_the_companion(qapp):
+    from desktop import make_modpack
+
+    options = {
+        "name": "Friends",
+        "version": "2",
+        "required_to_join": {"available": True, "on": False},
+        "chat_line": {"on": True, "text": "Get {name} {version}"},
+    }
+    dialog = make_modpack.MakeDialog(None, options)
+    assert dialog.required.isEnabled() and not dialog.required.isChecked()
+    assert dialog.body()["chat_line"] == {"on": True, "text": "Get {name} {version}"}
+    dialog.required.setChecked(True)
+    assert not dialog.chat_text.isEnabled(), "a required modpack has no chat line"
+    assert dialog.body()["required"] is True
+    dialog.chat_text.setText("  ")
+    assert dialog.body()["chat_line"] is None, "empty: the agent's own wording"

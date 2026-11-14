@@ -188,8 +188,13 @@ data class ModpackConfigFile(val path: String, @SerialName("size_bytes") val siz
 @Serializable
 data class PlayersLoader(val id: String, val name: String = "")
 
+/** [available]: the Companion mod is on the server. [on]: ticked last time. */
 @Serializable
-data class RequiredToJoin(val available: Boolean = false)
+data class RequiredToJoin(val available: Boolean = false, val on: Boolean = false)
+
+/** The line players without the modpack see; {name}, {version}, {link}, {get_it} are filled in. */
+@Serializable
+data class ChatLine(val on: Boolean = true, val text: String = "")
 
 /** What Make a modpack offers. [playersLoaders] is empty on a mod server. */
 @Serializable
@@ -200,6 +205,7 @@ data class ModpackMakeOptions(
     @SerialName("players_loaders") val playersLoaders: List<PlayersLoader> = emptyList(),
     val discord: Boolean = false,
     @SerialName("required_to_join") val requiredToJoin: RequiredToJoin = RequiredToJoin(),
+    @SerialName("chat_line") val chatLine: ChatLine = ChatLine(),
 )
 
 /** The person's answers to Make a modpack. */
@@ -209,6 +215,8 @@ data class MakeModpack(
     val leaveOutServerOnly: Boolean = true,
     val configs: List<String> = emptyList(),
     val playersLoader: String = "fabric",
+    val required: Boolean = false,
+    val chatLine: ChatLine? = null,
 )
 
 /** A CurseForge mod its author keeps from other apps: never put in. */
