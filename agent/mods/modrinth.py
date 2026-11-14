@@ -325,6 +325,15 @@ class ModrinthClient:
         }
         return _by_hash(await self._post("/version_files/update", body))
 
+    async def version_by_hash(self, sha512: str) -> dict[str, Any] | None:
+        """The version a file belongs to, found by its SHA-512, or None."""
+        try:
+            return self._version_summary(
+                await self._get(f"/version_file/{sha512}", {"algorithm": "sha512"})
+            )
+        except ModrinthNotFound:
+            return None
+
     async def by_hash(self, sha512: str) -> str | None:
         """The project a file belongs to, found by its SHA-512, or None."""
         try:

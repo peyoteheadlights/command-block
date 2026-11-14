@@ -344,6 +344,18 @@ class ModpackIntoRequest(BaseModel):
     confirm: bool = False
 
 
+class ModpackPreviewRequest(BaseModel):
+    version_id: str | None = Field(
+        default=None, pattern=r"^[\w:.-]{1,80}$", description="Null: the newest"
+    )
+
+
+class ModpackUpdateRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=32)
+    use_pack_configs: bool = False
+    confirm: bool = False
+
+
 class ChatRequest(BaseModel):
     message: str = Field(max_length=220)
 

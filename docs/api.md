@@ -279,6 +279,9 @@ Both saves keep a safety backup of the old file and answer with `changed`,
 | DELETE | `/api/modpacks/{token}` | Throw an uploaded pack away |
 | POST | `/api/modpacks/{token}/new-server` | Make a new server from the pack: `{"name", "directory", "eula_accepted": true}` |
 | POST | `/api/servers/{id}/modpack` | Import into this server: `{"token", "confirm": true}`. Stops it, backs it up, moves its mods aside, changes its version first if needed |
+| POST | `/api/servers/{id}/modpack/update/preview` | Linked modpack only (`modpack` in `GET /mods`): `{"version_id": null}` downloads its newest version (or that one) and answers with a `token`, the `pack` and `changes`: `added`, `removed`, `newer`, `added_by_you` (kept), `configs_changed_by_you` (kept unless `use_pack_configs`), `version_change`. Compared by file hash. Changes nothing |
+| POST | `/api/servers/{id}/modpack/update` | Modpack update: `{"token", "use_pack_configs": false, "confirm": true}`. Stops the server, one backup of what it touches, all or nothing, one Undo (which also puts the old link back) |
+| DELETE | `/api/servers/{id}/modpack/link` | Unlink: the server keeps its mods and stops following the modpack |
 
 ## Server types, versions and crossplay
 

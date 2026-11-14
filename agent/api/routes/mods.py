@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
-from ... import protection, suggestions
+from ... import linkedpack, protection, suggestions
 from ...jobs import JobConflict
 from ...mods import copy as copy_module
 from ...mods import fit
@@ -67,6 +67,14 @@ router = APIRouter()
 
 @router.get("/mods", response_model=ModList)
 async def list_mods(principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)):
+    # Opening the Mods page asks Modrinth about a linked modpack, at most
+    # once an hour and never for long (CurseForge waits for Check).
+    try:
+        await asyncio.wait_for(
+            linkedpack.check_quietly(ctx, relay=False, max_age=linkedpack.CHECK_EVERY), 5
+        )
+    except TimeoutError:
+        pass
     mods = ctx.mods.list_installed()
     checks = ctx.mods.check_all()
     return {
@@ -84,6 +92,7 @@ async def list_mods(principal: Principal = Depends(require(SERVER_VIEW)), ctx=De
         "needs_you": ctx.mods.needs_you(),
         "stored_separately": ctx.db.get_setting("mods_stored_separately") is True,
         "fit": ctx.db.get_setting(fit.SETTING),
+        "modpack": linkedpack.card(ctx, mods),
     }
 
 
@@ -328,6 +337,7 @@ async def mod_updates(
     ctx=Depends(get_server),
 ):
     if refresh:
+        await linkedpack.check_quietly(ctx, relay=True)
         updates = await ctx.mods.check_updates()
         return {"updates": updates, "checked_at": time.time()}
     updates = []

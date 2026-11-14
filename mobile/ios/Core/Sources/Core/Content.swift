@@ -240,6 +240,41 @@ public enum SameJob {
 }
 
 /// Update all's list and what is sent.
+/// The linked modpack card and Modpack update's question.
+public enum LinkedPacks {
+    public static func lines(_ strings: Strings, _ pack: LinkedModpack) -> [String] {
+        var lines = [strings.t("linked.from", ["name": pack.name, "version": pack.version, "site": pack.site])]
+        if let update = pack.update {
+            lines.append(update.version.isEmpty
+                ? strings.t("linked.update_ready_unnamed")
+                : strings.t("linked.update_ready", ["version": update.version]))
+        }
+        if pack.addedByYou > 0 { lines.append(strings.tn("linked.yours", count: pack.addedByYou)) }
+        return lines
+    }
+
+    public static func changes(_ strings: Strings, _ changes: ModpackChanges) -> [String] {
+        [
+            ("linked.newer", changes.newer.map { "\($0.from) → \($0.to)" }),
+            ("linked.added", changes.added),
+            ("linked.removed", changes.removed),
+            ("linked.kept", changes.addedByYou),
+            ("linked.configs", changes.configsChangedByYou),
+        ].filter { !$0.1.isEmpty }.map { strings.t($0.0, ["names": $0.1.joined(separator: ", ")]) }
+    }
+
+    public static func steps(_ strings: Strings, _ preview: ModpackUpdatePreview) -> [String] {
+        var steps = [strings.t("pack.step_stop"), strings.t("linked.step_one_backup")]
+        if preview.changes.versionChange {
+            steps.append(strings.t("pack.step_version", [
+                "type": preview.pack.typeName ?? strings.t("value.unknown"),
+                "version": preview.changes.minecraftVersion,
+            ]))
+        }
+        return steps
+    }
+}
+
 /// The "Still fit?" card: its first line, and "Change these" as an Update all.
 public enum StillFit {
     public static func lead(_ strings: Strings, _ fit: ModFit, plugins: Bool) -> String {
