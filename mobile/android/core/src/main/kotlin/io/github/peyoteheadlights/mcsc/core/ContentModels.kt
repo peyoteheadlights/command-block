@@ -148,6 +148,58 @@ data class ModpackUpdatePreview(
 @Serializable
 data class ModpackUpdated(val undo: Undo? = null)
 
+/** A config file Make a modpack can put in. */
+@Serializable
+data class ModpackConfigFile(val path: String, @SerialName("size_bytes") val sizeBytes: Long = 0)
+
+@Serializable
+data class PlayersLoader(val id: String, val name: String = "")
+
+@Serializable
+data class RequiredToJoin(val available: Boolean = false)
+
+/** What Make a modpack offers. [playersLoaders] is empty on a mod server. */
+@Serializable
+data class ModpackMakeOptions(
+    val name: String = "",
+    val version: String = "1",
+    val configs: List<ModpackConfigFile> = emptyList(),
+    @SerialName("players_loaders") val playersLoaders: List<PlayersLoader> = emptyList(),
+    val discord: Boolean = false,
+    @SerialName("required_to_join") val requiredToJoin: RequiredToJoin = RequiredToJoin(),
+)
+
+/** The person's answers to Make a modpack. */
+data class MakeModpack(
+    val name: String,
+    val version: String,
+    val leaveOutServerOnly: Boolean = true,
+    val configs: List<String> = emptyList(),
+    val playersLoader: String = "fabric",
+)
+
+/** A CurseForge mod its author keeps from other apps: never put in. */
+@Serializable
+data class GetYourself(val name: String = "", val page: String? = null)
+
+/** A made modpack, downloaded with [token]. [trustNote]: own files are inside. */
+@Serializable
+data class ModpackMade(
+    val token: String,
+    val filename: String = "modpack.mrpack",
+    val files: Int = 0,
+    @SerialName("size_bytes") val sizeBytes: Long? = null,
+    @SerialName("own_files") val ownFiles: List<String> = emptyList(),
+    @SerialName("trust_note") val trustNote: String? = null,
+    @SerialName("get_yourself") val getYourself: List<GetYourself> = emptyList(),
+    @SerialName("plugins_to_get") val pluginsToGet: List<String> = emptyList(),
+    @SerialName("left_out") val leftOut: List<String> = emptyList(),
+    val discord: Boolean = false,
+)
+
+@Serializable
+data class ModpackPosted(val posted: Int = 0)
+
 /** One mod in an [Overlap]. [turnOff]: the pick isn't this one. */
 @Serializable
 data class OverlapMod(

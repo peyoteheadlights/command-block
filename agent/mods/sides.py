@@ -239,10 +239,10 @@ def folder(ctx: ServerContext) -> Path:
     return ctx.config.server_dir / FOLDER
 
 
-def _kind(data: bytes) -> str | None:
+def _kind(data: bytes | Path) -> str | None:
     """mod, resource pack or shader pack, read from the zip's own files."""
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        with zipfile.ZipFile(io.BytesIO(data) if isinstance(data, bytes) else data) as zf:
             names = zf.namelist()
     except zipfile.BadZipFile:
         return None

@@ -619,3 +619,18 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
         completionHandler(nil)
     }
 }
+
+/// What a made modpack says on the Make a modpack card: ready, the trust
+/// note when own files are inside, and what isn't inside and why.
+public enum MadeModpacks {
+    public static func lines(_ strings: Strings, _ made: ModpackMade) -> [String] {
+        var lines = [strings.t("make.made", ["name": made.filename, "size": Display.bytes(strings, made.sizeBytes)])]
+        if made.trustNote != nil { lines.append(strings.t("make.trust")) }
+        lines += [
+            ("make.get_yourself", made.getYourself.map(\.name)),
+            ("make.plugins_to_get", made.pluginsToGet),
+            ("make.left_out", made.leftOut),
+        ].filter { !$0.1.isEmpty }.map { strings.t($0.0, ["names": $0.1.joined(separator: ", ")]) }
+        return lines
+    }
+}
