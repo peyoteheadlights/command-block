@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..events import Event
+from . import sides
 from .dependencies import PLATFORM_IDS, describe_range, pretty_name
 from .jarinfo import ModInfo, range_satisfies
 from .manager import ModError
@@ -136,6 +137,7 @@ async def refresh(ctx: ServerContext, about: str, mod_ids: set[str] | None) -> N
     """Check, save the answer for the Mods page and tell the apps. A check
     that fails is logged; the card is only cleared, never made up."""
     await catch_up(ctx.mods)
+    await sides.catch_up(ctx.mods)
     try:
         result = await check_fit(ctx, about, mod_ids)
     except Exception:

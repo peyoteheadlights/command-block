@@ -16,7 +16,15 @@ private struct ContentConfirm: Identifiable {
 
 /// Which file the Files picker is choosing.
 private enum Picking {
-    case jar, modpack, pack
+    case jar, modpack, pack, players
+}
+
+/// "Who needs it?" for one mod; `ready`: the server is stopped, so Players (a move) is offered.
+private struct SideAsk: Identifiable {
+    let mod: Mod
+    let ready: Bool
+
+    var id: String { mod.filename }
 }
 
 /// Mods, Plugins or Packs, named for the server type (mirrors
@@ -32,6 +40,7 @@ struct ContentView: View {
     @Environment(AppModel.self) private var model
     @State private var asking: ContentConfirm?
     @State private var picking: Picking?
+    @State private var choosingSide: SideAsk?
     @State private var query = ""
     @State private var packQuery = ""
     @State private var web: WebLink?
@@ -82,6 +91,22 @@ struct ContentView: View {
                 },
                 message: { ask in Text(verbatim: ask.body) }
             )
+            .confirmationDialog(
+                model.t("sides.who_title", ["name": choosingSide.map { $0.mod.name.isEmpty ? $0.mod.filename : $0.mod.name } ?? ""]),
+                isPresented: Binding(get: { choosingSide != nil }, set: { if !$0 { choosingSide = nil } }),
+                titleVisibility: .visible,
+                presenting: choosingSide
+            ) { ask in
+                // Players moves the jar out of the mods folder, so only while the server is stopped.
+                ForEach(Sides.picks(ask.mod).filter { $0 != "players" || ask.ready }, id: \.self) { side in
+                    Button(model.t("sides.mark_" + side)) {
+                        let strings = model.strings
+                        let name = ask.mod.name.isEmpty ? ask.mod.filename : ask.mod.name
+                        Task { await content.setSide(ask.mod.filename, name: name, side: side, strings) }
+                    }
+                }
+                Button(model.t("mobile.common.cancel"), role: .cancel) {}
+            }
             .sheet(item: $content.versions) { ask in
                 VersionsSheet(content: content, ask: ask, palette: palette)
             }
@@ -342,6 +367,17 @@ struct ContentView: View {
             ForEach(list.mods) { mod in
                 modCard(content, mod, changes, palette)
             }
+            if !list.oddSetups.isEmpty {
+                CardBox(palette: palette) {
+                    Text(verbatim: model.t("sides.odd_title")).foregroundStyle(palette.tone(.warning))
+                    ForEach(list.oddSetups, id: \.text) { odd in
+                        Text(verbatim: "• " + odd.text).font(.footnote).foregroundStyle(palette.tone(.warning))
+                    }
+                }
+            }
+            if kind != .packs {
+                playersOnly(content, list.playerOnly, kind, changes, palette)
+            }
 
             if changes == .ready {
                 SectionTitle(text: model.t("mobile.content.search_title"), palette: palette)
@@ -439,6 +475,11 @@ struct ContentView: View {
             presses.append(Press(title: model.t("mods.remove"), danger: true, enabled: ready) {
                 Task { await content.askRemove(mod, strings) }
             })
+            if !Sides.picks(mod).isEmpty {
+                presses.append(Press(title: model.t("sides.who"), enabled: idle) {
+                    choosingSide = SideAsk(mod: mod, ready: ready)
+                })
+            }
         }
         return CardBox(palette: palette) {
             Text(verbatim: mod.name.isEmpty ? mod.filename : mod.name)
@@ -462,10 +503,66 @@ struct ContentView: View {
                     .font(.footnote)
                     .foregroundStyle(palette.textSecondary)
             }
+            if let side = Sides.words(strings, mod) {
+                Text(verbatim: side)
+                    .font(.footnote)
+                    .foregroundStyle(palette.textSecondary)
+            }
             if model.technical {
                 Hint(text: Content.technical(strings, mod), palette: palette)
             }
             Presses(presses: presses, palette: palette)
+        }
+    }
+
+    /// The player-only folder: mods, resource packs and shader packs the server never loads.
+    @ViewBuilder
+    private func playersOnly(_ content: ContentPages, _ files: [PlayerFile], _ kind: ContentKind, _ changes: Changes, _ palette: Palette) -> some View {
+        let manage = changes != .notAllowed
+        let idle = content.busy == nil
+        if manage || !files.isEmpty {
+            SectionTitle(text: model.t("sides.players_title"), palette: palette)
+            CardBox(palette: palette) {
+                Hint(text: model.t("sides.players_intro"), palette: palette)
+                if files.isEmpty {
+                    Text(verbatim: model.t("sides.players_none")).foregroundStyle(palette.textSecondary)
+                }
+                ForEach(files) { file in
+                    let name = file.name.isEmpty ? file.filename : file.name
+                    Text(verbatim: name).font(.headline).foregroundStyle(palette.textPrimary)
+                    Text(verbatim: [file.version, model.t(file.kind == "mod" ? "sides.kind_mod" : "sides.kind_pack"), file.filename]
+                        .filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.footnote)
+                        .foregroundStyle(palette.textSecondary)
+                    if manage {
+                        Presses(presses: (file.kind == "mod" && kind == .mods ? [
+                            Press(title: model.t("sides.move_to_server"), enabled: changes == .ready && idle) {
+                                let strings = model.strings
+                                Task { await content.setSide(file.filename, name: name, side: "both", strings) }
+                            },
+                        ] : []) + [
+                            Press(title: model.t("mods.remove"), danger: true, enabled: idle) {
+                                let strings = model.strings
+                                asking = ContentConfirm(
+                                    title: strings.t("sides.remove_title", ["name": name]),
+                                    body: strings.t("sides.remove_body"),
+                                    confirm: strings.t("mods.remove")
+                                ) {
+                                    Task { await content.removeForPlayers(file.filename, strings) }
+                                }
+                            },
+                        ], palette: palette)
+                    }
+                }
+                if content.busy == "players" {
+                    Hint(text: model.t("mobile.content.reading"), palette: palette)
+                }
+                if manage {
+                    Presses(presses: [
+                        Press(title: model.t("sides.players_add"), enabled: idle) { picking = .players },
+                    ], palette: palette)
+                }
+            }
         }
     }
 
@@ -746,6 +843,9 @@ struct ContentView: View {
         case .pack:
             fits = Content.accepts(.packs, name)
             expected = Content.PACK_FILES.joined(separator: ", ")
+        case .players:
+            fits = Sides.accepts(name)
+            expected = ".jar, .zip"
         }
         guard fits else {
             content.said = Said(text: strings.t("mobile.content.wrong_file", ["kind": expected]), good: false)
@@ -763,6 +863,7 @@ struct ContentView: View {
             case .jar: await content.uploadMod(file, strings)
             case .modpack: await content.inspectModpack(file, strings)
             case .pack: await content.uploadAddon(file, strings)
+            case .players: await content.uploadForPlayers(file, strings)
             }
         }
     }

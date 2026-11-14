@@ -385,6 +385,22 @@ class ContentPages(
         }
     }
 
+    // ------------------------------------------------------------ Server / Players / Both
+    fun setSide(filename: String, name: String, side: String, strings: Strings) = work("side:$filename", strings, reload = ::loadMods) {
+        it.setModSide(serverId, filename, side)
+        Said(strings.t("sides.marked_$side", "name" to name), good = true)
+    }
+
+    fun uploadForPlayers(file: PickedFile, strings: Strings) = work("players", strings, reload = ::loadMods) {
+        it.uploadForPlayers(serverId, file)
+        Said(strings.t("sides.players_added", "name" to file.name), good = true)
+    }
+
+    fun removeForPlayers(filename: String, strings: Strings) = work("remove:$filename", strings, reload = ::loadMods) {
+        it.removeForPlayers(serverId, filename)
+        null
+    }
+
     // ------------------------------------------------------------ linked modpack
     var packUpdate: ModpackUpdatePreview? by mutableStateOf(null)
         private set

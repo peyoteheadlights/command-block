@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 from . import modpack
 from .events import Event
 from .mods.jarinfo import DISABLED_SUFFIX, sha256_file
+from .mods.sides import from_pack
 from .security.paths import EXECUTABLE_EXTENSIONS, PathSafetyError, check_archive_member
 
 if TYPE_CHECKING:
@@ -120,12 +121,17 @@ def _file_entry(folder: Path, item: modpack.PackFile) -> dict[str, Any] | None:
     path = folder / item.path
     if not item.key or not path.is_file():
         return None
-    return {
+    entry = {
         "path": item.path.replace("\\", "/"),
         "key": item.key,
         "project": item.project,
         "sha256": sha256_file(path),
     }
+    # The pack's own Server / Players / Both for it (agent/mods/sides.py).
+    side = from_pack({"client": item.client, "server": item.server})
+    if side:
+        entry["side"] = side
+    return entry
 
 
 def _override_hashes(pack: modpack.Pack, archive: Path) -> dict[str, str]:

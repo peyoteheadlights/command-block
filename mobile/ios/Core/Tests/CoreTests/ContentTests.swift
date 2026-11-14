@@ -213,6 +213,21 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(ModList().overlaps, [])
     }
 
+    func testServerPlayersAndBothSayWhereTheMarkCameFrom() throws {
+        let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [{"filename": "a.jar", "side": "both", "side_from": "unknown", "loader": "forge"}, {"filename": "b.jar", "side": "server", "side_from": "modrinth"}, {"filename": "p.jar", "side": "server", "side_from": "file", "loader": "paper"}], "server_state": "OFFLINE", "player_only": [{"filename": "map.jar", "name": "Minimap", "kind": "mod", "size_bytes": 10}], "odd_setups": [{"filename": "a.jar", "text": "Alpha needs Beta."}]}"#.utf8))
+        let a = list.mods[0], b = list.mods[1], plugin = list.mods[2]
+        XCTAssertEqual(Sides.words(s, a), "For: Both (not sure, the mod doesn't say)")
+        XCTAssertEqual(Sides.words(s, b), "For: Server (from Modrinth)")
+        XCTAssertNil(Sides.words(s, plugin))
+        XCTAssertEqual(Sides.picks(a), ["server", "players"])
+        XCTAssertEqual(Sides.picks(b), ["players", "both"])
+        XCTAssertEqual(Sides.picks(plugin), [])
+        XCTAssertEqual(list.playerOnly.first?.name, "Minimap")
+        XCTAssertEqual(list.oddSetups.first?.text, "Alpha needs Beta.")
+        XCTAssertTrue(Sides.accepts("Faithful.ZIP"))
+        XCTAssertFalse(Sides.accepts("pack.mrpack"))
+    }
+
     func testALinkedModpacksCardAndModpackUpdatesQuestion() throws {
         let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [{"filename": "mine.jar", "added_by_you": true}], "server_state": "OFFLINE", "modpack": {"name": "Test Pack", "site": "Modrinth", "version": "1.2.0", "update": {"version_id": "v2", "version": "1.3.0"}, "added_by_you": 1}}"#.utf8))
         var pack = try XCTUnwrap(list.modpack)

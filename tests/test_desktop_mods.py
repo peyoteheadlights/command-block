@@ -920,3 +920,47 @@ def test_a_linked_modpack_card_updates_and_unlinks(qapp, agent_http, monkeypatch
     button(page, "Unlink").click()
     wait_for(qapp, lambda: not page.linked_card.isVisible())
     assert linkedpack.read_link(ctx) is None
+
+
+# ---------------------------------------------------------------- Server / Players / Both
+def row_menu_item(page, mod, words):
+    """An item of one mod's ⋯ menu."""
+    for more in page.findChildren(QtWidgets.QToolButton):
+        if more.isVisibleTo(page) and more.accessibleName().endswith(f": {mod}") and more.menu():
+            for action in more.menu().actions():
+                if action.text() == words:
+                    return action
+    raise AssertionError(f"no {words!r} in {mod}'s menu")
+
+
+def test_marks_move_a_mod_to_players_only_and_back(qapp, agent_http, tmp_path):
+    folder = with_mods(agent_http)
+    make_jar(folder / "map.jar", "minimap", name="Minimap", environment="client")
+    players = core_of(agent_http).servers["survival"].config.server_dir / "player-only"
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc)
+    window.confirm = lambda *words: True  # no site lists these files
+    wait_for(qapp, lambda: "For: Players (from the mod's file)" in shown_text(page))
+    assert "For: Both (from the mod's file)" in shown_text(page)
+    assert "Players only" in shown_text(page) and "Nothing here yet." in shown_text(page)
+
+    wait_for(qapp, lambda: can(page, "Turn off", "Minimap"))
+    row_menu_item(page, "Minimap", "Only players need it").trigger()
+    wait_for(qapp, lambda: "Minimap moved to Players only" in page.note.text(), 20)
+    assert (players / "map.jar").is_file() and not (folder / "map.jar").exists()
+    wait_for(qapp, lambda: can(page, "Move to the server", "Minimap"))
+
+    pack = tmp_path / "faithful.zip"
+    import zipfile
+
+    with zipfile.ZipFile(pack, "w") as zf:
+        zf.writestr("pack.mcmeta", "{}")
+    pc.picked = str(pack)
+    button(page, "Add for players").click()
+    wait_for(qapp, lambda: "faithful.zip was added for players." in page.note.text(), 20)
+    assert (players / "faithful.zip").is_file()
+
+    row_button(page, "Move to the server", "Minimap").click()
+    wait_for(qapp, lambda: "Minimap is now marked Both." in page.note.text(), 20)
+    assert (folder / "map.jar").is_file()
+    wait_for(qapp, lambda: "For: Both (set by you)" in shown_text(page))

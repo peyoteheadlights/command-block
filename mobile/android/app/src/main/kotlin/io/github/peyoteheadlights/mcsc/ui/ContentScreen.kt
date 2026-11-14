@@ -53,6 +53,8 @@ import io.github.peyoteheadlights.mcsc.core.SameJob
 import io.github.peyoteheadlights.mcsc.core.Modpacks
 import io.github.peyoteheadlights.mcsc.core.LinkedModpack
 import io.github.peyoteheadlights.mcsc.core.LinkedPacks
+import io.github.peyoteheadlights.mcsc.core.PlayerFile
+import io.github.peyoteheadlights.mcsc.core.Sides
 import io.github.peyoteheadlights.mcsc.core.Permissions
 import io.github.peyoteheadlights.mcsc.core.States
 import io.github.peyoteheadlights.mcsc.core.StillFit
@@ -189,6 +191,15 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
     }
     if (list.mods.isEmpty()) item { Card { Item(t("mods.none"), subtitle = t("mods.none_hint").takeIf { changes == Changes.READY }) } }
     items(list.mods, key = { it.filename }) { mod -> ModCard(vm, content, mod, changes, ask) }
+    if (list.oddSetups.isNotEmpty()) {
+        item {
+            Card {
+                Note(t("sides.odd_title"), color = LocalColors.current.warning)
+                for (odd in list.oddSetups) Note("• ${odd.text}", color = LocalColors.current.warning)
+            }
+        }
+    }
+    if (kind != ContentKind.PACKS) playersOnly(vm, content, list.playerOnly, kind, changes, ask)
 
     if (changes == Changes.READY) {
         item { SectionTitle(t("mobile.content.search_title")) }
@@ -272,6 +283,7 @@ private fun ModCard(vm: AppViewModel, content: ContentPages, mod: Mod, changes: 
     val strings = vm.strings
     val status = Content.status(mod)
     val idle = content.busy == null
+    var choosing by remember { mutableStateOf(false) }
     Card {
         Item(
             mod.name.ifBlank { mod.filename },
@@ -280,6 +292,7 @@ private fun ModCard(vm: AppViewModel, content: ContentPages, mod: Mod, changes: 
         for (problem in Content.problems(mod)) Note(problem, color = if (mod.status == "error") colors.danger else colors.warning)
         Content.newer(strings, mod)?.let { Note(it, color = colors.accentInk) }
         if (mod.addedByYou == true) Note(t("linked.added_by_you"), color = colors.text3)
+        Sides.words(strings, mod)?.let { Note(it, color = colors.text3) }
         if (vm.technical) Note(Content.technical(strings, mod), color = colors.text3)
         if (changes != Changes.NOT_ALLOWED) {
             val ready = changes == Changes.READY && idle
@@ -289,8 +302,61 @@ private fun ModCard(vm: AppViewModel, content: ContentPages, mod: Mod, changes: 
                     Press(t("mods.update"), { content.askUpdate(mod) }, enabled = ready).takeIf { mod.updateAvailable != null },
                     Press(t("mobile.content.versions"), { content.showVersions(mod) }, enabled = idle).takeIf { mod.modId.isNotBlank() },
                     Press(t("mods.remove"), { content.askRemove(mod, strings) }, danger = true, enabled = ready),
+                    Press(t("sides.who"), { choosing = true }, enabled = idle).takeIf { Sides.picks(mod).isNotEmpty() },
                 ),
             )
+        }
+    }
+    if (choosing) {
+        val ready = changes == Changes.READY && idle
+        Question(t("sides.who_title", "name" to mod.name.ifBlank { mod.filename }), confirm = null, onConfirm = {}, onDismiss = { choosing = false }) {
+            for (side in Sides.picks(mod)) {
+                // Players moves the jar out of the mods folder, so the server must be stopped.
+                val allowed = side != "players" || ready
+                Item(
+                    t("sides.mark_$side"),
+                    subtitle = t("mobile.content.stop_first").takeIf { !allowed },
+                    onClick = if (allowed) { { choosing = false; content.setSide(mod.filename, mod.name.ifBlank { mod.filename }, side, strings) } } else null,
+                )
+            }
+        }
+    }
+}
+
+/** The player-only folder: mods, resource packs and shader packs the server never loads. */
+private fun LazyListScope.playersOnly(vm: AppViewModel, content: ContentPages, files: List<PlayerFile>, kind: ContentKind, changes: Changes, ask: (ContentAsk) -> Unit) {
+    val manage = changes != Changes.NOT_ALLOWED
+    if (files.isEmpty() && !manage) return
+    item { SectionTitle(t("sides.players_title")) }
+    item {
+        val strings = vm.strings
+        val idle = content.busy == null
+        val pick = rememberFilePicker { file ->
+            if (Sides.accepts(file.name)) content.uploadForPlayers(file, strings)
+            else content.tell(Said(strings.t("mobile.content.wrong_file", "kind" to ".jar / .zip"), good = false))
+        }
+        Card {
+            Note(t("sides.players_intro"), color = LocalColors.current.text2)
+            if (files.isEmpty()) Note(t("sides.players_none"))
+            for (file in files) {
+                val name = file.name.ifBlank { file.filename }
+                Item(name, subtitle = listOf(file.version, t(if (file.kind == "mod") "sides.kind_mod" else "sides.kind_pack"), file.filename).filter { it.isNotBlank() }.joinToString(" · "))
+                if (manage) {
+                    Presses(
+                        listOfNotNull(
+                            Press(t("sides.move_to_server"), { content.setSide(file.filename, name, "both", strings) }, enabled = changes == Changes.READY && idle)
+                                .takeIf { file.kind == "mod" && kind == ContentKind.MODS },
+                            Press(t("mods.remove"), {
+                                ask(ContentAsk(strings.t("sides.remove_title", "name" to name), strings.t("sides.remove_body"), strings.t("mods.remove"), true) {
+                                    content.removeForPlayers(file.filename, strings)
+                                })
+                            }, danger = true, enabled = idle),
+                        ),
+                    )
+                }
+            }
+            if (content.busy == "players") Note(t("mobile.content.reading"))
+            if (manage) Presses(listOf(Press(t("sides.players_add"), pick, enabled = idle)))
         }
     }
 }

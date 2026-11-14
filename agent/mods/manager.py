@@ -244,6 +244,8 @@ class ModManager:
             )
             if source == "modrinth":
                 record["modrinth_project"] = version.get("project_id")
+            if version.get("client_only"):  # CurseForge: for the game, not servers
+                record["client_only"] = True
             # What the site says this version doesn't work with, for the
             # "same job" rows (agent/mods/overlap.py).
             incompatible = [
