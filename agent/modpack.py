@@ -139,6 +139,7 @@ class PackFile:
     status: str
     reason: str | None = None
     server: str | None = None  # the pack's env.server: required, optional, unsupported
+    client: str | None = None  # the pack's env.client, for Server / Players / Both
     sha512: str | None = field(default=None, repr=False)
     sha1: str | None = field(default=None, repr=False)
     url: str | None = field(default=None, repr=False)
@@ -216,7 +217,10 @@ def _check_file(entry: Any) -> PackFile:
     size = int(size) if isinstance(size, int) and size >= 0 else None
     env: dict[str, Any] = entry["env"] if isinstance(entry.get("env"), dict) else {}
     server = str(env.get("server")) if env.get("server") else None
-    found = PackFile(path=path, name=name or path, size=size, status=DOWNLOAD, server=server)
+    client = str(env.get("client")) if env.get("client") else None
+    found = PackFile(
+        path=path, name=name or path, size=size, status=DOWNLOAD, server=server, client=client
+    )
     if server == "unsupported":
         found.status, found.reason = CLIENT, "only for the game itself, not servers"
         return found

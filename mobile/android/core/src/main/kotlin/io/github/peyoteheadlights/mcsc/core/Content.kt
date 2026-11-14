@@ -102,7 +102,7 @@ object Content {
     fun change(strings: Strings, old: String?, new: String?): String =
         "${old?.takeIf { it.isNotBlank() } ?: strings.t("value.unknown")} → ${new?.takeIf { it.isNotBlank() } ?: strings.t("value.unknown")}"
 
-    private val ACTIONS = setOf("install", "upload", "remove", "update", "rollback", "enable", "disable")
+    private val ACTIONS = setOf("install", "upload", "remove", "update", "rollback", "enable", "disable", "side", "players_add", "players_remove")
 
     /** What a history row did, in words; the agent's own name for an action the app doesn't know. */
     fun action(strings: Strings, row: ModHistoryRow): String =
@@ -266,6 +266,33 @@ object SameJob {
      * none, each one no other mod needs, so the owner keeps the one they use. */
     fun turnOff(overlap: Overlap): List<OverlapMod> =
         overlap.mods.filter { it.neededBy.isEmpty() && (overlap.keep.isEmpty() || it.turnOff) }
+}
+
+/** Server / Players / Both: the words under a mod and the picks offered. */
+object Sides {
+    val ALL = listOf("server", "players", "both")
+    private val PLUGINS = setOf("paper", "bukkit")
+    private val FROM = setOf("you", "unknown", "modpack", "file")
+    private val SITES = mapOf("modrinth" to "Modrinth", "curseforge" to "CurseForge")
+
+    /** "For: Both (not sure, the mod doesn't say)"; null for plugins, which only run on the server. */
+    fun words(strings: Strings, mod: Mod): String? {
+        val side = mod.side ?: return null
+        if (mod.loader in PLUGINS) return null
+        val words = strings.t("sides.for", "side" to strings.t("sides.$side"))
+        val from = mod.sideFrom ?: return words
+        val source = if (from in FROM) strings.t("sides.from_$from") else strings.t("sides.from_site", "site" to (SITES[from] ?: from))
+        return "$words $source"
+    }
+
+    /** The marks a mod can be changed to. Players stays offered while the jar
+     * is still in the mods folder, since picking it moves the jar out. */
+    fun picks(mod: Mod): List<String> =
+        if (mod.side == null || mod.loader in PLUGINS) emptyList()
+        else ALL.filter { it == "players" || it != mod.side }
+
+    /** A file the Players only list takes: a mod (.jar) or a pack (.zip). */
+    fun accepts(name: String): Boolean = name.lowercase().let { it.endsWith(".jar") || it.endsWith(".zip") }
 }
 
 /** The linked modpack card and Modpack update's question. */

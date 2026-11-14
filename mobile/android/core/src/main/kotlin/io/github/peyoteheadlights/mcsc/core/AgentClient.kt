@@ -655,6 +655,22 @@ class AgentClient(
     suspend fun setModEnabled(serverId: String, filename: String, enabled: Boolean): ModChanged =
         call(post("${server(serverId)}/mods/${if (enabled) "enable" else "disable"}", fileBody(filename)), ModChanged.serializer())
 
+    /** Server, Players or Both. Players moves the jar out of the mods folder. */
+    suspend fun setModSide(serverId: String, filename: String, side: String): ModSideChanged {
+        val body = buildJsonObject {
+            put("filename", filename)
+            put("side", side)
+        }
+        return call(post("${server(serverId)}/mods/side", body), ModSideChanged.serializer())
+    }
+
+    /** A mod, resource pack or shader pack for players only. */
+    suspend fun uploadForPlayers(serverId: String, file: PickedFile): PlayerFileAdded =
+        call(upload("${server(serverId)}/mods/player-only/upload?confirm=true", file), PlayerFileAdded.serializer(), slow = true)
+
+    suspend fun removeForPlayers(serverId: String, filename: String): Ok =
+        call(post("${server(serverId)}/mods/player-only/remove", fileBody(filename)), Ok.serializer())
+
     /** What else needs a mod, asked before removing it. */
     suspend fun modImpact(serverId: String, filename: String): ModImpact =
         get("${server(serverId)}/mods/impact?filename=${path(filename)}", ModImpact.serializer())

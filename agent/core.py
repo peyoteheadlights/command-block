@@ -35,6 +35,7 @@ from .minecraft.chat import ChatLog, parse_chat
 from .minecraft.crash import CrashReporter
 from .minecraft.playeractions import PlayerActions
 from .minecraft.process import MinecraftServer, ServerError
+from .mods import sides
 from .mods.fit import Later as FitCheck
 from .mods.manager import ModManager
 from .monitoring.answering import AnswerWatch
@@ -298,6 +299,7 @@ class ServerContext:
         while True:
             try:
                 await linkedpack.check_quietly(self, relay=False)
+                await sides.catch_up(self.mods)
                 updates = await self.mods.check_updates(background=True)
                 if updates:
                     await self.bus.publish(

@@ -49,7 +49,21 @@ ATTENTION = ("missing", "incompatible", "disabled", "platform_incompatible")
 STOPPED = ("OFFLINE", "CRASHED")
 PACK_FILES = (".mcpack", ".mcaddon", ".mctemplate")
 SEARCH = 10  # results asked of Modrinth at a time
-ACTIONS = ("install", "upload", "remove", "update", "rollback", "enable", "disable")
+ACTIONS = (
+    "install",
+    "upload",
+    "remove",
+    "update",
+    "rollback",
+    "enable",
+    "disable",
+    "side",
+    "players_add",
+    "players_remove",
+)
+# Server / Players / Both (agent/mods/sides.py): the mark's words, and where it came from.
+SIDES = ("server", "players", "both")
+PLUGINS = ("paper", "bukkit")
 # Plugin servers' suggestion groups, in the order shown.
 GROUPS = {
     "starter": "desktop.mods.group_starter",
@@ -291,6 +305,22 @@ class ModsPage(Page):
         layout.addWidget(drop_hint)
         self.column.addWidget(self.list_card)
 
+        # Server / Players / Both: mods that need one on the other side, and
+        # the player-only folder the server never loads (agent/mods/sides.py).
+        self.odd = label(kind="problem")
+        self.column.addWidget(self.odd)
+        self.player_only_card, layout = card(text("sides.players_title"))
+        layout.addWidget(label(text("sides.players_intro"), "sub"))
+        self.player_only_rows = QVBoxLayout()
+        layout.addLayout(self.player_only_rows)
+        self.add_for_players = push(text("sides.players_add"))
+        self.add_for_players.clicked.connect(self.pick_for_players)
+        line = QHBoxLayout()
+        line.addWidget(self.add_for_players)
+        line.addStretch()
+        layout.addLayout(line)
+        self.column.addWidget(self.player_only_card)
+
         # What friends add to their own game; never put on the server.
         self.players_card, layout = card("")
         players_intro = label(kind="sub")
@@ -358,6 +388,8 @@ class ModsPage(Page):
             self.problems,
             self.needs_you_card,
             self.linked_card,
+            self.odd,
+            self.player_only_card,
             self.fit_card,
             self.same_card,
             self.missing_card,
@@ -502,6 +534,7 @@ class ModsPage(Page):
             button.setEnabled(self.can_change)
         self.update_all_ready()
         self.show_linked(data.get("modpack"))
+        self.show_sides(data)
         self.show_fit(data.get("fit"))
         self.show_same(data.get("overlaps") or [])
         needs = data.get("needs_you") or []
@@ -544,6 +577,9 @@ class ModsPage(Page):
             words.addWidget(label(text("desktop.mods.checked_sha1"), "muted"))
         if mod.get("added_by_you"):
             words.addWidget(label(text("linked.added_by_you"), "muted"))
+        side = self.side_words(mod)
+        if side:
+            words.addWidget(label(side, "muted"))
         for issue in (mod.get("issues") or [])[:2]:
             words.addWidget(
                 label(issue["detail"], "problem" if issue.get("severity") == "error" else "sub")
@@ -585,6 +621,12 @@ class ModsPage(Page):
             )
         if self.may("mods.manage") and self.can_change:
             actions.append(("mods.remove", lambda: self.remove(mod)))
+        if self.may("mods.manage") and mod.get("side") and mod.get("loader") not in PLUGINS:
+            for side in SIDES:
+                # Players moves the jar out of the mods folder: the server must be
+                # stopped. Offered even when it's marked Players: it's still in mods.
+                if side == "players" and self.can_change or side not in (mod["side"], "players"):
+                    actions.append((f"sides.mark_{side}", lambda s=side: self.mark(mod, s)))
         for key, do in actions:
             menu.addAction(text(key)).triggered.connect(lambda _=False, d=do: d())
         more.setMenu(menu)
@@ -807,6 +849,124 @@ class ModsPage(Page):
             self.ask("POST", "/mods/remove", done, self.said, body={"filename": mod["filename"]})
 
         self.ask("GET", f"/mods/impact?filename={quote(mod['filename'])}", ask_first, self.said)
+
+    # ------------------------------------------------------------ Server / Players / Both
+    def side_words(self, mod: dict) -> str:
+        """ "For: Both (not sure)" under a mod; nothing for plugins, which
+        only ever run on the server."""
+        side = mod.get("side")
+        if not side or mod.get("loader") in PLUGINS:
+            return ""
+        words = text("sides.for", side=text(f"sides.{side}"))
+        source = mod.get("side_from")
+        if source in ("you", "unknown", "modpack", "file"):
+            words += " " + text(f"sides.from_{source}")
+        elif source:
+            site = {"modrinth": "Modrinth", "curseforge": "CurseForge"}.get(source, source)
+            words += " " + text("sides.from_site", site=site)
+        return words
+
+    def show_sides(self, data: dict) -> None:
+        odd = [o["text"] for o in data.get("odd_setups") or []]
+        self.odd.setText("\n".join([text("sides.odd_title"), *(f"• {t}" for t in odd[:6])]))
+        self.odd.setVisible(bool(odd))
+        files = data.get("player_only") or []
+        manage = self.may("mods.manage")
+        self.player_only_card.setVisible(bool(files) or manage)
+        self.add_for_players.setVisible(manage)
+        self.add_for_players.setEnabled(manage)
+        refill(
+            self.player_only_rows,
+            [self.player_only_row(f) for f in files] or [label(text("sides.players_none"), "sub")],
+        )
+
+    def player_only_row(self, item: dict) -> QWidget:
+        row = QWidget()
+        row.setProperty("kind", "row")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(12, 8, 8, 8)
+        words = QVBoxLayout()
+        name = item.get("name") or item["filename"]
+        words.addWidget(label(name, "step"))
+        kind = text("sides.kind_mod" if item.get("kind") == "mod" else "sides.kind_pack")
+        words.addWidget(
+            label(
+                "  ·  ".join(p for p in (item.get("version"), kind, item["filename"]) if p), "sub"
+            )
+        )
+        h.addLayout(words, 1)
+        mods_server = self.row.get("content") == "mods"
+        if self.may("mods.manage") and item.get("kind") == "mod" and mods_server:
+            back = push(text("sides.move_to_server"), "plain")
+            back.setAccessibleName(f"{back.text()}: {name}")
+            back.setEnabled(self.can_change)
+            back.clicked.connect(lambda: self.mark(item, "both"))
+            h.addWidget(back)
+        if self.may("mods.manage"):
+            drop = push(text("mods.remove"), "plain")
+            drop.setAccessibleName(f"{drop.text()}: {name}")
+            drop.clicked.connect(lambda: self.remove_for_players(item))
+            h.addWidget(drop)
+        return row
+
+    def mark(self, mod: dict, side: str) -> None:
+        name = mod.get("name") or mod["filename"]
+
+        def done(_result: dict) -> None:
+            self.say(text(f"sides.marked_{side}", name=name))
+            self.after_change()
+
+        self.ask(
+            "POST",
+            "/mods/side",
+            done,
+            self.said,
+            body={"filename": mod["filename"], "side": side},
+        )
+
+    def pick_for_players(self) -> None:
+        path = self.window_.pc.pick_file(
+            text("sides.players_add"), f"{text('sides.players_title')} (*.jar *.zip)"
+        )
+        if path:
+            self.add_for_players_file(path)
+
+    def add_for_players_file(self, path: str, sure: bool = False) -> None:
+        sid, agent = self.row["id"], self.window_.agent
+        name = Path(path).name
+
+        def failed(exc: AgentError) -> None:
+            if exc.problems.get("confirm") and not sure:
+                if self.sure_unknown(name, exc.problems):
+                    self.add_for_players_file(path, sure=True)
+                return
+            self.say(f"{name}: {exc}")
+
+        def done(_result: dict) -> None:
+            self.say(text("sides.players_added", name=name))
+            self.changed()
+
+        self.say(text("mobile.content.reading"))
+        self.run_here(
+            lambda: agent.upload(
+                f"/servers/{sid}/mods/player-only/upload?confirm={str(sure).lower()}", path
+            ),
+            done,
+            failed,
+        )
+
+    def remove_for_players(self, item: dict) -> None:
+        name = item.get("name") or item["filename"]
+        if self.window_.confirm(
+            text("sides.remove_title", name=name), text("sides.remove_body"), text("mods.remove")
+        ):
+            self.ask(
+                "POST",
+                "/mods/player-only/remove",
+                lambda _r: self.changed(),
+                self.said,
+                body={"filename": item["filename"]},
+            )
 
     # ------------------------------------------------------------ linked modpack
     def show_linked(self, pack: dict | None) -> None:
