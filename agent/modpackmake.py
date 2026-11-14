@@ -406,7 +406,7 @@ async def make(
         items = [i for i in items if i not in left_out]
         dependencies = await _dependencies(ctx, items, players_loader)
 
-        files, members, own, get_yourself, plugins = [], [], [], [], []
+        files, members, own, get_yourself, plugins, own_jars = [], [], [], [], [], []
         for item in items:
             if item.plugin:
                 plugins.append({"name": item.name, "site": "Modrinth" if item.url else item.site})
@@ -425,6 +425,15 @@ async def make(
             elif not item.plugin:
                 own.append(f"{SIDE_FOLDER[item.side]}/{item.path}")
                 members.append((item.source, own[-1]))
+                if item.source.suffix.lower() == ".jar" and is_inside(base, item.source):
+                    # Each can be put on Modrinth as its own mod (agent/modrinthshare.py).
+                    own_jars.append(
+                        {
+                            "name": item.name,
+                            "path": item.source.resolve().relative_to(base.resolve()).as_posix(),
+                            "side": item.side,
+                        }
+                    )
         for relative in picked:
             source = base / relative
             if source.is_file() and not source.is_symlink() and is_inside(base, source):
@@ -461,6 +470,7 @@ async def make(
             "plugins_to_get": [p["name"] for p in plugins if p["site"] != "Modrinth"],
             "left_out": [i.name for i in left_out],
             "size_bytes": target.stat().st_size,
+            "own_jars": own_jars,
         }
 
     job, result = await ctx.core.jobs.run(
@@ -476,6 +486,7 @@ async def make(
         "made_at": time.time(),
         "trust_note": bool(result["own_files"]),
         "get_yourself": [n["name"] for n in result["get_yourself"]],
+        "own_jars": result["own_jars"],
     }
     ctx.db.set_setting(MADE, saved)
     for old in _folder(ctx).glob("*.mrpack"):  # only the newest is kept

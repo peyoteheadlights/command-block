@@ -488,6 +488,39 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(path(5), "/api/servers/s/download-link/new")
     }
 
+    func testSignInWithModrinthComesBackAsAnMcscLinkAndTheModpackGoesUp() async throws {
+        let c = client()
+        StubAgent.json(#"{"url": "https://modrinth.com/auth/authorize?state=s1"}"#)
+        XCTAssertEqual(try await c.modrinthSignIn().url, "https://modrinth.com/auth/authorize?state=s1")
+        XCTAssertEqual(path(0), "/api/modrinth/sign-in")
+        XCTAssertEqual(body(0), #"{"return_to":"phone"}"#)
+
+        let back = ModrinthCards.cameBack(URL(string: "mcsc://modrinth?state=x.1.phone.y&code=abc")!)
+        XCTAssertEqual(back?.code, "abc")
+        XCTAssertEqual(back?.state, "x.1.phone.y")
+        XCTAssertNil(ModrinthCards.cameBack(URL(string: "mcsc://modrinth?state=x&error=access_denied")!))
+        XCTAssertNil(ModrinthCards.cameBack(URL(string: "mcsc://server/abc?code=1&state=2")!))
+
+        StubAgent.json(#"{"available": true, "signed_in": true, "username": "mark", "ran_out": false}"#)
+        XCTAssertTrue(try await c.modrinthFinish(code: "abc", state: "x.1.phone.y").signedIn)
+        XCTAssertEqual(body(1), #"{"code":"abc","state":"x.1.phone.y"}"#)
+
+        let card = #"{"account": {"available": true, "signed_in": true, "username": "mark", "ran_out": false}, "made": {"name": "Friends", "version": "2"}, "project": {"id": "p1", "slug": "friends", "title": "Friends", "url": "https://modrinth.com/modpack/friends"}, "uploads": [{"version_id": "v2", "version": "2", "at": 1.0}], "own_jars": [{"path": "mods/a.jar", "name": "A", "side": "both", "slug": "a", "url": "https://modrinth.com/mod/a"}], "server_project": {"id": "s", "slug": "s", "url": "https://modrinth.com/server/s"}, "older": {"listed": "1", "newest": "2"}, "address": "play.example.org"}"#
+        StubAgent.json(card)
+        let share = try await c.modrinthUpload(serverId: "s", slug: "friends", summary: "Our pack")
+        XCTAssertEqual(path(2), "/api/servers/s/modrinth/upload")
+        let lines = ModrinthCards.lines(s, share, owner: true)
+        XCTAssertEqual(lines[0], "Signed in to Modrinth as mark.")
+        XCTAssertTrue(lines[1].contains("https://modrinth.com/modpack/friends"))
+        XCTAssertTrue(ModrinthCards.serverLines(s, share)[1].contains("version 1"))
+        XCTAssertTrue(ModrinthCards.steps(s, share).contains("play.example.org"))
+        XCTAssertEqual(ModrinthCards.slug("Our Friends' Pack!"), "our-friends-pack")
+
+        StubAgent.json(card)
+        _ = try await c.modrinthOwnJar(serverId: "s", path: "mods/a.jar", slug: "a", summary: "A mod")
+        XCTAssertEqual(body(3), #"{"path":"mods/a.jar","slug":"a","summary":"A mod"}"#)
+    }
+
     func testTheInstalledListUpdateAllAndHistoryAreRead() async throws {
         let c = client()
         StubAgent.json(#"{"mods": [{"filename": "a.jar", "path": "C:\\s\\mods\\a.jar", "mod_id": "a", "name": "Alpha", "version": "1.0", "enabled": true, "status": "warn", "issues": [{"kind": "version_mismatch", "severity": "warn", "detail": "Made for 1.20"}], "has_history": true, "update_available": {"mod_id": "a", "latest_version": "2.0", "version_id": "va"}}], "problems": [], "minecraft_version": null, "server_state": "OFFLINE", "updates_checked_at": null}"#)

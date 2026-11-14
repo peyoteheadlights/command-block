@@ -471,6 +471,10 @@ class AgentCore:
         from .microsoft import Microsoft
 
         self.microsoft = Microsoft(config.data_dir)
+        # Sign in with Modrinth, for putting modpacks on it (agent/modrinthshare.py).
+        from .modrinthshare import ModrinthAccount
+
+        self.modrinth = ModrinthAccount(config)
         # HeadlessMC and its own sign-in, for the join with all mods (agent/headlessmc.py).
         from .headlessmc import HeadlessMc
 

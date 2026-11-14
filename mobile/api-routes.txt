@@ -105,6 +105,13 @@ POST /api/servers/{server_id}/download-link/new
 POST /api/servers/{server_id}/resource-pack/upload
 POST /api/servers/{server_id}/resource-pack
 DELETE /api/servers/{server_id}/resource-pack
+GET /api/servers/{server_id}/modrinth
+POST /api/servers/{server_id}/modrinth/upload
+POST /api/servers/{server_id}/modrinth/own-jar
+POST /api/servers/{server_id}/modrinth/server-project
+POST /api/modrinth/sign-in
+POST /api/modrinth/sign-in/finish
+POST /api/modrinth/sign-out
 GET /api/servers/{server_id}/addons
 POST /api/servers/{server_id}/addons/upload
 PUT /api/servers/{server_id}/addons/{pack_uuid}

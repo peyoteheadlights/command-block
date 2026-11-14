@@ -398,6 +398,35 @@ class ResourcePackRequest(BaseModel):
     required: bool = False
 
 
+class ModrinthSignInRequest(BaseModel):
+    """``pc<port>``: the desktop app waits on 127.0.0.1:<port> of its own
+    computer. ``phone``: the phone app opens mcsc://modrinth."""
+
+    return_to: str = Field(pattern=r"^(pc[1-9][0-9]{0,4}|phone)$")
+
+
+class ModrinthFinishRequest(BaseModel):
+    code: str = Field(max_length=200)
+    state: str = Field(max_length=200)
+
+
+class ModrinthUploadRequest(BaseModel):
+    """``slug`` and ``summary`` only the first time (the project is made)."""
+
+    slug: str = Field(default="", max_length=64)
+    summary: str = Field(default="", max_length=256)
+
+
+class ModrinthJarRequest(BaseModel):
+    path: str = Field(max_length=500)
+    slug: str = Field(max_length=64)
+    summary: str = Field(max_length=256)
+
+
+class ModrinthServerProjectRequest(BaseModel):
+    link: str = Field(default="", max_length=200)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(max_length=220)
 

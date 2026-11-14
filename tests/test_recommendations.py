@@ -147,6 +147,7 @@ def test_every_recommendation_has_evidence_and_a_way_to_the_fix():
                 ],
             }
         ],
+        modrinth_older={"listed": "1", "newest": "2"},
     )
     found = rec.evaluate(f)
     assert len(found) == len(rec.RULES)

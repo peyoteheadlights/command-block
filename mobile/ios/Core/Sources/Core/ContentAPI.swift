@@ -239,6 +239,45 @@ extension AgentClient {
         try await call("DELETE", content(serverId) + "/resource-pack", slow: true, as: DownloadLink.self)
     }
 
+    /// The "Put it on Modrinth" card.
+    public func modrinth(serverId: String) async throws -> ModrinthShare {
+        try await call("GET", content(serverId) + "/modrinth", as: ModrinthShare.self)
+    }
+
+    /// Modrinth's sign-in page; it comes back to the app as mcsc://modrinth. Owner only.
+    public func modrinthSignIn() async throws -> ModrinthSignInStarted {
+        let body = try AgentClient.encode(["return_to": "phone"])
+        return try await call("POST", "/api/modrinth/sign-in", body: body, as: ModrinthSignInStarted.self)
+    }
+
+    /// The code Modrinth gave: the PC swaps it and keeps the sign-in.
+    public func modrinthFinish(code: String, state: String) async throws -> ModrinthAccount {
+        let body = try AgentClient.encode(["code": code, "state": state])
+        return try await call("POST", "/api/modrinth/sign-in/finish", body: body, slow: true, as: ModrinthAccount.self)
+    }
+
+    public func modrinthSignOut() async throws -> ModrinthAccount {
+        try await call("POST", "/api/modrinth/sign-out", body: Data("{}".utf8), as: ModrinthAccount.self)
+    }
+
+    /// The newest modpack up as a draft; `slug` and `summary` only the first time.
+    public func modrinthUpload(serverId: String, slug: String, summary: String) async throws -> ModrinthShare {
+        let body = try AgentClient.encode(["slug": slug, "summary": summary])
+        return try await call("POST", content(serverId) + "/modrinth/upload", body: body, slow: true, as: ModrinthShare.self)
+    }
+
+    /// One own jar of the newest modpack as its own Modrinth mod (a draft).
+    public func modrinthOwnJar(serverId: String, path: String, slug: String, summary: String) async throws -> ModrinthShare {
+        let body = try AgentClient.encode(["path": path, "slug": slug, "summary": summary])
+        return try await call("POST", content(serverId) + "/modrinth/own-jar", body: body, slow: true, as: ModrinthShare.self)
+    }
+
+    /// The Modrinth Server Project's link (empty: forget it).
+    public func modrinthServerProject(serverId: String, link: String) async throws -> ModrinthShare {
+        let body = try AgentClient.encode(["link": link])
+        return try await call("POST", content(serverId) + "/modrinth/server-project", body: body, slow: true, as: ModrinthShare.self)
+    }
+
     /// A Bedrock server's behavior and resource packs.
     public func addons(serverId: String) async throws -> AddonList {
         try await call("GET", content(serverId) + "/addons", as: AddonList.self)

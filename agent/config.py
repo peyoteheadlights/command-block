@@ -310,6 +310,9 @@ class ModSettings(Section):
     # secret and it isn't CurseForge's key, which the app never has.
     curseforge_relay: str = "https://europe-west1-command-block-d4526.cloudfunctions.net/curseforge"
     firebase_web_key: str = "AIzaSyDUobgN-1BPbhI4jsLAASFU2Mf6rp3So_g"
+    # Sign in with Modrinth's function (agent/modrinthshare.py): it only
+    # swaps the sign-in code for a token, with a secret the app never has.
+    modrinth_sign_in: str = "https://europe-west1-command-block-d4526.cloudfunctions.net/modrinth"
     user_agent: str = "command-block (self-hosted)"
     backup_before_install: bool = True
     auto_stop_for_install: bool = False
