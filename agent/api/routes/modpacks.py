@@ -8,8 +8,9 @@ import asyncio
 from functools import partial
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 
-from ... import linkedpack, modpack
+from ... import linkedpack, modpack, modpackmake
 from ...mods.curseforge import MODPACKS, CurseForgeClient
 from ...mods.modrinth import ModrinthClient
 from ...security.auth import AuthError, Principal
@@ -24,6 +25,9 @@ from ..deps import audit, get_core, get_server
 from ..responses import (
     ModpackImported,
     ModpackInspected,
+    ModpackMade,
+    ModpackMakeOptions,
+    ModpackPosted,
     ModpackUpdated,
     ModpackUpdatePreview,
     ModSearch,
@@ -33,7 +37,9 @@ from ..responses import (
 from .models import (
     CurseForgeModpackRequest,
     ModpackIntoRequest,
+    ModpackMakeRequest,
     ModpackNewRequest,
+    ModpackPostRequest,
     ModpackPreviewRequest,
     ModpackUpdateRequest,
     ModrinthModpackRequest,
@@ -254,3 +260,69 @@ async def unlink_modpack(
         raise HTTPException(status_code=404, detail="This server isn't linked to a modpack.")
     audit(ctx, request, "modpack_unlink")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- making one
+@router.get("/modpack/make", response_model=ModpackMakeOptions)
+async def make_modpack_options(
+    principal: Principal = Depends(require(MODS_MANAGE)), ctx=Depends(get_server)
+):
+    """What Make a modpack offers: the name and next version, the config
+    files that can be ticked, the players' loaders on a plugin server."""
+    return await asyncio.to_thread(modpackmake.options, ctx)
+
+
+@router.post("/modpack/make", response_model=ModpackMade)
+async def make_modpack(
+    payload: ModpackMakeRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Make a modpack from this server, as a job. Nothing on the server
+    changes. Save it with GET /modpack/made/{token}."""
+    result = await modpackmake.make(
+        ctx,
+        payload.name,
+        payload.version,
+        leave_out_server_only=payload.leave_out_server_only,
+        configs=payload.configs,
+        players_loader=payload.players_loader,
+        user=principal.user,
+    )
+    request.state.audited = True  # make writes its own audit row
+    return {"ok": True, **result}
+
+
+@router.get("/modpack/made/{token}")
+async def download_modpack(
+    token: str,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """The newest modpack's .mrpack file (a zip, so no JSON answer)."""
+    try:
+        path = modpackmake.file_path(ctx, token)
+    except modpack.ModpackError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    made = modpackmake.made(ctx) or {}
+    return FileResponse(
+        path,
+        # application/zip: the phones only save an answer of that type.
+        media_type="application/zip",
+        filename=made.get("filename") or "modpack.mrpack",
+    )
+
+
+@router.post("/modpack/made/discord", response_model=ModpackPosted)
+async def post_modpack_to_discord(
+    payload: ModpackPostRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """The Discord bot posts the newest modpack in this server's chat
+    channels, when it fits Discord's 10 MB limit."""
+    result = await modpackmake.post_to_discord(ctx, payload.token, user=principal.user)
+    request.state.audited = True
+    return {"ok": True, **result}

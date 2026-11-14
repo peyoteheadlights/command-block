@@ -540,3 +540,16 @@ class IconCache(
         const val MAX_ICON_BYTES = 1024 * 1024
     }
 }
+
+/** What a made modpack says on the Make a modpack card: ready, the trust
+ * note when own files are inside, and what isn't inside and why. */
+object MadeModpacks {
+    fun lines(strings: Strings, made: ModpackMade): List<String> = listOfNotNull(
+        strings.t("make.made", "name" to made.filename, "size" to Display.bytes(strings, made.sizeBytes)),
+        strings.t("make.trust").takeIf { made.trustNote != null },
+    ) + listOf(
+        "make.get_yourself" to made.getYourself.map { it.name },
+        "make.plugins_to_get" to made.pluginsToGet,
+        "make.left_out" to made.leftOut,
+    ).filter { it.second.isNotEmpty() }.map { (key, names) -> strings.t(key, "names" to names.joinToString(", ")) }
+}

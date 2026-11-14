@@ -7,6 +7,7 @@ GET /api/security/tls
 GET /api/servers/{server_id}/backups/{backup_id}/download
 GET /api/servers/{server_id}/info
 GET /api/servers/{server_id}/logs/download
+GET /api/servers/{server_id}/modpack/made/{token}
 GET /api/servers/{server_id}/mods/check
 GET /api/servers/{server_id}/players/sessions
 GET /api/servers/{server_id}/world/download/{token}

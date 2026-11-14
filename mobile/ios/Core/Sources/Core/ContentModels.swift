@@ -1509,3 +1509,121 @@ public struct GameSettingsSaved: Decodable, Equatable, Sendable {
         restartNeeded = c.value(.restartNeeded, false)
     }
 }
+
+// MARK: - Make a modpack
+
+/// A config file Make a modpack can put in.
+public struct ModpackConfigFile: Decodable, Equatable, Sendable {
+    public var path: String
+    public var sizeBytes: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case path
+        case sizeBytes = "size_bytes"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        path = try c.decode(String.self, forKey: .path)
+        sizeBytes = c.value(.sizeBytes, 0)
+    }
+}
+
+public struct PlayersLoader: Decodable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+}
+
+/// What Make a modpack offers. `playersLoaders` is empty on a mod server.
+public struct ModpackMakeOptions: Decodable, Equatable, Sendable {
+    public var name: String
+    public var version: String
+    public var configs: [ModpackConfigFile]
+    public var playersLoaders: [PlayersLoader]
+    public var discord: Bool
+    /// False until the join check (the Companion mod) exists: the box is greyed.
+    public var requiredToJoin: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case name, version, configs, discord
+        case playersLoaders = "players_loaders"
+        case requiredToJoin = "required_to_join"
+    }
+
+    private struct Required: Decodable { var available: Bool? }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = c.value(.name, "")
+        version = c.value(.version, "1")
+        configs = c.each(.configs)
+        playersLoaders = c.each(.playersLoaders)
+        discord = c.value(.discord, false)
+        requiredToJoin = (c.maybe(.requiredToJoin) as Required?)?.available ?? false
+    }
+}
+
+/// The person's answers to Make a modpack.
+public struct MakeModpack: Encodable, Equatable, Sendable {
+    public var name: String
+    public var version: String
+    public var leaveOutServerOnly: Bool
+    public var configs: [String]
+    public var playersLoader: String
+
+    enum CodingKeys: String, CodingKey {
+        case name, version, configs
+        case leaveOutServerOnly = "leave_out_server_only"
+        case playersLoader = "players_loader"
+    }
+
+    public init(name: String, version: String, leaveOutServerOnly: Bool = true, configs: [String] = [], playersLoader: String = "fabric") {
+        self.name = name
+        self.version = version
+        self.leaveOutServerOnly = leaveOutServerOnly
+        self.configs = configs
+        self.playersLoader = playersLoader
+    }
+}
+
+/// A CurseForge mod its author keeps from other apps: never put in.
+public struct GetYourself: Decodable, Equatable, Sendable {
+    public var name: String
+}
+
+/// A made modpack, downloaded with `token`. `trustNote`: own files are inside.
+public struct ModpackMade: Decodable, Equatable, Sendable {
+    public var token: String
+    public var filename: String
+    public var sizeBytes: Int64?
+    public var trustNote: String?
+    public var getYourself: [GetYourself]
+    public var pluginsToGet: [String]
+    public var leftOut: [String]
+    public var discord: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case token, filename, discord
+        case sizeBytes = "size_bytes"
+        case trustNote = "trust_note"
+        case getYourself = "get_yourself"
+        case pluginsToGet = "plugins_to_get"
+        case leftOut = "left_out"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        token = try c.decode(String.self, forKey: .token)
+        filename = c.value(.filename, "modpack.mrpack")
+        sizeBytes = c.maybe(.sizeBytes)
+        trustNote = c.maybe(.trustNote)
+        getYourself = c.each(.getYourself)
+        pluginsToGet = c.value(.pluginsToGet, [])
+        leftOut = c.value(.leftOut, [])
+        discord = c.value(.discord, false)
+    }
+}
+
+public struct ModpackPosted: Decodable, Equatable, Sendable {
+    public var posted: Int
+}

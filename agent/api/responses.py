@@ -1864,6 +1864,58 @@ class ModpackUpdatePreview(Open):
     changes: ModpackChanges
 
 
+class ModpackMadeFile(Open):
+    """The newest modpack made from a server (agent/modpackmake.py)."""
+
+    token: str
+    filename: str
+    name: str
+    version: str
+    size_bytes: int
+    made_at: float
+    trust_note: bool = False
+    get_yourself: list[str] = []
+
+
+class ModpackMakeOptions(Open):
+    """What the Make a modpack screen offers."""
+
+    name: str
+    version: str
+    configs: list[dict[str, Any]] = Field(description="path, size_bytes")
+    players_loaders: list[dict[str, str]] = Field(
+        description="id, name; empty on a mod server (its own loader is used)"
+    )
+    discord: bool
+    discord_limit_bytes: int
+    required_to_join: dict[str, Any] = Field(description="available: false until the join check")
+    made: ModpackMadeFile | None = None
+
+
+class ModpackMade(Open):
+    """A modpack made; save it with GET .../modpack/made/{token}."""
+
+    ok: bool
+    job_id: str | None = None
+    token: str
+    filename: str
+    files: int
+    size_bytes: int
+    own_files: list[str] = Field(description="Own files inside, not from Modrinth or CurseForge")
+    trust_note: str | None = None
+    get_yourself: list[dict[str, Any]] = Field(
+        description="CurseForge mods its authors keep from other apps: name, filename, page"
+    )
+    plugins_to_get: list[str] = []
+    left_out: list[str] = []
+    discord: bool = False
+
+
+class ModpackPosted(Open):
+    ok: bool
+    posted: int
+
+
 class ModpackUpdated(Open):
     ok: bool
     job_id: str | None = None
