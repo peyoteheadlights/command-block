@@ -765,6 +765,16 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE servers ADD COLUMN group_name TEXT;
         """,
     ),
+    (
+        27,
+        # The Companion mod's last join check per player: the modpack
+        # version their game said it has (empty: none) and whether it passed.
+        """
+        ALTER TABLE players ADD COLUMN modpack_version TEXT;
+        ALTER TABLE players ADD COLUMN modpack_ok INTEGER;
+        ALTER TABLE players ADD COLUMN modpack_checked REAL;
+        """,
+    ),
 ]
 
 

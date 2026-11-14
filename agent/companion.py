@@ -33,7 +33,8 @@ from .security.paths import is_inside
 log = logging.getLogger("msc.companion")
 
 FORMAT = 1
-MOD_ID = "commandblock-companion"  # the mod's id in fabric.mod.json / neoforge.mods.toml
+MOD_ID = "commandblock_companion"  # the mod's id in fabric.mod.json / neoforge.mods.toml
+PLUGIN_NAME = "CommandBlockCompanion"  # the Paper plugin's name in paper-plugin.yml
 MODS_FILE = "config/commandblock-companion.json"
 PLUGIN_FILE = "plugins/CommandBlockCompanion/config.json"
 PLAYERS_FILE = "config/commandblock-companion-client.json"
@@ -78,7 +79,7 @@ def chat_text(template: str, name: str, version: str, link: str | None) -> str:
 def on_server(mods: Any) -> bool:
     """The Companion is an enabled mod on this server: then the modpack can
     be "Required to join"."""
-    return any(m.enabled and m.mod_id == MOD_ID for m in mods.scan())
+    return any(m.enabled and m.mod_id in (MOD_ID, PLUGIN_NAME) for m in mods.scan())
 
 
 def players_file(name: str, version: str) -> str:

@@ -256,6 +256,10 @@ class OnlinePlayer(Open):
     last_seen: float | None = None
     edition: str | None = Field(None, description="java or bedrock; null when it can't be told")
     session_seconds: float = Field(description="0 when the session's start isn't known")
+    modpack_version: str | None = Field(
+        None, description="From the Companion's last check; empty: none. null: never checked"
+    )
+    modpack_ok: int | None = Field(None, description="1 if that check passed")
 
 
 class KnownPlayer(OnlinePlayer):

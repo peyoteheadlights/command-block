@@ -76,6 +76,16 @@ NAMES = {
 }
 
 
+def modpack_words(p: dict) -> str | None:
+    """The Companion's last check of this player, or None if never checked."""
+    if p.get("modpack_ok") is None:
+        return None
+    version = p.get("modpack_version")
+    if not version:
+        return text("players.modpack_none")
+    return text("players.modpack" if p["modpack_ok"] else "players.modpack_bad", version=version)
+
+
 class PlayersPage(Page):
     POLL_MS = 1000
     POLLS = 22  # then the line stays "Sent" and says so
@@ -428,14 +438,13 @@ class PlayersPage(Page):
         return "  ·  ".join(parts)
 
     def known_info(self, p: dict) -> str:
-        return "  ·  ".join(
-            [
-                f"{text('players.col_first')} {clock(p.get('first_seen')) or text('time.never')}",
-                f"{text('players.col_last')} {clock(p.get('last_seen')) or text('time.never')}",
-                f"{text('players.col_sessions')} {p.get('sessions', 0)}",
-                f"{text('players.col_total')} {duration(p.get('total_seconds_live'))}",
-            ]
-        )
+        parts = [
+            f"{text('players.col_first')} {clock(p.get('first_seen')) or text('time.never')}",
+            f"{text('players.col_last')} {clock(p.get('last_seen')) or text('time.never')}",
+            f"{text('players.col_sessions')} {p.get('sessions', 0)}",
+            f"{text('players.col_total')} {duration(p.get('total_seconds_live'))}",
+        ]
+        return "  ·  ".join(parts + [w for w in [modpack_words(p)] if w])
 
     def player_row(self, name: str, info: str, online: bool, player: dict | None = None) -> QFrame:
         row = Row()

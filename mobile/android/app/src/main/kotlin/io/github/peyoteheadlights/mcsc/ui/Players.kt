@@ -148,7 +148,8 @@ private fun LazyListScope.playersPage(
         Card {
             val tags = PlayerButtons.tags(known.username, page).map { t(it) }
             val seen = t("players.col_last") + ": " + Display.ago(vm.strings, known.lastSeen, now)
-            Item(known.username, subtitle = (listOf(seen) + tags).joinToString(" · "), leading = { Face() })
+            val modpack = listOfNotNull(PlayerButtons.modpack(vm.strings, known))
+            Item(known.username, subtitle = (listOf(seen) + modpack + tags).joinToString(" · "), leading = { Face() })
             val online = page.online.any { it.username.equals(known.username, ignoreCase = true) }
             Buttons(PlayerButtons.forPlayer(known.username, online, page, canManage, canOp), known.username, busy, press)
         }

@@ -75,6 +75,8 @@ data class KnownPlayer(
     val online: Int? = null,
     val edition: String? = null,
     @SerialName("total_seconds_live") val totalSecondsLive: Double? = null,
+    @SerialName("modpack_version") val modpackVersion: String? = null,
+    @SerialName("modpack_ok") val modpackOk: Int? = null,
 )
 
 /** A name on one of Minecraft's own lists. On Bedrock an operator can have
