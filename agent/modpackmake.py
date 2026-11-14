@@ -490,7 +490,9 @@ async def make(
         job.step("Writing the modpack", total=len(members) or None, unit="files")
         await asyncio.to_thread(_write, target, index, members, job)
         extra = {
-            f"client-overrides/{companion.PLAYERS_FILE}": companion.players_file(name, version)
+            f"client-overrides/{companion.PLAYERS_FILE}": companion.players_file(
+                name, version, [f["path"] for f in for_companion]
+            )
         }
         if note:
             extra[f"server-overrides/{SERVER_NOTE}"] = json.dumps(note, indent=1)
