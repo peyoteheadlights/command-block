@@ -681,6 +681,22 @@ class ContentTest {
     }
 
     @Test
+    fun `the anti-cheat picker never shows a guessed price and warns about two`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"supported": true, "installed": ["Grim", "Vulcan"], "free": [{"id": "grim", "name": "Grim", "project": "grimac", "on": true, "warning": true}], "paid": [{"id": "vulcan", "name": "Vulcan", "on": true, "link": "https://www.spigotmc.org/resources/83626/", "setup": null, "price": null}, {"id": "polar", "name": "Polar", "on": false, "link": "https://polar.top", "setup": "https://docs.polar.top/getting-started.html", "price": "19.99 USD", "checked": "14 November 2026"}], "may_install": true, "may_add_own_jar": false}"""))
+            val picker = c.antiCheat("s")
+            assertEquals("/api/servers/s/anticheat", agent.server.takeRequest().path)
+            assertTrue(AntiCheats.status(strings, picker).startsWith("Two anti-cheats are in: Grim, Vulcan."))
+            val grim = AntiCheats.free(strings, picker.free[0])
+            assertTrue(grim.any { it.contains("Try it with a friend first") })
+            assertEquals("Price: see the seller's page.", AntiCheats.paid(strings, picker.paid[0])[1])
+            assertEquals("Price: 19.99 USD (checked 14 November 2026).", AntiCheats.paid(strings, picker.paid[1])[1])
+            assertEquals("No anti-cheat runs on this server type.", AntiCheats.status(strings, AntiCheat()))
+        }
+    }
+
+    @Test
     fun `bedrock packs and game settings are read and saved`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)

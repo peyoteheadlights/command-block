@@ -65,7 +65,12 @@ people to install that release by hand once
    `docs/api/openapi-<version>.json` and points `docs/api/released.txt` at
    it. From then on, `tests/test_api_contract.py` fails if a later change
    removes a route or a field without deprecating it first.
-5. **Commit, merge to main, then tag**:
+5. **Anti-cheat prices.** The app reads Vulcan's price from Spiget by
+   itself. For any product in `PAID` in `agent/anticheat.py` without a
+   `spiget` number (Polar), open the seller's page, write the price in
+   `price` (or `None` if you can't see one) and set `PRICES_CHECKED` to this
+   month, like `"November 2026"`. Drop a product that is gone.
+6. **Commit, merge to main, then tag**:
 
    ```powershell
    git tag v1.2.0

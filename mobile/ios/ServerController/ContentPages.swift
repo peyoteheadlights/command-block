@@ -277,11 +277,15 @@ final class ContentPages {
 
     /// Reads a project's versions that fit this server, for the install question.
     func openProject(_ hit: ModrinthHit) async {
+        await openProject(slug: hit.slug)
+    }
+
+    func openProject(slug: String) async {
         guard let client = client() else { return }
         project = PageRead(loading: true)
         sheet = .project
         do {
-            project = PageRead(value: try await client.modProject(serverId: serverId, slug: hit.slug))
+            project = PageRead(value: try await client.modProject(serverId: serverId, slug: slug))
         } catch let problem as AgentError {
             noted(problem)
             project = PageRead(problem: problem)
@@ -742,6 +746,19 @@ final class ContentPages {
 
     /// One button at a time: says what it did (or the agent's reason it
     /// didn't), then reads the screen again.
+    // MARK: - The anti-cheat picker
+
+    private(set) var antiCheat: AntiCheat? = nil
+
+    func loadAntiCheat() async {
+        guard let client = client() else { return }
+        do {
+            antiCheat = try await client.antiCheat(serverId: serverId)
+        } catch let problem as AgentError {
+            noted(problem)
+        } catch {}
+    }
+
     // MARK: - Put it on Modrinth
 
     private(set) var modrinth: ModrinthShare? = nil

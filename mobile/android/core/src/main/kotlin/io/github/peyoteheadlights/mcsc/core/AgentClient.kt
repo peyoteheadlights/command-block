@@ -874,6 +874,9 @@ class AgentClient(
     suspend fun removeResourcePack(serverId: String): DownloadLink =
         call(request("${server(serverId)}/resource-pack").delete().build(), DownloadLink.serializer(), slow = true)
 
+    /** The anti-cheat picker. Installing goes through [installMod] and [uploadMod]. */
+    suspend fun antiCheat(serverId: String): AntiCheat = get("${server(serverId)}/anticheat", AntiCheat.serializer())
+
     /** The "Put it on Modrinth" card. */
     suspend fun modrinth(serverId: String): ModrinthShare = get("${server(serverId)}/modrinth", ModrinthShare.serializer())
 

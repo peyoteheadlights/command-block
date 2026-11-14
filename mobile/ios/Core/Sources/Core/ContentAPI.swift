@@ -239,6 +239,11 @@ extension AgentClient {
         try await call("DELETE", content(serverId) + "/resource-pack", slow: true, as: DownloadLink.self)
     }
 
+    /// The anti-cheat picker. Installing goes through `installMod` and `uploadMod`.
+    public func antiCheat(serverId: String) async throws -> AntiCheat {
+        try await call("GET", content(serverId) + "/anticheat", as: AntiCheat.self)
+    }
+
     /// The "Put it on Modrinth" card.
     public func modrinth(serverId: String) async throws -> ModrinthShare {
         try await call("GET", content(serverId) + "/modrinth", as: ModrinthShare.self)
