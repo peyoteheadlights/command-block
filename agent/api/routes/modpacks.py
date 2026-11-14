@@ -10,19 +10,22 @@ from functools import partial
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from ... import linkedpack, modpack, modpackmake
+from ... import downloadlink, linkedpack, modpack, modpackmake
 from ...mods.curseforge import MODPACKS, CurseForgeClient
 from ...mods.modrinth import ModrinthClient
 from ...security.auth import AuthError, Principal
 from ...security.permissions import (
     MODS_MANAGE,
+    PC_SETTINGS,
     SERVERS_MANAGE,
+    SETTINGS_GAME,
     SETTINGS_SERVER,
     may_add_own_jar,
     require,
 )
 from ..deps import audit, get_core, get_server
 from ..responses import (
+    DownloadLinkState,
     ModpackImported,
     ModpackInspected,
     ModpackMade,
@@ -36,6 +39,7 @@ from ..responses import (
 )
 from .models import (
     CurseForgeModpackRequest,
+    DownloadLinkRequest,
     ModpackIntoRequest,
     ModpackMakeRequest,
     ModpackNewRequest,
@@ -43,6 +47,7 @@ from .models import (
     ModpackPreviewRequest,
     ModpackUpdateRequest,
     ModrinthModpackRequest,
+    ResourcePackRequest,
 )
 from .mods import side_by_side
 
@@ -326,3 +331,98 @@ async def post_modpack_to_discord(
     result = await modpackmake.post_to_discord(ctx, payload.token, user=principal.user)
     request.state.audited = True
     return {"ok": True, **result}
+
+
+# ---------------------------------------------------------------- the download link
+# Turning it on opens a port on this PC, so it is the owner's alone: PC
+# settings, which no moderator holds (agent/security/permissions.py).
+@router.get("/download-link", response_model=DownloadLinkState)
+async def download_link_state(
+    principal: Principal = Depends(require(MODS_MANAGE)), ctx=Depends(get_server)
+):
+    """The Download link card: on or off, the modpack's link, the resource pack."""
+    return downloadlink.state(ctx)
+
+
+@router.post("/download-link", response_model=DownloadLinkState)
+async def download_link_switch(
+    payload: DownloadLinkRequest,
+    request: Request,
+    principal: Principal = Depends(require(PC_SETTINGS)),
+    ctx=Depends(get_server),
+):
+    """Turn the link on (a new hard-to-guess link) or off (it stops working)."""
+    request.state.audited = True
+    return await downloadlink.set_on(ctx, payload.on, user=principal.user)
+
+
+@router.post("/download-link/new", response_model=DownloadLinkState)
+async def download_link_new(
+    request: Request,
+    principal: Principal = Depends(require(PC_SETTINGS)),
+    ctx=Depends(get_server),
+):
+    """A new link: the old one stops working at once."""
+    request.state.audited = True
+    return await downloadlink.new_link(ctx, user=principal.user)
+
+
+@router.post("/resource-pack/upload", response_model=DownloadLinkState)
+async def resource_pack_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    required: bool = False,
+    principal: Principal = Depends(require(SETTINGS_GAME)),
+    ctx=Depends(get_server),
+):
+    """Use this zip as the server resource pack, served by the download link."""
+    if not (file.filename or "").lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Choose a resource pack (.zip).")
+    folder = downloadlink.pack_file(ctx).parent
+    folder.mkdir(parents=True, exist_ok=True)
+    upload = folder / "upload.tmp"
+    size = 0
+    try:
+        with upload.open("wb") as out:
+            while chunk := await file.read(CHUNK):
+                size += len(chunk)
+                if size > downloadlink.MAX_PACK_BYTES:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="That resource pack is bigger than 250 MB, the most Minecraft takes.",
+                    )
+                await asyncio.to_thread(out.write, chunk)
+        request.state.audited = True
+        return await downloadlink.set_pack_file(
+            ctx, upload, file.filename or "", required, user=principal.user
+        )
+    finally:
+        upload.unlink(missing_ok=True)
+
+
+@router.post("/resource-pack", response_model=DownloadLinkState)
+async def resource_pack_set(
+    payload: ResourcePackRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_GAME)),
+    ctx=Depends(get_server),
+):
+    """An outside link for the resource pack, or only change "Players must
+    accept the resource pack" (no ``url``)."""
+    request.state.audited = True
+    if payload.url is None:
+        return await downloadlink.set_required(ctx, payload.required, user=principal.user)
+    return await downloadlink.set_pack_link(
+        ctx, payload.url, payload.sha1, payload.required, user=principal.user
+    )
+
+
+@router.delete("/resource-pack", response_model=DownloadLinkState)
+async def resource_pack_remove(
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_GAME)),
+    ctx=Depends(get_server),
+):
+    """No server resource pack any more."""
+    request.state.audited = True
+    return await downloadlink.remove_pack(ctx, user=principal.user)

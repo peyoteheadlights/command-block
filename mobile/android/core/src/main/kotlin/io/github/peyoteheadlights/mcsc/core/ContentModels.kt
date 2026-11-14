@@ -197,8 +197,34 @@ data class ModpackMade(
     val discord: Boolean = false,
 )
 
+/** [asLink]: too big for Discord, so the bot posted the download link. */
 @Serializable
-data class ModpackPosted(val posted: Int = 0)
+data class ModpackPosted(val posted: Int = 0, @SerialName("as_link") val asLink: Boolean = false)
+
+/** The server resource pack: a zip the download link serves ([served]), or an outside link. */
+@Serializable
+data class ResourcePack(
+    val source: String,
+    val filename: String? = null,
+    val url: String? = null,
+    val sha1: String? = null,
+    @SerialName("size_bytes") val sizeBytes: Long? = null,
+    val required: Boolean = false,
+    val served: Boolean = false,
+)
+
+/** The Download link card. [whyNot]: why it can't be turned on (no Tailscale yet). */
+@Serializable
+data class DownloadLink(
+    val on: Boolean = false,
+    @SerialName("why_not") val whyNot: String? = null,
+    val listening: Boolean = false,
+    @SerialName("modpack_url") val modpackUrl: String? = null,
+    @SerialName("speed_cap_bytes") val speedCapBytes: Long = 0,
+    @SerialName("resource_pack") val resourcePack: ResourcePack? = null,
+    @SerialName("max_pack_bytes") val maxPackBytes: Long = 0,
+    @SerialName("restart_needed") val restartNeeded: Boolean = false,
+)
 
 /** One mod in an [Overlap]. [turnOff]: the pick isn't this one. */
 @Serializable

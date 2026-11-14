@@ -21,6 +21,7 @@ import io.github.peyoteheadlights.mcsc.core.ModList
 import io.github.peyoteheadlights.mcsc.core.ModProject
 import io.github.peyoteheadlights.mcsc.core.ModVersion
 import io.github.peyoteheadlights.mcsc.core.ModVersions
+import io.github.peyoteheadlights.mcsc.core.DownloadLink
 import io.github.peyoteheadlights.mcsc.core.MakeModpack
 import io.github.peyoteheadlights.mcsc.core.ModpackInspected
 import io.github.peyoteheadlights.mcsc.core.ModpackMade
@@ -474,6 +475,7 @@ class ContentPages(
         makeOptions = null
         work("make", strings) {
             made = it.makeModpack(serverId, answers)
+            loadLink() // the modpack's download link, if it's on
             null
         }
     }
@@ -501,7 +503,60 @@ class ContentPages(
     fun postModpack(strings: Strings) = work("discord", strings) {
         val pack = made ?: return@work null
         val posted = it.postModpack(serverId, pack.token)
-        Said(strings.t("make.posted", "count" to posted.posted), good = true)
+        Said(strings.t(if (posted.asLink) "make.posted_link" else "make.posted", "count" to posted.posted), good = true)
+    }
+
+    // ------------------------------------------------------------ Download link
+    /** The download link and the server resource pack, once read. */
+    var link: DownloadLink? by mutableStateOf(null)
+        private set
+
+    /** Set while "Use a link…" asks for the pack's link and SHA-1. */
+    var askingPackLink by mutableStateOf(false)
+
+    /** Read on its own, not as a "work": the mods list may be loading at the same time. */
+    fun loadLink() {
+        val c = client() ?: return
+        scope.launch {
+            try {
+                link = c.downloadLink(serverId)
+            } catch (e: AgentException) {
+                noted(e)
+            }
+        }
+    }
+
+    fun switchLink(on: Boolean, strings: Strings) = work("link", strings) {
+        link = it.setDownloadLink(serverId, on)
+        null
+    }
+
+    fun newLink(strings: Strings) = work("link", strings) {
+        link = it.newDownloadLink(serverId)
+        null
+    }
+
+    fun uploadPack(file: PickedFile, strings: Strings) = work("pack", strings) {
+        link = it.uploadResourcePack(serverId, file, link?.resourcePack?.required ?: false)
+        null
+    }
+
+    fun setPackLink(url: String, sha1: String, strings: Strings) {
+        askingPackLink = false
+        work("pack", strings) {
+            link = it.setResourcePackLink(serverId, url, sha1, link?.resourcePack?.required ?: false)
+            null
+        }
+    }
+
+    fun setPackRequired(required: Boolean, strings: Strings) = work("pack", strings) {
+        link = it.setResourcePackRequired(serverId, required)
+        null
+    }
+
+    fun removePack(strings: Strings) = work("pack", strings) {
+        link = it.removeResourcePack(serverId)
+        null
     }
 
     // ------------------------------------------------------------ Bedrock packs
