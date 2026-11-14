@@ -105,6 +105,7 @@ POST /api/servers/{server_id}/download-link/new
 POST /api/servers/{server_id}/resource-pack/upload
 POST /api/servers/{server_id}/resource-pack
 DELETE /api/servers/{server_id}/resource-pack
+GET /api/servers/{server_id}/anticheat
 GET /api/servers/{server_id}/modrinth
 POST /api/servers/{server_id}/modrinth/upload
 POST /api/servers/{server_id}/modrinth/own-jar

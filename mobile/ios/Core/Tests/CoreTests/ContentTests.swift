@@ -526,6 +526,17 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(body(3), #"{"path":"mods/a.jar","slug":"a","summary":"A mod"}"#)
     }
 
+    func testTheAntiCheatPickerNeverShowsAGuessedPriceAndWarnsAboutTwo() async throws {
+        let c = client()
+        StubAgent.json(#"{"supported": true, "installed": ["Grim", "Vulcan"], "free": [{"id": "grim", "name": "Grim", "project": "grimac", "on": true, "warning": true}], "paid": [{"id": "vulcan", "name": "Vulcan", "on": true, "link": "https://www.spigotmc.org/resources/83626/", "setup": null, "price": null}, {"id": "polar", "name": "Polar", "on": false, "link": "https://polar.top", "setup": "https://docs.polar.top/getting-started.html", "price": "19.99 USD", "checked": "14 November 2026"}], "may_install": true, "may_add_own_jar": false}"#)
+        let picker = try await c.antiCheat(serverId: "s")
+        XCTAssertEqual(path(0), "/api/servers/s/anticheat")
+        XCTAssertTrue(AntiCheats.status(s, picker).hasPrefix("Two anti-cheats are in: Grim, Vulcan."))
+        XCTAssertTrue(AntiCheats.free(s, picker.free[0]).contains { $0.contains("Try it with a friend first") })
+        XCTAssertEqual(AntiCheats.paid(s, picker.paid[0])[1], "Price: see the seller's page.")
+        XCTAssertEqual(AntiCheats.paid(s, picker.paid[1])[1], "Price: 19.99 USD (checked 14 November 2026).")
+    }
+
     func testTheInstalledListUpdateAllAndHistoryAreRead() async throws {
         let c = client()
         StubAgent.json(#"{"mods": [{"filename": "a.jar", "path": "C:\\s\\mods\\a.jar", "mod_id": "a", "name": "Alpha", "version": "1.0", "enabled": true, "status": "warn", "issues": [{"kind": "version_mismatch", "severity": "warn", "detail": "Made for 1.20"}], "has_history": true, "update_available": {"mod_id": "a", "latest_version": "2.0", "version_id": "va"}}], "problems": [], "minecraft_version": null, "server_state": "OFFLINE", "updates_checked_at": null}"#)

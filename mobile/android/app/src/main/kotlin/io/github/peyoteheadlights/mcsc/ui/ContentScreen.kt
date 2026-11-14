@@ -55,11 +55,13 @@ import io.github.peyoteheadlights.mcsc.core.ModList
 import io.github.peyoteheadlights.mcsc.core.ModVersion
 import io.github.peyoteheadlights.mcsc.core.SameJob
 import io.github.peyoteheadlights.mcsc.core.Modpacks
+import io.github.peyoteheadlights.mcsc.core.AntiCheats
 import io.github.peyoteheadlights.mcsc.core.LinkedModpack
 import io.github.peyoteheadlights.mcsc.core.LinkedPacks
 import io.github.peyoteheadlights.mcsc.core.MadeModpacks
 import io.github.peyoteheadlights.mcsc.core.MakeModpack
 import io.github.peyoteheadlights.mcsc.core.ModrinthCards
+import io.github.peyoteheadlights.mcsc.core.ModrinthHit
 import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
 import io.github.peyoteheadlights.mcsc.core.PlayerFile
 import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
@@ -163,6 +165,7 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
     if (vm.canDo(Permissions.MODS_MANAGE)) item { MakeModpackCard(vm, content, idle) }
     if (vm.canDo(Permissions.MODS_MANAGE)) item { DownloadLinkCard(vm, content, idle) }
     if (vm.canDo(Permissions.MODS_MANAGE)) item { ModrinthCard(vm, content, idle) }
+    item { AntiCheatCard(vm, content, idle) }
     list.fit?.let { fit -> item { StillFitCard(vm, content, list, fit, kind, changes == Changes.READY && idle) } }
     if (list.overlaps.isNotEmpty()) item { SameJobCard(vm, content, list, changes == Changes.READY && idle) }
 
@@ -913,6 +916,51 @@ private fun ModrinthCard(vm: AppViewModel, content: ContentPages, idle: Boolean)
         Question(strings.t("modrinth.server_title"), confirm = null, onConfirm = {}, onDismiss = { showSteps = false }) {
             Text(ModrinthCards.steps(strings, share))
         }
+    }
+}
+
+/** The anti-cheat picker: free from Modrinth, paid from the seller's page, or your own jar. */
+@Composable
+private fun AntiCheatCard(vm: AppViewModel, content: ContentPages, idle: Boolean) {
+    val strings = vm.strings
+    val context = LocalContext.current
+    LaunchedEffect(content.serverId) { content.loadAntiCheat() }
+    val pickJar = rememberFilePicker { file -> content.uploadMod(file, strings) }
+    val picker = content.antiCheat ?: return
+    SectionTitle(t("anticheat.title"))
+    Card {
+        Note(t("anticheat.intro"))
+        Note(AntiCheats.status(strings, picker), color = LocalColors.current.text)
+        if (!picker.supported) return@Card
+        Note(t("anticheat.cpu"))
+        if (!picker.mayInstall) Note(t("anticheat.no_install"))
+        Note(t("anticheat.free"), color = LocalColors.current.text)
+        for (item in picker.free) {
+            for (line in AntiCheats.free(strings, item)) Note(line, color = LocalColors.current.text)
+            if (!item.on && picker.mayInstall) {
+                Presses(listOf(Press(strings.t("anticheat.add", "name" to item.name), { content.openProject(ModrinthHit(slug = item.project, title = item.name)) }, enabled = idle)))
+            }
+        }
+        val ownJar = picker.mayInstall && picker.mayAddOwnJar
+        if (picker.paid.isNotEmpty()) {
+            Note(t("anticheat.paid"), color = LocalColors.current.text)
+            Note(t("anticheat.buy_note"))
+            for (item in picker.paid) {
+                for (line in AntiCheats.paid(strings, item)) Note(line, color = LocalColors.current.text)
+                Presses(
+                    listOfNotNull(
+                        Press(t("anticheat.seller"), { openLink(context, item.link) }),
+                        item.setup?.let { setup -> Press(t("anticheat.setup"), { openLink(context, setup) }) },
+                        Press(t("anticheat.from_file"), pickJar, enabled = idle).takeIf { ownJar && !item.on },
+                    ),
+                )
+            }
+            Note(t("anticheat.prices_note"))
+        }
+        Note(t("anticheat.custom"), color = LocalColors.current.text)
+        Note(t("anticheat.custom_about"))
+        if (ownJar) Presses(listOf(Press(t("anticheat.from_file"), pickJar, enabled = idle)))
+        else Note(t("anticheat.no_own_jar"))
     }
 }
 

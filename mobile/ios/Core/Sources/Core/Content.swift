@@ -734,3 +734,29 @@ public enum ModrinthCards {
         return (code, state)
     }
 }
+
+/// What the anti-cheat picker says above its buttons.
+public enum AntiCheats {
+    public static func status(_ strings: Strings, _ picker: AntiCheat) -> String {
+        let names = picker.installed.joined(separator: ", ")
+        if !picker.supported { return strings.t("anticheat.none_here") }
+        if picker.installed.count > 1 { return strings.t("anticheat.two", ["names": names]) }
+        if !picker.installed.isEmpty { return strings.t("anticheat.in_now", ["names": names]) }
+        return strings.t("anticheat.nothing_in")
+    }
+
+    public static func free(_ strings: Strings, _ item: AntiCheatFree) -> [String] {
+        var lines = [strings.t("anticheat.about." + item.id)]
+        if item.warning { lines.append(strings.t("anticheat.fabric_warning")) }
+        if item.on { lines.append(strings.t("anticheat.is_in", ["name": item.name])) }
+        return lines
+    }
+
+    /// Never a guessed price: no checked price sends people to the seller's page.
+    public static func paid(_ strings: Strings, _ item: AntiCheatPaid) -> [String] {
+        var lines = [strings.t("anticheat.about." + item.id)]
+        lines.append(item.price.map { strings.t("anticheat.price", ["price": $0, "day": item.checked ?? ""]) } ?? strings.t("anticheat.price_unknown"))
+        if item.on { lines.append(strings.t("anticheat.is_in", ["name": item.name])) }
+        return lines
+    }
+}

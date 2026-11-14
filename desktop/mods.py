@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .agent import AgentError
+from .anticheat_card import AntiCheatCard
 from .download_link import LinkCard
 from .editor import GuideWindow, pick_file
 from .fixes import install
@@ -234,6 +235,9 @@ class ModsPage(Page):
         # Sign in with Modrinth and put the modpack on it.
         self.modrinth_card = ModrinthCard(self)
         self.column.addWidget(self.modrinth_card.frame)
+        # The anti-cheat picker (the Protection card's anti-cheat line opens it).
+        self.anticheat_card = AntiCheatCard(self)
+        self.column.addWidget(self.anticheat_card.frame)
 
         # Still fit?: after a mod or version change, the mods that need a
         # different version (ticked, run as one Update all), the ones with
@@ -560,6 +564,7 @@ class ModsPage(Page):
         self.make_card.show(self.row)
         self.link_card.show(self.row)
         self.modrinth_card.show(self.row)
+        self.anticheat_card.show(self.row)
         self.show_sides(data)
         self.show_fit(data.get("fit"))
         self.show_same(data.get("overlaps") or [])
