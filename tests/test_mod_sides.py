@@ -204,7 +204,7 @@ async def test_a_wrong_side_name_and_a_path_are_refused(ctx):
 
 
 async def test_a_pack_for_players_cant_move_onto_the_server(ctx, tmp_path):
-    await sides.add(ctx, "shiny.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    await sides.add(ctx, "shiny.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
     with pytest.raises(ModError, match="pack for players"):
         await sides.set_side(ctx, "shiny.zip", "both", "owner")
 
@@ -220,9 +220,11 @@ async def test_a_mod_for_another_loader_stays_with_players(ctx, tmp_path):
 
 # ---------------------------------------------------------------- adding for players
 async def test_mods_resource_packs_and_shader_packs_can_be_added_for_players(ctx, tmp_path):
-    await sides.add(ctx, "map.jar", jar_bytes(tmp_path, "minimap"), "owner")
-    await sides.add(ctx, "faithful.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
-    done = await sides.add(ctx, "bsl.zip", zip_bytes({"shaders/final.fsh": "x"}), "owner")
+    await sides.add(ctx, "map.jar", jar_bytes(tmp_path, "minimap"), "owner", own_jar=True)
+    await sides.add(ctx, "faithful.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
+    done = await sides.add(
+        ctx, "bsl.zip", zip_bytes({"shaders/final.fsh": "x"}), "owner", own_jar=True
+    )
     assert done["kind"] == "shader pack"
     found = {f["filename"]: f["kind"] for f in sides.player_files(ctx)}
     assert found == {"map.jar": "mod", "faithful.zip": "pack", "bsl.zip": "pack"}
@@ -231,25 +233,27 @@ async def test_mods_resource_packs_and_shader_packs_can_be_added_for_players(ctx
 
 async def test_anything_else_is_refused(ctx, tmp_path):
     with pytest.raises(ModError):
-        await sides.add(ctx, "notes.zip", zip_bytes({"readme.txt": "hi"}), "owner")
+        await sides.add(ctx, "notes.zip", zip_bytes({"readme.txt": "hi"}), "owner", own_jar=True)
     with pytest.raises(ModError):
-        await sides.add(ctx, "pack.jar", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+        await sides.add(ctx, "pack.jar", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
     with pytest.raises(PathSafetyError):
-        await sides.add(ctx, "run.exe", b"PK..", "owner")
+        await sides.add(ctx, "run.exe", b"PK..", "owner", own_jar=True)
     with pytest.raises(PathSafetyError):
-        await sides.add(ctx, "../x.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+        await sides.add(ctx, "../x.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
     with pytest.raises(ModError, match="already"):
-        await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
-        await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+        await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
+        await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
     assert [f["filename"] for f in sides.player_files(ctx)] == ["a.zip"]
 
 
 async def test_a_mod_for_another_loader_or_a_plugin_is_refused(ctx, tmp_path):
     with pytest.raises(ModError):
-        await sides.add(ctx, "f.jar", jar_bytes(tmp_path, "f", loader="forge"), "owner")
+        await sides.add(
+            ctx, "f.jar", jar_bytes(tmp_path, "f", loader="forge"), "owner", own_jar=True
+        )
     plugin = zip_bytes({"plugin.yml": "name: P\nversion: 1\nmain: a.B\n"})
     with pytest.raises(ModError):
-        await sides.add(ctx, "p.jar", plugin, "owner")
+        await sides.add(ctx, "p.jar", plugin, "owner", own_jar=True)
 
 
 async def test_a_file_no_site_lists_needs_a_yes_first(ctx, tmp_path, monkeypatch):
@@ -259,14 +263,14 @@ async def test_a_file_no_site_lists_needs_a_yes_first(ctx, tmp_path, monkeypatch
     monkeypatch.setattr(sides, "known_source", unknown)
     data = jar_bytes(tmp_path, "own")
     with pytest.raises(FormError):
-        await sides.add(ctx, "own.jar", data, "owner")
+        await sides.add(ctx, "own.jar", data, "owner", own_jar=True)
     assert sides.player_files(ctx) == []
-    await sides.add(ctx, "own.jar", data, "owner", confirm=True)
+    await sides.add(ctx, "own.jar", data, "owner", confirm=True, own_jar=True)
     assert [f["filename"] for f in sides.player_files(ctx)] == ["own.jar"]
 
 
 async def test_removing_a_player_file_moves_it_to_the_trash(ctx):
-    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
     await sides.remove(ctx, "a.zip", "owner")
     assert sides.player_files(ctx) == []
     assert any(p.name.endswith("-a.zip") for p in ctx.mods.trash_dir.iterdir())
@@ -409,14 +413,14 @@ async def test_the_folder_is_locked_from_the_servers_user_when_that_is_on(
     locked = []
     monkeypatch.setattr(serveruser, "is_on", lambda config: True)
     monkeypatch.setattr(serveruser, "deny_all", lambda path: locked.append(path) or True)
-    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
     assert locked == [ctx.config.server_dir / sides.FOLDER]
     sides.lock(ctx.config)  # before each server start
     assert len(locked) == 2
 
 
 async def test_a_file_changed_outside_the_app_is_pointed_out(ctx):
-    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
     assert [f["changed"] for f in sides.player_files(ctx)] == [False]
     path = ctx.config.server_dir / sides.FOLDER / "a.zip"
     path.write_bytes(zip_bytes({"pack.mcmeta": "{}", "evil.txt": "x"}))
@@ -432,7 +436,7 @@ async def test_a_file_changed_outside_the_app_is_pointed_out(ctx):
 async def test_touching_a_file_without_changing_it_isnt_a_change(ctx):
     import os
 
-    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
     path = ctx.config.server_dir / sides.FOLDER / "a.zip"
     os.utime(path, (1, 1))
     assert [f["changed"] for f in sides.player_files(ctx)] == [False]
@@ -449,8 +453,10 @@ async def test_files_modrinth_lists_can_be_left_out_and_got_again(ctx, monkeypat
         return ("modrinth", {"project_id": "x"}) if sent == data else None
 
     monkeypatch.setattr(sides, "known_source", known)
-    await sides.add(ctx, "faithful.zip", data, "owner")
-    await sides.add(ctx, "mine.zip", zip_bytes({"shaders/a.fsh": "x"}), "owner", confirm=True)
+    await sides.add(ctx, "faithful.zip", data, "owner", own_jar=True)
+    await sides.add(
+        ctx, "mine.zip", zip_bytes({"shaders/a.fsh": "x"}), "owner", confirm=True, own_jar=True
+    )
     path = ctx.config.server_dir / sides.FOLDER / "faithful.zip"
     assert sides.backup_skips(ctx.config, ctx.db) == set()
     sides.set_options(ctx, backup=True, skip_listed=True)
@@ -481,7 +487,9 @@ async def test_only_a_missing_modrinth_file_is_got_again(ctx, monkeypatch):
         return None
 
     monkeypatch.setattr(sides, "known_source", unknown)
-    await sides.add(ctx, "mine.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", confirm=True)
+    await sides.add(
+        ctx, "mine.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", confirm=True, own_jar=True
+    )
     with pytest.raises(ModError, match="isn't missing"):
         await sides.fetch_again(ctx, "mine.zip", "owner")
     (ctx.config.server_dir / sides.FOLDER / "mine.zip").unlink()
@@ -492,7 +500,7 @@ async def test_only_a_missing_modrinth_file_is_got_again(ctx, monkeypatch):
 
 
 async def test_removing_forgets_the_file(ctx):
-    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    await sides.add(ctx, "a.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
     await sides.remove(ctx, "a.zip", "owner")
     assert sides.player_files(ctx) == []  # not shown as missing
 
@@ -503,7 +511,7 @@ async def test_a_real_backup_holds_the_marks_and_player_files_and_skips_listed_o
     mods = ctx.mods
     make_jar(mods.mods_dir / "a.jar", "alpha")
     await sides.set_side(ctx, "a.jar", "server", "owner")
-    await sides.add(ctx, "faithful.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner")
+    await sides.add(ctx, "faithful.zip", zip_bytes({"pack.mcmeta": "{}"}), "owner", own_jar=True)
     backups = BackupManager(mods.config, mods.bus, mods.db, mods.server)
 
     def names(result):

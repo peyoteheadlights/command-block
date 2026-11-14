@@ -346,7 +346,8 @@ def _plan(
             newer.append({"name": item.name, "from": Path(same["path"]).name, "to": item.name})
     from_pack = {entry["sha256"] for entry in link["files"]}
     yours = [mod.filename for mod in ctx.mods.scan() if mod.sha256 and mod.sha256 not in from_pack]
-    configs = _changed_by_you(folder, link, _override_hashes(pack, archive))
+    incoming = _override_hashes(pack, archive)
+    configs = _changed_by_you(folder, link, incoming)
     return {
         "from_version": link.get("version") or "",
         "to_version": pack.version or "",
@@ -355,10 +356,17 @@ def _plan(
         "newer": newer,
         "added_by_you": yours,
         "configs_changed_by_you": configs,
+        "new_own_jars": _new_own_jars(link, pack, incoming),
         "version_change": not modpack._matches(ctx, pack),
         "minecraft_version": pack.minecraft,
         "problems": pack.problems,
     }
+
+
+def _new_own_jars(link: dict[str, Any], pack: modpack.Pack, incoming: dict[str, str]) -> list[str]:
+    """The pack's own jars that are new or changed since the version the
+    owner already said yes to: only these are asked about again."""
+    return [rel for rel in pack.own_jars if incoming.get(rel) != link["overrides"].get(rel)]
 
 
 def _changed_by_you(folder: Path, link: dict[str, Any], incoming: dict[str, str]) -> list[str]:
@@ -379,12 +387,16 @@ def _changed_by_you(folder: Path, link: dict[str, Any], incoming: dict[str, str]
 
 
 async def update(
-    ctx: ServerContext, token: str, use_pack_configs: bool = False, user: str = "system"
+    ctx: ServerContext,
+    token: str,
+    use_pack_configs: bool = False,
+    user: str = "system",
+    own_jars: bool = False,
 ) -> dict[str, Any]:
     """Modpack update: the version in ``token`` (from ``preview``) put in
     place of the one the server has, as one change with one Undo. Mods
     added by you are kept, and so are config files you changed unless
-    ``use_pack_configs``."""
+    ``use_pack_configs``. New or changed own jars need ``own_jars``."""
     from .safechange import SafeChange, before, run_safe_change
     from .servertypes.install import change_version
 
@@ -394,9 +406,8 @@ async def update(
         raise modpack.ModpackError("That isn't this server's modpack. Check for the update again.")
     archive = modpack.upload_path(ctx.core, token)
     pack = await modpack.read(ctx.core, token, archive)
-    if pack.problems:
-        raise modpack.ModpackError(pack.problems[0])
     plan = await asyncio.to_thread(_plan, ctx, link, pack, archive)
+    modpack.check_can_import(pack, plan["new_own_jars"], own_jars)
     incoming = await asyncio.to_thread(_override_hashes, pack, archive)
     keep = frozenset() if use_pack_configs else frozenset(plan["configs_changed_by_you"])
     old_keys = {entry["key"] for entry in link["files"]}

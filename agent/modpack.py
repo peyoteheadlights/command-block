@@ -4,7 +4,14 @@
 A .mrpack is a zip holding ``modrinth.index.json`` (the Minecraft version,
 the loader and its version, and every mod file with its hashes and where to
 download it) and ``overrides/`` and ``server-overrides/`` folders of files
-copied in as they are (configs, scripts, small extras).
+copied in as they are (configs, scripts, small extras). Its
+``client-overrides/`` mods, resource packs and shader packs go to the
+player-only folder (agent/mods/sides.py), which the server never loads.
+
+A pack another Command Block owner made from a plugin server (Paper,
+Purpur...) carries ``server-overrides/command-block.json``, because a
+.mrpack can only name Fabric, Quilt, Forge or NeoForge: it names the server
+type and the plugins the pack can't download. It is read, never written.
 
 A CurseForge pack's ``manifest.json`` lists only each mod's project and file
 id, and its ``overrides`` folder. Each file is asked of CurseForge through
@@ -29,6 +36,10 @@ mod list, with what will be skipped and why. Then:
   * the overrides are extracted with the same zip-slip check backup restore
     uses (check_archive_member): a pack with a path that would land outside
     the server folder, or a link, is refused as a whole
+  * own jars (any .jar in the overrides, or a file of the server's own
+    program, like libraries/) are code no site checked. They are listed as
+    "not checked by a site", and the import only takes them when the person
+    said yes to that list (``own_jars``) and holds "Add own .jar"
   * the server type and version are set up with the server type installer: a new
     server through create_server, an existing one through change_version
     when it isn't already on the pack's versions
@@ -58,6 +69,7 @@ from . import downloads, linkedpack, notes, servertypes
 from .downloads import DownloadError, FileSpec
 from .events import Event
 from .mods.curseforge import GOOD_STATUS, LOADERS, Blocked, CurseForgeClient, version_of
+from .mods.sides import FOLDER as PLAYER_FOLDER
 from .mods.sources import SourceError
 from .security.paths import (
     EXECUTABLE_EXTENSIONS,
@@ -92,7 +104,23 @@ MAX_MEMBERS = 50_000
 MAX_FILES = 2_000  # mods listed in the index
 UPLOAD_KEEP_SECONDS = 24 * 3600
 # Applied in this order, so a server-only file wins over the shared one.
-OVERRIDE_FOLDERS = ("overrides", "server-overrides")
+CLIENT_FOLDER = "client-overrides"
+OVERRIDE_FOLDERS = ("overrides", "server-overrides", CLIENT_FOLDER)
+# What players get from client-overrides, kept flat in the player-only
+# folder: folder -> the one file kind allowed in it.
+PLAYER_KINDS = {"mods": ".jar", "resourcepacks": ".zip", "shaderpacks": ".zip"}
+# The plugin server a Command Block owner's pack was made from (read only).
+SERVER_NOTE = "command-block.json"
+MAX_NOTE_BYTES = 64 * 1024
+MAX_NOTE_PLUGINS = 200
+OWN_JARS_NEEDED = (
+    'This modpack has own jars not checked by a site. Importing them needs the "Add own '
+    '.jar" permission. Ask the owner.'
+)
+OWN_JARS_ASK = (
+    "This modpack has own jars not checked by a site ({names}). Import it only if you "
+    "trust whoever made it, and say yes to that list."
+)
 # Folders and files in the overrides that only the game client uses.
 CLIENT_ONLY = frozenset(
     {
@@ -105,6 +133,8 @@ CLIENT_ONLY = frozenset(
         "optionsshaders.txt",
         "servers.dat",
         "servers.dat_old",
+        # Every other file in client-overrides: the game's own settings.
+        CLIENT_FOLDER,
     }
 )
 # Mods are only taken from Modrinth's own CDN.
@@ -165,7 +195,11 @@ class Pack:
     skipped_overrides: list[str]
     problems: list[str]
     site: str = "Modrinth"
-    folders: tuple[str, ...] = ("overrides", "server-overrides")
+    folders: tuple[str, ...] = OVERRIDE_FOLDERS
+    # Own jars, by where they land in the server folder.
+    own_jars: list[str] = field(default_factory=list)
+    # From command-block.json: plugins the pack can't download.
+    plugins_to_get: list[str] = field(default_factory=list)
 
     @property
     def downloads(self) -> list[PackFile]:
@@ -198,6 +232,8 @@ class Pack:
             "overrides": self.overrides,
             "overrides_bytes": self.overrides_bytes,
             "skipped_overrides": self.skipped_overrides,
+            "own_jars": self.own_jars,
+            "plugins_to_get": self.plugins_to_get,
             "problems": self.problems,
             "can_import": not self.problems,
         }
@@ -253,11 +289,21 @@ def _check_file(entry: Any) -> PackFile:
     return found
 
 
+def _player_path(relative: str) -> str:
+    """Where a client-overrides file goes: mods/x.jar, resourcepacks/x.zip
+    and shaderpacks/x.zip into the player-only folder; anything else stays
+    under client-overrides/, which CLIENT_ONLY skips."""
+    top, _, name = relative.partition("/")
+    if name and "/" not in name and PLAYER_KINDS.get(top) == Path(name).suffix.lower():
+        return f"{PLAYER_FOLDER}/{name}"
+    return f"{CLIENT_FOLDER}/{relative}"
+
+
 def _override_members(
     zf: zipfile.ZipFile, folders: tuple[str, ...] = OVERRIDE_FOLDERS
 ) -> list[tuple[zipfile.ZipInfo, str]]:
     """(entry, path inside the server folder) for every override file, in
-    the order they are applied."""
+    the order they are applied. command-block.json is read, never placed."""
     found = []
     for folder in folders:
         prefix = f"{folder}/"
@@ -266,9 +312,56 @@ def _override_members(
             if not name.startswith(prefix) or info.is_dir():
                 continue
             relative = name[len(prefix) :]
-            if relative:
-                found.append((info, relative))
+            if not relative or relative == SERVER_NOTE:
+                continue
+            found.append((info, _player_path(relative) if folder == CLIENT_FOLDER else relative))
     return found
+
+
+def is_own_code(relative: str, software_paths: tuple[str, ...]) -> bool:
+    """Whether an override file is code no site checked: a .jar anywhere,
+    or a file of the server's own program (libraries/, the launch jar,
+    user_jvm_args.txt), which Java would load or read its arguments from."""
+    top = relative.split("/", 1)[0].lower()  # Windows doesn't mind the case
+    return Path(relative).suffix.lower() == ".jar" or top in {p.lower() for p in software_paths}
+
+
+def _server_note(zf: zipfile.ZipFile, names: set[str]) -> tuple[Any, list[str]] | None:
+    """command-block.json: (the plugin server type, plugins to get by hand),
+    or None when the pack has none. Another owner wrote it, so it is read
+    strictly: anything off refuses the pack."""
+    name = f"server-overrides/{SERVER_NOTE}"
+    if name not in names:
+        return None
+    bad = ModpackError(f"The pack's {SERVER_NOTE} couldn't be read.")
+    if zf.getinfo(name).file_size > MAX_NOTE_BYTES:
+        raise bad
+    try:
+        note = json.loads(zf.read(name).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise bad from exc
+    plugins = note.get("plugins", []) if isinstance(note, dict) else None
+    if not isinstance(note, dict) or note.get("format") != 1 or not isinstance(plugins, list):
+        raise bad
+    try:
+        server_type = servertypes.get(str(note.get("server_type") or "-"))
+    except servertypes.UnknownServerType as exc:
+        raise ModpackError(
+            f"The pack's {SERVER_NOTE} names a server type this app doesn't know."
+        ) from exc
+    if server_type.content != "plugins":
+        raise ModpackError(
+            f"The pack's {SERVER_NOTE} names {server_type.name}, which isn't a plugin server."
+        )
+    to_get = []
+    for plugin in plugins:
+        if not isinstance(plugin, dict) or not isinstance(plugin.get("name"), str):
+            raise bad
+        # Only the name is shown, as plain text, cut short.
+        shown = "".join(c for c in plugin["name"] if c.isprintable()).strip()[:100]
+        if shown and plugin.get("site") != "Modrinth":
+            to_get.append(shown)
+    return server_type, to_get[:MAX_NOTE_PLUGINS]
 
 
 def inspect(archive: Path) -> Pack:
@@ -304,10 +397,16 @@ def inspect(archive: Path) -> Pack:
             dependencies, raw_files = index.get("dependencies"), index.get("files") or []
         if not isinstance(dependencies, dict) or not dependencies.get("minecraft"):
             raise ModpackError("The pack doesn't say which Minecraft version it is for.")
-        try:
-            server_type, loader = servertypes.for_mrpack(dependencies)
-        except servertypes.UnknownServerType as exc:
-            raise ModpackError(str(exc)) from exc
+        note = None if curseforge else _server_note(zf, names)
+        plugins_to_get: list[str] = []
+        if note:
+            # The loader in "dependencies" is the players' one.
+            (server_type, plugins_to_get), loader = note, None
+        else:
+            try:
+                server_type, loader = servertypes.for_mrpack(dependencies)
+            except servertypes.UnknownServerType as exc:
+                raise ModpackError(str(exc)) from exc
         from .servertypes.versions import VersionError, check_version
 
         try:
@@ -328,7 +427,7 @@ def inspect(archive: Path) -> Pack:
                 + "; ".join(f"{f.name} ({f.reason})" for f in refused[:5])
             )
 
-        overrides, size, skipped = 0, 0, []
+        overrides, size, skipped, own = 0, 0, [], []
         check_base = Path(tempfile.gettempdir()) / "mcsc-pack-check"
         for member, relative in _override_members(zf, folders):
             try:
@@ -339,6 +438,15 @@ def inspect(archive: Path) -> Pack:
                     "the server's folder, so it can't be imported."
                 )
                 break
+            # Windows drops a name's trailing dots and spaces ("run.bat." is
+            # run.bat) and reads "a:b" as a hidden stream, so no check
+            # below could trust such a name.
+            if any(part != part.rstrip(". ") or ":" in part for part in relative.split("/")):
+                problems.append(
+                    f"The pack has a file ({member.filename}) whose name Windows would change, "
+                    "so it can't be imported."
+                )
+                break
             top = relative.split("/", 1)[0]
             if top in CLIENT_ONLY:
                 if top not in skipped:
@@ -347,6 +455,8 @@ def inspect(archive: Path) -> Pack:
             if Path(relative).suffix.lower() in EXECUTABLE_EXTENSIONS:
                 skipped.append(relative)
                 continue
+            if is_own_code(relative, server_type.software_paths):
+                own.append(relative)
             overrides += 1
             size += member.file_size
         if size > MAX_UNPACKED_BYTES:
@@ -368,6 +478,8 @@ def inspect(archive: Path) -> Pack:
         problems=problems,
         site="CurseForge" if curseforge else "Modrinth",
         folders=folders,
+        own_jars=list(dict.fromkeys(own)),
+        plugins_to_get=plugins_to_get,
     )
 
 
@@ -672,14 +784,15 @@ async def import_new(
     color: str | None = None,
     eula_accepted: bool = False,
     user: str = "system",
+    own_jars: bool = False,
 ) -> dict[str, Any]:
-    """Create a new server set up the way the pack says, with its files."""
+    """Create a new server set up the way the pack says, with its files.
+    ``own_jars``: the person said yes to the pack's own jars."""
     from .servertypes.create import create_server
 
     archive = upload_path(core, token)
     pack = await read(core, token, archive)
-    if pack.problems:
-        raise ModpackError(pack.problems[0])
+    check_can_import(pack, pack.own_jars, own_jars)
 
     async def after_install(ctx: ServerContext, folder: Path, job: JobHandle | None) -> dict:
         result = await put_in_place(pack, archive, folder, job, ctx.mods)
@@ -708,6 +821,15 @@ async def import_new(
     _list_needs(ctx, pack)
     await ctx.bus.publish(_event(pack, ctx.name, result.get("modpack") or {}))
     return result
+
+
+def check_can_import(pack: Pack, own: list[str], said_yes: bool) -> None:
+    """Refuse a pack with problems, or with own jars (``own``) nobody said
+    yes to. Whether the account may add own jars is the route's check."""
+    if pack.problems:
+        raise ModpackError(pack.problems[0])
+    if own and not said_yes:
+        raise ModpackError(OWN_JARS_ASK.format(names=", ".join(own[:5])))
 
 
 def _matches(ctx: ServerContext, pack: Pack) -> bool:
@@ -741,16 +863,18 @@ def plan_into(ctx: ServerContext, pack: Pack) -> dict[str, Any]:
     }
 
 
-async def import_into(ctx: ServerContext, token: str, user: str = "system") -> dict[str, Any]:
+async def import_into(
+    ctx: ServerContext, token: str, user: str = "system", own_jars: bool = False
+) -> dict[str, Any]:
     """Import a pack into an existing server. Sets the server up on the
-    pack's type and versions first when it isn't on them already."""
+    pack's type and versions first when it isn't on them already.
+    ``own_jars``: the person said yes to the pack's own jars."""
     from .safechange import SafeChange, before, run_safe_change
     from .servertypes.install import change_version
 
     archive = upload_path(ctx.core, token)
     pack = await read(ctx.core, token, archive)
-    if pack.problems:
-        raise ModpackError(pack.problems[0])
+    check_can_import(pack, pack.own_jars, own_jars)
     version_result = None
     if not _matches(ctx, pack):
         version_result = await change_version(

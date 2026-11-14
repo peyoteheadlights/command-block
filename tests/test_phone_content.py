@@ -426,7 +426,7 @@ def test_a_modpack_imported_into_a_server_answers_its_typed_shape(
     assert inspected["pack"]["can_import"] is True
     assert {f["status"] for f in inspected["pack"]["files"]} == {"download", "client_only"}
 
-    async def imported(ctx, token, user="system"):
+    async def imported(ctx, token, user="system", own_jars=False):
         return {
             "job_id": "j1",
             "modpack": {"name": "Test Pack", "downloaded": 1, "check": "1 file checked"},
