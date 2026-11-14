@@ -493,8 +493,15 @@ async def make(
         "job_id": job.id,
         "filename": saved["filename"],
         "trust_note": TRUST_NOTE if result["own_files"] else None,
-        "discord": bool(_chat_channels(ctx)) and result["size_bytes"] <= DISCORD_LIMIT,
+        "discord": bool(_chat_channels(ctx))
+        and (result["size_bytes"] <= DISCORD_LIMIT or bool(_link_on(ctx))),
     }
+
+
+def _link_on(ctx: ServerContext) -> str | None:
+    from .downloadlink import MODPACK_NAME, url
+
+    return url(ctx, MODPACK_NAME)
 
 
 def _add_note(target: Path, note: dict[str, Any]) -> None:
@@ -505,13 +512,20 @@ def _add_note(target: Path, note: dict[str, Any]) -> None:
 # ---------------------------------------------------------------- the Discord bot
 async def post_to_discord(ctx: ServerContext, token: str, user: str = "system") -> dict[str, Any]:
     """The bot posts the newest modpack in this server's chat channels."""
+    from .downloadlink import MODPACK_NAME, url
+
     path = file_path(ctx, token)
     last = made(ctx) or {}
+    link = None
     if path.stat().st_size > DISCORD_LIMIT:
-        raise ModpackError(
-            "The modpack is bigger than Discord's 10 MB limit, so the bot can't post it. "
-            "Save it and share it another way."
-        )
+        # Too big for Discord: the download link instead, when it's on.
+        link = url(ctx, MODPACK_NAME)
+        if not link:
+            raise ModpackError(
+                "The modpack is bigger than Discord's 10 MB limit, so the bot can't post it. "
+                "Turn on the download link and the bot posts that instead, or share the file "
+                "another way."
+            )
     channels = _chat_channels(ctx)
     if not channels:
         raise ModpackError(
@@ -526,7 +540,12 @@ async def post_to_discord(ctx: ServerContext, token: str, user: str = "system") 
     if last.get("get_yourself"):
         words += "\nNot inside, get these yourself: " + ", ".join(last["get_yourself"])
     filename = safe_filename(last["filename"], {".mrpack"})
-    data = await asyncio.to_thread(path.read_bytes)
+    files = None
+    if link:
+        words += f"\nDownload it (works for friends on Tailscale): <{link}>"
+    else:
+        data = await asyncio.to_thread(path.read_bytes)
+        files = {"files[0]": (filename, data, "application/zip")}
     bot = ctx.core.discord
     for channel in channels:
         try:
@@ -534,7 +553,7 @@ async def post_to_discord(ctx: ServerContext, token: str, user: str = "system") 
                 "POST",
                 f"/channels/{channel}/messages",
                 {"content": words[:1900], "allowed_mentions": {"parse": []}},
-                files={"files[0]": (filename, data, "application/zip")},
+                files=files,
             )
         except DiscordError as exc:
             raise ModpackError(f"Discord didn't take the modpack: {exc}") from exc
@@ -545,4 +564,4 @@ async def post_to_discord(ctx: ServerContext, token: str, user: str = "system") 
         detail=filename,
         server_id=ctx.server_id,
     )
-    return {"posted": len(channels)}
+    return {"posted": len(channels), "as_link": bool(link)}

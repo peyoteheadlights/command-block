@@ -130,6 +130,12 @@ GET /api/servers/{server_id}/modpack/make
 POST /api/servers/{server_id}/modpack/make
 POST /api/servers/{server_id}/modpack/made/discord
 GET /api/servers/{server_id}/modpack/made/{token} file
+GET /api/servers/{server_id}/download-link
+POST /api/servers/{server_id}/download-link
+POST /api/servers/{server_id}/download-link/new
+POST /api/servers/{server_id}/resource-pack/upload
+POST /api/servers/{server_id}/resource-pack
+DELETE /api/servers/{server_id}/resource-pack
 POST /api/servers/{server_id}/mods/needs-you/dismiss
 GET /api/servers/{server_id}/addons
 POST /api/servers/{server_id}/addons/upload

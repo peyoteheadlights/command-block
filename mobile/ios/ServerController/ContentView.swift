@@ -16,7 +16,7 @@ private struct ContentConfirm: Identifiable {
 
 /// Which file the Files picker is choosing.
 private enum Picking {
-    case jar, modpack, pack, players
+    case jar, modpack, pack, players, resourcePack
 }
 
 /// "Who needs it?" for one mod; `ready`: the server is stopped, so Players (a move) is offered.
@@ -273,6 +273,64 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Download link
+
+    /// The download link (on, off, New link, Copy) and the server resource pack.
+    @ViewBuilder
+    private func downloadLinkCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        let owner = model.can(Permissions.PC_SETTINGS)
+        let game = model.can(Permissions.SETTINGS_GAME)
+        SectionTitle(text: model.t("link.title"), palette: palette)
+        CardBox(palette: palette) {
+            Text(verbatim: model.t("link.intro")).foregroundStyle(palette.textSecondary)
+            if let link = content.link {
+                ForEach(DownloadLinks.lines(strings, link, owner: owner), id: \.self) { line in
+                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                }
+                Presses(presses: [
+                    Press(title: model.t(link.on ? "link.turn_off" : "link.turn_on"), enabled: ready && owner && (link.on || link.whyNot == nil)) {
+                        Task { await content.switchLink(!link.on, strings) }
+                    },
+                ] + (link.on && owner ? [
+                    Press(title: model.t("link.new"), enabled: ready) {
+                        Task { await content.newLink(strings) }
+                    },
+                ] : []) + (link.modpackUrl.map { url in [
+                    Press(title: model.t("link.copy"), enabled: true) {
+                        UIPasteboard.general.string = url
+                        content.said = Said(text: strings.t("link.copied"), good: true)
+                    },
+                ] } ?? []), palette: palette)
+                Text(verbatim: model.t("pack.title")).foregroundStyle(palette.textPrimary)
+                Text(verbatim: model.t("pack.intro")).foregroundStyle(palette.textSecondary)
+                ForEach(DownloadLinks.packLines(strings, link), id: \.self) { line in
+                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                }
+                if let pack = link.resourcePack {
+                    Toggle(model.t("pack.required"), isOn: Binding(
+                        get: { pack.required },
+                        set: { on in Task { await content.setPackRequired(on, strings) } }
+                    ))
+                    .disabled(!ready || !game)
+                }
+                Presses(presses: [
+                    Press(title: model.t("pack.pick"), enabled: ready && game) { picking = .resourcePack },
+                    Press(title: model.t("pack.use_link"), enabled: ready && game) { content.askingPackLink = true },
+                ] + (link.resourcePack == nil ? [] : [
+                    Press(title: model.t("pack.remove"), enabled: ready && game) {
+                        Task { await content.removePack(strings) }
+                    },
+                ]), palette: palette)
+                Text(verbatim: model.t("pack.tailscale_only")).foregroundStyle(palette.textSecondary)
+            }
+        }
+        .task(id: serverId) { await content.loadLink() }
+        .sheet(isPresented: Binding(get: { content.askingPackLink }, set: { content.askingPackLink = $0 })) {
+            NavigationStack { PackLinkSheet(content: content) }
+        }
+    }
+
     // MARK: - Still fit?
 
     /// After a mod or version change: the ones to change (one Update all), the
@@ -353,6 +411,7 @@ struct ContentView: View {
             }
             if model.can(Permissions.MODS_MANAGE) {
                 makeModpackCard(content, ready: idle, palette)
+                downloadLinkCard(content, ready: idle, palette)
             }
             if let fit = list.fit {
                 stillFitCard(content, list, fit, kind, ready: changes == .ready && idle, palette)
@@ -918,6 +977,9 @@ struct ContentView: View {
         case .players:
             fits = Sides.accepts(name)
             expected = ".jar, .zip"
+        case .resourcePack:
+            fits = name.lowercased().hasSuffix(".zip")
+            expected = ".zip"
         }
         guard fits else {
             content.said = Said(text: strings.t("mobile.content.wrong_file", ["kind": expected]), good: false)
@@ -936,6 +998,7 @@ struct ContentView: View {
             case .modpack: await content.inspectModpack(file, strings)
             case .pack: await content.uploadAddon(file, strings)
             case .players: await content.uploadForPlayers(file, strings)
+            case .resourcePack: await content.uploadPack(file, strings)
             }
         }
     }
@@ -1421,6 +1484,41 @@ private struct MakeModpackSheet: View {
                     }
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || version.isEmpty)
                 }
+            }
+        }
+    }
+}
+
+/// A resource pack someone else hosts: its link, and its SHA-1 if the site gives one.
+private struct PackLinkSheet: View {
+    let content: ContentPages
+
+    @Environment(AppModel.self) private var model
+    @State private var url = ""
+    @State private var sha1 = ""
+
+    var body: some View {
+        let strings = model.strings
+        Form {
+            TextField(model.t("pack.link_prompt"), text: $url)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+            TextField(model.t("pack.sha1_prompt"), text: $sha1)
+                .textInputAutocapitalization(.never)
+        }
+        .navigationTitle(model.t("pack.title"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(model.t("mobile.common.cancel")) { content.askingPackLink = false }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(model.t("pack.use_link")) {
+                    let link = String(url.trimmingCharacters(in: .whitespaces).prefix(1000))
+                    let hash = String(sha1.trimmingCharacters(in: .whitespaces).prefix(40))
+                    Task { await content.setPackLink(link, hash, strings) }
+                }
+                .disabled(url.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
     }

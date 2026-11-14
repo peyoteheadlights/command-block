@@ -1624,6 +1624,77 @@ public struct ModpackMade: Decodable, Equatable, Sendable {
     }
 }
 
+/// `asLink`: too big for Discord, so the bot posted the download link.
 public struct ModpackPosted: Decodable, Equatable, Sendable {
     public var posted: Int
+    public var asLink: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case posted
+        case asLink = "as_link"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        posted = c.value(.posted, 0)
+        asLink = c.value(.asLink, false)
+    }
+}
+
+/// The server resource pack: a zip the download link serves (`served`), or an outside link.
+public struct ResourcePack: Decodable, Equatable, Sendable {
+    public var source: String
+    public var filename: String?
+    public var url: String?
+    public var sha1: String?
+    public var sizeBytes: Int64?
+    public var required: Bool
+    public var served: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case source, filename, url, sha1, required, served
+        case sizeBytes = "size_bytes"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        source = c.value(.source, "file")
+        filename = c.maybe(.filename)
+        url = c.maybe(.url)
+        sha1 = c.maybe(.sha1)
+        sizeBytes = c.maybe(.sizeBytes)
+        required = c.value(.required, false)
+        served = c.value(.served, false)
+    }
+}
+
+/// The Download link card. `whyNot`: why it can't be turned on (no Tailscale yet).
+public struct DownloadLink: Decodable, Equatable, Sendable {
+    public var on: Bool
+    public var whyNot: String?
+    public var listening: Bool
+    public var modpackUrl: String?
+    public var speedCapBytes: Int64
+    public var resourcePack: ResourcePack?
+    public var restartNeeded: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case on, listening
+        case whyNot = "why_not"
+        case modpackUrl = "modpack_url"
+        case speedCapBytes = "speed_cap_bytes"
+        case resourcePack = "resource_pack"
+        case restartNeeded = "restart_needed"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        on = c.value(.on, false)
+        whyNot = c.maybe(.whyNot)
+        listening = c.value(.listening, false)
+        modpackUrl = c.maybe(.modpackUrl)
+        speedCapBytes = c.value(.speedCapBytes, 0)
+        resourcePack = c.maybe(.resourcePack)
+        restartNeeded = c.value(.restartNeeded, false)
+    }
 }

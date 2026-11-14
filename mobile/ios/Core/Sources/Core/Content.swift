@@ -634,3 +634,39 @@ public enum MadeModpacks {
         return lines
     }
 }
+
+/// What the Download link card says: the modpack's link and the speed cap
+/// while it's on, why it can't run, and the resource pack. `owner`: may turn it on.
+public enum DownloadLinks {
+    public static func lines(_ strings: Strings, _ link: DownloadLink, owner: Bool) -> [String] {
+        var lines: [String] = []
+        if link.on, !link.listening, let why = link.whyNot {
+            lines.append(strings.t("link.not_listening", ["why": why]))
+        } else if link.on {
+            lines.append(link.modpackUrl.map { strings.t("link.modpack", ["url": $0]) } ?? strings.t("link.no_modpack"))
+            lines.append(strings.t("link.speed", ["speed": Display.bytes(strings, link.speedCapBytes)]))
+            lines.append(strings.t("link.new_hint"))
+        } else if let why = link.whyNot {
+            lines.append(why)
+        }
+        if !owner { lines.append(strings.t("link.owner_only")) }
+        return lines
+    }
+
+    public static func packLines(_ strings: Strings, _ link: DownloadLink) -> [String] {
+        guard let pack = link.resourcePack else { return [strings.t("pack.none")] }
+        let name = pack.filename ?? ""
+        let size = Display.bytes(strings, pack.sizeBytes)
+        var lines: [String]
+        if !pack.served {
+            lines = [strings.t("pack.outside", ["url": pack.url ?? ""])]
+        } else if pack.url != nil {
+            lines = [strings.t("pack.file", ["name": name, "size": size])]
+        } else {
+            lines = [strings.t("pack.file_off", ["name": name, "size": size])]
+        }
+        if pack.sha1 == nil { lines.append(strings.t("pack.no_sha1")) }
+        if link.restartNeeded { lines.append(strings.t("pack.restart")) }
+        return lines
+    }
+}

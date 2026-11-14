@@ -452,6 +452,10 @@ class AgentCore:
         self.wake = Wake(self)
         # Join protection and "Start when someone joins" (agent/joinguard.py).
         self.guard = GuardHub(self)
+        # The download link for made modpacks and resource packs (agent/downloadlink.py).
+        from .downloadlink import LinkServer
+
+        self.download_link = LinkServer(self)
         # Linked accounts work without the bot (the apps list and remove
         # them); the bot itself only exists while a token is set.
         self.links = Links(self.db)
@@ -590,6 +594,10 @@ class AgentCore:
         self.tailscale.start()
         self.wake.start()
         self.guard.start()
+        try:
+            await self.download_link.ensure()
+        except Exception:  # the link must never stop the agent starting
+            log.exception("the download link didn't start")
         self.pcs.start()
         await self._check_database_access()
         self.game_events.start()
@@ -733,6 +741,7 @@ class AgentCore:
         for ctx in list(self.servers.values()):
             await ctx.stop()
         await self.guard.stop()
+        await self.download_link.stop()
         await self.rented.stop()
         self.microsoft.cancel()
         self.headlessmc.cancel()
