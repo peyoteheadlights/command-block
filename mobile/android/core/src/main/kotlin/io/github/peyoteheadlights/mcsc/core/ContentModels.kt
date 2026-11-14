@@ -41,6 +41,11 @@ data class Mod(
     @SerialName("update_available") val updateAvailable: ModUpdate? = null,
     /** On a linked modpack's server: true when the modpack didn't put it there. */
     @SerialName("added_by_you") val addedByYou: Boolean? = null,
+    val loader: String? = null,
+    /** server, players or both: who needs it. */
+    val side: String? = null,
+    /** Where [side] came from: you, modpack, modrinth, curseforge, file or unknown. */
+    @SerialName("side_from") val sideFrom: String? = null,
 )
 
 @Serializable
@@ -57,7 +62,30 @@ data class ModList(
     val overlaps: List<Overlap> = emptyList(),
     /** The modpack this server came from; null: not linked. */
     val modpack: LinkedModpack? = null,
+    /** The player-only folder: kept for the modpack, never loaded by the server. */
+    @SerialName("player_only") val playerOnly: List<PlayerFile> = emptyList(),
+    /** A mod needs one that sits on the other side. */
+    @SerialName("odd_setups") val oddSetups: List<OddSetup> = emptyList(),
 )
+
+@Serializable
+data class PlayerFile(
+    val filename: String,
+    val name: String = "",
+    val version: String = "",
+    /** mod or pack (a resource pack or shader pack). */
+    val kind: String = "",
+    @SerialName("size_bytes") val sizeBytes: Long = 0,
+)
+
+@Serializable
+data class OddSetup(val filename: String = "", val text: String = "")
+
+@Serializable
+data class ModSideChanged(val side: String = "", val moved: Boolean = false)
+
+@Serializable
+data class PlayerFileAdded(val added: String = "", val kind: String = "")
 
 @Serializable
 data class LinkedModpackUpdate(

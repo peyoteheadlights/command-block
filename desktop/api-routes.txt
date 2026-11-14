@@ -107,6 +107,9 @@ GET /api/servers/{server_id}/mods/dependencies
 GET /api/servers/{server_id}/mods/versions/{mod_id}
 GET /api/servers/{server_id}/mods/impact
 POST /api/servers/{server_id}/mods/remove
+POST /api/servers/{server_id}/mods/side
+POST /api/servers/{server_id}/mods/player-only/upload
+POST /api/servers/{server_id}/mods/player-only/remove
 GET /api/servers/{server_id}/mods/update-all
 POST /api/servers/{server_id}/mods/update-all
 GET /api/servers/{server_id}/mods/search

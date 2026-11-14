@@ -15,7 +15,16 @@ from agent.mods.modrinth import ModrinthClient, ModrinthError
 from agent.security.paths import PathSafetyError
 
 
-def make_jar(path, mod_id, version="1.0.0", depends=None, breaks=None, name=None, loader="fabric"):
+def make_jar(
+    path,
+    mod_id,
+    version="1.0.0",
+    depends=None,
+    breaks=None,
+    name=None,
+    loader="fabric",
+    environment="*",
+):
     """Write a minimal but realistic mod jar."""
     meta = {
         "schemaVersion": 1,
@@ -24,7 +33,7 @@ def make_jar(path, mod_id, version="1.0.0", depends=None, breaks=None, name=None
         "name": name or mod_id.title(),
         "description": f"Test mod {mod_id}",
         "authors": ["tester"],
-        "environment": "*",
+        "environment": environment,
         "depends": depends or {},
     }
     if breaks:
