@@ -23,6 +23,15 @@ version 3 (`licenses/LGPL-3.0.txt`, which builds on `licenses/GPL-3.0.txt`).
   HarfBuzz and libpng), listed with their licenses at
   https://doc.qt.io/qt-6.8/licenses-used-in-qt.html.
 
+## Archivo (the heading font)
+
+Headings, the server tabs and the page list use Archivo
+(https://github.com/Omnibus-Type/Archivo), Copyright 2020 The Archivo
+Project Authors, under the SIL Open Font License 1.1
+(`licenses/Archivo-OFL.txt`). Three weights ship unchanged in
+`desktop/fonts` (Medium, SemiBold and Bold). Nothing is downloaded when the
+app runs.
+
 ## Diagnose server's test player
 
 Diagnose server joins with Mineflayer (https://github.com/PrismarineJS/mineflayer,

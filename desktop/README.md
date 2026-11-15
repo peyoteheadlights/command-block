@@ -13,9 +13,14 @@ the phone apps use.
   SHA-256 fingerprint instead of turning certificate checks off.
 - `window.py` has the main window: sign-in, All servers and the binder tabs.
   Anything that calls the agent runs off the window's thread so the window
-  never freezes. `server_tab.py` is one server's tab: header card, page tabs
-  and the right panel. `overview.py` is its Overview in Simple and Technical,
-  and `graphs.py` draws the graphs.
+  never freezes. `server_tab.py` is one server's tab: the header, the open
+  page and the side notes. `overview.py` is its Overview in Simple and
+  Technical, and `graphs.py` draws the graphs.
+- `shell.py` draws the binder itself: the server tabs, the sheet of paper
+  and a server's page list with its sliding marker. `frame.py` is the window
+  without Windows' frame: only the binder shows on the desktop, and the
+  window does its own moving, resizing, snapping and minimize, maximize and
+  close buttons. Over Remote Desktop it is plain grey behind the binder.
 - Each server page is a `Page` (`ui.py`) that asks the agent only while it
   is open: `players.py` (Players and chat), `console.py`, `performance.py`,
   `schedules.py`, `activity.py` (every event, and the crashes with what
@@ -39,8 +44,10 @@ the phone apps use.
   window current, and `alerts.py` is the bell's list of alerts.
 - `words.py` and `theme.py` read the words and colors from the top-level
   `shared/`, so the desktop app, the phone apps and the installer look and
-  read the same. The server's color tints the window with the same sums as
-  the phone apps (`agent/colors.py`). The app's own words start with
+  read the same. The page stays plain paper: a server's color goes on its
+  tab, the band behind the sheet, the buttons and the edges, worked out with
+  the same sums as the phone apps (`agent/colors.py`). `fonts/` holds
+  Archivo, the heading font. The app's own words start with
   `desktop.` in `shared/strings.json`.
 - `icons.py` draws the line icons and the server badges; `images/` holds the
   app's icon (`python scripts/make_icons.py` makes it from `docs/images/logo.png`).

@@ -26,6 +26,7 @@ def main() -> int:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from fastapi.testclient import TestClient
     from PySide6.QtCore import QThreadPool
+    from PySide6.QtGui import QColor, QImage, QLinearGradient, QPainter
     from PySide6.QtWidgets import QApplication, QPushButton
 
     from agent.main import create_app
@@ -51,7 +52,20 @@ def main() -> int:
     def snap(window: MainWindow, name: str, dark: bool) -> None:
         settle()
         path = OUT / f"{name}-{'dark' if dark else 'light'}.png"
-        window.grab().save(str(path))
+        shot = window.grab().toImage()
+        # The window is see-through around the binder: put a pretend
+        # desktop behind it, so the picture shows that.
+        desktop = QImage(shot.size(), QImage.Format.Format_RGB32)
+        painter = QPainter(desktop)
+        wallpaper = QLinearGradient(0, 0, shot.width(), shot.height())
+        for at, color in (
+            ((0, "#27466B"), (1, "#6B3F52")) if dark else ((0, "#7FB3D6"), (1, "#E9B48A"))
+        ):
+            wallpaper.setColorAt(at, QColor(color))
+        painter.fillRect(desktop.rect(), wallpaper)
+        painter.drawImage(0, 0, shot)
+        painter.end()
+        desktop.save(str(path))
         print(f"wrote {path.relative_to(ROOT)}")
 
     with tempfile.TemporaryDirectory() as folder:
