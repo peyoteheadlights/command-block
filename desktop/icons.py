@@ -36,6 +36,7 @@ SHAPES = {
     "maximize": '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
     "restore": '<rect x="5.5" y="8.5" width="10" height="10" rx="2"/><path d="M9 5.5h7.5a2 2 0 0 1 2 2V15"/>',
     "close": '<path d="M7 7l10 10M17 7L7 17"/>',
+    "restart": '<path d="M19.5 12a7.5 7.5 0 1 1-2.4-5.5"/><path d="M19.5 4.5v4.2h-4.2"/>',
     "search": '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/>',
     "store": '<path d="M5 8h14l-1.2 11.2a1.5 1.5 0 0 1-1.5 1.3H7.7a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/>',
 }

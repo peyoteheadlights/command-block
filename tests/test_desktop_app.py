@@ -376,11 +376,14 @@ def test_start_stop_and_restart_work_from_the_header(qapp, agent_http):
 
     def press(words):
         window.refresh()
-        wait_for(qapp, lambda: any(b.text() == words and b.isEnabled() for b in header_buttons()))
-        next(b for b in header_buttons() if b.text() == words).click()
+        wait_for(qapp, lambda: any(named(b) == words and b.isEnabled() for b in header_buttons()))
+        next(b for b in header_buttons() if named(b) == words).click()
+
+    def named(b):
+        return b.text() or b.accessibleName()  # Restart is an icon button: its name is on hover
 
     def header_buttons():
-        return window.server_screen.header.findChildren(QtWidgets.QPushButton)
+        return window.server_screen.header.findChildren(QtWidgets.QAbstractButton)
 
     window = signed_in_on(qapp, agent_http)
     press("Start")
@@ -663,22 +666,26 @@ def test_the_bell_counts_what_the_account_has_not_read(qapp, agent_http):
 
 
 def test_a_hint_shows_on_hover_on_tab_and_space_and_to_narrator(qapp, agent_http):
-    window = signed_in_on(qapp, agent_http)
-    hint = next(
-        h for h in window.findChildren(QtWidgets.QToolButton, "hint") if h.isVisibleTo(window)
-    )
-    words = hint.toolTip()
-    assert len(words) > 20
-    assert hint.accessibleDescription() == words
-    assert hint.focusPolicy() & QtCore.Qt.FocusPolicy.TabFocus
-    hint.setFocus()
     from PySide6.QtGui import QKeyEvent
 
+    from desktop.parts import Bubble, InfoDot
+
+    window = signed_in_on(qapp, agent_http)
+    wait_for(qapp, lambda: "Server address" in shown_text(window))
+    hint = next(h for h in window.findChildren(InfoDot) if h.isVisibleTo(window))
+    words = hint.accessibleDescription()
+    assert len(words) > 20
+    assert hint.focusPolicy() & QtCore.Qt.FocusPolicy.TabFocus
+    QtWidgets.QApplication.sendEvent(hint, QtCore.QEvent(QtCore.QEvent.Type.Enter))
+    wait_for(qapp, lambda: Bubble.words() == words)
+    QtWidgets.QApplication.sendEvent(hint, QtCore.QEvent(QtCore.QEvent.Type.Leave))
+    assert Bubble.words() == ""
+    hint.setFocus()
     for kind in (QtCore.QEvent.Type.KeyPress, QtCore.QEvent.Type.KeyRelease):
         QtWidgets.QApplication.sendEvent(
             hint, QKeyEvent(kind, QtCore.Qt.Key.Key_Space, QtCore.Qt.KeyboardModifier.NoModifier)
         )
-    assert QtWidgets.QToolTip.text() == words
+    wait_for(qapp, lambda: Bubble.words() == words)
 
 
 def test_technical_mode_has_no_suggestions_card(qapp, agent_http):

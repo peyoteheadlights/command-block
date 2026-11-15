@@ -28,6 +28,12 @@ the phone apps use.
   boxes are style sheet rules in `theme.py`. A part finds its colors from
   the window it is on. `python scripts/parts_gallery.py` shows them all on
   one screen to try (`--shots` saves pictures).
+- The Overview, Settings and All servers are built from those parts. A
+  card is a raised box (`card()` in `overview.py`). In Settings a switch, a
+  slider, the name and the color save as soon as they change (`applies()`
+  and `saves_when_let_go()` in `settings.py`); the other fields keep their
+  card's Save. A server's box on All servers takes its own color
+  (`ServerRow` in `window.py`, `row_sheet()` in `theme.py`).
 - Each server page is a `Page` (`ui.py`) that asks the agent only while it
   is open: `players.py` (Players and chat), `console.py`, `performance.py`,
   `schedules.py`, `activity.py` (every event, and the crashes with what
