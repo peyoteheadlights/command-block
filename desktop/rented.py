@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QFrame,
     QHBoxLayout,
     QLineEdit,
     QPlainTextEdit,
@@ -27,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from .agent import AgentError
+from .parts import Box, Status
 from .server_tab import state_words
 from .theme import SHARED
 from .ui import label, push, refill, size
@@ -71,20 +71,26 @@ def usage_line(row: dict) -> str:
     return text("desktop.rented.usage", memory=memory, cpu=cpu, disk=disk)
 
 
-class RentedRow(QFrame):
-    """One rented server on All servers, marked with the host's name."""
+class RentedRow(Box):
+    """One rented server on All servers, with the host's name."""
 
     def __init__(self, window: MainWindow, row: dict) -> None:
         super().__init__()
-        self.setProperty("kind", "row")
-        line = QHBoxLayout(self)
-        line.setContentsMargins(14, 10, 10, 10)
+        line = QHBoxLayout()
+        self.column.addLayout(line)
+        words = QVBoxLayout()
+        words.setSpacing(2)
         name = label(row["name"])
         name.setObjectName("title")
-        line.addWidget(name, 1)
-        line.addWidget(label(row["host"], "chip"))
-        line.addWidget(label(state_words(row), "sub"))
+        words.addWidget(name)
         state = row.get("state")
+        under = QHBoxLayout()
+        under.setSpacing(10)
+        mark = {"ONLINE": "on", "OFFLINE": "off"}.get(state or "", "wait")
+        under.addWidget(Status(mark, state_words(row)))
+        under.addWidget(label(row["host"], "sub"), 1)
+        words.addLayout(under)
+        line.addLayout(words, 1)
         if window.may(row["id"], "server.control") and state in ("ONLINE", "OFFLINE"):
             action = "stop" if state == "ONLINE" else "start"
             button = push(text(f"action.{action}"), "primary" if action == "start" else "")

@@ -20,6 +20,7 @@ from PySide6.QtCore import QObject, QPoint, QRunnable, QSize, Qt, QThreadPool, Q
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -27,10 +28,10 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QInputDialog,
-    QLabel,
     QLineEdit,
     QMenu,
     QMessageBox,
+    QPushButton,
     QScrollArea,
     QStackedWidget,
     QToolButton,
@@ -54,9 +55,10 @@ from .moderators import Moderators
 from .mods import takes
 from .new_server import NewServerScreen
 from .overview import SimpleOverview, TechnicalOverview
+from .parts import Box, Status
 from .pc import WindowsPC
 from .rented import ConnectPanel, RentedRow, RentedScreen
-from .server_tab import BUSY, ServerScreen, state_words
+from .server_tab import BUSY, ServerScreen, facts, state_mark, state_words
 from .shell import BinderTabs, Desk, Sheet
 from .tailscale_step import TailscaleStep
 from .ui import clock, content_page, has_packs, label, push, refill
@@ -169,38 +171,45 @@ class SignInScreen(QWidget):
         )
 
 
-class ServerRow(QFrame):
-    """One server on All servers. ``act`` starts or stops a server on another
-    of the owner's PCs (that PC checks the account may)."""
+class ServerRow(Box):
+    """One server on All servers: a raised box with its edge, color bar and
+    Start button in the server's own color. ``act`` starts or stops a
+    server on another of the owner's PCs (that PC checks the account may)."""
 
     def __init__(
         self, window: MainWindow, row: dict, act: Callable[[str], None] | None = None
     ) -> None:
         super().__init__()
-        self.setProperty("kind", "row")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 10, 10, 10)
-        dot = QLabel()
-        dot.setFixedSize(12, 12)
-        dot.setStyleSheet(f"background: {row.get('color') or '#8E8E93'}; border-radius: 6px;")
-        layout.addWidget(dot)
+        # The parts in the box take their colors from here, not from the window.
+        self.look = theme.tokens(window.dark, row.get("color"))
+        self.setStyleSheet(theme.row_sheet(self.look))
+        line = QHBoxLayout()
+        line.setSpacing(12)
+        self.column.addLayout(line)
+        bar = QFrame()
+        bar.setFixedWidth(4)
+        bar.setStyleSheet(f"background: {row.get('color') or self.look['neutral']};")
+        line.addWidget(bar)
+        words = QVBoxLayout()
+        words.setSpacing(2)
         name = label(row["name"])
         name.setObjectName("title")
-        layout.addWidget(name, 1)
-        if row.get("test"):
-            layout.addWidget(label(text("test.badge"), "chip"))
+        words.addWidget(name)
         state = row.get("state", "UNKNOWN")
-        layout.addWidget(label(state_words(row), "sub"))
+        said = facts(row, port=False, players=False)
         if state == "ONLINE":
             players = row.get("players_online")
-            shown = (
+            said.append(
                 text("servers.players_of", n=players, max=row.get("max_players") or "?")
                 if players is not None
                 else text("state.unknown")
             )
-        else:
-            shown = text("servers.not_running")
-        layout.addWidget(label(shown, "sub"))
+        under = QHBoxLayout()
+        under.setSpacing(10)
+        under.addWidget(Status(state_mark(row), state_words(row)))
+        under.addWidget(label(" · ".join(said), "sub"), 1)
+        words.addLayout(under)
+        line.addLayout(words, 1)
         action = "stop" if state in ("ONLINE", *BUSY) else "start"
         button = push(text(f"action.{action}"), "primary" if action == "start" else "")
         button.setEnabled(state not in BUSY)
@@ -210,7 +219,7 @@ class ServerRow(QFrame):
         else:
             button.clicked.connect(lambda: window.server_action(row["id"], action))
             button.setVisible(window.may(row["id"], "server.control"))
-        layout.addWidget(button)
+        line.addWidget(button)
 
 
 class NoticeScreen(QWidget):
@@ -259,6 +268,10 @@ class NoticeScreen(QWidget):
 
 
 class AllServersScreen(QWidget):
+    """Every server as a raised box, under small headings where there is
+    more than one group (this PC, rented servers, the owner's other PCs),
+    then a dashed card to add one. With no server at all, only that."""
+
     NAME = "All servers"
 
     def __init__(self, window: MainWindow) -> None:
@@ -266,15 +279,9 @@ class AllServersScreen(QWidget):
         self.window_ = window
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 20)
-        top = QHBoxLayout()
-        heading = label(text("page.servers"))
-        heading.setObjectName("title")
-        top.addWidget(heading, 1)
-        # A server rented from a host, on its Pterodactyl panel (owner only).
-        self.connect_button = push(text("desktop.rented.connect"), "plain")
-        self.connect_button.clicked.connect(lambda: ConnectPanel(window).exec())
-        top.addWidget(self.connect_button)
-        outer.addLayout(top)
+        self.heading = label(text("page.servers"), name="h1")
+        outer.addWidget(self.heading)
+        outer.addSpacing(8)
         self.problem = label(kind="problem")
         self.problem.hide()
         outer.addWidget(self.problem)
@@ -284,11 +291,52 @@ class AllServersScreen(QWidget):
         self.said = label(kind="ok")  # what was just done here, like a server removed
         self.said.hide()
         outer.addWidget(self.said)
-        self.rows = QVBoxLayout()
-        self.rows.setSpacing(8)
-        outer.addLayout(self.rows)
-        outer.addStretch()
+        body = QWidget()
+        self.rows = QVBoxLayout(body)
+        self.rows.setContentsMargins(0, 0, 0, 0)
+        self.rows.setSpacing(2)  # a box brings its own room for its shadow
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
         self.servers: list[dict] = []
+        self.add_button = self.connect_button = QPushButton()  # made again with each fill
+
+    def add_card(self, first: bool) -> QWidget:
+        """Add server, and for the owner Connect a rented server (on its
+        Pterodactyl panel). ``first``: there is no server yet, so it is the
+        whole page, with the filled button."""
+        window = self.window_
+        self.add_button = push(text("page.add_server"), "primary" if first else "plain")
+        look = theme.tokens(window.dark)  # no server is open here: the copper
+        self.add_button.setIcon(
+            icons.icon("plus", look["accent-text" if first else "accent-ink"], 16)
+        )
+        self.add_button.clicked.connect(lambda: window.show_screen("New server"))
+        self.connect_button = push(text("desktop.rented.connect"), "plain")
+        self.connect_button.clicked.connect(lambda: ConnectPanel(window).exec())
+        self.connect_button.setVisible(window.role in (None, "owner"))
+        card = QFrame()
+        buttons: QBoxLayout
+        if first:
+            self.add_button.setProperty("big", True)
+            buttons = QVBoxLayout(card)
+            buttons.setContentsMargins(0, 60, 0, 0)
+            none = label(text("servers.none"), name="h2")
+            buttons.addWidget(none, 0, Qt.AlignmentFlag.AlignHCenter)
+            buttons.addSpacing(8)
+            for button in (self.add_button, self.connect_button):
+                buttons.addWidget(button, 0, Qt.AlignmentFlag.AlignHCenter)
+            return card
+        card.setObjectName("newServer")
+        buttons = QHBoxLayout(card)
+        buttons.setContentsMargins(12, 10, 12, 10)
+        buttons.addStretch()
+        buttons.addWidget(self.add_button)
+        buttons.addWidget(self.connect_button)
+        buttons.addStretch()
+        return card
 
     def failed(self, exc: AgentError) -> None:
         self.problem.setText(str(exc))
@@ -307,21 +355,20 @@ class AllServersScreen(QWidget):
         """This PC's servers, then each of the owner's other PCs' (Your
         PCs), under the PC's name."""
         refill(self.rows, [])
-        others = self.window_.other_pcs()
-        if others:
-            self.rows.addWidget(label(self.window_.this_pc_name(), name="h2"))
-        if not self.servers:
-            self.rows.addWidget(label(text("servers.none"), "sub"))
+        window = self.window_
+        others = window.other_pcs()
+        group = lambda words: label(words, "group")  # noqa: E731
+        if others or (window.rented and self.servers):
+            self.rows.addWidget(group(window.this_pc_name()))
         for row in self.servers:
-            self.rows.addWidget(ServerRow(self.window_, row))
-        self.connect_button.setVisible(self.window_.role in (None, "owner"))
-        if self.window_.rented:
-            self.rows.addWidget(label(text("desktop.rented.heading_list"), name="h2"))
-            for row in self.window_.rented:
-                self.rows.addWidget(RentedRow(self.window_, row))
+            self.rows.addWidget(ServerRow(window, row))
+        if window.rented:
+            self.rows.addWidget(group(text("desktop.rented.heading_list")))
+            for row in window.rented:
+                self.rows.addWidget(RentedRow(window, row))
         for pc in others:
-            self.rows.addWidget(label(pc.get("name") or "", name="h2"))
-            found = self.window_.elsewhere.get(pc["id"])
+            self.rows.addWidget(group(pc.get("name") or ""))
+            found = window.elsewhere.get(pc["id"])
             if found is None:
                 self.rows.addWidget(label(text("desktop.pcs.loading"), "sub"))
             elif isinstance(found, str):
@@ -330,8 +377,13 @@ class AllServersScreen(QWidget):
                 self.rows.addWidget(label(text("servers.none"), "sub"))
             else:
                 for row in found:
-                    act = lambda action, p=pc, r=row: self.window_.act_elsewhere(p, r, action)  # noqa: E731
-                    self.rows.addWidget(ServerRow(self.window_, row, act))
+                    act = lambda action, p=pc, r=row: window.act_elsewhere(p, r, action)  # noqa: E731
+                    self.rows.addWidget(ServerRow(window, row, act))
+        first = not (self.servers or window.rented or others)
+        if not first:
+            self.rows.addSpacing(8)
+        self.rows.addWidget(self.add_card(first))
+        self.rows.addStretch()
 
 
 class ScreenStack(QStackedWidget):

@@ -9,6 +9,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
+from .parts import ink
 from .ui import clock
 from .words import text
 
@@ -84,14 +85,14 @@ class Graph(QWidget):
         p.setFont(font)
         left, bottom = 44, 20
         plot = QRectF(left, 6, self.width() - left - 6, self.height() - bottom - 6)
-        p.setPen(QPen(QColor(c["border"]), 1))
+        p.setPen(QPen(ink(c["border"]), 1))
         p.setBrush(QColor(c["plot"]))
-        p.drawRoundedRect(plot, 4, 4)
+        p.drawRoundedRect(plot, 8, 8)
         muted = QColor(c["text"])
         for frac, words in zip((0, 0.5, 1), self.axis_labels(), strict=True):
             y = plot.bottom() - frac * plot.height()
             if 0 < frac < 1:
-                p.setPen(QPen(QColor(c["border"]), 1, Qt.PenStyle.DashLine))
+                p.setPen(QPen(ink(c["border"]), 1, Qt.PenStyle.DashLine))
                 p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
             p.setPen(muted)
             p.drawText(
@@ -200,7 +201,7 @@ class HoursGraph(QWidget):
         p.setFont(font)
         left, bottom = 30, 18
         plot = QRectF(left, 6, self.width() - left - 6, self.height() - bottom - 6)
-        p.setPen(QPen(QColor(c["border"]), 1))
+        p.setPen(QPen(ink(c["border"]), 1))
         p.setBrush(QColor(c["plot"]))
         p.drawRect(plot)
         top = max([h["average"] or 0 for h in self.hours] + [1])
