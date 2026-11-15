@@ -627,6 +627,29 @@ class ContentTest {
     }
 
     @Test
+    fun `the title screen is read, sent with the modpack and its picture uploaded`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            val options = """{"name": "Friends", "version": "2", "required_to_join": {"available": true, "on": false}, "title_screen": {"button": {"on": true, "address": "play.example.net"}, "flavor_text": {"on": false, "text": ""}, "background": {"on": false}, "background_set": true}}"""
+            agent.server.enqueue(agent.json(options))
+            val got = c.makeModpackOptions("s").titleScreen
+            assertEquals(TitleButton(true, "play.example.net"), got.button)
+            assertTrue(got.backgroundSet)
+            agent.server.takeRequest()
+
+            agent.server.enqueue(agent.json(options))
+            c.uploadTitleBackground("s", PickedFile("sky.png", 2) { "PN".byteInputStream() })
+            assertEquals("/api/servers/s/modpack/title-background", agent.server.takeRequest().path)
+
+            agent.server.enqueue(agent.json("""{"ok": true, "token": "t1", "filename": "Friends 2.mrpack", "files": 1, "size_bytes": 1}"""))
+            val screen = TitleScreen(TitleButton(true, "play.example.net"), FlavorText(true, "Dragons!"), OnOff(true))
+            c.makeModpack("s", MakeModpack("Friends", "2", titleScreen = screen))
+            val sent = agent.server.takeRequest().body.readUtf8()
+            assertTrue(sent, sent.endsWith(""""title_screen":{"button":{"on":true,"address":"play.example.net"},"flavor_text":{"on":true,"text":"Dragons!"},"background":{"on":true}}}"""))
+        }
+    }
+
+    @Test
     fun `the download link turns on and the resource pack is sent, set by link and removed`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)

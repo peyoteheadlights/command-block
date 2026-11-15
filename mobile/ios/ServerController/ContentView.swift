@@ -1617,10 +1617,17 @@ private struct MakeModpackSheet: View {
     @State private var required = false
     @State private var chatOn = true
     @State private var chatText = ""
+    @State private var buttonOn = false
+    @State private var address = ""
+    @State private var flavorOn = false
+    @State private var flavor = ""
+    @State private var backgroundOn = false
+    @State private var pickingBackground = false
 
     var body: some View {
         let strings = model.strings
         if let options = content.makeOptions {
+            let hasBackground = options.titleScreen.backgroundSet || content.backgroundSet
             Form {
                 Section {
                     TextField(model.t("make.name"), text: $name)
@@ -1649,6 +1656,22 @@ private struct MakeModpackSheet: View {
                         Text(hiding: model.t("make.chat_line_hint")).font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                if options.requiredToJoin {
+                    // What friends with the Companion see when Minecraft starts.
+                    Section(model.t("make.title_screen")) {
+                        Text(verbatim: model.t("make.title_screen_hint")).font(.footnote).foregroundStyle(.secondary)
+                        Toggle(model.t("make.title_button"), isOn: $buttonOn)
+                        TextField(model.t("make.title_address"), text: $address).disabled(!buttonOn)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .onChange(of: address) { _, new in address = String(new.prefix(260)) }
+                        Toggle(model.t("make.flavor_text"), isOn: $flavorOn)
+                        TextField(model.t("make.flavor_text"), text: $flavor).disabled(!flavorOn)
+                            .onChange(of: flavor) { _, new in flavor = String(new.prefix(60)) }
+                        Toggle(model.t("make.background"), isOn: $backgroundOn).disabled(!hasBackground)
+                        Button(model.t("make.background_pick")) { pickingBackground = true }
+                            .disabled(content.busy != nil)
+                    }
+                }
                 Section(model.t(options.configs.isEmpty ? "make.no_configs" : "make.configs")) {
                     ForEach(options.configs, id: \.path) { config in
                         Toggle(config.path, isOn: Binding(
@@ -1667,6 +1690,22 @@ private struct MakeModpackSheet: View {
                 required = options.requiredToJoin && options.requiredOn
                 chatOn = options.chatLine.on
                 chatText = options.chatLine.text
+                buttonOn = options.titleScreen.button.on
+                address = options.titleScreen.button.address
+                flavorOn = options.titleScreen.flavorText.on
+                flavor = options.titleScreen.flavorText.text
+                backgroundOn = options.titleScreen.background.on
+            }
+            .fileImporter(isPresented: $pickingBackground, allowedContentTypes: [.png]) { result in
+                guard case .success(let url) = result else { return }
+                Task {
+                    do {
+                        let file = try await Task.detached { try PickedCopy.make(url) }.value
+                        await content.uploadTitleBackground(file, strings)
+                    } catch {
+                        content.said = Said(text: strings.t("mobile.error.failed", ["reason": error.localizedDescription]), good: false)
+                    }
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1683,7 +1722,12 @@ private struct MakeModpackSheet: View {
                             required: required,
                             // Left empty: the agent's own wording.
                             chatLine: options.requiredToJoin && !chatText.trimmingCharacters(in: .whitespaces).isEmpty
-                                ? ChatLine(on: chatOn, text: chatText.trimmingCharacters(in: .whitespaces)) : nil
+                                ? ChatLine(on: chatOn, text: chatText.trimmingCharacters(in: .whitespaces)) : nil,
+                            titleScreen: TitleScreen(
+                                button: .init(on: buttonOn, address: address.trimmingCharacters(in: .whitespaces)),
+                                flavorText: .init(on: flavorOn, text: flavor.trimmingCharacters(in: .whitespaces)),
+                                background: .init(on: backgroundOn && hasBackground)
+                            )
                         )
                         Task { await content.makeModpack(answers, strings) }
                     }

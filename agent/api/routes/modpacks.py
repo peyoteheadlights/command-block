@@ -10,7 +10,7 @@ from functools import partial
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from ... import downloadlink, linkedpack, modpack, modpackmake, modrinthshare
+from ... import downloadlink, linkedpack, modpack, modpackmake, modrinthshare, titlescreen
 from ...mods.curseforge import MODPACKS, CurseForgeClient
 from ...mods.modrinth import ModrinthClient
 from ...security.auth import AuthError, Principal
@@ -304,9 +304,21 @@ async def make_modpack(
         user=principal.user,
         required=payload.required,
         chat_line=payload.chat_line.model_dump() if payload.chat_line else None,
+        title_screen=payload.title_screen.model_dump() if payload.title_screen else None,
     )
     request.state.audited = True  # make writes its own audit row
     return {"ok": True, **result}
+
+
+@router.post("/modpack/title-background", response_model=ModpackMakeOptions)
+async def title_background_upload(
+    file: UploadFile = File(...),
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """The picture behind the title screen of the next modpacks (PNG, up to 4 MB)."""
+    data = await file.read(titlescreen.MAX_BACKGROUND_BYTES + 1)
+    return await asyncio.to_thread(modpackmake.save_title_background, ctx, data)
 
 
 @router.get("/modpack/made/{token}")

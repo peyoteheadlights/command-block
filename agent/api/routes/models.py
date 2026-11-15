@@ -441,6 +441,28 @@ class ModpackChatLine(BaseModel):
     text: str = Field(min_length=1, max_length=300)
 
 
+class ModpackOnOff(BaseModel):
+    on: bool = False
+
+
+class ModpackTitleButton(BaseModel):
+    on: bool = False
+    address: str = Field(default="", max_length=260)
+
+
+class ModpackFlavorText(BaseModel):
+    on: bool = False
+    text: str = Field(default="", max_length=60)
+
+
+class ModpackTitleScreen(BaseModel):
+    """The Companion's title screen (agent/titlescreen.py)."""
+
+    button: ModpackTitleButton = Field(default_factory=ModpackTitleButton)
+    flavor_text: ModpackFlavorText = Field(default_factory=ModpackFlavorText)
+    background: ModpackOnOff = Field(default_factory=ModpackOnOff)
+
+
 class ModpackMakeRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     version: str = Field(min_length=1, max_length=32)
@@ -452,6 +474,7 @@ class ModpackMakeRequest(BaseModel):
     # Needs the Companion mod on the server (agent/companion.py).
     required: bool = False
     chat_line: ModpackChatLine | None = None
+    title_screen: ModpackTitleScreen | None = None
 
 
 class ModpackPostRequest(BaseModel):

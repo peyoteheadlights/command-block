@@ -445,6 +445,19 @@ final class ContentTests: XCTestCase {
         )
     }
 
+    func testTheTitleScreenIsReadAndSentWithTheModpack() async throws {
+        let c = client()
+        StubAgent.json(#"{"name": "Friends", "version": "2", "required_to_join": {"available": true, "on": false}, "title_screen": {"button": {"on": true, "address": "play.example.net"}, "flavor_text": {"on": false, "text": ""}, "background": {"on": false}, "background_set": true}}"#)
+        let options = try await c.makeModpackOptions(serverId: "s")
+        XCTAssertEqual(options.titleScreen.button, TitleScreen.Button(on: true, address: "play.example.net"))
+        XCTAssertTrue(options.titleScreen.backgroundSet)
+
+        StubAgent.json(#"{"ok": true, "token": "t1", "filename": "Friends 2.mrpack", "files": 1, "size_bytes": 1}"#)
+        let screen = TitleScreen(button: .init(on: true, address: "play.example.net"), flavorText: .init(on: true, text: "Dragons!"), background: .init(on: true))
+        _ = try await c.makeModpack(serverId: "s", MakeModpack(name: "Friends", version: "2", titleScreen: screen))
+        XCTAssertTrue(body(1).contains(#""title_screen":{"background":{"on":true},"button":{"address":"play.example.net","on":true},"flavor_text":{"on":true,"text":"Dragons!"}}"#), body(1))
+    }
+
     func testMakeAModpackSendsTheAnswersThenDownloadsItAndPostsItInDiscord() async throws {
         let c = client()
         StubAgent.json(#"{"name": "Friends", "version": "2", "configs": [{"path": "config/a.toml", "size_bytes": 9}], "players_loaders": [{"id": "fabric", "name": "Fabric"}], "discord": true, "discord_limit_bytes": 10485760, "required_to_join": {"available": false}}"#)

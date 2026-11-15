@@ -1245,3 +1245,32 @@ def test_make_dialog_offers_required_and_the_chat_line_with_the_companion(qapp):
     assert dialog.body()["required"] is True
     dialog.chat_text.setText("  ")
     assert dialog.body()["chat_line"] is None, "empty: the agent's own wording"
+
+
+def test_make_dialog_sets_the_title_screen(qapp):
+    from desktop import make_modpack
+
+    options = {
+        "name": "Friends",
+        "version": "2",
+        "required_to_join": {"available": True, "on": False},
+        "title_screen": {
+            "button": {"on": True, "address": "play.example.net"},
+            "flavor_text": {"on": False, "text": ""},
+            "background": {"on": False},
+            "background_set": False,
+        },
+    }
+    uploaded = {"title_screen": {"background_set": True}}
+    dialog = make_modpack.MakeDialog(None, options, lambda: uploaded)
+    assert dialog.address.isEnabled() and not dialog.flavor.isEnabled()
+    assert not dialog.background_on.isEnabled(), "no picture picked yet"
+    button(dialog, "Pick picture").click()
+    assert dialog.background_on.isChecked()
+    dialog.flavor_on.setChecked(True)
+    dialog.flavor.setText(" Dragons! ")
+    assert dialog.body()["title_screen"] == {
+        "button": {"on": True, "address": "play.example.net"},
+        "flavor_text": {"on": True, "text": "Dragons!"},
+        "background": {"on": True},
+    }

@@ -1656,12 +1656,14 @@ public struct ModpackMakeOptions: Decodable, Equatable, Sendable {
     /// It was ticked last time.
     public var requiredOn: Bool
     public var chatLine: ChatLine
+    public var titleScreen: TitleScreen
 
     enum CodingKeys: String, CodingKey {
         case name, version, configs, discord
         case playersLoaders = "players_loaders"
         case requiredToJoin = "required_to_join"
         case chatLine = "chat_line"
+        case titleScreen = "title_screen"
     }
 
     private struct Required: Decodable { var available: Bool?; var on: Bool? }
@@ -1677,6 +1679,62 @@ public struct ModpackMakeOptions: Decodable, Equatable, Sendable {
         requiredToJoin = required?.available ?? false
         requiredOn = required?.on ?? false
         chatLine = c.maybe(.chatLine) ?? ChatLine()
+        titleScreen = c.maybe(.titleScreen) ?? TitleScreen()
+    }
+}
+
+/// What friends with the Companion see when Minecraft starts: the join
+/// button beside Realms, the yellow flavor text and the background picture.
+public struct TitleScreen: Codable, Equatable, Sendable {
+    public struct Button: Codable, Equatable, Sendable {
+        public var on = false
+        public var address = ""
+        public init(on: Bool = false, address: String = "") { self.on = on; self.address = address }
+    }
+
+    public struct Flavor: Codable, Equatable, Sendable {
+        public var on = false
+        public var text = ""
+        public init(on: Bool = false, text: String = "") { self.on = on; self.text = text }
+    }
+
+    public struct OnOff: Codable, Equatable, Sendable {
+        public var on = false
+        public init(on: Bool = false) { self.on = on }
+    }
+
+    public var button: Button
+    public var flavorText: Flavor
+    public var background: OnOff
+    /// A picture was uploaded (read only; never sent).
+    public var backgroundSet: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case button, background
+        case flavorText = "flavor_text"
+        case backgroundSet = "background_set"
+    }
+
+    public init(button: Button = Button(), flavorText: Flavor = Flavor(), background: OnOff = OnOff(), backgroundSet: Bool = false) {
+        self.button = button
+        self.flavorText = flavorText
+        self.background = background
+        self.backgroundSet = backgroundSet
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        button = c.maybe(.button) ?? Button()
+        flavorText = c.maybe(.flavorText) ?? Flavor()
+        background = c.maybe(.background) ?? OnOff()
+        backgroundSet = c.value(.backgroundSet, false)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(button, forKey: .button)
+        try c.encode(flavorText, forKey: .flavorText)
+        try c.encode(background, forKey: .background)
     }
 }
 
@@ -1701,18 +1759,22 @@ public struct MakeModpack: Encodable, Equatable, Sendable {
     public var required: Bool
     /// nil: the agent's own wording.
     public var chatLine: ChatLine?
+    public var titleScreen: TitleScreen?
 
     enum CodingKeys: String, CodingKey {
         case name, version, configs, required
         case leaveOutServerOnly = "leave_out_server_only"
         case playersLoader = "players_loader"
         case chatLine = "chat_line"
+        case titleScreen = "title_screen"
     }
 
     public init(
         name: String, version: String, leaveOutServerOnly: Bool = true, configs: [String] = [],
-        playersLoader: String = "fabric", required: Bool = false, chatLine: ChatLine? = nil
+        playersLoader: String = "fabric", required: Bool = false, chatLine: ChatLine? = nil,
+        titleScreen: TitleScreen? = nil
     ) {
+        self.titleScreen = titleScreen
         self.name = name
         self.version = version
         self.leaveOutServerOnly = leaveOutServerOnly
