@@ -487,9 +487,22 @@ final class ContentPages {
         }
     }
 
+    /// A title-screen picture was uploaded while the Make a modpack sheet shows.
+    private(set) var backgroundSet = false
+
+    func uploadTitleBackground(_ file: PickedFile, _ strings: Strings) async {
+        defer { try? FileManager.default.removeItem(at: file.url) }
+        await work("background", strings) { [weak self] client, id in
+            let options = try await client.uploadTitleBackground(serverId: id, file: file)
+            self?.backgroundSet = options.titleScreen.backgroundSet
+            return nil
+        }
+    }
+
     func makeModpack(_ answers: MakeModpack, _ strings: Strings) async {
         sheet = nil
         makeOptions = nil
+        backgroundSet = false
         await work("make", strings) { [weak self] client, id in
             self?.made = try await client.makeModpack(serverId: id, answers)
             await self?.loadLink() // the modpack's download link, if it's on

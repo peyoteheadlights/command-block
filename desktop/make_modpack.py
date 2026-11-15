@@ -36,10 +36,12 @@ if TYPE_CHECKING:
 
 class MakeDialog(QDialog):
     """Name, version, "Leave out server-only mods", the players' loader on
-    a plugin server, the config files to put in, "Required to join" and
-    the chat line (both need the Companion mod on the server)."""
+    a plugin server, the config files to put in, "Required to join", the
+    chat line and the title screen (all need the Companion mod on the
+    server). ``pick_background`` uploads a picture and returns the new
+    options, or None."""
 
-    def __init__(self, parent: QWidget, options: dict) -> None:
+    def __init__(self, parent: QWidget, options: dict, pick_background=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(text("make.title"))
         column = QVBoxLayout(self)
@@ -83,6 +85,7 @@ class MakeDialog(QDialog):
         self.required.toggled.connect(self.chat_text.setDisabled)
         self.chat_on.setDisabled(self.required.isChecked())
         self.chat_text.setDisabled(self.required.isChecked())
+        self.title_screen(column, options, pick_background, bool(join.get("available")))
 
         configs = options.get("configs") or []
         column.addWidget(label(text("make.configs" if configs else "make.no_configs")))
@@ -106,6 +109,56 @@ class MakeDialog(QDialog):
         buttons.rejected.connect(self.reject)
         column.addWidget(buttons)
 
+    def title_screen(self, column, options: dict, pick_background, shown: bool) -> None:
+        """The join button beside Realms, the yellow flavor text and the
+        background picture, for friends with the Companion."""
+        title = options.get("title_screen") or {}
+        button, flavor = title.get("button") or {}, title.get("flavor_text") or {}
+        self.button_on = QCheckBox(text("make.title_button"))
+        self.button_on.setChecked(bool(button.get("on")))
+        self.address = QLineEdit(button.get("address") or "")
+        self.address.setMaxLength(260)
+        self.address.setPlaceholderText(text("make.title_address"))
+        self.flavor_on = QCheckBox(text("make.flavor_text"))
+        self.flavor_on.setChecked(bool(flavor.get("on")))
+        self.flavor = QLineEdit(flavor.get("text") or "")
+        self.flavor.setMaxLength(60)
+        self.background_on = QCheckBox(text("make.background"))
+        self.background_on.setChecked(bool((title.get("background") or {}).get("on")))
+        self.background_on.setEnabled(bool(title.get("background_set")))
+        pick = push(text("make.background_pick"))
+
+        def picked() -> None:
+            got = pick_background() if pick_background else None
+            if got and (got.get("title_screen") or {}).get("background_set"):
+                self.background_on.setEnabled(True)
+                self.background_on.setChecked(True)
+
+        pick.clicked.connect(picked)
+        line = QHBoxLayout()
+        line.addWidget(self.background_on)
+        line.addWidget(pick)
+        line.addStretch()
+        widgets = [
+            label(text("make.title_screen")),
+            label(text("make.title_screen_hint"), "sub"),
+            self.button_on,
+            self.address,
+            self.flavor_on,
+            self.flavor,
+        ]
+        for widget in widgets:
+            widget.setVisible(shown)
+            column.addWidget(widget)
+        holder = QWidget()
+        holder.setLayout(line)
+        holder.setVisible(shown)
+        column.addWidget(holder)
+        self.button_on.toggled.connect(self.address.setEnabled)
+        self.flavor_on.toggled.connect(self.flavor.setEnabled)
+        self.address.setEnabled(self.button_on.isChecked())
+        self.flavor.setEnabled(self.flavor_on.isChecked())
+
     def body(self) -> dict[str, Any]:
         return {
             "name": self.name.text().strip(),
@@ -118,6 +171,17 @@ class MakeDialog(QDialog):
             "chat_line": {"on": self.chat_on.isChecked(), "text": self.chat_text.text().strip()}
             if self.chat_text.text().strip()
             else None,
+            "title_screen": {
+                "button": {
+                    "on": self.button_on.isChecked(),
+                    "address": self.address.text().strip(),
+                },
+                "flavor_text": {
+                    "on": self.flavor_on.isChecked(),
+                    "text": self.flavor.text().strip(),
+                },
+                "background": {"on": self.background_on.isChecked()},
+            },
         }
 
 
@@ -172,7 +236,7 @@ class MakeCard:
         self.page.ask("GET", "/modpack/make", self.ask_details, self.page.said)
 
     def ask_details(self, options: dict) -> None:
-        dialog = MakeDialog(self.page, options)
+        dialog = MakeDialog(self.page, options, self.pick_background)
         if not dialog.exec():
             return
         self.start.setEnabled(False)
@@ -194,6 +258,18 @@ class MakeCard:
             always=lambda: self.start.setEnabled(True),
             slow=True,
         )
+
+    def pick_background(self) -> dict | None:
+        """Upload the title-screen picture now; waits, as the dialog is open."""
+        path = self.page.window_.pc.pick_file(text("make.background"), "PNG (*.png)")
+        if not path:
+            return None
+        sid, agent = self.page.row["id"], self.page.window_.agent
+        try:
+            return agent.upload(f"/servers/{sid}/modpack/title-background", path)
+        except Exception as exc:  # the agent's own words, like "Choose a PNG picture."
+            self.page.said(exc)
+            return None
 
     def save_file(self) -> None:
         made = self.result or {}
