@@ -269,3 +269,7 @@ POST /api/settings/separate-windows-user
 GET /api/servers/{server_id}/store
 POST /api/servers/{server_id}/store/connect
 POST /api/servers/{server_id}/store/check
+GET /api/servers/{server_id}/far-view
+POST /api/servers/{server_id}/far-view
+POST /api/servers/{server_id}/far-view/options
+POST /api/servers/{server_id}/far-view/rebuild

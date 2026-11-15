@@ -28,6 +28,7 @@ import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .. import farview
 from ..changes import ChangeHistory
 from ..events import Event, EventBus
 from ..minecraft.properties import world_folders
@@ -331,7 +332,13 @@ class BackupManager:
             # Player-only files Modrinth lists, when the owner chose to get
             # them again after a restore instead of keeping copies.
             skipped = sides.backup_skips(self.config, self.db)
-            members = [m for m in members if m not in skipped]
+            # Far-view data: rebuilt from the world, and often gigabytes.
+            members = [
+                m
+                for m in members
+                if m not in skipped
+                and not farview.is_far_view_data(m.relative_to(self.config.server_dir))
+            ]
             used = {m.relative_to(self.config.server_dir).parts[0] for m in members}
             empty = [s for s in sources if s.is_dir() and s.name not in used]
             if job:

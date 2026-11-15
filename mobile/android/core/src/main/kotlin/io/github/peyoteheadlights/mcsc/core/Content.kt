@@ -673,3 +673,30 @@ object AntiCheats {
     )
 
 }
+
+/** What the Far view card says. */
+object FarViews {
+    fun status(strings: Strings, card: FarView): String {
+        val on = card.choices.firstOrNull { it.id == card.choice }
+        return when {
+            !card.supported -> strings.t("farview.none_here")
+            on != null -> strings.t("farview.is_on", "name" to on.name)
+            else -> strings.t("farview.is_off")
+        }
+    }
+
+    /** A choice's lines: what it is, then why it can't, or what it adds here. */
+    fun lines(strings: Strings, item: FarViewChoice, now: String): List<String> {
+        val lines = mutableListOf(strings.t("farview.about.${item.id}"))
+        when {
+            !item.available -> item.why?.let { lines.add(it) }
+            item.id == now -> {}
+            item.server.isEmpty() && item.players.isEmpty() -> lines.add(strings.t("farview.all_here"))
+            else -> {
+                if (item.server.isNotEmpty()) lines.add(strings.t("farview.server_gets", "names" to item.server.joinToString(", ")))
+                if (item.players.isNotEmpty()) lines.add(strings.t("farview.players_get", "names" to item.players.joinToString(", ")))
+            }
+        }
+        return lines
+    }
+}

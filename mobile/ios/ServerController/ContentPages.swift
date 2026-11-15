@@ -772,6 +772,41 @@ final class ContentPages {
         } catch {}
     }
 
+    // MARK: - Far view
+
+    private(set) var farView: FarView? = nil
+
+    func loadFarView() async {
+        guard let client = client() else { return }
+        do {
+            farView = try await client.farView(serverId: serverId)
+        } catch let problem as AgentError {
+            noted(problem)
+        } catch {}
+    }
+
+    func chooseFarView(_ choice: String, _ strings: Strings) async {
+        await work("far_view", strings, reload: { await self.loadFarView(); await self.loadMods() }) { client, id in
+            _ = try await client.chooseFarView(serverId: id, choice: choice)
+            return Said(text: strings.t("farview.changed"), good: true)
+        }
+    }
+
+    func saveFarView(unvisited: Bool, loadAhead: Bool, radius: Int, _ strings: Strings) async {
+        let world = farView?.loadAhead?.world ?? ""
+        await work("far_view", strings) { client, id in
+            self.farView = try await client.farViewOptions(serverId: id, unvisited: unvisited, loadAhead: loadAhead, radius: radius, world: world)
+            return Said(text: strings.t("farview.saved"), good: true)
+        }
+    }
+
+    func rebuildFarView(_ strings: Strings) async {
+        await work("far_view", strings) { client, id in
+            let done = try await client.rebuildFarView(serverId: id)
+            return Said(text: strings.t("farview.rebuilt", ["files": String(done.files), "size": Display.bytes(strings, done.sizeBytes)]), good: true)
+        }
+    }
+
     // MARK: - Put it on Modrinth
 
     private(set) var modrinth: ModrinthShare? = nil
