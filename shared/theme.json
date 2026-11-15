@@ -52,6 +52,7 @@
    "alpha": 0.11
   },
   "danger": "#C0221A",
+  "on-danger": "#FFFFFF",
   "danger-soft": {
    "rgb": "#C9261C",
    "alpha": 0.1
@@ -112,6 +113,7 @@
    "alpha": 0.15
   },
   "danger": "#FF6B61",
+  "on-danger": "#111111",
   "danger-soft": {
    "rgb": "#FF453A",
    "alpha": 0.16
@@ -172,6 +174,7 @@
    "alpha": 0.15
   },
   "danger": "#FF8A80",
+  "on-danger": "#111111",
   "danger-soft": {
    "rgb": "#FF5A50",
    "alpha": 0.16
@@ -229,6 +232,7 @@
    "alpha": 0.16
   },
   "danger": "#FF8A80",
+  "on-danger": "#000000",
   "danger-soft": {
    "rgb": "#FF8A80",
    "alpha": 0.18
