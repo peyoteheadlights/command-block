@@ -12,7 +12,8 @@ Each time a modpack is made, two small files come out of it:
     plugin server). The server-side Companion reads it
   * inside the modpack, for players: ``client-overrides/`` gets the
     modpack's name and version, so a player's Companion can say which
-    version they have
+    version they have, and the title screen's settings
+    (agent/titlescreen.py)
 
 Only hashes of the modpack's own files go in, never anything from a
 player's PC. The Java side refuses unknown fields, so a new field means a
@@ -82,12 +83,19 @@ def on_server(mods: Any) -> bool:
     return any(m.enabled and m.mod_id in (MOD_ID, PLUGIN_NAME) for m in mods.scan())
 
 
-def players_file(name: str, version: str, files: list[str]) -> str:
+def players_file(
+    name: str, version: str, files: list[str], title_screen: dict[str, Any] | None = None
+) -> str:
     """The players' half, put in the modpack's client-overrides/. ``files``
     are the modpack's mod jars: an update may replace only these, never
-    the player's own mods."""
+    the player's own mods. Older Companions skip ``title_screen``."""
     return json.dumps(
-        {"format": FORMAT, "modpack": {"name": name, "version": version}, "files": files},
+        {
+            "format": FORMAT,
+            "modpack": {"name": name, "version": version},
+            "files": files,
+            "title_screen": title_screen,
+        },
         indent=1,
     )
 

@@ -772,6 +772,9 @@ class Listener:
             "version": {"name": self.version, "protocol": protocol},
             "players": {"max": self.max_players, "online": 0},
             "description": {"text": self.asleep_words},
+            # The Companion's title-screen button says "Asleep, ask to start"
+            # (Minecraft ignores fields it doesn't know).
+            "commandblock": {"asleep": True},
         }
         return packet(0, mc_string(json.dumps(status)))
 

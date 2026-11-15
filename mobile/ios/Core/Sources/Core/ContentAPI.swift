@@ -219,6 +219,11 @@ extension AgentClient {
     }
 
     /// A resource pack (.zip) picked on the phone, served by the download link.
+    /// The title-screen background (a PNG picked on the phone) for the next modpacks.
+    public func uploadTitleBackground(serverId: String, file: PickedFile) async throws -> ModpackMakeOptions {
+        try await upload(content(serverId) + "/modpack/title-background", file, as: ModpackMakeOptions.self)
+    }
+
     public func uploadResourcePack(serverId: String, file: PickedFile, required: Bool) async throws -> DownloadLink {
         try await upload(content(serverId) + "/resource-pack/upload?required=\(required)", file, as: DownloadLink.self)
     }

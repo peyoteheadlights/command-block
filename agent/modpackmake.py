@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from . import companion
+from . import companion, titlescreen
 from .discord.client import DiscordError
 from .modpack import INDEX, MAX_PACK_BYTES, SERVER_NOTE, ModpackError
 from .mods import sides
@@ -189,6 +189,7 @@ def options(ctx: ServerContext) -> dict[str, Any]:
             "on": bool(last.get("required")),
         },
         "chat_line": last.get("chat_line") or {"on": True, "text": companion.CHAT_LINE_DEFAULT},
+        "title_screen": titlescreen.options(ctx, last, _folder(ctx)),
         "made": made(ctx),
     }
 
@@ -361,6 +362,12 @@ def _write(target: Path, index: dict[str, Any], members: list[tuple[Path, str]],
         temp.unlink(missing_ok=True)
 
 
+def save_title_background(ctx: ServerContext, data: bytes) -> dict[str, Any]:
+    """The owner's title-screen picture, kept for the next modpacks."""
+    titlescreen.save_background(_folder(ctx), data)
+    return options(ctx)
+
+
 def _folder(ctx: ServerContext) -> Path:
     folder = ctx.core.config.data_dir / FOLDER / ctx.server_id
     folder.mkdir(parents=True, exist_ok=True)
@@ -389,6 +396,7 @@ async def make(
     user: str = "system",
     required: bool = False,
     chat_line: dict[str, Any] | None = None,
+    title_screen: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Make the modpack, as a job. On the server it only writes the
     Companion's settings (agent/companion.py)."""
@@ -410,6 +418,13 @@ async def make(
         raise ModpackError(
             "Required to join needs the Command Block Companion mod on this server. Add it "
             "on the Mods page, then make the modpack again."
+        )
+    title_screen = titlescreen.check(title_screen, _folder(ctx))
+    last = ctx.db.get_setting(MADE)
+    if titlescreen.address_moved(last if isinstance(last, dict) else {}, title_screen, version):
+        raise ModpackError(
+            "The join button's address changed: give the modpack a new version, so "
+            "friends' games pick up the new address."
         )
     offered = {c["path"] for c in config_files(ctx)}
     picked = list(dict.fromkeys(configs or []))
@@ -491,8 +506,15 @@ async def make(
         await asyncio.to_thread(_write, target, index, members, job)
         extra = {
             f"client-overrides/{companion.PLAYERS_FILE}": companion.players_file(
-                name, version, [f["path"] for f in for_companion]
-            )
+                name,
+                version,
+                [f["path"] for f in for_companion],
+                titlescreen.players_part(ctx.name, title_screen),
+            ),
+            **{
+                f"client-overrides/{path}": data
+                for path, data in titlescreen.files(base, title_screen, _folder(ctx)).items()
+            },
         }
         if note:
             extra[f"server-overrides/{SERVER_NOTE}"] = json.dumps(note, indent=1)
@@ -536,6 +558,7 @@ async def make(
         "own_jars": result["own_jars"],
         "required": required,
         "chat_line": {"on": bool(chat_line["on"]), "text": chat_line["text"]},
+        "title_screen": title_screen,
     }
     ctx.db.set_setting(MADE, saved)
     for old in _folder(ctx).glob("*.mrpack"):  # only the newest is kept
@@ -564,7 +587,7 @@ def _link_on(ctx: ServerContext) -> str | None:
     return url(ctx, MODPACK_NAME)
 
 
-def _add_files(target: Path, files: dict[str, str]) -> None:
+def _add_files(target: Path, files: dict[str, str | bytes]) -> None:
     with zipfile.ZipFile(target, "a", zipfile.ZIP_DEFLATED) as zf:
         for name, text in files.items():
             zf.writestr(name, text)
