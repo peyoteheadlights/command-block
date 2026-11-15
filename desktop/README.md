@@ -21,6 +21,13 @@ the phone apps use.
   without Windows' frame: only the binder shows on the desktop, and the
   window does its own moving, resizing, snapping and minimize, maximize and
   close buttons. Over Remote Desktop it is plain grey behind the binder.
+- `parts.py` has the parts the pages are built from: the raised box, the
+  icon button and the info dot with their hover label, the switch, the
+  segmented control, the snapping slider, the big number you can type in,
+  the search field, the status mark and the player face. Buttons and tick
+  boxes are style sheet rules in `theme.py`. A part finds its colors from
+  the window it is on. `python scripts/parts_gallery.py` shows them all on
+  one screen to try (`--shots` saves pictures).
 - Each server page is a `Page` (`ui.py`) that asks the agent only while it
   is open: `players.py` (Players and chat), `console.py`, `performance.py`,
   `schedules.py`, `activity.py` (every event, and the crashes with what
