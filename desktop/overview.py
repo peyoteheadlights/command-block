@@ -14,16 +14,16 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer
+from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
-    QToolButton,
-    QToolTip,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -32,6 +32,7 @@ from agent.ports import address
 
 from .fixes import get_help, run_fix, sure
 from .graphs import Graph
+from .parts import Box, InfoDot
 from .theme import SHARED
 from .ui import Note, clock, content_page, label, push, refill
 from .words import mode, text
@@ -39,6 +40,7 @@ from .words import mode, text
 if TYPE_CHECKING:
     from .window import MainWindow
 
+NARROW = 680  # a Technical Overview narrower than this puts its graphs two by two
 # The agent names pages its own way; these are the desktop's.
 PAGE_FOR = {
     "overview": "Overview",
@@ -53,41 +55,25 @@ PAGE_FOR = {
     "app-settings": "PC settings",
     "tailscale": "Tailscale",  # the step, which Reconnect runs again
 }
-# Every "?" in the app: the key and its plain-language words.
+# The longer words behind a card's info dot, by a short name.
 HINTS = {"address": "desktop.hint.address", "backup": "desktop.hint.backup"}
 
 
-class Hint(QToolButton):
-    """A small "?" that explains a harder word: on hover, on Tab + Space,
-    and to Narrator (its accessible description)."""
-
-    def __init__(self, key: str) -> None:
-        super().__init__()
-        words = text(HINTS[key])
-        self.setObjectName("hint")
-        self.setText("?")
-        self.setToolTip(words)
-        self.setAccessibleName(text("help.what_is_this"))
-        self.setAccessibleDescription(words)
-        self.clicked.connect(
-            lambda: QToolTip.showText(self.mapToGlobal(QPoint(0, self.height())), words, self)
-        )
-
-
-def card(title: str, hint: str | None = None) -> tuple[QFrame, QVBoxLayout]:
-    frame = QFrame()
+def card(title: str, hint: str | None = None, words: str = "") -> tuple[Box, QVBoxLayout]:
+    """A raised box with a heading. ``hint`` puts an info dot next to the
+    heading: a name from HINTS or the key of its words. ``words`` does the
+    same with words that are already made."""
+    frame = Box()
     frame.setProperty("kind", "card")
-    layout = QVBoxLayout(frame)
-    layout.setContentsMargins(14, 12, 14, 12)
     top = QHBoxLayout()
     heading = label(title, name="h2")
-    heading.setWordWrap(False)  # a short title on one line, not squeezed by the hint
+    heading.setWordWrap(False)  # a short title on one line, not squeezed by the dot
     top.addWidget(heading)
-    if hint:
-        top.addWidget(Hint(hint))
+    if hint or words:
+        top.addWidget(InfoDot(words or text(HINTS.get(hint or "", hint or ""))))
     top.addStretch()
-    layout.addLayout(top)
-    return frame, layout
+    frame.column.addLayout(top)
+    return frame, frame.column
 
 
 def title_of(frame: QFrame) -> QLabel:
@@ -95,6 +81,15 @@ def title_of(frame: QFrame) -> QLabel:
     found = frame.findChild(QLabel, "h2")
     assert found is not None
     return found
+
+
+def line(words: QLabel, *buttons: QWidget) -> QHBoxLayout:
+    """One row of a card: what it says on the left, its buttons on the right."""
+    row = QHBoxLayout()
+    row.addWidget(words, 1)
+    for button in buttons:
+        row.addWidget(button)
+    return row
 
 
 class AskCard(QWidget):
@@ -108,7 +103,7 @@ class AskCard(QWidget):
         layout.addWidget(label(text("desktop.ask.text"), "sub"))
         answers = QHBoxLayout()
         for answer, words, kind in (
-            ("donate", "desktop.ask.donate", "primary"),
+            ("donate", "desktop.ask.donate", "tonal"),
             ("no_thanks", "desktop.ask.no", "plain"),
         ):
             choice = push(text(words), kind)
@@ -172,9 +167,7 @@ class ProtectionCard(QWidget):
             strong = line["level"] in ("worst", "problem")
             h.addWidget(label(text(line["words"], **values), "step" if strong else "sub"), 1)
             if line.get("fix"):
-                fix = push(
-                    text(f"protect.fix.{line['fix']}", **values), "primary" if strong else ""
-                )
+                fix = push(text(f"protect.fix.{line['fix']}", **values))
                 fix.clicked.connect(lambda _=False, f=line["fix"], v=values: self.fix(f, v))
                 h.addWidget(fix)
             for addon in line.get("addons") or []:
@@ -274,30 +267,25 @@ class SimpleOverview(QWidget):
         address, layout = card(text("desktop.card.address"), "address")
         self.address = label(name="h2")
         self.address.setProperty("kind", "address")
-        self.address_note = label(text("desktop.card.address_body"), "sub")
-        copy = push(text("join.copy"))
+        self.address.setWordWrap(False)
+        self.address_note = label(kind="sub")  # only when there is no address to show
+        copy = push(text("join.copy"), "tonal")
         copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.address.text()))
         self.copy = copy
-        for widget in (self.address, self.address_note):
-            layout.addWidget(widget)
+        layout.addLayout(line(self.address, copy))
+        layout.addWidget(self.address_note)
         layout.addStretch()
-        layout.addWidget(copy)
 
         backup, layout = card(text("overview.last_backup"), "backup")
         self.backup = label()
         self.backup_note = label(kind="sub")
         self.back_up = push(text("action.back_up_now"))
         self.back_up.clicked.connect(self.make_backup)
-        for widget in (self.backup, self.backup_note):
-            layout.addWidget(widget)
-        layout.addStretch()
-        buttons = QHBoxLayout()
-        buttons.addWidget(self.back_up)
         see = push(text("desktop.backups.see"), "plain")
         see.clicked.connect(lambda: window.open_page("Backups"))
-        buttons.addWidget(see)
-        buttons.addStretch()
-        layout.addLayout(buttons)
+        layout.addLayout(line(self.backup, self.back_up, see))
+        layout.addWidget(self.backup_note)
+        layout.addStretch()
 
         mods, layout = card(text("page.mods"))
         self.mods_card = mods  # hidden for a type that takes no add-ons (Vanilla)
@@ -305,17 +293,14 @@ class SimpleOverview(QWidget):
         self.mods = label()
         open_mods = push(text("desktop.card.open_mods"))
         open_mods.clicked.connect(lambda: window.open_page("Mods"))
-        layout.addWidget(self.mods)
+        layout.addLayout(line(self.mods, open_mods))
         layout.addStretch()
-        layout.addWidget(open_mods)
 
-        world, layout = card(text("desktop.card.world"))
-        layout.addWidget(label(text("desktop.card.world_body")))
-        layout.addWidget(label(text("world.lead"), "sub"))
-        layout.addStretch()
+        world, layout = card(text("desktop.card.world"), "world.lead")
         restore = push(text("page.world"))
         restore.clicked.connect(lambda: window.open_page("Backups"))
-        layout.addWidget(restore)
+        layout.addLayout(line(label(text("desktop.card.world_body")), restore))
+        layout.addStretch()
 
         self.cards = [address, backup, mods, world]
         for i, frame in enumerate(self.cards):
@@ -357,21 +342,24 @@ class SimpleOverview(QWidget):
             line = QWidget()
             h = QHBoxLayout(line)
             h.setContentsMargins(0, 4, 0, 4)
-            words = QVBoxLayout()
-            words.addWidget(label(rec["title"], "step"))
-            words.addWidget(label(rec.get("reason", ""), "sub"))
-            h.addLayout(words, 1)
+            title = label(rec["title"], "step")
+            # As wide as its words, and it wraps before the page scrolls sideways.
+            title.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+            h.addWidget(title)
+            if rec.get("reason"):
+                h.addWidget(InfoDot(rec["reason"]))
+            h.addStretch(1)
             details = rec.get("details") or {}
             if rec["id"] == "crash":
                 level = label(
-                    text("desktop.fix.sure", level=sure(details.get("confidence"))), "chip"
+                    text("desktop.fix.sure", level=sure(details.get("confidence"))), "sub"
                 )
                 level.setWordWrap(False)
                 h.addWidget(level)
             action = rec.get("action") or {}
             help_only = rec["id"] == "crash" and not details.get("fix")
             if action.get("label") and not (help_only and self.window_.role not in (None, "owner")):
-                fix = push(action["label"], "primary")
+                fix = push(action["label"])
                 fix.setProperty("suggestion", rec["id"])
                 fix.clicked.connect(lambda _=False, r=rec: self.run_action(r))
                 h.addWidget(fix)
@@ -467,9 +455,8 @@ class SimpleOverview(QWidget):
         self.address.setText(host or "")
         self.address.setVisible(bool(host))
         self.copy.setVisible(bool(host))
-        self.address_note.setText(
-            text("desktop.card.address_body") if host else text("join.no_tailscale")
-        )
+        self.address_note.setText("" if host else text("join.no_tailscale"))
+        self.address_note.setVisible(not host)
         self.even_cards()
 
     def show_backups(self, data: dict) -> None:
@@ -533,27 +520,33 @@ class TechnicalOverview(QWidget):
         self.protection = ProtectionCard(window)
         column.addWidget(self.protection)
         graphs, layout = card(text("page.performance", technical=True))
-        row = QHBoxLayout()
-        layout.addLayout(row)
+        self.graph_grid = QGridLayout()
+        self.graph_grid.setSpacing(14)
+        layout.addLayout(self.graph_grid)
         self.graphs: dict[str, Graph] = {}
         self.values: dict[str, QLabel] = {}
+        self.graph_boxes: list[QWidget] = []
         for key, words, unit, top in (
             ("tps", "overview.speed", "", 20.0),
             ("mspt", "desktop.graph.mspt", "ms", 50.0),
             ("proc_ram_mb", "overview.memory", "GB", 4.0),
             ("cpu_percent", "overview.cpu", "%", 100.0),
         ):
-            box = QVBoxLayout()
+            holder = QWidget()
+            box = QVBoxLayout(holder)
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(2)
             box.addWidget(label(text(words, technical=True), "sub"))
-            value = label(name="h2")
+            value = label(kind="big")  # the number is the point, its label is small
+            value.setWordWrap(False)
             box.addWidget(value)
             graph = Graph(text(words, technical=True), unit, top)
             box.addWidget(graph)
-            row.addLayout(box, 1)
+            self.graph_boxes.append(holder)
             self.graphs[key], self.values[key] = graph, value
         column.addWidget(graphs)
 
-        lower = QHBoxLayout()
+        lower = self.below = QBoxLayout(QBoxLayout.Direction.LeftToRight)
         lower.setSpacing(12)
         console, layout = card(text("overview.recent_console", technical=True))
         self.console = QPlainTextEdit()
@@ -583,6 +576,31 @@ class TechnicalOverview(QWidget):
         self.timer = QTimer(self)
         self.timer.setInterval(self.REFRESH_MS)
         self.timer.timeout.connect(self.reload)
+        self.columns = 0
+        self.place()
+
+    def place(self) -> None:
+        """Four graphs in a row, or two by two with the console above the
+        details where the page is narrow, so it never scrolls sideways."""
+        columns = 4 if self.width() >= NARROW else 2
+        if columns == self.columns:
+            return
+        self.columns = columns
+        for i, holder in enumerate(self.graph_boxes):
+            self.graph_grid.addWidget(holder, i // columns, i % columns)
+        self.below.setDirection(
+            QBoxLayout.Direction.LeftToRight if columns == 4 else QBoxLayout.Direction.TopToBottom
+        )
+
+    def minimumSizeHint(self) -> QSize:
+        # Four graphs in a row must not keep the page wide: it is allowed
+        # to get narrower, and then place() puts them two by two.
+        hint = super().minimumSizeHint()
+        return QSize(min(hint.width(), NARROW - 1), hint.height())
+
+    def resizeEvent(self, event) -> None:
+        self.place()
+        super().resizeEvent(event)
 
     def showEvent(self, event) -> None:
         self.timer.start()
@@ -600,7 +618,7 @@ class TechnicalOverview(QWidget):
         colors = {
             "line": look["accent"],
             "text": look["text-secondary"],
-            "border": look["text-tertiary"],
+            "border": look["border"],
             "plot": look["surface-sunken"],
         }
         for graph in self.graphs.values():
