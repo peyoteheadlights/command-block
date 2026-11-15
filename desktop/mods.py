@@ -34,6 +34,7 @@ from .agent import AgentError
 from .anticheat_card import AntiCheatCard
 from .download_link import LinkCard
 from .editor import GuideWindow, pick_file
+from .farview_card import FarViewCard
 from .fixes import install
 from .make_modpack import MakeCard
 from .modrinth_card import ModrinthCard
@@ -238,6 +239,9 @@ class ModsPage(Page):
         # The anti-cheat picker (the Protection card's anti-cheat line opens it).
         self.anticheat_card = AntiCheatCard(self)
         self.column.addWidget(self.anticheat_card.frame)
+        # Far view: Off / Distant Horizons / Voxy, and the night load.
+        self.farview_card = FarViewCard(self)
+        self.column.addWidget(self.farview_card.frame)
 
         # Still fit?: after a mod or version change, the mods that need a
         # different version (ticked, run as one Update all), the ones with
@@ -565,6 +569,7 @@ class ModsPage(Page):
         self.link_card.show(self.row)
         self.modrinth_card.show(self.row)
         self.anticheat_card.show(self.row)
+        self.farview_card.show(self.row)
         self.show_sides(data)
         self.show_fit(data.get("fit"))
         self.show_same(data.get("overlaps") or [])

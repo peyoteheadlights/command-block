@@ -19,7 +19,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from . import __version__, colors, linkedpack, memory, protection, supportask, watchers
+from . import __version__, colors, farview, linkedpack, memory, protection, supportask, watchers
 from .autosleep import AutoSleep
 from .backups.manager import BackupManager
 from .config import ConfigError
@@ -103,6 +103,8 @@ class ServerContext:
         # a server nobody is playing on (off unless this server turns it on).
         self.chat = ChatLog()
         self.autosleep = AutoSleep(self)
+        # Far view's "Load the world ahead": Chunky at night (agent/farview.py).
+        self.night_load = farview.NightLoad(self)
         self.spam = watchers.ChatSpam(self)
         # Online and really answering, or online and stuck.
         self.answering = AnswerWatch(self)
@@ -143,6 +145,11 @@ class ServerContext:
                     message=f"Build folder not copied: {exc}",
                 )
             )
+        try:
+            # Far view's "generate unvisited land" in DH's own config files.
+            await asyncio.to_thread(farview.before_start, self)
+        except OSError as exc:
+            self.server._emit_console(f"[agent] far view setting not written: {exc}")
         return await self.core.guard.before_launch(self)
 
     def _whitelist_addon(self, kind: str):
@@ -275,6 +282,7 @@ class ServerContext:
             self._update_check_loop(), name=f"mod-updates-{self.server_id}"
         )
         self.autosleep.start()
+        self.night_load.start()
         self.answering.start()
 
     async def autostart(self) -> None:
@@ -321,6 +329,7 @@ class ServerContext:
             self._update_task.cancel()
         self.fit.stop()
         await self.autosleep.stop()
+        await self.night_load.stop()
         await self.answering.stop()
         await self.metrics.stop()
         await self.tps.stop()

@@ -226,3 +226,7 @@ POST /api/servers/{server_id}/quests/events/{event_id}/approve
 PUT /api/servers/{server_id}/quests/events/{event_id}/attendance/{discord_id}
 POST /api/servers/{server_id}/quests/polls
 DELETE /api/servers/{server_id}/quests/polls/{poll_id}
+GET /api/servers/{server_id}/far-view
+POST /api/servers/{server_id}/far-view
+POST /api/servers/{server_id}/far-view/options
+POST /api/servers/{server_id}/far-view/rebuild

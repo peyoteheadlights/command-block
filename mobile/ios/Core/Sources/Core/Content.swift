@@ -760,3 +760,27 @@ public enum AntiCheats {
         return lines
     }
 }
+
+/// What the Far view card says.
+public enum FarViews {
+    public static func status(_ strings: Strings, _ card: FarView) -> String {
+        if !card.supported { return strings.t("farview.none_here") }
+        if let on = card.choices.first(where: { $0.id == card.choice }) {
+            return strings.t("farview.is_on", ["name": on.name])
+        }
+        return strings.t("farview.is_off")
+    }
+
+    /// A choice's lines: what it is, then why it can't, or what it adds here.
+    public static func lines(_ strings: Strings, _ item: FarViewChoice, now: String) -> [String] {
+        var lines = [strings.t("farview.about." + item.id)]
+        if !item.available {
+            if let why = item.why { lines.append(why) }
+        } else if item.id != now {
+            if item.server.isEmpty && item.players.isEmpty { lines.append(strings.t("farview.all_here")) }
+            if !item.server.isEmpty { lines.append(strings.t("farview.server_gets", ["names": item.server.joined(separator: ", ")])) }
+            if !item.players.isEmpty { lines.append(strings.t("farview.players_get", ["names": item.players.joined(separator: ", ")])) }
+        }
+        return lines
+    }
+}

@@ -799,3 +799,17 @@ class BotLinkRequest(BaseModel):
     name: str | None = Field(None, max_length=20)
     servers: list[str] = Field(default_factory=list, max_length=50)
     until: float | None = None
+
+
+class FarViewChoiceRequest(BaseModel):
+    choice: Literal["off", "distanthorizons", "voxy"]
+
+
+class FarViewOptionsRequest(BaseModel):
+    """Far view's settings: DH's "generate unvisited land" and Chunky's
+    night load (how far out from 0, 0, and which world; empty: the main one)."""
+
+    unvisited: bool = False
+    load_ahead: bool = False
+    radius: int = Field(2000, ge=100, le=30000)
+    world: str = Field("", max_length=32, pattern=r"^[A-Za-z0-9_\-]*$")

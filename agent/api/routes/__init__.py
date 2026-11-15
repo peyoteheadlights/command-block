@@ -31,6 +31,7 @@ from . import (
     discord_links,
     duplicate,
     events,
+    farview,
     files,
     friends,
     gamesettings,
@@ -85,6 +86,7 @@ PER_SERVER = (
     guides,
     configfiles,
     protection,
+    farview,
     store,
 )
 GLOBAL = (
