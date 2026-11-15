@@ -35,6 +35,7 @@ from .agent import AgentError
 from .anticheat_card import AntiCheatCard
 from .download_link import LinkCard
 from .editor import GuideWindow, pick_file
+from .farview_card import FarViewCard
 from .fixes import install
 from .make_modpack import MakeCard
 from .modrinth_card import ModrinthCard
@@ -423,6 +424,9 @@ class ModsPage(Page):
         # Sign in with Modrinth and put the modpack on it.
         self.modrinth_card = ModrinthCard(self)
         self.column.addWidget(self.modrinth_card.frame)
+        # Far view: Off / Distant Horizons / Voxy, and the night load.
+        self.farview_card = FarViewCard(self)
+        self.column.addWidget(self.farview_card.frame)
 
         self.checks_card, layout = card(text("mods.about_checks"))
         self.checks = label(kind="sub")
@@ -592,6 +596,7 @@ class ModsPage(Page):
         self.link_card.show(self.row)
         self.modrinth_card.show(self.row)
         self.anticheat_card.show(self.row)
+        self.farview_card.show(self.row)
         self.show_sides(data)
         self.show_fit(data.get("fit"))
         self.show_same(data.get("overlaps") or [])

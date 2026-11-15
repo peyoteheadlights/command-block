@@ -567,6 +567,21 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(body(3), #"{"path":"mods/a.jar","slug":"a","summary":"A mod"}"#)
     }
 
+    func testFarViewListsWhatEachChoiceAddsAndSaysWhyOneCant() async throws {
+        let c = client()
+        StubAgent.json(#"{"supported": true, "choice": "off", "choices": [{"id": "distanthorizons", "name": "Distant Horizons", "available": true, "server": ["Distant Horizons"], "players": []}, {"id": "voxy", "name": "Voxy", "available": false, "why": "Voxy has nothing for NeoForge on Minecraft 1.21.4 yet.", "server": [], "players": []}], "unvisited": false, "load_ahead": {"on": false, "radius": 2000, "world": "", "chunky": false, "running": false, "night": "1:00-6:00", "main_world": "world"}, "may_change": true}"#)
+        let card = try await c.farView(serverId: "s")
+        XCTAssertEqual(path(0), "/api/servers/s/far-view")
+        XCTAssertEqual(FarViews.status(s, card), "Far view is off.")
+        XCTAssertEqual(FarViews.lines(s, card.choices[0], now: card.choice)[1], "The server gets: Distant Horizons")
+        XCTAssertEqual(FarViews.lines(s, card.choices[1], now: card.choice)[1], "Voxy has nothing for NeoForge on Minecraft 1.21.4 yet.")
+        XCTAssertEqual(card.loadAhead?.night, "1:00-6:00")
+        StubAgent.json(#"{"ok": true, "choice": "voxy", "removed": [], "added": ["voxy.jar"]}"#)
+        let done = try await c.chooseFarView(serverId: "s", choice: "voxy")
+        XCTAssertEqual(done.added, ["voxy.jar"])
+        XCTAssertEqual(body(1), #"{"choice":"voxy"}"#)
+    }
+
     func testTheAntiCheatPickerNeverShowsAGuessedPriceAndWarnsAboutTwo() async throws {
         let c = client()
         StubAgent.json(#"{"supported": true, "installed": ["Grim", "Vulcan"], "free": [{"id": "grim", "name": "Grim", "project": "grimac", "on": true, "warning": true}], "paid": [{"id": "vulcan", "name": "Vulcan", "on": true, "link": "https://www.spigotmc.org/resources/83626/", "setup": null, "price": null}, {"id": "polar", "name": "Polar", "on": false, "link": "https://polar.top", "setup": "https://docs.polar.top/getting-started.html", "price": "19.99 USD", "checked": "14 November 2026"}], "may_install": true, "may_add_own_jar": false}"#)

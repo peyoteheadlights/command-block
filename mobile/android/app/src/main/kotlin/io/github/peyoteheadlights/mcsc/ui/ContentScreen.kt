@@ -68,6 +68,7 @@ import io.github.peyoteheadlights.mcsc.core.ModVersion
 import io.github.peyoteheadlights.mcsc.core.SameJob
 import io.github.peyoteheadlights.mcsc.core.Modpacks
 import io.github.peyoteheadlights.mcsc.core.AntiCheats
+import io.github.peyoteheadlights.mcsc.core.FarViews
 import io.github.peyoteheadlights.mcsc.core.LinkedModpack
 import io.github.peyoteheadlights.mcsc.core.LinkedPacks
 import io.github.peyoteheadlights.mcsc.core.MadeModpacks
@@ -178,6 +179,7 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
     if (vm.canDo(Permissions.MODS_MANAGE)) item { DownloadLinkCard(vm, content, idle) }
     if (vm.canDo(Permissions.MODS_MANAGE)) item { ModrinthCard(vm, content, idle) }
     item { AntiCheatCard(vm, content, idle) }
+    item { FarViewCard(vm, content, idle) }
     list.fit?.let { fit -> item { StillFitCard(vm, content, list, fit, kind, changes == Changes.READY && idle) } }
     if (list.overlaps.isNotEmpty()) item { SameJobCard(vm, content, list, changes == Changes.READY && idle) }
 
@@ -975,6 +977,63 @@ private fun ModrinthCard(vm: AppViewModel, content: ContentPages, idle: Boolean)
     if (showSteps) {
         Question(strings.t("modrinth.server_title"), confirm = null, onConfirm = {}, onDismiss = { showSteps = false }) {
             Text(ModrinthCards.steps(strings, share))
+        }
+    }
+}
+
+/** Far view: Off / Distant Horizons / Voxy, DH's unvisited land, Chunky at night, and (Technical) Rebuild. */
+@Composable
+private fun FarViewCard(vm: AppViewModel, content: ContentPages, idle: Boolean) {
+    val strings = vm.strings
+    LaunchedEffect(content.serverId) { content.loadFarView() }
+    val card = content.farView ?: return
+    var unvisited by remember(card) { mutableStateOf(card.unvisited) }
+    var ahead by remember(card) { mutableStateOf(card.loadAhead.on) }
+    var radius by remember(card) { mutableStateOf(card.loadAhead.radius.toString()) }
+    var asking by remember { mutableStateOf(false) }
+    SectionTitle(t("farview.title"))
+    Card {
+        Note(t("farview.intro"))
+        Note(FarViews.status(strings, card), color = LocalColors.current.text)
+        if (!card.supported) return@Card
+        val may = card.mayChange
+        Note(t(if (may) "farview.stop_first" else "farview.no_change"))
+        for (item in card.choices) {
+            for (line in FarViews.lines(strings, item, card.choice)) Note(line, color = LocalColors.current.text)
+            if (may && item.available && item.id != card.choice) {
+                Presses(listOf(Press(strings.t("farview.use", "name" to item.name), { content.chooseFarView(item.id, strings) }, enabled = idle)))
+            }
+        }
+        if (may && card.choice != "off") {
+            Note(t("farview.off_note"))
+            Presses(listOf(Press(t("farview.turn_off"), { content.chooseFarView("off", strings) }, enabled = idle)))
+        }
+        if (card.choice == "distanthorizons") {
+            Tick(t("farview.unvisited"), unvisited, subtitle = t("farview.unvisited_hint"), enabled = may) { unvisited = it }
+        }
+        val load = card.loadAhead
+        Tick(t("farview.load_ahead"), ahead, subtitle = strings.t("farview.load_ahead_hint", "night" to load.night), enabled = may && load.chunky) { ahead = it }
+        if (!load.chunky) {
+            Note(t("farview.needs_chunky"))
+            if (may) Presses(listOf(Press(t("farview.add_chunky"), { content.openProject(ModrinthHit(slug = "chunky", title = "Chunky")) }, enabled = idle)))
+        } else if (load.running) {
+            Note(t("farview.loading_now"), color = LocalColors.current.text)
+        }
+        OutlinedTextField(value = radius, onValueChange = { radius = it.filter(Char::isDigit).take(5) }, enabled = may,
+            label = { Text(t("farview.radius")) }, singleLine = true)
+        val blocks = radius.toIntOrNull()
+        if (may) {
+            Presses(listOf(Press(t("farview.save"), { content.saveFarView(unvisited, ahead, blocks ?: 0, strings) }, enabled = idle && blocks != null && blocks in 100..30000)))
+        }
+        Note(t("farview.backups_note"))
+        if (vm.technical && may) {
+            Note(t("farview.rebuild_hint"))
+            Presses(listOf(Press(t("farview.rebuild"), { asking = true }, enabled = idle)))
+        }
+    }
+    if (asking) {
+        Question(t("farview.rebuild"), t("farview.rebuild"), onConfirm = { asking = false; content.rebuildFarView(strings) }, onDismiss = { asking = false }) {
+            Text(t("farview.rebuild_ask"))
         }
     }
 }

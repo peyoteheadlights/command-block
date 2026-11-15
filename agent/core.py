@@ -24,6 +24,7 @@ from . import (
     colors,
     consolefriends,
     downtime,
+    farview,
     linkedpack,
     memory,
     protection,
@@ -113,6 +114,8 @@ class ServerContext:
         # a server nobody is playing on (off unless this server turns it on).
         self.chat = ChatLog()
         self.autosleep = AutoSleep(self)
+        # Far view's "Load the world ahead": Chunky at night (agent/farview.py).
+        self.night_load = farview.NightLoad(self)
         self.spam = watchers.ChatSpam(self)
         # Online and really answering, or online and stuck.
         self.answering = AnswerWatch(self)
@@ -175,6 +178,12 @@ class ServerContext:
                         f"[agent] set server-udp-ports={udp} so Bedrock players' game traffic "
                         f"uses one UDP port (the same number as the game port)"
                     )
+
+        try:
+            # Far view's "generate unvisited land" in DH's own config files.
+            await asyncio.to_thread(farview.before_start, self)
+        except OSError as exc:
+            self.server._emit_console(f"[agent] far view setting not written: {exc}")
         return await self.core.guard.before_launch(self)
 
     def _whitelist_addon(self, kind: str):
@@ -316,6 +325,7 @@ class ServerContext:
             self._update_check_loop(), name=f"mod-updates-{self.server_id}"
         )
         self.autosleep.start()
+        self.night_load.start()
         self.answering.start()
 
     async def _update_check_loop(self) -> None:
@@ -350,6 +360,7 @@ class ServerContext:
             self._empty_task.cancel()
         self.fit.stop()
         await self.autosleep.stop()
+        await self.night_load.stop()
         await self.answering.stop()
         await self.metrics.stop()
         await self.tps.stop()

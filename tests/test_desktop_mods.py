@@ -1228,6 +1228,19 @@ def test_the_side_filter_and_on_all_servers(qapp, agent_http):
     wait_for(qapp, lambda: can(page, "Remove", "Alpha"))
 
 
+# ---------------------------------------------------------------- far view
+def test_the_far_view_card_offers_each_choice_and_chunky(qapp, agent_http):
+    from .test_far_view import FarModrinth
+
+    with_mods(agent_http, FarModrinth())
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: "Far view is off." in shown_text(page), 20)
+    words = shown_text(page)
+    assert "Distant Horizons: friends see far land" in words
+    assert "Chunky loads land around the middle of the world" in words
+    assert button(page, "Add Chunky")
+
+
 def test_make_dialog_offers_required_and_the_chat_line_with_the_companion(qapp):
     from desktop import make_modpack
 

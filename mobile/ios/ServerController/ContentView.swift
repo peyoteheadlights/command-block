@@ -43,6 +43,7 @@ struct ContentView: View {
     @State private var choosingSide: SideAsk?
     @State private var query = ""
     @State private var packQuery = ""
+    @State private var farRadius = ""
     @State private var web: WebLink?
 
     private var content: ContentPages { model.pages(serverId).content }
@@ -397,6 +398,102 @@ struct ContentView: View {
         .task(id: serverId) { await content.loadAntiCheat() }
     }
 
+    // MARK: - Far view
+
+    /// Off / Distant Horizons / Voxy, DH's unvisited land, Chunky at night, and (Technical) Rebuild.
+    @ViewBuilder
+    private func farViewCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        Group {
+            if let card = content.farView {
+                let may = card.mayChange
+                let load = card.loadAhead
+                let radius = Int(farRadius) ?? load?.radius ?? 2000
+                SectionTitle(text: model.t("farview.title"), palette: palette)
+                CardBox(palette: palette) {
+                    Text(verbatim: model.t("farview.intro")).foregroundStyle(palette.textSecondary)
+                    Text(verbatim: FarViews.status(strings, card)).foregroundStyle(palette.textPrimary)
+                    if card.supported {
+                        Text(verbatim: model.t(may ? "farview.stop_first" : "farview.no_change")).foregroundStyle(palette.textSecondary)
+                        ForEach(card.choices) { item in
+                            ForEach(FarViews.lines(strings, item, now: card.choice), id: \.self) { line in
+                                Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                            }
+                            if may && item.available && item.id != card.choice {
+                                Presses(presses: [
+                                    Press(title: strings.t("farview.use", ["name": item.name]), enabled: ready) {
+                                        Task { await content.chooseFarView(item.id, strings) }
+                                    },
+                                ], palette: palette)
+                            }
+                        }
+                        if may && card.choice != "off" {
+                            Hint(text: model.t("farview.off_note"), palette: palette)
+                            Presses(presses: [
+                                Press(title: model.t("farview.turn_off"), enabled: ready) {
+                                    Task { await content.chooseFarView("off", strings) }
+                                },
+                            ], palette: palette)
+                        }
+                        if card.choice == "distanthorizons" {
+                            Toggle(model.t("farview.unvisited"), isOn: Binding(get: { card.unvisited }, set: { on in
+                                Task { await content.saveFarView(unvisited: on, loadAhead: load?.on ?? false, radius: radius, strings) }
+                            }))
+                            .disabled(!may || !ready)
+                            Hint(text: model.t("farview.unvisited_hint"), palette: palette)
+                        }
+                        Toggle(model.t("farview.load_ahead"), isOn: Binding(get: { load?.on ?? false }, set: { on in
+                            Task { await content.saveFarView(unvisited: card.unvisited, loadAhead: on, radius: radius, strings) }
+                        }))
+                        .disabled(!may || !ready || !(load?.chunky ?? false))
+                        Hint(text: strings.t("farview.load_ahead_hint", ["night": load?.night ?? ""]), palette: palette)
+                        if !(load?.chunky ?? false) {
+                            Hint(text: model.t("farview.needs_chunky"), palette: palette)
+                            if may {
+                                Presses(presses: [
+                                    Press(title: model.t("farview.add_chunky"), enabled: ready) {
+                                        Task { await content.openProject(slug: "chunky") }
+                                    },
+                                ], palette: palette)
+                            }
+                        } else if load?.running ?? false {
+                            Text(verbatim: model.t("farview.loading_now")).foregroundStyle(palette.textPrimary)
+                        }
+                        TextField(model.t("farview.radius"), text: Binding(
+                            get: { farRadius.isEmpty ? String(load?.radius ?? 2000) : farRadius },
+                            set: { farRadius = String($0.filter(\.isNumber).prefix(5)) }
+                        ))
+                        .keyboardType(.numberPad)
+                        .disabled(!may)
+                        if may {
+                            Presses(presses: [
+                                Press(title: model.t("farview.save"), enabled: ready && (100...30000).contains(radius)) {
+                                    Task { await content.saveFarView(unvisited: card.unvisited, loadAhead: load?.on ?? false, radius: radius, strings) }
+                                },
+                            ], palette: palette)
+                        }
+                        Hint(text: model.t("farview.backups_note"), palette: palette)
+                        if model.technical && may {
+                            Hint(text: model.t("farview.rebuild_hint"), palette: palette)
+                            Presses(presses: [
+                                Press(title: model.t("farview.rebuild"), enabled: ready) {
+                                    asking = ContentConfirm(
+                                        title: strings.t("farview.rebuild"),
+                                        body: strings.t("farview.rebuild_ask"),
+                                        confirm: strings.t("farview.rebuild")
+                                    ) {
+                                        Task { await content.rebuildFarView(strings) }
+                                    }
+                                },
+                            ], palette: palette)
+                        }
+                    }
+                }
+            }
+        }
+        .task(id: serverId) { await content.loadFarView() }
+    }
+
     // MARK: - Put it on Modrinth
 
     /// Sign in with Modrinth, upload the modpack and own jars, the Server Project helper.
@@ -548,6 +645,7 @@ struct ContentView: View {
                 modrinthCard(content, ready: idle, palette)
             }
             antiCheatCard(content, ready: idle, palette)
+            farViewCard(content, ready: idle, palette)
             if let fit = list.fit {
                 stillFitCard(content, list, fit, kind, ready: changes == .ready && idle, palette)
             }

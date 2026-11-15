@@ -299,3 +299,7 @@ GET /api/servers/{server_id}/performance/csv
 GET /api/servers/{server_id}/files
 GET /api/servers/{server_id}/files/download file
 POST /api/servers/{server_id}/files/upload
+GET /api/servers/{server_id}/far-view
+POST /api/servers/{server_id}/far-view
+POST /api/servers/{server_id}/far-view/options
+POST /api/servers/{server_id}/far-view/rebuild

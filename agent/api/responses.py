@@ -2012,6 +2012,47 @@ class AntiCheat(Open):
     may_add_own_jar: bool = False
 
 
+class FarViewChoice(Open):
+    id: str = Field(description="distanthorizons or voxy")
+    name: str
+    available: bool = Field(description="False: nothing fits this server; why says so")
+    why: str | None = None
+    server: list[str] = Field(description="What the server gets, by name, needs first")
+    players: list[str] = Field(description="What the players' modpack gets beyond the server's")
+
+
+class FarViewLoadAhead(Open):
+    on: bool
+    radius: int
+    world: str = Field(description="Empty: the main world")
+    chunky: bool = Field(description="Chunky is in (it does the loading)")
+    running: bool = Field(description="Loading right now")
+    night: str = Field(description="When it runs, like 1:00-6:00")
+    main_world: str
+
+
+class FarView(Open):
+    supported: bool = Field(description="False: a server without mods or plugins")
+    choice: str = Field(description="off, distanthorizons or voxy")
+    choices: list[FarViewChoice]
+    unvisited: bool = Field(description="DH builds land nobody has visited (off by default)")
+    load_ahead: FarViewLoadAhead
+    may_change: bool = False
+
+
+class FarViewChanged(Open):
+    ok: bool
+    choice: str
+    removed: list[str]
+    added: list[str]
+
+
+class FarViewRebuilt(Open):
+    ok: bool
+    files: int
+    size_bytes: int
+
+
 class ProtectionFixed(Open):
     ok: bool
     fix: str

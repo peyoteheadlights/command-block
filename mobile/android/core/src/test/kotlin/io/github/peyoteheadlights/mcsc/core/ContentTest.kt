@@ -739,6 +739,25 @@ class ContentTest {
     }
 
     @Test
+    fun `far view lists what each choice adds and says why one can't`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"supported": true, "choice": "off", "choices": [{"id": "distanthorizons", "name": "Distant Horizons", "available": true, "server": ["Distant Horizons"], "players": []}, {"id": "voxy", "name": "Voxy", "available": false, "why": "Voxy has nothing for NeoForge on Minecraft 1.21.4 yet.", "server": [], "players": []}], "unvisited": false, "load_ahead": {"on": false, "radius": 2000, "world": "", "chunky": false, "running": false, "night": "1:00-6:00", "main_world": "world"}, "may_change": true}"""))
+            val card = c.farView("s")
+            assertEquals("/api/servers/s/far-view", agent.server.takeRequest().path)
+            assertEquals("Far view is off.", FarViews.status(strings, card))
+            assertEquals("The server gets: Distant Horizons", FarViews.lines(strings, card.choices[0], card.choice)[1])
+            assertEquals("Voxy has nothing for NeoForge on Minecraft 1.21.4 yet.", FarViews.lines(strings, card.choices[1], card.choice)[1])
+            assertEquals("1:00-6:00", card.loadAhead.night)
+            agent.server.enqueue(agent.json("""{"ok": true, "choice": "voxy", "removed": [], "added": ["voxy.jar"]}"""))
+            assertEquals(listOf("voxy.jar"), c.chooseFarView("s", "voxy").added)
+            val sent = agent.server.takeRequest()
+            assertEquals("/api/servers/s/far-view", sent.path)
+            assertEquals("""{"choice":"voxy"}""", sent.body.readUtf8())
+        }
+    }
+
+    @Test
     fun `the anti-cheat picker never shows a guessed price and warns about two`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)

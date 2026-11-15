@@ -27,6 +27,8 @@ import io.github.peyoteheadlights.mcsc.core.DownloadLink
 import io.github.peyoteheadlights.mcsc.core.MakeModpack
 import io.github.peyoteheadlights.mcsc.core.ModpackInspected
 import io.github.peyoteheadlights.mcsc.core.AntiCheat
+import io.github.peyoteheadlights.mcsc.core.Display
+import io.github.peyoteheadlights.mcsc.core.FarView
 import io.github.peyoteheadlights.mcsc.core.ModpackMade
 import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
 import io.github.peyoteheadlights.mcsc.core.ModpackUpdatePreview
@@ -678,6 +680,36 @@ class ContentPages(
                 noted(e)
             }
         }
+    }
+
+    // ------------------------------------------------------------ far view
+    var farView: FarView? by mutableStateOf(null)
+        private set
+
+    fun loadFarView() {
+        val c = client() ?: return
+        scope.launch {
+            try {
+                farView = c.farView(serverId)
+            } catch (e: AgentException) {
+                noted(e)
+            }
+        }
+    }
+
+    fun chooseFarView(choice: String, strings: Strings) = work("far_view", strings, reload = { loadFarView(); loadMods() }) {
+        it.chooseFarView(serverId, choice)
+        Said(strings.t("farview.changed"), good = true)
+    }
+
+    fun saveFarView(unvisited: Boolean, loadAhead: Boolean, radius: Int, strings: Strings) = work("far_view", strings) {
+        farView = it.farViewOptions(serverId, unvisited, loadAhead, radius, farView?.loadAhead?.world ?: "")
+        Said(strings.t("farview.saved"), good = true)
+    }
+
+    fun rebuildFarView(strings: Strings) = work("far_view", strings) {
+        val done = it.rebuildFarView(serverId)
+        Said(strings.t("farview.rebuilt", "files" to done.files.toString(), "size" to Display.bytes(strings, done.sizeBytes)), good = true)
     }
 
     // ------------------------------------------------------------ Bedrock packs
