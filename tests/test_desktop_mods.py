@@ -11,6 +11,8 @@ import hashlib
 import httpx
 import pytest
 
+from desktop import parts
+
 from .conftest import PASSWORD, LiveAgent, build_bedrock_config
 from .fake_pc import FakePC
 from .test_bedrock import manifest, mcpack
@@ -66,7 +68,8 @@ def mods_page(qapp, agent_http, pc=None):
 def row_buttons(page, words, mod) -> list:
     return [
         b
-        for b in page.findChildren(QtWidgets.QPushButton)
+        # a row's switch and icon buttons are buttons too, with the same names
+        for b in page.findChildren(QtWidgets.QAbstractButton)
         if b.isVisibleTo(page) and b.accessibleName() == f"{words}: {mod}"
     ]
 
@@ -139,7 +142,10 @@ def test_the_list_shows_each_mod_and_changes_wait_until_the_server_stops(qapp, a
     # The rows are shown on the next turn of the event loop, after the count.
     wait_for(qapp, lambda: "3 mods installed" in shown_text(page) and "Alpha" in shown_text(page))
     text = shown_text(page)
-    assert "Alpha" in text and "Beta" in text and "Off" in text and "Working" in text
+    assert "Alpha" in text and "Beta" in text and "Working" in text
+    # Beta is off: its switch says so, and names what a click would do
+    assert row_button(page, "Turn off", "Alpha").isChecked()
+    assert not row_button(page, "Turn on", "Beta").isChecked()
     assert "Stop the server first" in text
     assert not row_button(page, "Turn off", "Alpha").isEnabled()
     assert not button(page, "Update all").isEnabled()
@@ -168,7 +174,7 @@ def test_an_update_asks_and_undo_puts_the_old_version_back(qapp, agent_http):
     agent_http.get("/api/servers/survival/mods/update-all", headers=headers)  # saves what's newer
     window, page = mods_page(qapp, agent_http)
     questions = asked(window)
-    wait_for(qapp, lambda: "Update: 2.0" in shown_text(page))
+    wait_for(qapp, lambda: "1.0 → 2.0" in shown_text(page))
     row_button(page, "Update", "Alpha").click()
     wait_for(qapp, lambda: "Updated to 2.0" in page.note.text(), 30)
     assert questions[0] == (
@@ -185,7 +191,7 @@ def test_remove_says_what_needs_it_first(qapp, agent_http):
     window, page = mods_page(qapp, agent_http)
     questions = asked(window)
     wait_for(qapp, lambda: can(page, "Turn off", "Alpha"))
-    menu_item(page, "Remove").trigger()  # the first row's menu: Alpha
+    row_button(page, "Remove", "Alpha").click()
     wait_for(qapp, lambda: "Alpha removed" in page.note.text())
     assert questions[0][0] == "Remove Alpha?" and "Needs Alpha needs it" in questions[0][1]
     assert not (folder / "alpha.jar").exists()
@@ -224,7 +230,7 @@ def test_search_and_install_with_the_mods_it_needs(qapp, agent_http):
     window, page = mods_page(qapp, agent_http)
     seen = ticks(window)
     page.search_box.setText("lith")
-    button(page, "Search").click()
+    page.search_box.returnPressed.emit()  # Enter in the field: there is no Search button
     wait_for(qapp, lambda: "Lithium" in shown_text(page))
     wait_for(qapp, lambda: can(page, "Install", "Lithium"))
     row_button(page, "Install", "Lithium").click()
@@ -453,6 +459,8 @@ def test_a_moderator_without_mods_rights_sees_no_change_buttons(qapp, agent_http
     wait_for(qapp, lambda: window.role is not None and not window._tasks)
     wait_for(qapp, lambda: "3 mods installed" in shown_text(page))
     assert not buttons_named(page, "Turn off") and not buttons_named(page, "Update all")
+    assert not [s for s in page.findChildren(parts.Switch) if s.isVisibleTo(page)]
+    assert not row_buttons(page, "Remove", "Alpha")
     assert not page.search_card.isVisibleTo(page)
 
 

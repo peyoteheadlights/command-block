@@ -59,11 +59,14 @@ PAGE_FOR = {
 HINTS = {"address": "desktop.hint.address", "backup": "desktop.hint.backup"}
 
 
-def card(title: str, hint: str | None = None, words: str = "") -> tuple[Box, QVBoxLayout]:
+def card(
+    title: str, hint: str | None = None, words: str = "", box: bool = True
+) -> tuple[Box, QVBoxLayout]:
     """A raised box with a heading. ``hint`` puts an info dot next to the
     heading: a name from HINTS or the key of its words. ``words`` does the
-    same with words that are already made."""
-    frame = Box()
+    same with words that are already made. ``box=False`` leaves the box
+    away (a list of rows that are boxes)."""
+    frame = Box(raised=box)
     frame.setProperty("kind", "card")
     top = QHBoxLayout()
     heading = label(title, name="h2")
@@ -74,6 +77,13 @@ def card(title: str, hint: str | None = None, words: str = "") -> tuple[Box, QVB
     top.addStretch()
     frame.column.addLayout(top)
     return frame, frame.column
+
+
+def dot_of(frame: QFrame) -> InfoDot:
+    """A card's info dot, to change its sentence later."""
+    found = frame.findChild(InfoDot)
+    assert found is not None
+    return found
 
 
 def title_of(frame: QFrame) -> QLabel:

@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from .agent import AgentError
+from .parts import Row
 from .ui import label, push
 from .words import mode, text
 
@@ -284,10 +285,8 @@ class GuideWindow(QDialog):
         outer.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
 
     def button_row(self, button: dict) -> QWidget:
-        row = QWidget()
-        row.setProperty("kind", "row")
-        column = QVBoxLayout(row)
-        column.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        column = row.column
         if button.get("help"):
             column.addWidget(label(button["help"], "sub"))
         reads: dict[str, Any] = {}
