@@ -37,4 +37,38 @@ class GateTest {
         g.allow("late", 200_000);
         assertTrue(g.remembered() < 2000);
     }
+
+    // ---- Part 7 (security review) ----
+
+    @Test
+    void ipv6AddressesInOneNetworkShareACount() {
+        // One home gets a whole /64 of IPv6 addresses, so per address alone would be no limit.
+        Gate g = new Gate(2);
+        assertTrue(g.allow("2001:db8:1:2:0:0:0:1", 0));
+        assertTrue(g.allow("2001:db8:1:2:ffff:ffff:ffff:ffff", 0));
+        assertFalse(g.allow("2001:db8:1:2:abcd:0:0:9", 0), "same /64: same count");
+        assertTrue(g.allow("2001:db8:1:3:0:0:0:1", 0), "another /64 has its own count");
+    }
+
+    @Test
+    void aFloodOfNewAddressesCantFillTheMemory() {
+        Gate g = new Gate(1);
+        for (int i = 0; i < 50_000; i++) {
+            g.allow("10." + (i >> 16) + "." + ((i >> 8) & 255) + "." + (i & 255), i % 1000);
+        }
+        assertTrue(g.remembered() <= Gate.MAX_REMEMBERED, "remembered " + g.remembered());
+        assertFalse(g.allow("192.0.2.1", 30_000), "full: a new address waits");
+        assertTrue(g.allow("192.0.2.1", 120_000), "a minute later the old ones are forgotten");
+    }
+
+    @Test
+    void aFloodDoesNotMakeEveryCheckSlow() {
+        Gate g = new Gate(1);
+        long start = System.nanoTime();
+        for (int i = 0; i < 200_000; i++) {
+            g.allow("10." + (i >> 16) + "." + ((i >> 8) & 255) + "." + (i & 255), i / 100);
+        }
+        // Sweeping every remembered address on every call took minutes here.
+        assertTrue(System.nanoTime() - start < 5_000_000_000L, "took " + (System.nanoTime() - start) / 1_000_000 + " ms");
+    }
 }

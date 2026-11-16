@@ -1,5 +1,6 @@
 package io.github.peyoteheadlights.companion;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -95,7 +96,6 @@ public record Plan(String name, String version, List<Item> items, List<String> s
             if (name.isEmpty() || version.isEmpty()) {
                 throw new BadInput("the modpack has no Companion players file");
             }
-            List<String> newPackFiles = packFiles(players);
 
             List<Item> items = new ArrayList<>();
             List<String> skipped = new ArrayList<>();
@@ -153,13 +153,14 @@ public record Plan(String name, String version, List<Item> items, List<String> s
                     }
                 }
             }
-            // A player's own mod with the same name as a modpack file is never replaced.
+            // A player's own mod with the same name as a modpack file is never replaced. Only
+            // the modpack in place says which files are its own: a new one could claim anything.
             Set<String> ours = new HashSet<>(oldPackFiles);
-            ours.addAll(newPackFiles);
             items.removeIf(i -> {
                 boolean theirs = Files.exists(mods.resolve(i.file())) && !ours.contains("mods/" + i.file());
                 if (theirs) {
                     skipped.add(i.file() + ": you have your own file with that name, so it was left alone");
+                    wanted.remove(i.file());
                 }
                 return theirs;
             });
@@ -169,7 +170,12 @@ public record Plan(String name, String version, List<Item> items, List<String> s
                     items.add(new Item(file, Change.REMOVE, null, null, null, null, true));
                 }
             }
-            return new Plan(name, version, List.copyOf(items), List.copyOf(skipped), playersText);
+            // The new players file lists only the files this modpack really brings, so a
+            // later update can never remove a file it merely claimed.
+            JsonArray owned = new JsonArray();
+            wanted.keySet().forEach(f -> owned.add("mods/" + f));
+            players.add("files", owned);
+            return new Plan(name, version, List.copyOf(items), List.copyOf(skipped), new Gson().toJson(players));
         } catch (IllegalArgumentException | IllegalStateException | NullPointerException | UnsupportedOperationException e) {
             throw new BadInput("the modpack file doesn't make sense"); // Gson and HexFormat throw these
         }
