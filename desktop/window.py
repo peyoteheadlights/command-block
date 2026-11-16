@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, QPoint, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QBoxLayout,
@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
 from agent import API_VERSION, appinfo
 from agent import __version__ as APP_VERSION
 
-from . import icons, self_update, theme
+from . import icons, motion, self_update, theme
 from .agent import AgentClient, AgentError, SignedOut, Unreachable
 from .alerts import KEPT, PAGES, PC_PAGES, RESTART_FOR, NotificationsScreen
 from .backups import is_world
@@ -61,6 +61,7 @@ from .rented import ConnectPanel, RentedRow, RentedScreen
 from .server_tab import BUSY, ServerScreen, facts, state_mark, state_words
 from .shell import BinderTabs, Desk, Sheet
 from .tailscale_step import TailscaleStep
+from .top_view import TopView
 from .ui import clock, content_page, has_packs, label, push, refill
 from .words import mode, text
 from .yourpcs import YourPCs
@@ -506,6 +507,8 @@ class MainWindow(FramelessWindow):
         desk.band = self.band
         column.addWidget(self.band, 1)
         self.stack = ScreenStack()
+        # The four whole-window screens have no paper to turn.
+        self.stack.currentChanged.connect(self.turn_page)
         self.sheet.inside.addWidget(self.stack)
         self.setCentralWidget(desk)
         self.place_frame()
@@ -595,6 +598,9 @@ class MainWindow(FramelessWindow):
             pc.set_setting("start_with_windows_set", True)
         self.apply_look(None)
         self.tab_to_window_buttons_last()
+        self.top_view = TopView(self)
+        for keys, by in (("Ctrl+Tab", 1), ("Ctrl+Shift+Tab", -1)):
+            QShortcut(QKeySequence(keys), self, lambda by=by: self.top_view.step(by))
         saved = pc.saved_sign_in(agent.place)
         once = pc.setting("one_time_sign_in") if agent.place == "this PC" else None
         if once:
@@ -677,6 +683,10 @@ class MainWindow(FramelessWindow):
                 return
             self.open_page(found[0])
             self.server_screen.page.take(found[1])  # type: ignore[attr-defined]
+
+    def turn_page(self) -> None:
+        if not self.sheet.bare:
+            motion.turn(self.stack)
 
     def can_drag(self, pos: QPoint) -> bool:
         """By the top row and the band. A press on the paper is for what is

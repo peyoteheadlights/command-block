@@ -37,9 +37,10 @@ def test_diagnose_needs_its_own_permission_and_edits_in_a_summary(agent, fake, m
     words = wait_for(lambda: (r := fake.replies(token)) and r[-1].startswith("Diagnose") and r)
     assert words[0].startswith("Testing Test Server")
     summary = words[-1]
-    assert "✅ Join from this PC as CommandBlock: worked" in summary
-    assert "❌ Home network: failed" in summary
-    assert "❔ Internet: not checked" in summary
+    lines = summary.splitlines()  # plain words, no emoji in front
+    assert "Join from this PC as CommandBlock: worked" in lines
+    assert "Home network: failed" in lines
+    assert "Internet: not checked" in lines
     assert "- The server ran out of memory." in summary
     assert "1 change may fix it" in summary
     assert "192.168" not in summary  # details stay in the apps
