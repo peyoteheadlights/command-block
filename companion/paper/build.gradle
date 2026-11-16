@@ -1,0 +1,37 @@
+// The Paper plugin: the server's half only. Players use the Fabric or
+// NeoForge mod (the owner puts it in the server's player-only folder).
+base { archivesName = 'commandblock-companion-paper' }
+
+repositories {
+    maven { name = 'Paper'; url = 'https://repo.papermc.io/repository/maven-public/' }
+}
+
+dependencies {
+    compileOnly "io.papermc.paper:paper-api:${project.paper_version}"
+    implementation project(':common')
+    testImplementation "io.papermc.paper:paper-api:${project.paper_version}"
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.11.4'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging { events 'failed'; exceptionFormat 'full' }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25 // Paper for Minecraft 26.x needs Java 25
+}
+
+processResources {
+    def version = project.version
+    inputs.property 'version', version
+    filesMatching('paper-plugin.yml') { expand 'version': version }
+}
+
+jar {
+    dependsOn ':common:classes'
+    from(project(':common').sourceSets.main.output)
+    from(rootProject.file('../LICENSE')) { rename { "LICENSE_command-block-companion" } }
+}
