@@ -62,7 +62,10 @@ def test_workflows_ask_for_least_permissions():
         assert "write" not in str(top.values()), f"{path.name} writes by default"
         for name, job in flow["jobs"].items():
             if job.get("permissions", {}).get("contents") == "write":
-                assert (path.name, name) == ("release.yml", "publish"), (path.name, name)
+                assert (path.name, name) in {
+                    ("release.yml", "publish"),
+                    ("companion-release.yml", "github"),
+                }, (path.name, name)
 
 
 def test_the_signing_key_is_only_in_a_job_that_installs_only_the_app():
@@ -78,3 +81,16 @@ def test_the_signing_key_is_only_in_a_job_that_installs_only_the_app():
     assert set(sign["permissions"].values()) == {"read"}
     installs = [step["run"] for step in sign["steps"] if "pip install" in step.get("run", "")]
     assert installs == ["python -m pip install --require-hashes -r requirements.lock"]
+
+
+def test_the_modrinth_token_is_only_in_a_job_that_builds_nothing():
+    """The Companion's Modrinth token sits in one job, behind the
+    "modrinth" environment, which only uploads the jars the build job made."""
+    flow = yaml.safe_load((WORKFLOWS / "companion-release.yml").read_text(encoding="utf-8"))
+    holders = [name for name, job in flow["jobs"].items() if "MODRINTH_TOKEN" in json.dumps(job)]
+    assert holders == ["modrinth"]
+    job = flow["jobs"]["modrinth"]
+    assert job.get("environment") == "modrinth"
+    assert job["permissions"] == {}
+    assert job["needs"] == "build"
+    assert not any("gradlew" in step.get("run", "") for step in job["steps"])

@@ -24,3 +24,18 @@ install it for you, so updating is the fix.
 
 The agent, the desktop app, the phone apps, the installer and the in-app updater. How the
 app is designed to keep your PC safe is in [docs/security.md](docs/security.md).
+
+Also the Command Block Companion mod and plugin (`companion/`). What it
+protects against, and what it can't, is in
+[companion/THREAT-MODEL.md](companion/THREAT-MODEL.md); it checks that a
+player has the right modpack and is not an anti-cheat. Only its newest
+release gets fixes.
+
+## Checking a download
+
+Every setup file and Companion jar on the releases page has a `.sha256`
+file, and GitHub keeps a signed record of where it was built:
+
+```
+gh attestation verify <file> --repo peyoteheadlights/command-block
+```
