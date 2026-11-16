@@ -85,6 +85,7 @@ class ConnectWindow(QWidget):
         self.setWindowTitle(text("app.name"))
         self.setObjectName("desk")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        theme.load_fonts()
         dark = QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
         self.setStyleSheet(theme.style_sheet(theme.tokens(dark, None), pc.text_scale()))
         self.resize(720, 520)
