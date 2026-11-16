@@ -42,7 +42,7 @@ public record Settings(
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
     // One file name: no folders, no characters Windows refuses in names.
     private static final String NAME = "[^/\\\\:*?\"<>|\\x00-\\x1f]{1,255}";
-    private static final Pattern MOD_PATH = Pattern.compile("mods/" + NAME + "\\.jar");
+    static final Pattern MOD_PATH = Pattern.compile("mods/" + NAME + "\\.jar");
     // The server's copy, from the server folder: up to 4 folders deep, never "..".
     private static final Pattern ON_SERVER = Pattern.compile("(" + NAME + "/){0,3}" + NAME + "\\.jar");
     private static final Pattern VERSION = Pattern.compile("[\\w.+-]{1,32}", Pattern.UNICODE_CHARACTER_CLASS);

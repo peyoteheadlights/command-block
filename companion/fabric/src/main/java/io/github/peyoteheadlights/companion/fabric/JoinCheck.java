@@ -21,11 +21,13 @@ final class JoinCheck implements ConfigurationTask {
     private final ServerConfigurationPacketListenerImpl handler;
     private final Checker checker;
     private final long deadline;
+    private final OfferPayload offer;
     private Challenge sent;
     private volatile Answer answer;
     private volatile boolean badAnswer;
 
-    JoinCheck(ServerConfigurationPacketListenerImpl handler, Checker checker, int timeoutSeconds) {
+    JoinCheck(ServerConfigurationPacketListenerImpl handler, Checker checker, int timeoutSeconds, OfferPayload offer) {
+        this.offer = offer;
         this.handler = handler;
         this.checker = checker;
         this.deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L;
@@ -45,6 +47,10 @@ final class JoinCheck implements ConfigurationTask {
                 badAnswer = true;
             }
         });
+        if (offer != null && ServerConfigurationNetworking.canSend(handler, OfferPayload.TYPE)) {
+            // First, so the player's Companion can offer the update if the check finds them behind.
+            sender.accept(ServerConfigurationNetworking.createClientboundPacket(offer));
+        }
         sender.accept(ServerConfigurationNetworking.createClientboundPacket(new CheckPayload(sent.encode())));
     }
 

@@ -7,8 +7,10 @@ import io.github.peyoteheadlights.companion.Challenge;
 import io.github.peyoteheadlights.companion.Checker;
 import io.github.peyoteheadlights.companion.Gate;
 import io.github.peyoteheadlights.companion.Hashes;
+import io.github.peyoteheadlights.companion.Offer;
 import io.github.peyoteheadlights.companion.Prover;
 import io.github.peyoteheadlights.companion.Settings;
+import io.github.peyoteheadlights.companion.screen.Updates;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
@@ -32,6 +34,7 @@ import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
@@ -73,7 +76,11 @@ public final class Companion {
     public Companion(IEventBus modBus) {
         // optional(): players without the Companion can still connect, and get our message instead of NeoForge's.
         modBus.addListener(RegisterPayloadHandlersEvent.class, event -> event.registrar("1").optional()
-                .commonBidirectional(CheckPayload.TYPE, CheckPayload.CODEC, Companion::serverGot, Companion::playerGot));
+                .commonBidirectional(CheckPayload.TYPE, CheckPayload.CODEC, Companion::serverGot, Companion::playerGot)
+                .commonToClient(OfferPayload.TYPE, OfferPayload.CODEC, (payload, context) -> Updates.offered(payload.data())));
+        if (FMLEnvironment.getDist().isClient()) {
+            ClientHooks.register();
+        }
         modBus.addListener(RegisterConfigurationTasksEvent.class, Companion::joining);
         NeoForge.EVENT_BUS.addListener(ServerStartingEvent.class, event -> load(event.getServer()));
         NeoForge.EVENT_BUS.addListener(PlayerEvent.PlayerLoggedInEvent.class, event -> joined((ServerPlayer) event.getEntity()));
@@ -121,7 +128,7 @@ public final class Companion {
             return;
         }
         if (handler.hasChannel(CheckPayload.TYPE)) {
-            JoinCheck check = new JoinCheck(handler, checker, settings.timeoutSeconds());
+            JoinCheck check = new JoinCheck(handler, checker, settings.timeoutSeconds(), offer(handler));
             joining.put(handler, check);
             event.register(check);
         } else {
@@ -211,6 +218,14 @@ public final class Companion {
         return true;
     }
 
+    /** The update offer for this player, or null when the download link is off or they can't take it. */
+    private static OfferPayload offer(ServerConfigurationPacketListenerImpl handler) {
+        if (settings.downloadLink() == null || !handler.hasChannel(OfferPayload.TYPE)) {
+            return null;
+        }
+        return new OfferPayload(new Offer(settings.modpackName(), settings.modpackVersion(), settings.downloadLink()).encode());
+    }
+
     private static int nextCheck(MinecraftServer server) {
         int min = settings.recheckMinMinutes();
         int minutes = min + RANDOM.nextInt(settings.recheckMaxMinutes() - min + 1);
@@ -228,7 +243,10 @@ public final class Companion {
         CompletableFuture.runAsync(() -> {
             try {
                 Challenge challenge = Challenge.decode(payload.data());
-                context.reply(new CheckPayload(Prover.answer(challenge, loadedJars(), packVersion()).encode()));
+                String version = packVersion();
+                Answer answer = Prover.answer(challenge, loadedJars(), version);
+                context.reply(new CheckPayload(answer.encode()));
+                Updates.checked(challenge, answer, version);
             } catch (BadInput e) {
                 LOG.warn("The server's check didn't make sense ({}), so it wasn't answered", e.getMessage());
             }
@@ -265,7 +283,7 @@ public final class Companion {
     private static String packVersion() {
         Path file = FMLPaths.CONFIGDIR.get().resolve(PLAYERS_FILE);
         try {
-            if (Files.size(file) > 4096) {
+            if (Files.size(file) > Settings.MAX_SETTINGS_BYTES) { // it lists the modpack's files
                 return "";
             }
             return Prover.packVersion(Files.readString(file, StandardCharsets.UTF_8));

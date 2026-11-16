@@ -21,11 +21,13 @@ final class JoinCheck implements ICustomConfigurationTask {
     private final ServerConfigurationPacketListenerImpl handler;
     private final Checker checker;
     private final long deadline;
+    private final OfferPayload offer;
     private Challenge sent;
     private Answer answer;
     private boolean badAnswer;
 
-    JoinCheck(ServerConfigurationPacketListenerImpl handler, Checker checker, int timeoutSeconds) {
+    JoinCheck(ServerConfigurationPacketListenerImpl handler, Checker checker, int timeoutSeconds, OfferPayload offer) {
+        this.offer = offer;
         this.handler = handler;
         this.checker = checker;
         this.deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L;
@@ -34,6 +36,9 @@ final class JoinCheck implements ICustomConfigurationTask {
     @Override
     public void run(Consumer<CustomPacketPayload> sender) {
         sent = checker.newChallenge();
+        if (offer != null) {
+            sender.accept(offer); // first, so the player's Companion can offer the update if the check finds them behind
+        }
         sender.accept(new CheckPayload(sent.encode()));
     }
 

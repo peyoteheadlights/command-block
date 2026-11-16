@@ -6,6 +6,7 @@ import io.github.peyoteheadlights.companion.BadInput;
 import io.github.peyoteheadlights.companion.Challenge;
 import io.github.peyoteheadlights.companion.Checker;
 import io.github.peyoteheadlights.companion.Gate;
+import io.github.peyoteheadlights.companion.Offer;
 import io.github.peyoteheadlights.companion.Settings;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -58,6 +59,7 @@ public final class CompanionServer implements ModInitializer {
     @Override
     public void onInitialize() {
         CheckPayload.register();
+        OfferPayload.register();
         ServerLifecycleEvents.SERVER_STARTING.register(CompanionServer::load);
         ServerConfigurationConnectionEvents.CONFIGURE.register((handler, server) -> {
             if (checker == null) {
@@ -70,7 +72,7 @@ public final class CompanionServer implements ModInitializer {
                 return;
             }
             if (ServerConfigurationNetworking.canSend(handler, CheckPayload.TYPE)) {
-                ((FabricServerConfigurationPacketListenerImpl) handler).addTask(new JoinCheck(handler, checker, settings.timeoutSeconds()));
+                ((FabricServerConfigurationPacketListenerImpl) handler).addTask(new JoinCheck(handler, checker, settings.timeoutSeconds(), offer()));
             } else {
                 judged(handler.getOwner(), null, handler::disconnect); // no Companion at all
             }
@@ -176,6 +178,13 @@ public final class CompanionServer implements ModInitializer {
             chatLines.put(player.id(), settings.chatLineText());
         }
         return true;
+    }
+
+    /** The update offer for players, or null when the download link is off. */
+    static OfferPayload offer() {
+        return settings.downloadLink() == null
+                ? null
+                : new OfferPayload(new Offer(settings.modpackName(), settings.modpackVersion(), settings.downloadLink()).encode());
     }
 
     private static int nextCheck(MinecraftServer server) {

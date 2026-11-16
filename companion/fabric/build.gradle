@@ -17,6 +17,9 @@ loom {
     }
 }
 
+// The update screen, shared with the NeoForge mod (Minecraft's own classes only).
+sourceSets.client.java.srcDir '../client-screens/src/main/java'
+
 dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
