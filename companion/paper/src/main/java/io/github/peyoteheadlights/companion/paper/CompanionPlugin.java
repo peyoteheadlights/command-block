@@ -5,6 +5,7 @@ import io.github.peyoteheadlights.companion.BadInput;
 import io.github.peyoteheadlights.companion.Challenge;
 import io.github.peyoteheadlights.companion.Checker;
 import io.github.peyoteheadlights.companion.Gate;
+import io.github.peyoteheadlights.companion.Offer;
 import io.github.peyoteheadlights.companion.Settings;
 import io.papermc.paper.connection.PlayerConfigurationConnection;
 import io.papermc.paper.connection.PlayerConnection;
@@ -45,6 +46,7 @@ import org.bukkit.plugin.messaging.PluginMessageListener;
  */
 public final class CompanionPlugin extends JavaPlugin implements Listener, PluginMessageListener {
     static final String CHANNEL = "commandblock:check";
+    static final String OFFER_CHANNEL = "commandblock:offer";
     /** Same limit as the mods' CheckPayload: 4000 hashes of 32 bytes, plus spots. */
     static final int MAX_BYTES = 1 + Challenge.NONCE_BYTES + 2 + 32 * 4000 + 1 + 14 * Challenge.MAX_SPOTS;
     private static final int TICKS_PER_MINUTE = 20 * 60;
@@ -82,6 +84,7 @@ public final class CompanionPlugin extends JavaPlugin implements Listener, Plugi
         checker = Checker.create(settings, serverDir, random);
         gate = new Gate(settings.handshakesPerIpPerMinute());
         getServer().getMessenger().registerOutgoingPluginChannel(this, CHANNEL);
+        getServer().getMessenger().registerOutgoingPluginChannel(this, OFFER_CHANNEL);
         getServer().getMessenger().registerIncomingPluginChannel(this, CHANNEL, this);
         getServer().getPluginManager().registerEvents(this, this);
         getServer().getScheduler().runTaskTimer(this, this::tick, 20, 20);
@@ -111,6 +114,11 @@ public final class CompanionPlugin extends JavaPlugin implements Listener, Plugi
         Checker.Verdict verdict = null;
         try {
             Challenge sent = checker.newChallenge();
+            if (settings.downloadLink() != null && connection.getListeningPluginChannels().contains(OFFER_CHANNEL)) {
+                // First, so the player's Companion can offer the update if the check finds them behind.
+                Offer offer = new Offer(settings.modpackName(), settings.modpackVersion(), settings.downloadLink());
+                connection.sendPluginMessage(this, OFFER_CHANNEL, frame(offer.encode()));
+            }
             connection.sendPluginMessage(this, CHANNEL, frame(sent.encode()));
             verdict = checker.judge(sent, Answer.decode(unframe(reply.get(settings.timeoutSeconds(), TimeUnit.SECONDS))));
         } catch (InterruptedException e) {

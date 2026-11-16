@@ -50,6 +50,17 @@ public final class Prover {
         return new Answer(c.nonce(), version, List.copyOf(loaded), extra, List.copyOf(proofs));
     }
 
+    /** The modpack's name from the players file, like packVersion; "" for anything odd. */
+    public static String packName(String playersFileJson) {
+        try {
+            JsonObject root = JsonParser.parseString(playersFileJson).getAsJsonObject();
+            String name = root.getAsJsonObject("modpack").get("name").getAsString();
+            return name.isBlank() || name.length() > 128 || name.chars().anyMatch(c -> c < 0x20 || c == 0x7f) ? "" : name;
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
     /**
      * Reads the modpack version from the players file the modpack carries
      * (config/commandblock-companion-client.json). Anything odd gives "".

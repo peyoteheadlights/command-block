@@ -1,5 +1,6 @@
 package io.github.peyoteheadlights.companion.fabric;
 
+import io.github.peyoteheadlights.companion.screen.Updates;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,15 +41,28 @@ public final class JoinTest implements FabricClientGameTest {
             world.getConnection().waitForChunksDownload();
             context.waitFor(mc -> chat.contains("Get the Friends modpack"), 200);
         }
+
+        // With the download link on, a player who's behind is offered the update (the button the
+        // disconnect and pause screens get). Nothing is downloaded until they press it.
+        settings(false, "[{\"path\": \"mods/missing.jar\", \"name\": \"Missing\", \"sha256\": \"" + FAKE_SHA
+                + "\", \"size\": 10, \"on_server\": null}]", "Get the Friends modpack", "\"http://127.0.0.1:9/x/modpack.mrpack\"");
+        try (TestSingleplayerContext world = context.worldBuilder().create()) {
+            world.getConnection().waitForChunksDownload();
+            context.waitFor(mc -> Updates.button(null, 0, 0) != null, 200);
+        }
     }
 
     private static void settings(boolean required, String files, String chatLine) {
+        settings(required, files, chatLine, "null");
+    }
+
+    private static void settings(boolean required, String files, String chatLine, String link) {
         String json = """
                 {"format": 1, "required": %s, "modpack": {"name": "Friends", "version": "1"},
-                 "files": %s, "download_link": null, "chat_line": {"on": true, "text": "%s"},
+                 "files": %s, "download_link": %s, "chat_line": {"on": true, "text": "%s"},
                  "check": {"timeout_seconds": 10, "recheck_minutes": [10, 30], "spot_checks": 3,
                            "handshakes_per_ip_per_minute": 60}}
-                """.formatted(required, files, chatLine);
+                """.formatted(required, files, link, chatLine);
         Path file = FabricLoader.getInstance().getConfigDir().resolve("commandblock-companion.json");
         try {
             Files.writeString(file, json);

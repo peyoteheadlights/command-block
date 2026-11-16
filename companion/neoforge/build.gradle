@@ -26,6 +26,9 @@ neoForge {
     }
 }
 
+// The update screen, shared with the Fabric mod (Minecraft's own classes only).
+sourceSets.main.java.srcDir '../client-screens/src/main/java'
+
 dependencies {
     implementation project(':common')
 }
