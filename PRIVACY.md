@@ -50,6 +50,17 @@ server's console, its lines are posted there with addresses hidden.
 by itself: you choose who to give it to. It never contains passwords, keys
 or worlds.
 
+## The Companion mod
+
+When you join a server that runs the Command Block Companion, your game
+tells that server only, for each mod file the server names, whether your
+game loaded it, which version of its modpack you have, and whether you
+have any other mods (yes or no): never the names of your own mods, your
+files or anything else from your PC. A server can name any mod file it
+likes, so it can find out whether you use that one. Updates come only
+from Modrinth, CurseForge or the server's own download link, and only
+after you say yes.
+
 ## The phone apps
 
 The Android and iPhone apps talk only to your PC, over your Tailscale
