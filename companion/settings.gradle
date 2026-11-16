@@ -1,0 +1,3 @@
+rootProject.name = 'command-block-companion'
+include 'common'
+// Later parts add: include 'fabric', 'neoforge', 'paper'
