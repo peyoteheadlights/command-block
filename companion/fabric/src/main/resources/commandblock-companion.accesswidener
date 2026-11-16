@@ -1,0 +1,3 @@
+accessWidener v2 official
+# The joining player's address, for the per-address limit (Gate).
+accessible field net/minecraft/server/network/ServerCommonPacketListenerImpl connection Lnet/minecraft/network/Connection;
