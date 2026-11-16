@@ -1,0 +1,18 @@
+// Shared settings for every module of the Companion.
+subprojects {
+    apply plugin: 'java-library'
+
+    group = 'io.github.peyoteheadlights'
+    version = '0.1.0'
+
+    java {
+        toolchain { languageVersion = JavaLanguageVersion.of(21) } // Minecraft 1.21+ needs Java 21
+    }
+
+    repositories { mavenCentral() }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.compilerArgs << '-Xlint:all' << '-Werror'
+    }
+}
