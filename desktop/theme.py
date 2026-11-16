@@ -180,7 +180,7 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{ border
 
 QListWidget {{ background: {t["surface"]}; border: 1px solid {t["border"]};
                border-radius: {t["radius"]}; padding: 4px; }}
-QListWidget::item {{ padding: 8px; border-bottom: 1px solid {t["border"]}; }}
+QListWidget::item {{ padding: 8px; margin-bottom: 2px; border-radius: {t["radius-sm"]}; }}
 QListWidget::item:selected {{ background: {t["accent-soft"]}; color: {t["text-primary"]}; }}
 
 QFrame[kind="choice"] {{ background: {t["surface"]}; border: 1px solid {t["border"]};

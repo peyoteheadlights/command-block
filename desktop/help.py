@@ -162,7 +162,8 @@ class About(Section):
         except OSError as exc:
             notices = str(exc)
         notes = label(notices)
-        notes.setTextFormat(Qt.TextFormat.PlainText)
+        # Drawn as Markdown, so the file's "#" and backticks don't show as code.
+        notes.setTextFormat(Qt.TextFormat.MarkdownText)
         inside.addWidget(notes)
         self.fill("licences", licences)
 
