@@ -45,7 +45,7 @@ struct ServerView: View {
         .background(palette.sheet.ignoresSafeArea())
         .navigationTitle(row?.name ?? status?.name ?? serverId)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(palette.sheet, for: .navigationBar)
+        .binder(current: serverId)
         .refreshable {
             await load()
             await pages.loadCards()
@@ -78,7 +78,7 @@ struct ServerView: View {
             HStack(alignment: .center, spacing: 12) {
                 ColorBadge(hex: row?.color, size: 18)
                 Text(row?.name ?? status?.name ?? serverId)
-                    .font(.title2.weight(.bold))
+                    .font(.heading(.title2))
                     .foregroundStyle(palette.textPrimary)
             }
             HStack(spacing: 8) {
@@ -158,7 +158,7 @@ struct ServerView: View {
         return card(palette) {
             HStack {
                 Text(model.t("mobile.server.players_now"))
-                    .font(.headline)
+                    .font(.heading())
                     .foregroundStyle(palette.textPrimary)
                 Spacer()
                 Text(Display.players(model.strings, online, status?.maxPlayers))
@@ -174,9 +174,7 @@ struct ServerView: View {
             } else {
                 ForEach(list, id: \.username) { player in
                     HStack {
-                        Image(systemName: "person.fill")
-                            .foregroundStyle(palette.accentInk)
-                            .accessibilityHidden(true)
+                        Face(palette: palette)
                         Text(player.username)
                             .foregroundStyle(palette.textPrimary)
                         Spacer()
@@ -244,8 +242,9 @@ struct ServerView: View {
         .background(palette.surface, in: RoundedRectangle(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(palette.accentEdge.opacity(0.35), lineWidth: 1)
+                .strokeBorder(palette.edge, lineWidth: 1.5)
         )
+        .shadow(color: .black.opacity(0.08), radius: 3, y: 2)
     }
 
     // MARK: - Confirming

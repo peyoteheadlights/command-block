@@ -44,6 +44,9 @@ struct ServersListView: View {
             .refreshable {
                 await model.refreshServers()
             }
+            .scrollContentBackground(.hidden)
+            .background(model.basePalette(colorScheme).sheet)
+            .binder(current: nil)
             .navigationTitle(model.t("mobile.servers.title"))
             .toolbar {
                 if AddServer.allowed(model.me) {

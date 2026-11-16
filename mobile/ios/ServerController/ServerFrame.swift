@@ -2,8 +2,9 @@ import Core
 import SwiftUI
 import UIKit
 
-/// One of a server's screens: in the server's color, with its title, and
-/// the live feed carrying this server's console and chat while it is open.
+/// One of a server's screens: in the binder, with the server's color on the
+/// band and the edges, its title, and the live feed carrying this server's
+/// console and chat while it is open.
 struct ServerFrame<Content: View>: View {
     let serverId: String
     let title: String
@@ -19,13 +20,14 @@ struct ServerFrame<Content: View>: View {
             .background(palette.sheet.ignoresSafeArea())
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(palette.sheet, for: .navigationBar)
+            .binder(current: serverId)
             .onAppear { model.watch(serverId) }
             .onDisappear { model.unwatch(serverId) }
     }
 }
 
-/// A rounded card.
+/// A raised box with its edge in the server's color: only for a thing you
+/// act on as one piece.
 struct CardBox<Content: View>: View {
     let palette: Palette
     @ViewBuilder let content: () -> Content
@@ -39,8 +41,9 @@ struct CardBox<Content: View>: View {
         .background(palette.surface, in: RoundedRectangle(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(palette.accentEdge.opacity(0.35), lineWidth: 1)
+                .strokeBorder(palette.edge, lineWidth: 1.5)
         )
+        .shadow(color: .black.opacity(0.08), radius: 3, y: 2)
     }
 }
 

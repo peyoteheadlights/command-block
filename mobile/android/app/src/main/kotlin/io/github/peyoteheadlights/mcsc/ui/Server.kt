@@ -1,6 +1,7 @@
 package io.github.peyoteheadlights.mcsc.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -74,7 +75,13 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
         item {
             val colors = LocalColors.current
             Card(Modifier.padding(top = 8.dp)) {
-                Item(t(Display.state(state, status?.answering?.ok).key), subtitle = Display.uptime(vm.strings, state, status?.uptime))
+                // The status mark (a dot and its word), then for how long.
+                Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
+                    StateText(state, status?.answering?.ok)
+                    Display.uptime(vm.strings, state, status?.uptime)?.let {
+                        Text(it, color = colors.text2, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
                 if (state == States.RESTART_PENDING) Note(t("mobile.server.restart_pending"))
                 listOfNotNull(status?.serverTypeName ?: row?.typeName, status?.minecraftVersion ?: row?.minecraftVersion)
                     .joinToString(" ").takeIf { it.isNotBlank() }
@@ -104,6 +111,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                 Card {
                     Item(
                         player.username,
+                        leading = { Face() },
                         subtitle = player.sessionSeconds?.takeIf { player.sessionStarted != null }?.let {
                             t("mobile.server.player_since", "duration" to Display.duration(vm.strings, it))
                         },

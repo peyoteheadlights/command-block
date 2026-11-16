@@ -142,6 +142,35 @@ object ServerColors {
         return out
     }
 
+    /** The app icon's copper: the buttons' color where no server is open. */
+    const val COPPER = "#C8794A"
+
+    /**
+     * The binder look, the same sums as the desktop app's (desktop/theme.py
+     * tokens): the page stays the theme's plain paper, and the server's
+     * color [baseHex] goes on the band behind the sheet, the buttons, the
+     * edges and its tab. Without a server the buttons are copper and the
+     * rest stays the theme's. ServerColorsTest checks it against the
+     * recorded cases (shared/look-cases.json).
+     */
+    fun binder(baseHex: String?, k: Map<String, String>, theme: String): Map<String, String> {
+        val out = linkedMapOf<String, String>()
+        for (name in listOf("accent-band", "accent-edge")) k[name]?.let { out["--$name"] = it }
+        k["tab-neutral"]?.let { out["--tab-fill"] = it }
+        k["text-primary"]?.let { out["--tab-text"] = it }
+        val own = baseHex?.let { derive(it, k, theme) }
+        val tint = own ?: derive(COPPER, k, theme).orEmpty()
+        val names = listOf("accent", "accent-text", "accent-ink", "accent-ring") +
+            if (own != null) listOf("accent-band", "accent-edge", "tab-fill", "tab-text") else emptyList()
+        for (name in names) tint["--$name"]?.let { out["--$name"] = it }
+        val sheet = rgb(k["sheet"]) ?: WHITE
+        (if (luminance(sheet) < 0.18) k["sheet"] else k["surface"])?.let { out["--paper"] = it }
+        val band = mix(rgb(out["--accent-band"]) ?: sheet, rgb(out["--accent-edge"]) ?: sheet, 0.28)
+        out["--band"] = hex(band)
+        out["--band-text"] = hex(readable(rgb(k["text-primary"]) ?: BLACK, listOf(band)))
+        return out
+    }
+
     /** A server's badge: its color as a fill, with text that reads on it. */
     fun badge(baseHex: String?): Pair<String, String>? {
         val base = rgb(baseHex) ?: return null

@@ -15,7 +15,7 @@ struct JoinCard: View {
     var body: some View {
         CardBox(palette: palette) {
             Text(model.t("join.title"))
-                .font(.headline)
+                .font(.heading())
                 .foregroundStyle(palette.textPrimary)
             if let problem = pages.join.problem {
                 ProblemRow(text: problem.message(model.strings), palette: palette)
@@ -126,13 +126,12 @@ struct JoinCard: View {
     }
 
     private func group(_ titleKey: String, _ hintKey: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        // The sentence that explains the group sits behind an info dot.
+        HStack(spacing: 0) {
             Text(model.t(titleKey))
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(palette.textPrimary)
-            Text(model.t(hintKey))
-                .font(.footnote)
-                .foregroundStyle(palette.textSecondary)
+            InfoDot(words: model.t(hintKey), palette: palette, label: model.t("help.what_is_this"))
         }
         .padding(.top, 4)
     }
@@ -158,7 +157,7 @@ struct SuggestionsCard: View {
             let canEdit = model.can(Permissions.SETTINGS_SERVER)
             CardBox(palette: palette) {
                 Text(model.t("overview.recommendations"))
-                    .font(.headline)
+                    .font(.heading())
                     .foregroundStyle(palette.textPrimary)
                 if list.recommendations.isEmpty {
                     Text(model.t("rec.none"))
@@ -166,13 +165,13 @@ struct SuggestionsCard: View {
                 }
                 ForEach(list.recommendations, id: \.id) { rec in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(rec.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(palette.textPrimary)
-                        if let reason = rec.reason, !reason.isEmpty {
-                            Text(reason)
-                                .font(.footnote)
-                                .foregroundStyle(palette.textSecondary)
+                        HStack(spacing: 0) {
+                            Text(rec.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(palette.textPrimary)
+                            if let reason = rec.reason, !reason.isEmpty {
+                                InfoDot(words: reason, palette: palette, label: model.t("help.what_is_this"))
+                            }
                         }
                         if let evidence = rec.evidence, !evidence.isEmpty {
                             Text(evidence)
@@ -233,10 +232,11 @@ struct ChecklistCard: View {
     var body: some View {
         if pages.checklist.problem == nil, let list = pages.checklist.value, list.show {
             CardBox(palette: palette) {
-                HStack {
+                HStack(spacing: 0) {
                     Text(model.t("start.title"))
-                        .font(.headline)
+                        .font(.heading())
                         .foregroundStyle(palette.textPrimary)
+                    InfoDot(words: model.t("start.lead"), palette: palette, label: model.t("help.what_is_this"))
                     Spacer()
                     if model.can(Permissions.SETTINGS_SERVER) {
                         Button(model.t("start.hide")) {
@@ -250,9 +250,6 @@ struct ChecklistCard: View {
                         .font(.footnote)
                         .foregroundStyle(palette.textSecondary)
                 }
-                Text(model.t("start.lead"))
-                    .font(.footnote)
-                    .foregroundStyle(palette.textSecondary)
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(list.items, id: \.id) { item in

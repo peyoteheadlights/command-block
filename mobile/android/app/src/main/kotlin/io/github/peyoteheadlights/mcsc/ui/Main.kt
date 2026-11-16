@@ -15,6 +15,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -77,131 +78,138 @@ fun Main(vm: AppViewModel) {
             }
         },
     ) { padding ->
-        NavHost(nav, startDestination = "servers", modifier = Modifier.padding(padding)) {
-            composable("servers") {
-                ServersScreen(vm, onOpen = { nav.navigate("server/${android.net.Uri.encode(it)}") }, onAdd = { nav.navigate("servers/add") })
+        // A tab in the top view: back to the list, then into that server.
+        val openServer: (String?) -> Unit = { id ->
+            nav.popBackStack("servers", inclusive = false)
+            if (id != null) nav.navigate("server/${Uri.encode(id)}") { launchSingleTop = true }
+        }
+        CompositionLocalProvider(LocalOpenServer provides openServer) {
+            NavHost(nav, startDestination = "servers", modifier = Modifier.padding(padding)) {
+                composable("servers") {
+                    ServersScreen(vm, onOpen = { nav.navigate("server/${android.net.Uri.encode(it)}") }, onAdd = { nav.navigate("servers/add") })
+                }
+                composable("servers/add") {
+                    AddServerScreen(vm, onBack = { nav.popBackStack() }, onOpen = { id ->
+                        // The new server opens in place of the "+" screen.
+                        nav.popBackStack()
+                        nav.navigate("server/${Uri.encode(id)}")
+                    })
+                }
+                composable("server/{id}") { back ->
+                    val id = back.arguments?.getString("id").orEmpty()
+                    ServerScreen(vm, id, onBack = { nav.popBackStack() }, onOpen = { page -> nav.navigate("server/${Uri.encode(id)}/$page") })
+                }
+                composable("server/{id}/console") { back ->
+                    ConsoleScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("server/{id}/chat") { back ->
+                    ChatScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("server/{id}/players") { back ->
+                    PlayersScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("server/{id}/performance") { back ->
+                    PerformanceScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("server/{id}/backups") { back ->
+                    val id = back.serverId()
+                    BackupsScreen(vm, id, onBack = { nav.popBackStack() }, onRestoreWorld = { nav.navigate("server/${Uri.encode(id)}/world") })
+                }
+                composable("server/{id}/world") { back ->
+                    WorldRestoreScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("server/{id}/schedules") { back ->
+                    SchedulesScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("server/{id}/content") { back ->
+                    ContentScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("server/{id}/game") { back ->
+                    GameSettingsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("server/{id}/settings") { back ->
+                    ServerSettingsScreen(
+                        vm, back.serverId(),
+                        onBack = { nav.popBackStack() },
+                        // The server is gone: back to All servers, not to its page.
+                        onRemoved = { nav.popBackStack("servers", inclusive = false) },
+                    )
+                }
+                composable("server/{id}/diagnose") { back ->
+                    DiagnoseScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("server/{id}/quests") { back ->
+                    QuestsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("server/{id}/events") { back ->
+                    EventsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("server/{id}/crashes") { back ->
+                    val id = back.serverId()
+                    CrashesScreen(vm, id, onBack = { nav.popBackStack() }, onOpen = { crash -> nav.navigate("server/${Uri.encode(id)}/crashes/$crash") })
+                }
+                composable("server/{id}/crashes/{crash}") { back ->
+                    val crash = back.arguments?.getString("crash")?.toLongOrNull() ?: return@composable
+                    CrashScreen(vm, back.serverId(), crash, onBack = { nav.popBackStack() })
+                }
+                composable("alerts") {
+                    NotificationsScreen(vm, onOpenServer = { nav.navigate("server/${android.net.Uri.encode(it)}") })
+                }
+                composable("settings") {
+                    SettingsScreen(
+                        vm,
+                        onAbout = { nav.navigate("about") },
+                        onAccount = { nav.navigate("settings/account") },
+                        onModerators = { nav.navigate("settings/moderators") },
+                        onPc = { nav.navigate("settings/pc") },
+                        onDiscord = { nav.navigate("settings/discord") },
+                    )
+                }
+                composable("settings/discord") { DiscordScreen(vm, onBack = { nav.popBackStack() }) }
+                composable("settings/account") { AccountScreen(vm, onBack = { nav.popBackStack() }) }
+                composable("settings/pc") {
+                    PcSettingsScreen(
+                        vm,
+                        onBack = { nav.popBackStack() },
+                        onDevices = { nav.navigate("settings/pc/devices") },
+                        onAlerts = { nav.navigate("settings/pc/alerts") },
+                    )
+                }
+                composable("settings/pc/devices") { DevicesScreen(vm, onBack = { nav.popBackStack() }) }
+                composable("settings/pc/alerts") { AlertSettingsScreen(vm, onBack = { nav.popBackStack() }) }
+                composable("settings/moderators") {
+                    ModeratorsScreen(
+                        vm,
+                        onBack = { nav.popBackStack() },
+                        onOpen = { nav.navigate("settings/moderators/${Uri.encode(it)}") },
+                        onAdd = { nav.navigate("settings/moderators-add") },
+                    )
+                }
+                composable("settings/moderators-add") {
+                    AddModeratorScreen(vm, onBack = { nav.popBackStack() }, onAdded = { name ->
+                        // The invite opens in place of the form; back goes to the list.
+                        nav.popBackStack()
+                        nav.navigate("settings/moderators/${Uri.encode(name)}/invite")
+                    })
+                }
+                composable("settings/moderators/{name}") { back ->
+                    val name = back.arguments?.getString("name").orEmpty()
+                    ModeratorScreen(
+                        vm, name,
+                        onBack = { nav.popBackStack() },
+                        onServer = { id -> nav.navigate("settings/moderators/${Uri.encode(name)}/server/${Uri.encode(id)}") },
+                        onInvite = { nav.navigate("settings/moderators/${Uri.encode(name)}/invite") },
+                    )
+                }
+                composable("settings/moderators/{name}/invite") { back ->
+                    InviteScreen(vm, back.arguments?.getString("name").orEmpty(), onDone = { nav.popBackStack() })
+                }
+                composable("settings/moderators/{name}/server/{id}") { back ->
+                    ModeratorServerScreen(vm, back.arguments?.getString("name").orEmpty(), back.serverId(), onBack = { nav.popBackStack() })
+                }
+                composable("about") { AboutScreen(vm, onBack = { nav.popBackStack() }, onHelp = { nav.navigate("help") }) }
+                composable("help") { HelpScreen(onBack = { nav.popBackStack() }) }
             }
-            composable("servers/add") {
-                AddServerScreen(vm, onBack = { nav.popBackStack() }, onOpen = { id ->
-                    // The new server opens in place of the "+" screen.
-                    nav.popBackStack()
-                    nav.navigate("server/${Uri.encode(id)}")
-                })
-            }
-            composable("server/{id}") { back ->
-                val id = back.arguments?.getString("id").orEmpty()
-                ServerScreen(vm, id, onBack = { nav.popBackStack() }, onOpen = { page -> nav.navigate("server/${Uri.encode(id)}/$page") })
-            }
-            composable("server/{id}/console") { back ->
-                ConsoleScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("server/{id}/chat") { back ->
-                ChatScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("server/{id}/players") { back ->
-                PlayersScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("server/{id}/performance") { back ->
-                PerformanceScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("server/{id}/backups") { back ->
-                val id = back.serverId()
-                BackupsScreen(vm, id, onBack = { nav.popBackStack() }, onRestoreWorld = { nav.navigate("server/${Uri.encode(id)}/world") })
-            }
-            composable("server/{id}/world") { back ->
-                WorldRestoreScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("server/{id}/schedules") { back ->
-                SchedulesScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("server/{id}/content") { back ->
-                ContentScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("server/{id}/game") { back ->
-                GameSettingsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("server/{id}/settings") { back ->
-                ServerSettingsScreen(
-                    vm, back.serverId(),
-                    onBack = { nav.popBackStack() },
-                    // The server is gone: back to All servers, not to its page.
-                    onRemoved = { nav.popBackStack("servers", inclusive = false) },
-                )
-            }
-            composable("server/{id}/diagnose") { back ->
-                DiagnoseScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("server/{id}/quests") { back ->
-                QuestsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("server/{id}/events") { back ->
-                EventsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("server/{id}/crashes") { back ->
-                val id = back.serverId()
-                CrashesScreen(vm, id, onBack = { nav.popBackStack() }, onOpen = { crash -> nav.navigate("server/${Uri.encode(id)}/crashes/$crash") })
-            }
-            composable("server/{id}/crashes/{crash}") { back ->
-                val crash = back.arguments?.getString("crash")?.toLongOrNull() ?: return@composable
-                CrashScreen(vm, back.serverId(), crash, onBack = { nav.popBackStack() })
-            }
-            composable("alerts") {
-                NotificationsScreen(vm, onOpenServer = { nav.navigate("server/${android.net.Uri.encode(it)}") })
-            }
-            composable("settings") {
-                SettingsScreen(
-                    vm,
-                    onAbout = { nav.navigate("about") },
-                    onAccount = { nav.navigate("settings/account") },
-                    onModerators = { nav.navigate("settings/moderators") },
-                    onPc = { nav.navigate("settings/pc") },
-                    onDiscord = { nav.navigate("settings/discord") },
-                )
-            }
-            composable("settings/discord") { DiscordScreen(vm, onBack = { nav.popBackStack() }) }
-            composable("settings/account") { AccountScreen(vm, onBack = { nav.popBackStack() }) }
-            composable("settings/pc") {
-                PcSettingsScreen(
-                    vm,
-                    onBack = { nav.popBackStack() },
-                    onDevices = { nav.navigate("settings/pc/devices") },
-                    onAlerts = { nav.navigate("settings/pc/alerts") },
-                )
-            }
-            composable("settings/pc/devices") { DevicesScreen(vm, onBack = { nav.popBackStack() }) }
-            composable("settings/pc/alerts") { AlertSettingsScreen(vm, onBack = { nav.popBackStack() }) }
-            composable("settings/moderators") {
-                ModeratorsScreen(
-                    vm,
-                    onBack = { nav.popBackStack() },
-                    onOpen = { nav.navigate("settings/moderators/${Uri.encode(it)}") },
-                    onAdd = { nav.navigate("settings/moderators-add") },
-                )
-            }
-            composable("settings/moderators-add") {
-                AddModeratorScreen(vm, onBack = { nav.popBackStack() }, onAdded = { name ->
-                    // The invite opens in place of the form; back goes to the list.
-                    nav.popBackStack()
-                    nav.navigate("settings/moderators/${Uri.encode(name)}/invite")
-                })
-            }
-            composable("settings/moderators/{name}") { back ->
-                val name = back.arguments?.getString("name").orEmpty()
-                ModeratorScreen(
-                    vm, name,
-                    onBack = { nav.popBackStack() },
-                    onServer = { id -> nav.navigate("settings/moderators/${Uri.encode(name)}/server/${Uri.encode(id)}") },
-                    onInvite = { nav.navigate("settings/moderators/${Uri.encode(name)}/invite") },
-                )
-            }
-            composable("settings/moderators/{name}/invite") { back ->
-                InviteScreen(vm, back.arguments?.getString("name").orEmpty(), onDone = { nav.popBackStack() })
-            }
-            composable("settings/moderators/{name}/server/{id}") { back ->
-                ModeratorServerScreen(vm, back.arguments?.getString("name").orEmpty(), back.serverId(), onBack = { nav.popBackStack() })
-            }
-            composable("about") { AboutScreen(vm, onBack = { nav.popBackStack() }, onHelp = { nav.navigate("help") }) }
-            composable("help") { HelpScreen(onBack = { nav.popBackStack() }) }
         }
     }
 }
