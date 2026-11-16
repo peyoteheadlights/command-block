@@ -285,6 +285,7 @@ class SetupWindow(QWidget):
         if dark is None:
             dark = QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
         self.dark = dark
+        theme.load_fonts()
         self.tokens = theme.tokens(dark)
         self.setStyleSheet(theme.style_sheet(self.tokens))
         self.setWindowTitle(t("window"))
