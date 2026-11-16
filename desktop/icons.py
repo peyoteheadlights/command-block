@@ -38,6 +38,9 @@ SHAPES = {
     "close": '<path d="M7 7l10 10M17 7L7 17"/>',
     "restart": '<path d="M19.5 12a7.5 7.5 0 1 1-2.4-5.5"/><path d="M19.5 4.5v4.2h-4.2"/>',
     "search": '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/>',
+    "update": '<path d="M12 19V5.5"/><path d="M6 11l6-6 6 6"/>',
+    "remove": '<path d="M4.5 7h15"/><path d="M9.5 7V4.8h5V7"/><path d="M6.5 7l.8 12a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4l.8-12"/><path d="M10 11v5.5M14 11v5.5"/>',
+    "more": '<path d="M6 12h.01M12 12h.01M18 12h.01"/>',
     "store": '<path d="M5 8h14l-1.2 11.2a1.5 1.5 0 0 1-1.5 1.3H7.7a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/>',
 }
 

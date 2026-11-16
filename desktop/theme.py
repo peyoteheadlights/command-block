@@ -147,6 +147,8 @@ QPushButton:hover {{ background: {t["surface-sunken"]}; }}
 QPushButton:pressed {{ background: {t["surface-selected"]}; }}
 QPushButton:focus {{ border: 2px solid {t["accent-ring"]}; padding: 4px 13px; }}
 QPushButton:disabled {{ color: {t["text-tertiary"]}; background: {t["surface-sunken"]}; }}
+QPushButton:checked {{ background: {t["accent-soft"]}; color: {t["accent-ink"]};
+                       border: 1px solid {t["accent-ring"]}; font-weight: 600; }}
 QPushButton[kind="primary"] {{ background: {t["accent"]}; color: {t["accent-text"]};
                                border: 1px solid {t["accent-ring"]}; min-width: 96px; font-weight: 600; }}
 QPushButton[kind="primary"]:hover {{ background: {t["accent-hover"]}; }}
@@ -162,6 +164,9 @@ QPushButton[kind="tonal"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
 QPushButton[kind="plain"] {{ background: transparent; border: 1px solid transparent;
                              color: {t["accent-ink"]}; padding: 5px 8px; }}
 QPushButton[kind="plain"]:hover {{ background: {t["accent-soft"]}; }}
+QPushButton[kind="dashed"] {{ background: transparent; border: 1px dashed {t["border-strong"]}; }}
+QPushButton[kind="dashed"]:hover {{ background: {t["accent-soft"]}; }}
+QPushButton[kind="dashed"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
 QPushButton[kind="swatch"] {{ border-radius: 11px; min-width: 22px; max-width: 22px;
                               min-height: 22px; max-height: 22px; padding: 0;
                               border: 1px solid {t["border-strong"]}; }}
@@ -177,8 +182,9 @@ QListWidget {{ background: {t["surface"]}; border: 1px solid {t["border"]};
 QListWidget::item {{ padding: 8px; border-bottom: 1px solid {t["border"]}; }}
 QListWidget::item:selected {{ background: {t["accent-soft"]}; color: {t["text-primary"]}; }}
 
-QFrame[kind="choice"], QFrame[kind="row"] {{ background: {t["surface"]}; border: 1px solid {t["border"]};
-                                             border-radius: {t["radius"]}; }}
+QFrame[kind="choice"] {{ background: {t["surface"]}; border: 1px solid {t["border"]};
+                         border-radius: {t["radius"]}; }}
+QFrame[kind="row"] {{ background: {t["surface-sunken"]}; border: 0; border-radius: {t["radius"]}; }}
 QFrame[kind="choice"][selected="true"] {{ background: {t["accent-soft"]};
                                           border: 1px solid {t["accent-ring"]}; }}
 QFrame[kind="line"] {{ background: {t["border"]}; max-height: 1px; min-height: 1px; }}
@@ -201,7 +207,7 @@ QPlainTextEdit {{ background: {t["console-bg"]}; border: 1px solid {t["border"]}
                   border-radius: {t["radius"]}; font-family: "Cascadia Mono", Consolas, monospace;
                   font-size: 9pt; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: 0; }}
-QMessageBox {{ background: {t["paper"]}; }}
+QDialog, QMessageBox {{ background: {t["paper"]}; }}
 QToolTip {{ background: {t["surface"]}; border: 1px solid {t["border-strong"]}; }}
 
 QTabBar#binder {{ font-weight: 500; }}
@@ -232,9 +238,6 @@ QFrame#panel {{ border: 0 solid {t["border-strong"]}; border-left-width: 1px; }}
 QFrame#panel[under="true"] {{ border-left-width: 0; border-top-width: 1px; }}
 QLabel#h1 {{ font-size: 25.5pt; font-weight: 700; }}
 QLabel#h2 {{ font-size: 12pt; font-weight: 600; }}
-QLabel[kind="chip"] {{ background: {t["surface-sunken"]}; color: {t["text-secondary"]};
-                       border-radius: 10px; padding: 2px 10px; }}
-QLabel[kind="chip"][strong="true"] {{ background: {t["accent"]}; color: {t["accent-text"]}; }}
 QPushButton[big="true"] {{ font-size: 12pt; min-width: 110px; min-height: 30px; }}
 QToolButton#tool {{ background: {t["paper"]}; border: 1px solid {t["border-strong"]};
                     border-radius: 10px; padding: 0; min-width: 34px; max-width: 34px;
@@ -257,6 +260,4 @@ QLineEdit#bigNumber {{ font-size: 25.5pt; font-weight: 600; background: transpar
 QLineEdit#bigNumber:hover {{ background: {t["surface-sunken"]}; }}
 QLineEdit#bigNumber:focus {{ background: {t["paper"]}; border: 2px solid {t["accent-ring"]};
                              padding: 0 4px; }}
-QPushButton[kind="segment"]:checked {{ background: {t["accent"]}; color: {t["accent-text"]};
-                                       font-weight: 600; }}
 """

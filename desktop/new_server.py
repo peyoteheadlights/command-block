@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFrame,
@@ -38,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from .mods import find_pack, pack_lines
 from .overview import card
+from .parts import Segmented
 from .ui import clock, field, label, push, refill, size, swatches
 from .words import has, mode, text
 
@@ -76,15 +76,13 @@ class NewServerScreen(QScrollArea):
         column.setSpacing(12)
         column.addWidget(label(text("page.add_server"), name="title"))
         ways = QHBoxLayout()
-        ways.setSpacing(0)
-        self.way_group = QButtonGroup(self)
         self.panels = QStackedWidget()
-        for i, words in enumerate(WAYS):
-            button = push(text(words), "segment")
-            button.setCheckable(True)
-            button.clicked.connect(lambda _=False, n=i: self.panels.setCurrentIndex(n))
-            self.way_group.addButton(button, i)
-            ways.addWidget(button)
+        self.ways = Segmented(
+            [(str(i), text(words)) for i, words in enumerate(WAYS)],
+            "0",
+            lambda key: self.panels.setCurrentIndex(int(key)),
+        )
+        ways.addWidget(self.ways)
         ways.addStretch()
         column.addLayout(ways)
         self.said = label(kind="problem")
@@ -109,7 +107,7 @@ class NewServerScreen(QScrollArea):
     def load(self) -> None:
         """Each time the tab opens: a fresh start, with the PC's choices."""
         self.said.hide()
-        self.way_group.button(0).setChecked(True)
+        self.ways.choose("0")
         self.panels.setCurrentIndex(0)
         for layout in (self.steps, self.pack_column, self.have_column):
             refill(layout, [])
@@ -882,7 +880,7 @@ class NewServerScreen(QScrollArea):
 
     def take(self, paths: list[str]) -> None:
         """A modpack dropped on the "+" tab."""
-        self.way_group.button(1).setChecked(True)
+        self.ways.choose("1")
         self.panels.setCurrentIndex(1)
         self.read_pack(paths[0])
 

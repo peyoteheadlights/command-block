@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from .overview import card
+from .parts import IconButton, Row
 from .ui import Page, clock, duration, label, push, refill, size
 from .words import mode, text
 
@@ -105,7 +106,7 @@ class BackupsPage(Page):
         top.addStretch()
         self.column.addLayout(top)
 
-        listed, layout = card(text("backups.list"))
+        listed, layout = card(text("backups.list"), box=False)
         self.stop_first = label(kind="problem")
         layout.addWidget(self.stop_first)
         self.rows = QVBoxLayout()
@@ -282,10 +283,8 @@ class BackupsPage(Page):
         self.keeping.setText(text("backups.keeping", **kept) if kept else "")
 
     def backup_row(self, b: dict, point: dict | None) -> QFrame:
-        row = QFrame()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
         words = QVBoxLayout()
         made = clock(b.get("created_at"))
         words.addWidget(label(b["name"] if mode["technical"] else made, "step"))
@@ -314,8 +313,7 @@ class BackupsPage(Page):
                 h.addWidget(restore)
             else:
                 h.addWidget(label(text("world.not_offered"), "muted"))
-        more = QToolButton()
-        more.setText("⋯")
+        more = IconButton("more", text("desktop.more"))
         more.setAccessibleName(f"{text('desktop.more')}: {made}")
         more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(more)

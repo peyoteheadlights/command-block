@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QComboBox, QFrame, QGridLayout, QHBoxLayout, QLineEdit, QVBoxLayout
 
 from .overview import card, title_of
+from .parts import IconButton, Row, Switch
 from .ui import Page, clock, label, push, refill
 from .words import mode, text
 
@@ -32,7 +33,7 @@ class SchedulesPage(Page):
         super().__init__(window)
         self.tasks: list[str] = []
         self.editing: dict | None = None  # the schedule the form changes, or None for a new one
-        listed, layout = card(text("schedules.list"))
+        listed, layout = card(text("schedules.list"), box=False)
         self.rows = QVBoxLayout()
         layout.addLayout(self.rows)
         self.column.addWidget(listed)
@@ -138,10 +139,8 @@ class SchedulesPage(Page):
         return text(f"task.{task}") if task in self.tasks and not mode["technical"] else task
 
     def schedule_row(self, s: dict) -> QFrame:
-        row = QFrame()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
         words = QVBoxLayout()
         words.addWidget(label(s["name"], "step"))
         next_run = clock(s.get("next_run")) if s.get("enabled") else text("schedules.off")
@@ -153,17 +152,22 @@ class SchedulesPage(Page):
         if self.may_manage():
             for key, do in (
                 ("desktop.edit", lambda: self.edit(s)),
-                (
-                    "schedules.turn_off" if s.get("enabled") else "schedules.turn_on",
-                    lambda: self.turn(s),
-                ),
                 ("schedules.run_now", lambda: self.run_now(s)),
-                ("schedules.delete", lambda: self.delete(s)),
             ):
                 button = push(text(key))
                 button.setAccessibleName(f"{text(key)}: {s['name']}")
                 button.clicked.connect(lambda _=False, d=do: d())
                 h.addWidget(button)
+            # The switch turns the schedule on or off at once.
+            key = "schedules.turn_off" if s.get("enabled") else "schedules.turn_on"
+            turn = Switch(f"{text(key)}: {s['name']}")
+            turn.setChecked(bool(s.get("enabled")))
+            turn.toggled.connect(lambda _on: self.turn(s))
+            h.addWidget(turn)
+            delete = IconButton("remove", text("schedules.delete"), "danger")
+            delete.setAccessibleName(f"{text('schedules.delete')}: {s['name']}")
+            delete.clicked.connect(lambda: self.delete(s))
+            h.addWidget(delete)
         return row
 
     # ------------------------------------------------------------ the form
@@ -211,7 +215,12 @@ class SchedulesPage(Page):
     def turn(self, s: dict) -> None:
         body = {k: s.get(k) for k in ("name", "task", "kind", "expr")}
         body.update(payload=s.get("payload") or {}, enabled=not s.get("enabled"))
-        self.ask("PUT", f"/schedules/{s['id']}", lambda _r: self.load(), body=body)
+
+        def refused(exc: Exception) -> None:
+            self.window_.page_problem(exc)
+            self.load()  # the list again, so the switch shows what is true
+
+        self.ask("PUT", f"/schedules/{s['id']}", lambda _r: self.load(), refused, body=body)
 
     def run_now(self, s: dict) -> None:
         def done(result: dict) -> None:
