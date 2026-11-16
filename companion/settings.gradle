@@ -7,5 +7,4 @@ pluginManagement {
 }
 
 rootProject.name = 'command-block-companion'
-include 'common', 'fabric', 'neoforge'
-// Later: include 'paper'
+include 'common', 'fabric', 'neoforge', 'paper'

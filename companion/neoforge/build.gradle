@@ -1,0 +1,47 @@
+// The NeoForge mod: one jar for players and servers, like the Fabric one.
+plugins {
+    id 'net.neoforged.moddev' version '2.0.148'
+}
+
+base { archivesName = 'commandblock-companion-neoforge' }
+
+neoForge {
+    version = project.neo_version
+    mods {
+        commandblock_companion { sourceSet(sourceSets.main) }
+    }
+    // A real join (no download): gradlew :neoforge:runServer in one window,
+    // then gradlew :neoforge:runClient in another. The game joins by itself.
+    runs {
+        server {
+            server()
+            gameDirectory = file('run/server')
+            programArgument '--nogui'
+        }
+        client {
+            client()
+            gameDirectory = file('run/client')
+            programArguments.addAll '--quickPlayMultiplayer', 'localhost:25599'
+        }
+    }
+}
+
+dependencies {
+    implementation project(':common')
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25 // Minecraft 26.x needs Java 25
+}
+
+processResources {
+    def version = project.version
+    inputs.property 'version', version
+    filesMatching('META-INF/neoforge.mods.toml') { expand 'version': version }
+}
+
+jar {
+    dependsOn ':common:classes'
+    from(project(':common').sourceSets.main.output)
+    from(rootProject.file('../LICENSE')) { rename { "LICENSE_command-block-companion" } }
+}
