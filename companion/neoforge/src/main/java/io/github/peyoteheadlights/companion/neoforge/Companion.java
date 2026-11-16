@@ -281,12 +281,17 @@ public final class Companion {
 
     /** The modpack's own version, from the file the modpack carries; "" without one. */
     private static String packVersion() {
+        return Prover.packVersion(playersFile());
+    }
+
+    /** The players file the modpack carries (version, title screen); "" without one. */
+    static String playersFile() {
         Path file = FMLPaths.CONFIGDIR.get().resolve(PLAYERS_FILE);
         try {
             if (Files.size(file) > Settings.MAX_SETTINGS_BYTES) { // it lists the modpack's files
                 return "";
             }
-            return Prover.packVersion(Files.readString(file, StandardCharsets.UTF_8));
+            return Files.readString(file, StandardCharsets.UTF_8);
         } catch (IOException e) {
             return "";
         }
