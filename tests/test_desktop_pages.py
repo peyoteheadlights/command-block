@@ -23,6 +23,8 @@ from .test_desktop_app import (
 
 QtWidgets = pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is in requirements-dev")
 
+from desktop import parts  # noqa: E402
+
 
 def running(qapp, agent_http, server_id="survival") -> dict:
     headers = owner(agent_http)
@@ -313,10 +315,15 @@ def test_the_health_checks_show_with_their_overall_result(qapp, agent_http):
 # ---------------------------------------------------------------- Schedules
 def row_of(page, name):
     """The schedule's row on the page, found by its name."""
+    return next(r for r in page.findChildren(parts.Row) if name in shown_text(r))
+
+
+def row_part(page, words, name):
+    """The row's switch or icon button, by the name Narrator reads."""
     return next(
-        r
-        for r in page.findChildren(QtWidgets.QFrame)
-        if r.property("kind") == "row" and name in shown_text(r)
+        b
+        for b in row_of(page, name).findChildren(QtWidgets.QAbstractButton)
+        if b.accessibleName() == f"{words}: {name}"
     )
 
 
@@ -365,10 +372,12 @@ def test_editing_a_schedule_changes_it_and_keeps_it_on(qapp, agent_http):
 
 def test_turning_a_schedule_off_and_on(qapp, agent_http):
     window, page = schedules_page(qapp, agent_http)
-    buttons_named(row_of(page, "Nightly backup"), "Turn off")[0].click()
+    assert row_part(page, "Turn off", "Nightly backup").isChecked()
+    row_part(page, "Turn off", "Nightly backup").click()
     wait_for(qapp, lambda: "Next run: Off" in shown_text(row_of(page, "Nightly backup")))
     wait_for(qapp, lambda: "Nightly backup" not in shown_text(window.server_screen.panel))
-    buttons_named(row_of(page, "Nightly backup"), "Turn on")[0].click()
+    assert not row_part(page, "Turn on", "Nightly backup").isChecked()
+    row_part(page, "Turn on", "Nightly backup").click()
     wait_for(qapp, lambda: "Next run: Off" not in shown_text(row_of(page, "Nightly backup")))
 
 
@@ -382,10 +391,10 @@ def test_delete_asks_first(qapp, agent_http):
     window, page = schedules_page(qapp, agent_http)
     asked = []
     window.confirm = lambda title, body, yes: asked.append(title) or False
-    buttons_named(row_of(page, "Log cleanup"), "Delete")[0].click()
+    row_part(page, "Delete", "Log cleanup").click()
     assert asked == ["Delete Log cleanup?"]
     window.confirm = lambda title, body, yes: True
-    buttons_named(row_of(page, "Log cleanup"), "Delete")[0].click()
+    row_part(page, "Delete", "Log cleanup").click()
     wait_for(qapp, lambda: "Log cleanup" not in shown_text(page))
 
 
@@ -409,6 +418,8 @@ def test_a_moderator_without_schedules_manage_only_sees_the_list(qapp, agent_htt
     page = open_page(qapp, window, "Schedules")
     wait_for(qapp, lambda: "Nightly backup" in shown_text(page))
     assert not buttons_named(page, "Run now")
+    row = row_of(page, "Nightly backup")  # no switch and no Delete on it either
+    assert not row.findChildren(parts.Switch) and not row.findChildren(parts.IconButton)
     assert not page.form.isVisible()
 
 

@@ -93,7 +93,6 @@ class ConsolePage(Page):
         button.setCheckable(True)
         button.setChecked(on)
         button.setToolTip(words(tip))
-        button.setProperty("kind", "segment")
         return button
 
     def paused(self, on: bool) -> None:

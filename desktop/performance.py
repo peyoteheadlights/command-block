@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -20,6 +19,7 @@ from PySide6.QtWidgets import (
 from .fixes import run_fix
 from .graphs import Graph
 from .overview import card
+from .parts import Segmented
 from .ui import Page, clock, label, push, refill
 from .words import text
 
@@ -53,14 +53,12 @@ class PerformancePage(Page):
         self.hours = 6
         top = QHBoxLayout()
         top.addWidget(label(words("perf.range"), "sub"))
-        self.ranges = QButtonGroup(self)
-        for hours in RANGES:
-            button = push(words(f"perf.range_{hours}"), "segment")
-            button.setCheckable(True)
-            button.setChecked(hours == self.hours)
-            button.clicked.connect(lambda _=False, h=hours: self.pick_range(h))
-            self.ranges.addButton(button)
-            top.addWidget(button)
+        self.ranges = Segmented(
+            [(str(hours), words(f"perf.range_{hours}")) for hours in RANGES],
+            str(self.hours),
+            lambda key: self.pick_range(int(key)),
+        )
+        top.addWidget(self.ranges)
         top.addStretch()
         self.column.addLayout(top)
 
