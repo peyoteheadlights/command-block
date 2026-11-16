@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .parts import arrive
 from .words import text
 
 if TYPE_CHECKING:
@@ -157,10 +158,13 @@ class Note(QWidget):
         self.hide()
 
     def say(self, words: str, undo: Callable[[], None] | None = None) -> None:
+        new = words != self.words.text() or self.isHidden()
         self.words.setText(words)
         self.then = undo
         self.undo.setVisible(undo is not None)
         self.setVisible(bool(words))
+        if words and new:
+            arrive(self)
 
     def undo_clicked(self) -> None:
         then, self.then = self.then, None

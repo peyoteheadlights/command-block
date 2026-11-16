@@ -41,6 +41,17 @@ the phone apps use.
   again so the switch shows what is true. Update, Remove and Delete are
   icon buttons with their name on hover. Diagnose server shows its tests
   as round marks joined by a line (`Steps` in `parts.py`).
+- `top_view.py` is the top view: rest the mouse on the empty part of the
+  top row (or press Ctrl+Tab) and the binder tips back, with every server's
+  tab standing one step behind the one before. Ctrl+Tab and Ctrl+Shift+Tab
+  go through the tabs, and letting go of Ctrl opens the one picked. It draws
+  pictures of the real binder tipped back and hands clicks on to the real
+  tabs and buttons. `motion.py` has the page turn and the arithmetic both
+  use. A box coming up under the mouse, a note fading in and the status
+  dot's pulse are in `parts.py`.
+- Nothing moves when Windows' "Show animations" is off or over Remote
+  Desktop (`animated()` in `parts.py`). Ctrl+Tab still works then; the top
+  view is just there at once, and the mouse doesn't open it.
 - Each server page is a `Page` (`ui.py`) that asks the agent only while it
   is open: `players.py` (Players and chat), `console.py`, `performance.py`,
   `schedules.py`, `activity.py` (every event, and the crashes with what

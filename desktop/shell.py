@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from agent import colors
 
 from . import icons
+from .parts import animated, glide
 
 ROUND = 10  # the tabs' top corners, and the open tab's feet
 EDGE = 1.5  # the line around the paper
@@ -93,6 +94,44 @@ class BinderTabs(QTabBar):
         self.looks: dict[str, dict[str, str]] = {}
         self.running: set[str] = set()
         self.none_open = False  # the screen shown belongs to no tab (PC settings, Help)
+        # The top view's pick: a little brighter, and with Ctrl+Tab ringed.
+        self.lit, self.lit_ring = -1, False
+        # Tabs come up under the mouse: the one it is on most, the ones next
+        # to it a little. ``rise`` has each tab's extra height right now.
+        self.under = -1
+        self.rise: dict[int, float] = {}
+        self._rise_from: dict[int, float] = {}
+        self._rising = glide(self, 300, self._rise_to)
+        self.setMouseTracking(True)
+
+    def mouseMoveEvent(self, event) -> None:
+        super().mouseMoveEvent(event)
+        self._hover(self.tabAt(event.position().toPoint()))
+
+    def leaveEvent(self, event) -> None:
+        super().leaveEvent(event)
+        self._hover(-1)
+
+    def _hover(self, index: int) -> None:
+        if index == self.under:
+            return
+        self.under = index
+        self._rising.stop()
+        self._rise_from = dict(self.rise)
+        if animated(self):
+            self._rising.start()
+        else:
+            self.rise = {}
+
+    def _rise_to(self, at: float) -> None:
+        ends = (
+            {self.under: 10.0, self.under - 1: 5.0, self.under + 1: 5.0} if self.under >= 0 else {}
+        )
+        self.rise = {}
+        for index in ends.keys() | self._rise_from.keys():
+            was = self._rise_from.get(index, 0.0)
+            self.rise[index] = was + (ends.get(index, 0.0) - was) * at
+        self.update()
 
     def refit(self) -> None:
         """Measures the tabs again. Qt sizes a tab when it is added, which
@@ -132,21 +171,29 @@ class BinderTabs(QTabBar):
         open_ = -1 if self.none_open else self.currentIndex()
         for index in range(self.count()):
             if index != open_:
-                self._paint_tab(painter, index, False)
+                self.paint_tab(painter, index, False)
         if open_ >= 0:
-            self._paint_tab(painter, open_, True)
+            self.paint_tab(painter, open_, True)
 
-    def _paint_tab(self, painter: QPainter, index: int, open_: bool) -> None:
-        which = self.tabData(index)
+    def look_of_tab(self, index: int) -> dict[str, str]:
         # All servers and "+" stay neutral, whichever server is open.
-        look = self.looks.get(which) or {
+        return self.looks.get(self.tabData(index)) or {
             "tab-fill": self.look["tab-neutral"],
             "tab-text": self.look["text-primary"],
         }
-        fill = QColor(self.look["band"] if open_ else look["tab-fill"])
+
+    def fill_of(self, index: int, color: str = "") -> QColor:
+        """A tab's color: its server's, unless the open tab's ``color`` is given."""
+        fill = QColor(color or self.look_of_tab(index)["tab-fill"])
+        return fill.lighter(108) if index == self.lit else fill
+
+    def paint_tab(self, painter: QPainter, index: int, open_: bool) -> None:
+        which = self.tabData(index)
+        look = self.look_of_tab(index)
+        fill = self.fill_of(index, self.look["band"] if open_ else "")
         ink = self.look["band-text"] if open_ else look["tab-text"]
         rect = self.tabRect(index)
-        tall = self.heights()[1 if open_ else 0]
+        tall = max(self.heights()[open_], self.heights()[0] + round(self.rise.get(index, 0.0)))
         left = rect.left() + (self.LEAD if index == 0 else 0)
         right, bottom = rect.right() + 1 - self.GAP, float(self.height())
         top = bottom - tall
@@ -166,12 +213,12 @@ class BinderTabs(QTabBar):
                 foot.arcTo(circle, start, sweep)
                 foot.closeSubpath()
                 painter.drawPath(foot)
-            if self.hasFocus():
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.setPen(QPen(QColor(self.look["accent-ring"]), 2))
-                painter.drawRoundedRect(
-                    QRectF(left + 2, top + 2, right - left - 4, tall + ROUND), 8, 8
-                )
+        if (self.hasFocus() and open_) if self.lit < 0 else (self.lit_ring and index == self.lit):
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(self.look["accent-ring"]), 2))
+            painter.setClipRect(QRectF(left, top, right - left, tall))
+            painter.drawRoundedRect(QRectF(left + 2, top + 2, right - left - 4, tall + ROUND), 8, 8)
+            painter.setClipping(False)
         x = left + self.PAD
         middle = top + tall / 2
         if which in self.ICONS:
