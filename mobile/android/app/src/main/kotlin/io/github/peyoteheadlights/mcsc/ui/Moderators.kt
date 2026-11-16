@@ -291,7 +291,7 @@ fun AddModeratorScreen(vm: AppViewModel, onBack: () -> Unit, onAdded: (String) -
                     Card {
                         Item(
                             t("mobile.mod.all_servers"),
-                            subtitle = t("mobile.mod.all_servers_hint"),
+                            info = t("mobile.mod.all_servers_hint"),
                             trailing = { Switch(checked = all, onCheckedChange = { all = it }) },
                         )
                         if (!all) {
@@ -334,7 +334,7 @@ private fun LevelChoices(catalogue: PermissionCatalogue, selected: String, onPic
 @Composable
 private fun Radio(title: String, subtitle: String?, selected: Boolean, enabled: Boolean = true, onSelect: () -> Unit) {
     Box(Modifier.selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onSelect)) {
-        Item(title, subtitle = subtitle, trailing = { RadioButton(selected = selected, onClick = null, enabled = enabled) })
+        Item(title, info = subtitle, trailing = { RadioButton(selected = selected, onClick = null, enabled = enabled) })
     }
 }
 
@@ -364,7 +364,7 @@ fun ModeratorScreen(vm: AppViewModel, name: String, onBack: () -> Unit, onServer
                             mod.invite?.let { Item(t("mobile.mod.invite_expires", "time" to Display.dateTime(vm.strings, it.expiresAt))) }
                             Item(
                                 t("mobile.mod.invite_new"),
-                                subtitle = t("mobile.mod.invite_new_hint"),
+                                info = t("mobile.mod.invite_new_hint"),
                                 onClick = { pages.newInvite(name, false, vm.strings, onInvite) },
                             )
                             Item(t("mobile.mod.invite_cancel"), onClick = { pages.cancelInvite(name, vm.strings) })
@@ -380,7 +380,7 @@ fun ModeratorScreen(vm: AppViewModel, name: String, onBack: () -> Unit, onServer
                     Card {
                         Item(
                             t("mobile.mod.all_servers"),
-                            subtitle = t("mobile.mod.all_servers_hint"),
+                            info = t("mobile.mod.all_servers_hint"),
                             trailing = {
                                 Switch(
                                     checked = mod.allServers,

@@ -9,7 +9,7 @@ struct SectionTitle: View {
 
     var body: some View {
         Text(text)
-            .font(.headline)
+            .font(.heading())
             .foregroundStyle(palette.textPrimary)
             .padding(.top, 8)
             .accessibilityAddTraits(.isHeader)

@@ -97,9 +97,12 @@ struct PlayersView: View {
         } else {
             ForEach(page.online, id: \.username) { player in
                 CardBox(palette: palette) {
-                    Text(verbatim: player.username)
-                        .font(.headline)
-                        .foregroundStyle(palette.textPrimary)
+                    HStack(spacing: 10) {
+                        Face(palette: palette)
+                        Text(verbatim: player.username)
+                            .font(.headline)
+                            .foregroundStyle(palette.textPrimary)
+                    }
                     Text(
                         model.t("players.col_session") + ": " + Display.playingFor(model.strings, player)
                             + (player.edition == "bedrock" ? " · " + model.t("players.bedrock") : "")
@@ -255,9 +258,12 @@ struct PlayersView: View {
                         + Display.ago(model.strings, known.lastSeen, now: context.date.timeIntervalSince1970)
                     let tags = PlayerButtons.tags(known.username, page: page).map { model.t($0) }
                     CardBox(palette: palette) {
-                        Text(verbatim: known.username)
-                            .font(.headline)
-                            .foregroundStyle(palette.textPrimary)
+                        HStack(spacing: 10) {
+                            Face(palette: palette)
+                            Text(verbatim: known.username)
+                                .font(.headline)
+                                .foregroundStyle(palette.textPrimary)
+                        }
                         Text(([seen] + tags).joined(separator: " · "))
                             .font(.footnote)
                             .foregroundStyle(palette.textSecondary)
@@ -384,7 +390,7 @@ struct PlayersView: View {
 
     private func section(_ text: String, _ palette: Palette) -> some View {
         Text(text)
-            .font(.headline)
+            .font(.heading())
             .foregroundStyle(palette.textPrimary)
             .padding(.top, 8)
             .accessibilityAddTraits(.isHeader)

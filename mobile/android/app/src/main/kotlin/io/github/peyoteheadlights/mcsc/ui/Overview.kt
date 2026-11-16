@@ -138,7 +138,7 @@ private fun adapterNote(vm: AppViewModel, address: JoinAddress, count: Int): Str
 
 @Composable
 private fun Group(title: String, hint: String) {
-    Item(title, subtitle = hint)
+    Item(title, info = hint)
 }
 
 @Composable
@@ -176,7 +176,7 @@ fun LazyListScope.suggestionsCard(vm: AppViewModel, pages: ServerPages, canEdit:
 private fun Suggestion(rec: Recommendation, canEdit: Boolean, onAction: (String) -> Unit) {
     val colors = LocalColors.current
     val context = LocalContext.current
-    Item(rec.title, subtitle = rec.reason)
+    Item(rec.title, info = rec.reason)
     rec.evidence?.takeIf { it.isNotBlank() }?.let { Note(it, color = colors.text3) }
     val url = rec.action?.url
     val label = rec.action?.label
@@ -205,7 +205,7 @@ fun LazyListScope.checklistCard(vm: AppViewModel, pages: ServerPages, canEdit: B
             val total = list.total
             Item(
                 if (done != null && total != null) t("start.progress", "done" to done, "total" to total) else t("value.unknown"),
-                subtitle = t("start.lead"),
+                info = t("start.lead"),
                 trailing = {
                     if (canEdit) TextButton(onClick = pages::hideChecklist) { Text(t("start.hide")) }
                 },

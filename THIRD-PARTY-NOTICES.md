@@ -25,12 +25,12 @@ version 3 (`licenses/LGPL-3.0.txt`, which builds on `licenses/GPL-3.0.txt`).
 
 ## Archivo (the heading font)
 
-Headings, the server tabs and the page list use Archivo
+Headings and the server tabs in every app, and the desktop app's page list, use Archivo
 (https://github.com/Omnibus-Type/Archivo), Copyright 2020 The Archivo
 Project Authors, under the SIL Open Font License 1.1
 (`licenses/Archivo-OFL.txt`). Three weights ship unchanged in
-`desktop/fonts` (Medium, SemiBold and Bold). Nothing is downloaded when the
-app runs.
+`shared/fonts` (Medium, SemiBold and Bold), and the desktop app and both
+phone apps carry them. Nothing is downloaded when an app runs.
 
 ## Diagnose server's test player
 

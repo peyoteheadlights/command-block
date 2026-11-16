@@ -88,7 +88,7 @@ fun SettingsScreen(vm: AppViewModel, onAbout: () -> Unit, onAccount: () -> Unit,
                 Card {
                     Item(
                         t("mobile.settings.unlock_on"),
-                        subtitle = t("mobile.settings.unlock_hint"),
+                        info = t("mobile.settings.unlock_hint"),
                         trailing = { Switch(checked = vm.unlock, onCheckedChange = vm::chooseUnlock) },
                     )
                 }
@@ -98,7 +98,7 @@ fun SettingsScreen(vm: AppViewModel, onAbout: () -> Unit, onAccount: () -> Unit,
                 Card {
                     Item(
                         t("mobile.settings.lock_alerts_on"),
-                        subtitle = t("mobile.settings.lock_alerts_hint"),
+                        info = t("mobile.settings.lock_alerts_hint"),
                         trailing = {
                             Switch(
                                 checked = vm.lockAlerts,
@@ -121,7 +121,7 @@ fun SettingsScreen(vm: AppViewModel, onAbout: () -> Unit, onAccount: () -> Unit,
                     Item(t("mobile.settings.pc_address"), subtitle = vm.pairing?.let { "${it.host}:${it.port}" } ?: t("value.unknown"))
                     Item(t("mobile.settings.pc_version"), subtitle = vm.agentVersion ?: t("value.unknown"))
                     Item(t("mobile.settings.signed_in_as"), subtitle = vm.me?.user ?: vm.user ?: t("value.unknown"))
-                    Item(t("mobile.settings.rescan"), subtitle = t("mobile.settings.rescan_hint"), onClick = vm::rescan)
+                    Item(t("mobile.settings.rescan"), info = t("mobile.settings.rescan_hint"), onClick = vm::rescan)
                     Item(t("mobile.settings.sign_out"), onClick = { asking = "sign_out" })
                     Item(t("mobile.settings.forget_pc"), onClick = { asking = "forget_pc" })
                 }
@@ -165,7 +165,7 @@ private fun DeviceAlertsCard(vm: AppViewModel, chosen: DeviceAlerts) {
     Card {
         Item(
             t("desktop.device_alerts.own"),
-            subtitle = t("desktop.device_alerts.own_hint"),
+            info = t("desktop.device_alerts.own_hint"),
             trailing = {
                 Switch(checked = chosen.own, enabled = !vm.phone.busy, onCheckedChange = { vm.chooseDeviceAlerts(it, on) })
             },
@@ -192,6 +192,6 @@ private fun Choice(title: String, subtitle: String? = null, selected: Boolean, o
     androidx.compose.foundation.layout.Box(
         Modifier.selectable(selected = selected, role = Role.RadioButton, onClick = onSelect),
     ) {
-        Item(title, subtitle = subtitle, trailing = { RadioButton(selected = selected, onClick = null) })
+        Item(title, info = subtitle, trailing = { RadioButton(selected = selected, onClick = null) })
     }
 }
