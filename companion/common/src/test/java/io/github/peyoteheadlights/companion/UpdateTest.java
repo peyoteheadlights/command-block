@@ -245,4 +245,61 @@ class UpdateTest {
         s.start();
         return s;
     }
+
+    // ---- Part 7 (security review): a modpack can only claim files it really brings ----
+
+    /** A modpack whose players file lists {@code claimed}, with sodium and minimap.jar from Modrinth. */
+    Path claimingPack(String claimed) throws Exception {
+        Path file = game.resolve("claiming.mrpack");
+        String sha = HexFormat.of().formatHex(hash("SHA-512", SODIUM));
+        String index = """
+                {"formatVersion": 1, "files": [
+                 {"path": "mods/sodium.jar", "hashes": {"sha512": "%s"}, "downloads": ["https://cdn.modrinth.com/s.jar"]},
+                 {"path": "mods/minimap.jar", "hashes": {"sha512": "%s"}, "downloads": ["https://cdn.modrinth.com/m.jar"]}
+                ]}""".formatted(sha, "cd".repeat(64));
+        String players = """
+                {"format": 1, "modpack": {"name": "Friends", "version": "3"}, "files": %s,
+                 "title_screen": {"name": "Survival", "address": "play.example.net", "flavor_text": null}}""".formatted(claimed);
+        try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(file))) {
+            put(z, "modrinth.index.json", index.getBytes(StandardCharsets.UTF_8));
+            put(z, Plan.PLAYERS_FILE, players.getBytes(StandardCharsets.UTF_8));
+        }
+        return file;
+    }
+
+    @Test
+    void aNewModpackCantClaimAPlayersOwnFile() throws Exception {
+        Path mods = mods();
+        Files.writeString(mods.resolve("minimap.jar"), "the player's own minimap");
+        // The new modpack says minimap.jar is its own and brings one with that name.
+        Plan plan = Plan.read(claimingPack("[\"mods/sodium.jar\", \"mods/minimap.jar\"]"), mods, serverList(),
+                List.of("mods/sodium.jar"));
+        assertFalse(byName(plan).containsKey("minimap.jar ADD"), "only the modpack in place says what is its own");
+        assertTrue(plan.skipped().stream().anyMatch(s -> s.startsWith("minimap.jar")));
+        assertTrue(byName(plan).containsKey("sodium.jar ADD"));
+    }
+
+    @Test
+    void theNewPlayersFileListsOnlyFilesTheUpdateBrings() throws Exception {
+        Path mods = mods();
+        Files.writeString(mods.resolve("minimap.jar"), "the player's own minimap");
+        Files.writeString(mods.resolve("journal.jar"), "the player's own journal");
+        // It also claims journal.jar, which it doesn't bring: a later update would then "remove" it.
+        Plan plan = Plan.read(claimingPack("[\"mods/sodium.jar\", \"mods/minimap.jar\", \"mods/journal.jar\"]"),
+                mods, serverList(), List.of());
+        assertEquals(List.of("mods/sodium.jar"), Plan.packFiles(plan.playersFile()));
+        // The rest of the players file is kept.
+        assertEquals("3", Prover.packVersion(plan.playersFile()));
+        assertEquals("play.example.net", TitleSettings.parse(plan.playersFile()).host());
+    }
+
+    @Test
+    void aLaterUpdateNeverRemovesAFileTheOldModpackOnlyClaimed() throws Exception {
+        Path mods = mods();
+        Files.writeString(mods.resolve("journal.jar"), "the player's own journal");
+        Plan first = Plan.read(claimingPack("[\"mods/sodium.jar\", \"mods/journal.jar\"]"), mods, serverList(), List.of());
+        Files.write(mods.resolve("sodium.jar"), SODIUM); // the first update went in
+        Plan second = Plan.read(claimingPack("[\"mods/sodium.jar\"]"), mods, serverList(), Plan.packFiles(first.playersFile()));
+        assertFalse(byName(second).containsKey("journal.jar REMOVE"));
+    }
 }
