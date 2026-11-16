@@ -5,6 +5,7 @@ import io.github.peyoteheadlights.companion.BadInput;
 import io.github.peyoteheadlights.companion.Challenge;
 import io.github.peyoteheadlights.companion.Prover;
 import io.github.peyoteheadlights.companion.Settings;
+import io.github.peyoteheadlights.companion.screen.TitleExtras;
 import io.github.peyoteheadlights.companion.screen.Updates;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -22,6 +23,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.DisconnectedScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.gui.screens.TitleScreen;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,7 +34,8 @@ public final class CompanionClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        String version = packVersion();
+        String playersFile = playersFile();
+        String version = Prover.packVersion(playersFile);
         ClientConfigurationNetworking.registerGlobalReceiver(
                 CheckPayload.TYPE, (payload, context) -> answer(payload, context.responseSender(), version));
         ClientPlayNetworking.registerGlobalReceiver(
@@ -46,6 +49,16 @@ public final class CompanionClient implements ClientModInitializer {
                 if (button != null) {
                     Screens.getWidgets(screen).add(button);
                 }
+            }
+            // The owner's join button, background and flavor text (part 5).
+            if (screen instanceof TitleScreen title) {
+                TitleExtras.load(FabricLoader.getInstance().getConfigDir(), FabricLoader.getInstance().getGameDir(), playersFile());
+                Button join = TitleExtras.init(title, Screens.getWidgets(screen));
+                if (join != null) {
+                    Screens.getWidgets(screen).add(join);
+                }
+                ScreenEvents.beforeExtract(screen).register((s, graphics, mouseX, mouseY, delta) ->
+                        TitleExtras.drawBackground(graphics, s.width, s.height));
             }
         });
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> Updates.closing(
@@ -67,14 +80,14 @@ public final class CompanionClient implements ClientModInitializer {
         });
     }
 
-    /** The modpack's own version, from the file the modpack carries; "" without one. */
-    private static String packVersion() {
+    /** The players file the modpack carries (version, title screen); "" without one. */
+    private static String playersFile() {
         Path file = FabricLoader.getInstance().getConfigDir().resolve(PLAYERS_FILE);
         try {
             if (Files.size(file) > Settings.MAX_SETTINGS_BYTES) { // it lists the modpack's files
                 return "";
             }
-            return Prover.packVersion(Files.readString(file, StandardCharsets.UTF_8));
+            return Files.readString(file, StandardCharsets.UTF_8);
         } catch (IOException e) {
             return "";
         }
