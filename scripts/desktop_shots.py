@@ -144,6 +144,9 @@ def main() -> int:
                 for technical in (False, True):
                     window.set_mode(technical)
                     snap(window, f"03-server-{'technical' if technical else 'simple'}", dark)
+                window.top_view.step(1)  # the top view, as Ctrl+Tab opens it
+                snap(window, "06-top-view", dark)
+                window.top_view.shut()
                 window.resize(900, 760)
                 snap(window, "04-server-narrow", dark)
                 window.set_mode(False)
