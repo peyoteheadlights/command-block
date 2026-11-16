@@ -77,7 +77,7 @@ the phone apps use.
   `shared/`, so the desktop app, the phone apps and the installer look and
   read the same. The page stays plain paper: a server's color goes on its
   tab, the band behind the sheet, the buttons and the edges, worked out with
-  the same sums as the phone apps (`agent/colors.py`). `fonts/` holds
+  the same sums as the phone apps (`agent/colors.py`). `shared/fonts/` holds
   Archivo, the heading font. The app's own words start with
   `desktop.` in `shared/strings.json`.
 - `icons.py` draws the line icons and the server badges; `images/` holds the

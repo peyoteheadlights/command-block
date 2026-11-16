@@ -19,7 +19,8 @@ from pathlib import Path
 from agent import colors
 
 SHARED = Path(__file__).resolve().parent.parent / "shared"
-FONTS = Path(__file__).resolve().parent / "fonts"
+FONTS = SHARED / "fonts"
+IMAGES = Path(__file__).resolve().parent / "images"
 RADIUS = {"radius-sm": "8px", "radius": "8px", "radius-lg": "14px"}
 COPPER = "#C8794A"
 HEADING = '"Archivo", "Segoe UI Variable Display", "Segoe UI", sans-serif'
@@ -112,7 +113,7 @@ def _tick(t: dict[str, str]) -> str:
     """The tick mark's picture, white or black like the words on a filled
     button. A style sheet can only take it from a file."""
     name = "tick-white.svg" if t["accent-text"] == "#FFFFFF" else "tick-black.svg"
-    return (FONTS.parent / "images" / name).as_posix()
+    return (IMAGES / name).as_posix()
 
 
 def _sheet(t: dict[str, str]) -> str:
