@@ -1,0 +1,7 @@
+name: CommandBlockCompanion
+version: '${version}'
+main: io.github.peyoteheadlights.companion.paper.CompanionPlugin
+api-version: '26.3'
+description: Checks that players joining a Command Block server have its modpack, and tells them what to get if not. Not an anti-cheat, the whitelist stays the real gate.
+authors: [peyoteheadlights]
+website: https://github.com/peyoteheadlights/command-block
