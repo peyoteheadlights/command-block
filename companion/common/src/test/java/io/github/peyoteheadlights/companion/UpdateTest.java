@@ -287,10 +287,10 @@ class UpdateTest {
         // It also claims journal.jar, which it doesn't bring: a later update would then "remove" it.
         Plan plan = Plan.read(claimingPack("[\"mods/sodium.jar\", \"mods/minimap.jar\", \"mods/journal.jar\"]"),
                 mods, serverList(), List.of());
-        assertEquals(List.of("mods/sodium.jar"), Plan.packFiles(plan.playersFile()));
+        assertEquals(List.of("mods/sodium.jar"), Plan.packFiles(plan.playersFile(plan.items())));
         // The rest of the players file is kept.
-        assertEquals("3", Prover.packVersion(plan.playersFile()));
-        assertEquals("play.example.net", TitleSettings.parse(plan.playersFile()).host());
+        assertEquals("3", Prover.packVersion(plan.playersFile(plan.items())));
+        assertEquals("play.example.net", TitleSettings.parse(plan.playersFile(plan.items())).host());
     }
 
     @Test
@@ -299,7 +299,77 @@ class UpdateTest {
         Files.writeString(mods.resolve("journal.jar"), "the player's own journal");
         Plan first = Plan.read(claimingPack("[\"mods/sodium.jar\", \"mods/journal.jar\"]"), mods, serverList(), List.of());
         Files.write(mods.resolve("sodium.jar"), SODIUM); // the first update went in
-        Plan second = Plan.read(claimingPack("[\"mods/sodium.jar\"]"), mods, serverList(), Plan.packFiles(first.playersFile()));
+        Plan second = Plan.read(claimingPack("[\"mods/sodium.jar\"]"), mods, serverList(), Plan.packFiles(first.playersFile(first.items())));
         assertFalse(byName(second).containsKey("journal.jar REMOVE"));
+    }
+
+    // ---- Code review 2026-11-17 ----
+
+    @Test
+    void aJarTwiceInTheModpackGoesInOnce() throws Exception {
+        Path mods = mods();
+        // own.jar is in client-overrides already; the same name in overrides and in the download list too.
+        Path mrpack = pack("https://cdn.modrinth.com/s.jar", Map.of("overrides/mods/own.jar", OWN));
+        Plan plan = Plan.read(mrpack, mods, serverList(), List.of());
+        assertEquals(1, plan.items().stream().filter(i -> i.file().equals("own.jar")).count());
+        Install.prepare(Install.client(), plan, List.of(byName(plan).get("own.jar ADD")), mrpack, game, (f, d, t) -> {});
+        Swap.apply(game); // used to fail on the second copy and undo everything
+        assertEquals("own tweaks v2", Files.readString(mods.resolve("own.jar")));
+    }
+
+    @Test
+    void theNewPlayersFileListsOnlyWhatReallyIsTheModpacks() throws Exception {
+        Path mods = mods();
+        Files.write(mods.resolve("sodium.jar"), SODIUM); // the player's own, identical copy
+        Plan plan = Plan.read(pack("https://cdn.modrinth.com/s.jar", Map.of()), mods, serverList(), List.of());
+        assertEquals(List.of(), Plan.packFiles(plan.playersFile(List.of())),
+                "not their identical copy, and not the own jar they left unticked");
+        assertEquals(List.of("mods/own.jar"), Plan.packFiles(plan.playersFile(plan.items())));
+
+        Plan again = Plan.read(pack("https://cdn.modrinth.com/s.jar", Map.of()), mods, serverList(), List.of("mods/sodium.jar"));
+        assertEquals(List.of("mods/sodium.jar"), Plan.packFiles(again.playersFile(List.of())),
+                "a file the modpack in place already said was its own stays its own");
+
+        Files.writeString(mods.resolve("sodium.jar"), "sodium v1"); // the old modpack's, with an update waiting
+        Plan older = Plan.read(pack("https://cdn.modrinth.com/s.jar", Map.of()), mods, serverList(), List.of("mods/sodium.jar"));
+        assertEquals(List.of("mods/sodium.jar"), Plan.packFiles(older.playersFile(List.of())),
+                "still the modpack's when the player doesn't tick its update");
+        assertEquals(List.of("mods/sodium.jar"), Plan.packFiles(older.playersFile(List.of(byName(older).get("sodium.jar ADD")))),
+                "ticked: listed once");
+    }
+
+    @Test
+    void anOwnJarChangedAfterTheListIsRefused() throws Exception {
+        Path mods = mods();
+        Path mrpack = pack("https://cdn.modrinth.com/s.jar", Map.of());
+        Plan plan = Plan.read(mrpack, mods, serverList(), List.of());
+        Files.delete(mrpack);
+        try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(mrpack))) {
+            put(z, "client-overrides/mods/own.jar", "something else".getBytes(StandardCharsets.UTF_8));
+        }
+        assertThrows(BadInput.class, () -> Install.prepare(Install.client(), plan, List.of(byName(plan).get("own.jar ADD")),
+                mrpack, game, (f, d, t) -> {}));
+        assertFalse(Files.exists(game.resolve(Install.FOLDER).resolve("waiting")), "nothing is left waiting");
+    }
+
+    @Test
+    void aDownloadTheServerDidntNameIsRefused() throws Exception {
+        // A changed modpack could name any file on Modrinth: only jars from the server's own check go in.
+        Plan plan = Plan.read(pack("https://cdn.modrinth.com/s.jar", Map.of()), mods(), serverList(), List.of());
+        Path file = game.resolve("x.jar");
+        Files.write(file, SODIUM);
+        Install.onServerList(plan, file);
+        Files.writeString(file, "a different mod from Modrinth");
+        assertThrows(BadInput.class, () -> Install.onServerList(plan, file));
+    }
+
+    @Test
+    void aFailedSwapIsShownNextTime() throws Exception {
+        Path log = Files.createDirectories(game.resolve(Install.FOLDER)).resolve("swap.log");
+        assertEquals(null, Swap.lastFailure(game));
+        Files.writeString(log, "2026-11-17T02:00:00Z Nothing changed: own.jar\n");
+        assertEquals("Nothing changed: own.jar", Swap.lastFailure(game));
+        Files.writeString(log, "2026-11-17T02:00:00Z Updated: 1 added, 0 kept in previous\n");
+        assertEquals(null, Swap.lastFailure(game));
     }
 }

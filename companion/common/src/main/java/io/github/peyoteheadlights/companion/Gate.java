@@ -13,6 +13,11 @@ import java.util.Map;
  * weak PC hash files all day. Works with the app's Join protection.
  * IPv6 addresses count per /64 (one home gets a whole /64), like the app's
  * own limits.
+ *
+ * <p>Joins from this PC itself are never counted: behind Join protection
+ * (or a tunnel on this PC) every player arrives from 127.0.0.1, so one
+ * count for all of them would let one person keep everyone out. The join
+ * guard already limits each real address before it passes a player on.
  */
 public final class Gate {
     private static final long MINUTE = 60_000L;
@@ -30,6 +35,9 @@ public final class Gate {
 
     /** True if this address may start a check now; counts it if so. */
     public synchronized boolean allow(String ip, long nowMillis) {
+        if (loopback(ip)) {
+            return true;
+        }
         // At most once a second: sweeping on every call made a flood slow every check.
         if (seen.size() > FORGET_AFTER && nowMillis - lastSweep >= 1000) {
             seen.values().removeIf(times -> times.isEmpty() || times.peekLast() <= nowMillis - MINUTE);
@@ -52,6 +60,18 @@ public final class Gate {
         }
         times.addLast(nowMillis);
         return true;
+    }
+
+    /** True for 127.x.x.x and ::1. Only a literal address is looked at, so no name lookup ever happens. */
+    static boolean loopback(String ip) {
+        if (!ip.matches("[0-9.]+|[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*")) {
+            return false;
+        }
+        try {
+            return InetAddress.getByName(ip).isLoopbackAddress();
+        } catch (UnknownHostException e) {
+            return false;
+        }
     }
 
     /** The address itself, or for IPv6 its first 64 bits. */

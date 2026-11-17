@@ -19,6 +19,21 @@ class GateTest {
     }
 
     @Test
+    void joinsFromThisPcAreNeverCounted() {
+        // Behind Join protection every player comes from 127.0.0.1: one count for all of
+        // them would let one person keep everyone out. The guard limits real addresses itself.
+        Gate g = new Gate(1);
+        for (int i = 0; i < 100; i++) {
+            assertTrue(g.allow("127.0.0.1", i));
+            assertTrue(g.allow("0:0:0:0:0:0:0:1", i));
+        }
+        assertTrue(g.allow("1.2.3.4", 0));
+        assertFalse(g.allow("1.2.3.4", 1), "other addresses still count");
+        assertFalse(Gate.loopback("localhost"), "only literal addresses: no name lookup");
+        assertFalse(Gate.loopback("local:E:1234"));
+    }
+
+    @Test
     void refusedTriesDontCount() {
         Gate g = new Gate(1);
         assertTrue(g.allow("a", 0));

@@ -26,13 +26,25 @@ public final class Hashes {
     public static byte[] ofFile(Path file) throws IOException {
         MessageDigest d = sha256();
         try (InputStream in = Files.newInputStream(file)) {
-            byte[] buf = new byte[64 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                d.update(buf, 0, n);
-            }
+            feed(in, d, Long.MAX_VALUE);
         }
         return d.digest();
+    }
+
+    /**
+     * Reads the stream into the digest in 64 KiB pieces. Stops once more
+     * than {@code max} bytes came, so the caller can refuse a file that's
+     * too big without reading all of it. Returns how many bytes it read.
+     */
+    static long feed(InputStream in, MessageDigest d, long max) throws IOException {
+        byte[] buf = new byte[64 * 1024];
+        long total = 0;
+        int n;
+        while (total <= max && (n = in.read(buf)) > 0) {
+            d.update(buf, 0, n);
+            total += n;
+        }
+        return total;
     }
 
     /**

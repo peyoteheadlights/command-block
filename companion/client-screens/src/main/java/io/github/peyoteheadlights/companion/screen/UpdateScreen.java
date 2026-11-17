@@ -31,7 +31,9 @@ final class UpdateScreen extends Screen {
     private final Screen parent;
     private final Offer offer;
     private final List<byte[]> serverHashes;
+    private final String offeredBy;
     private final Path game;
+    private final String lastFailure;
     private final HttpClient http = Install.client();
     private Plan plan;
     private final Map<Plan.Item, Boolean> ticks = new LinkedHashMap<>();
@@ -39,12 +41,14 @@ final class UpdateScreen extends Screen {
     private volatile boolean busy = true;
     private volatile boolean done;
 
-    UpdateScreen(Screen parent, Offer offer, List<byte[]> serverHashes) {
+    UpdateScreen(Screen parent, Offer offer, List<byte[]> serverHashes, String offeredBy) {
         super(Component.literal("Update '" + offer.name() + "' to " + offer.version()));
         this.parent = parent;
         this.offer = offer;
         this.serverHashes = serverHashes;
+        this.offeredBy = offeredBy;
         this.game = net.minecraft.client.Minecraft.getInstance().gameDirectory.toPath();
+        this.lastFailure = Swap.lastFailure(game); // the swap ran after the game closed: say so here
         work(this::read);
     }
 
@@ -88,6 +92,9 @@ final class UpdateScreen extends Screen {
         });
         Install.prepare(http, plan, ticked, game.resolve(Install.FOLDER).resolve("modpack.mrpack"), game,
                 (file, n, total) -> status = "Downloading " + file + " (" + n + " of " + total + ")");
+        // So the title screen moves server list entries only for the server this update came from.
+        Files.writeString(game.resolve(Install.FOLDER).resolve(Updates.OFFERED_BY), offeredBy == null ? "" : offeredBy,
+                StandardCharsets.UTF_8);
         done = true;
         status = "Ready. It goes in when you close the game, and your own mods stay as they are.";
     }
@@ -98,6 +105,10 @@ final class UpdateScreen extends Screen {
         int y = 20;
         add(new StringWidget(x, y, 320, 12, getTitle(), font));
         y += 18;
+        if (lastFailure != null && !done) {
+            add(new StringWidget(x, y, 320, 12, Component.literal("Your last update didn't go in. " + lastFailure), font));
+            y += 18;
+        }
         if (busy || status != null || done) {
             add(new StringWidget(x, y, 320, 12, Component.literal(status == null ? "" : status), font));
             y += 24;

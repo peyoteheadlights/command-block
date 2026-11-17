@@ -43,8 +43,8 @@ public final class Checker {
     /**
      * Makes a Checker. Hashes the server's own copy of each file once, and
      * only uses copies that still match the modpack for spot checks (an owner
-     * may have changed a mod since making the modpack). Call it off the
-     * server's main thread: it reads files.
+     * may have changed a mod since making the modpack). It reads every file,
+     * so a big modpack makes the server start a little slower.
      */
     public static Checker create(Settings settings, Path serverDir, SecureRandom random) {
         List<Integer> usable = new ArrayList<>();

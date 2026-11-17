@@ -1,10 +1,10 @@
 package io.github.peyoteheadlights.companion.neoforge;
 
-import io.github.peyoteheadlights.companion.Answer;
-import io.github.peyoteheadlights.companion.BadInput;
+import com.mojang.authlib.GameProfile;
 import io.github.peyoteheadlights.companion.Challenge;
-import io.github.peyoteheadlights.companion.Checker;
+import io.github.peyoteheadlights.companion.ServerSide;
 import java.util.function.Consumer;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
 import net.neoforged.neoforge.network.configuration.ICustomConfigurationTask;
@@ -19,50 +19,47 @@ final class JoinCheck implements ICustomConfigurationTask {
     static final Type TYPE = new Type("commandblock:check");
 
     private final ServerConfigurationPacketListenerImpl handler;
-    private final Checker checker;
-    private final long deadline;
-    private final OfferPayload offer;
+    private final ServerSide side;
+    private final boolean canTakeOffer;
     private Challenge sent;
-    private Answer answer;
-    private boolean badAnswer;
+    private long deadline;
+    private byte[] answer;
 
-    JoinCheck(ServerConfigurationPacketListenerImpl handler, Checker checker, int timeoutSeconds, OfferPayload offer) {
-        this.offer = offer;
+    JoinCheck(ServerConfigurationPacketListenerImpl handler, ServerSide side, boolean canTakeOffer) {
         this.handler = handler;
-        this.checker = checker;
-        this.deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L;
+        this.side = side;
+        this.canTakeOffer = canTakeOffer;
     }
 
     @Override
     public void run(Consumer<CustomPacketPayload> sender) {
-        sent = checker.newChallenge();
-        if (offer != null) {
-            sender.accept(offer); // first, so the player's Companion can offer the update if the check finds them behind
+        sent = side.newChallenge();
+        // The time starts now, not when the task was queued: the tasks before this one
+        // (a resource pack prompt, a big modpack's registry sync) don't count.
+        deadline = System.nanoTime() + side.timeoutSeconds() * 1_000_000_000L;
+        byte[] offer = side.offer();
+        if (offer != null && canTakeOffer) {
+            sender.accept(new OfferPayload(offer)); // first, so the player's Companion can offer the update if the check finds them behind
         }
         sender.accept(new CheckPayload(sent.encode()));
     }
 
     /** The player's answer. Only the first one counts: one check per join. */
     void answered(byte[] data) {
-        if (answer != null || badAnswer) {
-            return;
-        }
-        try {
-            answer = Answer.decode(data);
-        } catch (BadInput e) {
-            badAnswer = true;
+        if (answer == null) {
+            answer = data;
         }
     }
 
     @Override
     public boolean tick() {
-        if (answer == null && !badAnswer && System.nanoTime() < deadline) {
+        if (answer == null && System.nanoTime() < deadline) {
             return false; // still waiting
         }
         Companion.joining.remove(handler);
-        Checker.Verdict verdict = answer == null ? null : checker.judge(sent, answer);
+        GameProfile profile = handler.getOwner();
         // false after a kick: the player is gone, nothing more to run.
-        return Companion.judged(handler.getOwner(), verdict, handler::disconnect);
+        return side.judged(profile.id(), profile.name(), sent, answer, message -> handler.disconnect(Component.literal(message)));
     }
 
     @Override

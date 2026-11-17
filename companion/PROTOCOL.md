@@ -30,12 +30,17 @@ and `unframe`, at most 3 length bytes).
 1. A player starts joining. While Minecraft is still "configuring" them
    (before they are in the world), the server asks the per-address limit
    (`Gate`: `handshakes_per_ip_per_minute` checks a minute from one
-   address; IPv6 counts per /64). Over the limit: refused when the
-   modpack is required, otherwise not checked.
+   address; IPv6 counts per /64). Joins from the server's own PC
+   (127.0.0.1, ::1) are never counted: behind Join protection everyone
+   arrives from there, and the join guard limits each real address
+   itself. Over the limit: refused when the modpack is required,
+   otherwise not checked.
 2. A player whose game doesn't listen on `commandblock:check` has no
    Companion: judged as "no answer".
 3. Otherwise the server sends the Offer (only when the download link is
-   on), then a fresh Challenge, and waits `timeout_seconds`.
+   on), then a fresh Challenge, and waits `timeout_seconds` from that
+   moment (the join steps before it, like a resource pack prompt, don't
+   count).
 4. The first Answer counts; later ones are ignored. No answer in time, or
    an answer that doesn't parse: "no answer".
 5. `Checker.judge` passes the player when every modpack file was loaded
@@ -99,8 +104,8 @@ for "anything else".
 | Field | Type | Limit |
 |---|---|---|
 | version | `u8` | 1 |
-| name | `text(128)` | not blank, no control characters |
-| version | `text(32)` | `[\w.+-]{1,32}` |
+| name | `text(256)` | not blank, no control characters (the app allows 64 characters, up to 4 bytes each) |
+| version | `text(32)` | `[A-Za-z0-9_.+-]{1,32}` |
 | link | `text(512)` | `http` or `https`, printable ASCII, a host, no user name or password |
 
 The offer never makes the Companion do anything by itself. It only adds
@@ -135,7 +140,7 @@ Every object must have exactly these keys, no more and no fewer.
 |---|---|
 | `format` | 1. A newer format is refused (the check then stays off) |
 | `modpack.name` | text up to 128, not blank |
-| `modpack.version` | `[\w.+-]{1,32}` |
+| `modpack.version` | `[A-Za-z0-9_.+-]{1,32}`: English letters and digits only, the same rule everywhere (`Settings.versionOk`, and the app's `VERSION_RE`) |
 | `files` | at most 4000 |
 | `files[].path` | `mods/<one file name>.jar`, no folders, no characters Windows refuses |
 | `files[].sha256` | 64 lowercase hex |
@@ -169,8 +174,10 @@ turns only that part off, never crashes the game.
 - `modpack.version` is what the Answer says (`Prover.packVersion`).
 - `files` are the modpack's own jars: the only files an update may ever
   replace or remove. When an update goes in, this list is rewritten to
-  the files that update really brought (`Plan.read`), so a modpack can
-  never claim a player's own mod.
+  the modpack's files already in place (only those the old list named)
+  plus the ones the player ticked and the update added
+  (`Plan.playersFile`), so a modpack can never claim a player's own mod,
+  not even an identical copy, nor a file the player chose not to add.
 - `title_screen` (`TitleSettings.parse`): the join button's address (a
   host name or IPv4 address, maybe `:port`) and the flavor text (up to
   60 characters, no control characters, no `§` colour codes). Each may
@@ -179,6 +186,14 @@ turns only that part off, never crashes the game.
   4096 pixels a side).
 
 ## Updates
+
+The "Update to ..." button only shows when the offer's modpack name is
+the one in place (or there is none yet), and a new join forgets the last
+server's offer (`Updates.joining`), so another server can't offer to swap
+a friend's modpack for its own. When the update is got ready, the
+server's address is written to `.commandblock-companion/offered-by.txt`;
+the title screen moves server list entries to a new address only when
+that address is the old one (`TitleExtras.followAddress`).
 
 Only after the player presses "Update to ..." and then "Download" on the
 list (`UpdateScreen`):
@@ -190,14 +205,20 @@ list (`UpdateScreen`):
    `mediafilez.forgecdn.net`, https, no other port) checked by the
    modpack's SHA-512; own jars inside the modpack only when their
    SHA-256 is on the server's list from the last check, and unticked;
-   removals only of files the modpack in place lists as its own. Files
-   go only straight into `mods/` (`Swap.inside`).
+   removals only of files the modpack in place lists as its own. Each
+   file name once: `client-overrides/` wins over `overrides/`, and both
+   over the download list, like a launcher. Files go only straight into
+   `mods/` (`Swap.inside`).
 3. `Install.prepare` downloads the ticked files into a waiting folder,
-   every one checked; one bad file throws the whole update away.
-   Redirects are followed only within the same site.
+   every one checked: downloads by SHA-512 and then their SHA-256 must
+   be on the server's list from the last check (the `.mrpack` comes over
+   plain http, so a changed one can't add any other Modrinth or
+   CurseForge file); own jars by SHA-256 again. One bad file throws the
+   whole update away. Redirects are followed only within the same site.
 4. When the game closes, `Swap` (a small Java program started from the
    Companion's own jar with the game's own Java) moves the old files to
    `previous/` and the new ones in, or undoes every move if one fails.
-   "Go back" swaps the previous set back the same way.
+   "Go back" swaps the previous set back the same way. If the swap
+   changes nothing, the next update screen says why (`Swap.lastFailure`).
 
 Nothing downloaded is ever run.

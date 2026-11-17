@@ -16,7 +16,7 @@ import java.net.URISyntaxException;
 public record Offer(String name, String version, String link) {
 
     public static final int VERSION = 1;
-    public static final int MAX_NAME_BYTES = 128;
+    public static final int MAX_NAME_BYTES = 256; // the app allows 64 characters, up to 4 bytes each
     public static final int MAX_LINK_BYTES = 512;
 
     public byte[] encode() {
@@ -36,7 +36,7 @@ public record Offer(String name, String version, String link) {
         if (name.isBlank() || name.chars().anyMatch(c -> c < 0x20 || c == 0x7f)) {
             throw new BadInput("bad name");
         }
-        if (!version.matches("[\\w.+-]{1,32}")) {
+        if (!Settings.versionOk(version)) {
             throw new BadInput("bad version");
         }
         if (!link.matches("https?://[\\x21-\\x7e]{1,500}")) {
