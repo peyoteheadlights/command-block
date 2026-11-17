@@ -50,6 +50,18 @@ class SettingsTest {
     }
 
     @Test
+    void theVersionRuleIsTheSameEverywhere() throws Exception {
+        // Letters from other languages pass Java's and Python's \\w, but players' Companions refused
+        // them, so the Update button never showed. One rule now: English letters, digits, _ . + -
+        for (String odd : new String[] {"\u00e92", "\u0663", "1 beta", "1\n"}) {
+            assertThrows(BadInput.class, () -> Settings.parse(changed(r -> r.getAsJsonObject("modpack").addProperty("version", odd))), odd);
+            assertFalse(Settings.versionOk(odd), odd);
+            assertEquals("", Prover.packVersion("{\"format\": 1, \"modpack\": {\"name\": \"S\", \"version\": \"" + odd.replace("\n", "\\n") + "\"}}"));
+        }
+        assertEquals("1.4", Settings.parse(fromAgent()).modpackVersion());
+    }
+
+    @Test
     void refusesAnUnknownField() {
         assertThrows(BadInput.class, () -> Settings.parse(changed(r -> r.addProperty("surprise", 1))));
         assertThrows(BadInput.class, () -> Settings.parse(changed(r -> firstFile(r).addProperty("x", 1))));

@@ -30,6 +30,13 @@ class OfferTest {
     }
 
     @Test
+    void aLongNameInAnyLanguageFits() throws BadInput {
+        // The app allows 64 characters; Chinese is 3 bytes each and an emoji 4.
+        String name = "\u670d".repeat(32) + "\ud83d\ude00".repeat(32);
+        assertEquals(name, Offer.decode(new Offer(name, "3", "http://100.64.0.1:25590/t/x.mrpack").encode()).name());
+    }
+
+    @Test
     void refusesLeftOverBytesAndOtherVersions() {
         byte[] good = new Offer("F", "1", "http://h/x").encode();
         byte[] longer = Arrays.copyOf(good, good.length + 1);

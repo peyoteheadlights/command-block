@@ -209,6 +209,13 @@ def test_a_name_that_cant_be_a_file_name_is_refused(server, name):
     assert make(client, headers, name=name).status_code in (400, 422)
 
 
+@pytest.mark.parametrize("version", ["\u00e92", "\u0663", "1 beta", "1\n"])
+def test_a_version_players_companions_cant_read_is_refused(server, version):
+    # Python's \w lets in other languages' letters, but the Companion only reads A-Z, 0-9 and _ . + -
+    client, headers = server
+    assert make(client, headers, version=version).status_code in (400, 422)
+
+
 def test_modrinth_down_makes_nothing(server):
     client, headers = server
     client.app.state.core.mods.modrinth.fail = True

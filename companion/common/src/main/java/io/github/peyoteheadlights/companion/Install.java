@@ -65,15 +65,17 @@ public final class Install {
                 if (item.change() == Plan.Change.REMOVE) {
                     remove.add(item.file());
                 } else if (item.source() == Plan.Source.OWN) {
+                    // Hashed again: the modpack file could have changed since the list was made.
                     try (InputStream in = zip.getInputStream(zip.getEntry(item.zipEntry()))) {
-                        copy(in, target, Settings.MAX_FILE_BYTES, null, null);
+                        copy(in, target, Settings.MAX_FILE_BYTES, "SHA-256", item.hash());
                     }
                     add.add(item.file());
                 } else {
                     if (Plan.site(item.url()) != item.source()) {
                         throw new BadInput(item.file() + ": not from " + item.source()); // never trust a changed list
                     }
-                    download(http, item.url(), target, Settings.MAX_FILE_BYTES, "SHA-512", item.sha512());
+                    download(http, item.url(), target, Settings.MAX_FILE_BYTES, "SHA-512", item.hash());
+                    onServerList(plan, target);
                     add.add(item.file());
                 }
                 progress.at(item.file(), ++done, ticked.size());
@@ -85,8 +87,19 @@ public final class Install {
         JsonObject what = new JsonObject();
         what.add("add", add);
         what.add("remove", remove);
-        what.addProperty("players", plan.playersFile());
+        what.addProperty("players", plan.playersFile(ticked));
         Files.writeString(waiting.resolve(Swap.PLAN), new Gson().toJson(what), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * The modpack file comes over plain http, so a changed one could name any
+     * file on Modrinth or CurseForge. Only jars the server's own check named
+     * (it came over the game's connection) may go in.
+     */
+    static void onServerList(Plan plan, Path file) throws IOException, BadInput {
+        if (!plan.onServerList(Hashes.ofFile(file))) {
+            throw new BadInput(file.getFileName() + " isn't on the server's own list, so the modpack may have been changed on the way");
+        }
     }
 
     /**
