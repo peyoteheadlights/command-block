@@ -1,11 +1,11 @@
 package io.github.peyoteheadlights.companion.fabric;
 
-import io.github.peyoteheadlights.companion.Answer;
-import io.github.peyoteheadlights.companion.BadInput;
+import com.mojang.authlib.GameProfile;
 import io.github.peyoteheadlights.companion.Challenge;
-import io.github.peyoteheadlights.companion.Checker;
+import io.github.peyoteheadlights.companion.ServerSide;
 import java.util.function.Consumer;
 import net.fabricmc.fabric.api.networking.v1.ServerConfigurationNetworking;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.server.network.ConfigurationTask;
 import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
@@ -19,51 +19,45 @@ final class JoinCheck implements ConfigurationTask {
     static final Type TYPE = new Type("commandblock:check");
 
     private final ServerConfigurationPacketListenerImpl handler;
-    private final Checker checker;
-    private final long deadline;
-    private final OfferPayload offer;
+    private final ServerSide side;
     private Challenge sent;
-    private volatile Answer answer;
-    private volatile boolean badAnswer;
+    private long deadline;
+    private volatile byte[] answer;
 
-    JoinCheck(ServerConfigurationPacketListenerImpl handler, Checker checker, int timeoutSeconds, OfferPayload offer) {
-        this.offer = offer;
+    JoinCheck(ServerConfigurationPacketListenerImpl handler, ServerSide side) {
         this.handler = handler;
-        this.checker = checker;
-        this.deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L;
+        this.side = side;
     }
 
     @Override
     public void start(Consumer<Packet<?>> sender) {
-        sent = checker.newChallenge();
-        // Only the first answer counts: one check per join.
+        sent = side.newChallenge();
+        // The time starts now, not when the task was queued: the tasks before this one
+        // (a resource pack prompt, a big modpack's registry sync) don't count.
+        deadline = System.nanoTime() + side.timeoutSeconds() * 1_000_000_000L;
         ServerConfigurationNetworking.registerReceiver(handler, CheckPayload.TYPE, (payload, context) -> {
-            if (answer != null || badAnswer) {
-                return;
-            }
-            try {
-                answer = Answer.decode(payload.data());
-            } catch (BadInput e) {
-                badAnswer = true;
+            if (answer == null) {
+                answer = payload.data(); // only the first answer counts: one check per join
             }
         });
+        byte[] offer = side.offer();
         if (offer != null && ServerConfigurationNetworking.canSend(handler, OfferPayload.TYPE)) {
             // First, so the player's Companion can offer the update if the check finds them behind.
-            sender.accept(ServerConfigurationNetworking.createClientboundPacket(offer));
+            sender.accept(ServerConfigurationNetworking.createClientboundPacket(new OfferPayload(offer)));
         }
         sender.accept(ServerConfigurationNetworking.createClientboundPacket(new CheckPayload(sent.encode())));
     }
 
     @Override
     public boolean tick() {
-        Answer got = answer;
-        if (got == null && !badAnswer && System.nanoTime() < deadline) {
+        byte[] got = answer;
+        if (got == null && System.nanoTime() < deadline) {
             return false; // still waiting
         }
         ServerConfigurationNetworking.unregisterReceiver(handler, CheckPayload.TYPE.id());
-        Checker.Verdict verdict = got == null ? null : checker.judge(sent, got);
+        GameProfile profile = handler.getOwner();
         // false after a kick: the player is gone, nothing more to run.
-        return CompanionServer.judged(handler.getOwner(), verdict, handler::disconnect);
+        return side.judged(profile.id(), profile.name(), sent, got, message -> handler.disconnect(Component.literal(message)));
     }
 
     @Override

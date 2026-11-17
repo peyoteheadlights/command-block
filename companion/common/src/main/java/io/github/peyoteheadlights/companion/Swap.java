@@ -82,6 +82,21 @@ public final class Swap {
         return Files.isRegularFile(folder.resolve("waiting").resolve(PLAN)) || Files.exists(folder.resolve(GO_BACK));
     }
 
+    /**
+     * Why the last swap changed nothing, or null when it worked (or never
+     * ran). The swap runs after the game closed, so the next update screen
+     * shows this: otherwise nobody would ever see it.
+     */
+    public static String lastFailure(Path game) {
+        try {
+            String line = Files.readString(game.resolve(Install.FOLDER).resolve("swap.log"), StandardCharsets.UTF_8).strip();
+            int at = line.indexOf(" Nothing changed: ");
+            return at < 0 ? null : line.substring(at + 1);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     /** True when there's an older set to go back to. */
     public static boolean canGoBack(Path game) {
         return Files.isRegularFile(game.resolve(Install.FOLDER).resolve("previous").resolve(PLAN));

@@ -45,7 +45,8 @@ public record Settings(
     static final Pattern MOD_PATH = Pattern.compile("mods/" + NAME + "\\.jar");
     // The server's copy, from the server folder: up to 4 folders deep, never "..".
     private static final Pattern ON_SERVER = Pattern.compile("(" + NAME + "/){0,3}" + NAME + "\\.jar");
-    private static final Pattern VERSION = Pattern.compile("[\\w.+-]{1,32}", Pattern.UNICODE_CHARACTER_CLASS);
+    // English letters and digits only: the app, the server and every player read it the same way.
+    private static final Pattern VERSION = Pattern.compile("[A-Za-z0-9_.+-]{1,32}");
     private static final Pattern LINK = Pattern.compile("https?://[\\x21-\\x7e]{1,500}");
 
     /** Reads the settings file's text. Throws BadInput for anything we don't accept. */
@@ -71,7 +72,7 @@ public record Settings(
         onlyKeys(modpack, Set.of("name", "version"));
         String name = text(modpack, "name", 128);
         String version = text(modpack, "version", 32);
-        if (name.isBlank() || !VERSION.matcher(version).matches()) {
+        if (name.isBlank() || !versionOk(version)) {
             throw new BadInput("bad modpack name or version");
         }
 
@@ -133,6 +134,11 @@ public record Settings(
                 max,
                 integer(check, "spot_checks", 0, Challenge.MAX_SPOTS),
                 integer(check, "handshakes_per_ip_per_minute", 1, 60));
+    }
+
+    /** The one rule for a modpack version, used everywhere: up to 32 of A-Z a-z 0-9 _ . + - */
+    public static boolean versionOk(String version) {
+        return version != null && VERSION.matcher(version).matches();
     }
 
     // ---------------------------------------------------------------- small helpers
