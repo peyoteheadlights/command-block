@@ -1,0 +1,35 @@
+# Extra lint rules for the tests only. Everything else comes from pyproject.toml.
+extend = "../pyproject.toml"
+src = [".."]  # so import sorting still sees agent/ and desktop/ as ours
+
+[lint.flake8-tidy-imports.banned-api]
+"time.sleep".msg = "Tests must not sleep a fixed time: it makes them slow on CI and flaky on slow PCs. Fix the root cause: wait for the condition you need, with a deadline (use wait_for from tests/fake_discord.py). Don't add a noqa or add this file to the list in tests/ruff.toml."
+
+[lint.per-file-ignores]
+"*.py" = ["B011"]
+
+# Known exceptions: these files already sleep (some inside their own wait
+# loops). The planned sleep cleanup moves them to one wait helper and empties
+# this list. Never add a new file here.
+"conftest.py" = ["B011", "TID251"]
+"fake_discord.py" = ["B011", "TID251"]  # wait_for itself, the one allowed poll
+"fixtures/fake_bedrock_server.py" = ["B011", "TID251"]  # pretends to boot slowly, on purpose
+"fixtures/fake_server.py" = ["B011", "TID251"]  # pretends to boot and stop slowly, on purpose
+"test_desktop_app.py" = ["B011", "TID251"]
+"test_desktop_wake.py" = ["B011", "TID251"]
+"test_discord.py" = ["B011", "TID251"]
+"test_first_run_safety.py" = ["B011", "TID251"]
+"test_guides.py" = ["B011", "TID251"]
+"test_https.py" = ["B011", "TID251"]
+"test_join_protection.py" = ["B011", "TID251"]
+"test_multi_server.py" = ["B011", "TID251"]
+"test_phone_content.py" = ["B011", "TID251"]
+"test_protection.py" = ["B011", "TID251"]
+"test_recommendations.py" = ["B011", "TID251"]
+"test_reliability.py" = ["B011", "TID251"]
+"test_rented_servers.py" = ["B011", "TID251"]
+"test_separate_windows_user.py" = ["B011", "TID251"]
+"test_shared_accounts.py" = ["B011", "TID251"]
+"test_updates.py" = ["B011", "TID251"]
+"windows/test_separate_user_live.py" = ["B011", "TID251"]
+"windows/test_task_scheduler_live.py" = ["B011", "TID251"]
