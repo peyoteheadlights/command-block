@@ -159,6 +159,7 @@ class PlayerTracker:
                     "uuid": uuid,
                     "edition": edition,
                     "online": len(self.online()),
+                    "first": not row,
                 },
             )
         )

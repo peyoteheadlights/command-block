@@ -492,7 +492,7 @@ class Schedule(Open):
     id: int
     name: str
     task: str
-    kind: str = Field(description="daily, weekly or interval")
+    kind: str = Field(description="daily, weekly, interval, cron, once or event")
     expr: str
     payload: dict[str, Any] = {}
     enabled: bool

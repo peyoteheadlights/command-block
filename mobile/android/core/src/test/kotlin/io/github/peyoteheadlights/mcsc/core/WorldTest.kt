@@ -235,21 +235,50 @@ class WorldTest {
             payload = buildJsonObject { put("note", "keep") }, enabled = true, nextRun = null,
         )
         assertEquals("Every day at 04:00", Schedules.whenText(strings, nightly))
-        assertEquals("cron 0 4 * * *", Schedules.whenText(strings, nightly.copy(kind = "cron", expr = "0 4 * * *")))
+        assertEquals("Cron 0 4 * * *", Schedules.whenText(strings, nightly.copy(kind = "cron", expr = "0 4 * * *")))
+        assertEquals("yearly 01-01", Schedules.whenText(strings, nightly.copy(kind = "yearly", expr = "01-01")))
         assertEquals("Back up", Schedules.taskName(strings, "backup", tasks))
         assertEquals("mystery", Schedules.taskName(strings, "mystery", tasks))
         assertEquals("Off", Schedules.next(strings, nightly.copy(enabled = false)))
         assertEquals("Never", Schedules.next(strings, nightly))
+        assertEquals("When it happens", Schedules.next(strings, nightly.copy(kind = "event")))
 
         val off = Schedules.toggled(nightly)
         assertEquals(false, off["enabled"]?.jsonPrimitive?.content?.toBoolean())
         assertEquals("keep", (off["payload"] as kotlinx.serialization.json.JsonObject)["note"]?.jsonPrimitive?.content)
         assertEquals("04:00", off["expr"]?.jsonPrimitive?.content)
 
-        val added = Schedules.newBody(strings, "  ", "backup", "interval", " 6h ", tasks)
+        val added = Schedules.newBody(strings, "  ", listOf(Schedules.Step("backup")), "interval", " 6h ", tasks)
         assertEquals("Back up", added["name"]?.jsonPrimitive?.content)
         assertEquals("6h", added["expr"]?.jsonPrimitive?.content)
         assertEquals(JsonPrimitive(true), added["enabled"])
+    }
+
+    @Test
+    fun `several steps are sent as steps in a row and one step as its own task`() {
+        val tasks = listOf("backup", "message", "command", "steps")
+        assertEquals(listOf("backup", "message"), Schedules.stepTasks(tasks, technical = false))
+        assertEquals(listOf("backup", "message", "command"), Schedules.stepTasks(tasks, technical = true))
+        assertEquals(false, "cron" in Schedules.kinds(technical = false))
+
+        val one = Schedules.newBody(strings, "Hi", listOf(Schedules.Step("message", " Hello ")), "daily", "04:00", tasks, onlyIfRunning = true)
+        val payload = one["payload"] as kotlinx.serialization.json.JsonObject
+        assertEquals("message", one["task"]?.jsonPrimitive?.content)
+        assertEquals("Hello", payload["text"]?.jsonPrimitive?.content)
+        assertEquals(JsonPrimitive(true), payload["only_if_running"])
+
+        val steps = listOf(Schedules.Step("message", "Backing up"), Schedules.Step("command", "kill @a"), Schedules.Step("backup", "", "Done"))
+        val many = Schedules.newBody(strings, "", steps, "daily", "04:00", tasks, keepGoing = true, confirm = true)
+        val sent = (many["payload"] as kotlinx.serialization.json.JsonObject)
+        val list = sent["steps"] as kotlinx.serialization.json.JsonArray
+        assertEquals("steps", many["task"]?.jsonPrimitive?.content)
+        assertEquals(3, list.size)
+        assertEquals(JsonPrimitive(true), (list[1] as kotlinx.serialization.json.JsonObject)["confirm"])
+        assertEquals("Done", (list[2] as kotlinx.serialization.json.JsonObject)["after"]?.jsonPrimitive?.content)
+        assertEquals(JsonPrimitive(true), sent["keep_going"])
+        val saved = Schedule(id = 1, task = "steps", payload = sent)
+        assertEquals("3 steps", Schedules.summary(strings, saved, tasks))
+        assertEquals("Send a message to players: Hello", Schedules.summary(strings, Schedule(id = 2, task = "message", payload = payload), tasks))
     }
 
     // ------------------------------------------------------------ restore world

@@ -1,10 +1,13 @@
 package io.github.peyoteheadlights.mcsc.core
 
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /** Backups' words, and which buttons each row offers (backups.js). */
@@ -92,7 +95,29 @@ object Backups {
 
 /** Schedules' words and what is sent (schedules.js). */
 object Schedules {
-    val KINDS = listOf("daily", "weekly", "interval")
+    val KINDS = listOf("daily", "weekly", "interval", "once", "event", "cron")
+
+    /** The kinds the form offers: a cron line only in Technical. */
+    fun kinds(technical: Boolean): List<String> = KINDS.filter { technical || it != "cron" }
+
+    /** What one step can do: "steps" is made by adding steps, any console command is Technical. */
+    fun stepTasks(tasks: List<String>, technical: Boolean): List<String> =
+        tasks.filter { it != "steps" && (technical || it != "command") }
+
+    /** The most steps in a row the agent takes. */
+    const val MAX_STEPS = 10
+
+    /** One step of the form: its task, its words (message, command or the
+     * message before a backup) and the message after a backup. */
+    data class Step(val task: String, val words: String = "", val after: String = "")
+
+    /** The words a step's task needs, as a strings key; null when it needs none. */
+    fun wordsKey(task: String): String? = when (task) {
+        "message" -> "schedules.text_message"
+        "command" -> "schedules.text_command"
+        "backup" -> "schedules.before"
+        else -> null
+    }
 
     fun kindKey(kind: String): String = "schedules.kind_$kind"
 
@@ -105,13 +130,56 @@ object Schedules {
     fun taskName(strings: Strings, task: String, tasks: List<String>): String =
         if (!strings.technical && task in tasks && strings.has("task.$task")) strings.t("task.$task") else task
 
-    /** The next run's time, or Off. */
-    fun next(strings: Strings, schedule: Schedule): String =
-        if (schedule.enabled) Display.dateTime(strings, schedule.nextRun) else strings.t("schedules.off")
+    /** What a schedule does: "3 steps", or its task with its message or command. */
+    fun summary(strings: Strings, schedule: Schedule, tasks: List<String>): String {
+        if (schedule.task == "steps") {
+            val count = (schedule.payload["steps"] as? JsonArray)?.size ?: 0
+            return strings.t("schedules.steps_count", "count" to count)
+        }
+        val said = (schedule.payload["text"] ?: schedule.payload["command"])?.jsonPrimitive?.contentOrNull
+        val name = taskName(strings, schedule.task, tasks)
+        return if (said.isNullOrEmpty()) name else "$name: $said"
+    }
 
-    /** A new schedule; with no name it is called after its task. */
-    fun newBody(strings: Strings, name: String, task: String, kind: String, expr: String, tasks: List<String>): JsonObject =
-        body(name.trim().ifEmpty { taskName(strings, task, tasks) }, task, kind, expr.trim(), JsonObject(emptyMap()), enabled = true)
+    /** The next run's time, "When it happens" for an event, or Off. */
+    fun next(strings: Strings, schedule: Schedule): String = when {
+        !schedule.enabled -> strings.t("schedules.off")
+        schedule.kind == "event" -> strings.t("schedules.on_event")
+        else -> Display.dateTime(strings, schedule.nextRun)
+    }
+
+    /** A new schedule; with no name it is called after its task. One step is
+     * sent as that task; more as "steps". [confirm]: the person said yes to
+     * a command the console asks about. */
+    fun newBody(
+        strings: Strings,
+        name: String,
+        steps: List<Step>,
+        kind: String,
+        expr: String,
+        tasks: List<String>,
+        keepGoing: Boolean = false,
+        onlyIfRunning: Boolean = false,
+        skipWhenEmpty: Boolean = false,
+        confirm: Boolean = false,
+    ): JsonObject {
+        val sent = steps.map { step(it, confirm) }
+        val options = mapOf("only_if_running" to JsonPrimitive(onlyIfRunning), "skip_when_empty" to JsonPrimitive(skipWhenEmpty))
+        val task = if (steps.size == 1) steps[0].task else "steps"
+        val payload = if (steps.size == 1) JsonObject(sent[0] - "task" + options)
+        else JsonObject(mapOf("steps" to JsonArray(sent.map(::JsonObject)), "keep_going" to JsonPrimitive(keepGoing)) + options)
+        return body(name.trim().ifEmpty { taskName(strings, task, tasks) }, task, kind, expr.trim(), payload, enabled = true)
+    }
+
+    private fun step(step: Step, confirm: Boolean): Map<String, JsonElement> {
+        val words = JsonPrimitive(step.words.trim())
+        return mapOf("task" to JsonPrimitive(step.task)) + when (step.task) {
+            "message" -> mapOf("text" to words)
+            "command" -> mapOf("command" to words, "confirm" to JsonPrimitive(confirm))
+            "backup" -> mapOf("before" to words, "after" to JsonPrimitive(step.after.trim()))
+            else -> emptyMap()
+        }
+    }
 
     /** The whole schedule again with only on or off changed (PUT replaces it). */
     fun toggled(schedule: Schedule): JsonObject =

@@ -94,7 +94,7 @@ class ServerContext:
             self.config, self.db, self.server, self.metrics, self.players, self.mods
         )
         self.scheduler = Scheduler(
-            self.config, self.bus, self.db, self.server, self.backups, core.notifier
+            self.config, self.bus, self.db, self.server, self.backups, core.notifier, self.players
         )
 
         self.player_actions = PlayerActions(self.server, self.bus)
@@ -235,6 +235,10 @@ class ServerContext:
                 watchers.remember(self)
         except Exception:  # pragma: no cover - reported, never stops the server's events
             log.exception("the Protection card's start/stop work failed")
+        try:
+            await self.scheduler.heard(event)
+        except Exception:  # pragma: no cover - reported, never stops the server's events
+            log.exception("event schedules failed")
 
     def backup_on_stop(self, event: Event) -> bool:
         """Back up now? Only when it's on, after a planned stop that isn't
