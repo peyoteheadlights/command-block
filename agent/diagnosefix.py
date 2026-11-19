@@ -210,15 +210,23 @@ def _firewall(ctx: ServerContext, lines: list[dict[str, Any]], tried: list[str])
             or where not in here
         ):
             continue
-        protocol = "udp" if where[0] == "raknet" else "tcp"
         port = int(line["port"])
-        key = f"firewall {protocol} {port}"
-        if key in found:
-            continue
-        name = firewall.rule_name(ctx.server_id, protocol, port)
-        if key not in tried and firewall.has_rule(name):
-            continue
-        found[key] = _rule(key, name, protocol, port, line["group"])
+        if where[0] != "raknet":
+            protocols = ["tcp"]
+        elif ctx.config.server_type.edition == "bedrock":
+            # Bedrock 1.26.50+ (NetherNet) joins over TCP, then plays over UDP
+            # on the same number (agent/ports.py set_udp_ports); older ones UDP only.
+            protocols = ["tcp", "udp"]
+        else:
+            protocols = ["udp"]  # Geyser
+        for protocol in protocols:
+            key = f"firewall {protocol} {port}"
+            if key in found:
+                continue
+            name = firewall.rule_name(ctx.server_id, protocol, port)
+            if key not in tried and firewall.has_rule(name):
+                continue
+            found[key] = _rule(key, name, protocol, port, line["group"])
     return found
 
 
