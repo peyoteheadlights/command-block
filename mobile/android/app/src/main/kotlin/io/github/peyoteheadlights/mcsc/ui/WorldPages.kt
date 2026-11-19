@@ -35,6 +35,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
 
 /** What a button did, said once it is done: good news or a problem. */
 data class Said(val text: String, val good: Boolean)
@@ -377,14 +378,37 @@ class WorldPages(
         Said(strings.t("schedules.deleted"), good = true)
     }
 
-    /** Adds a schedule; [added] runs once the agent took it, to empty the form. */
-    fun addSchedule(name: String, task: String, kind: String, expr: String, strings: Strings, added: () -> Unit) {
-        val tasks = schedules.value?.tasks.orEmpty()
+    /** A command the console asks "are you sure?" about, in the agent's
+     * words, while the screen asks the person; null otherwise. */
+    var scheduleDanger: String? by mutableStateOf(null)
+        private set
+    private var pendingSchedule: ((Boolean) -> JsonObject)? = null
+    private var pendingAdded: () -> Unit = {}
+
+    /** Adds a schedule; [added] runs once the agent took it, to empty the form.
+     * [body] makes what is sent, with or without "confirm" on its commands. */
+    fun addSchedule(body: (Boolean) -> JsonObject, strings: Strings, added: () -> Unit, confirm: Boolean = false) {
         work("add", strings, reload = ::loadSchedules) {
-            it.addSchedule(serverId, Schedules.newBody(strings, name, task, kind, expr, tasks))
+            try {
+                it.addSchedule(serverId, body(confirm))
+            } catch (e: AgentException.Failed) {
+                if (e.status != 409 || confirm) throw e
+                pendingSchedule = body
+                pendingAdded = added
+                scheduleDanger = e.reason ?: strings.t("value.unknown")
+                return@work null
+            }
             added()
             Said(strings.t("schedules.created"), good = true)
         }
+    }
+
+    /** The person answered the "are you sure?" about a scheduled command. */
+    fun answerDanger(yes: Boolean, strings: Strings) {
+        val body = pendingSchedule
+        scheduleDanger = null
+        pendingSchedule = null
+        if (yes && body != null) addSchedule(body, strings, pendingAdded, confirm = true)
     }
 
     // ------------------------------------------------------------ performance
