@@ -361,6 +361,8 @@ class Backup(Open):
     includes: str | None = Field(None, description="Its top-level folders, comma-separated")
     exists: bool | None = Field(None, description="Whether its file is still on disk")
     copy_: BackupCopy | None = Field(None, alias="copy")
+    kept: bool | None = Field(None, description="Keep this backup: the clean-up never deletes it")
+    excludes: str | None = Field(None, description="Folders it left out, comma-separated")
 
 
 class Retention(Open):
@@ -383,6 +385,61 @@ class BackupMade(Open):
     verified: bool | None = None
     verification: dict[str, Any] | None = None
     job_id: str | None = None
+
+
+class BackupKept(Open):
+    ok: bool
+    id: int
+    name: str
+    kept: bool
+
+
+class BackupSize(Open):
+    """What a manual or scheduled backup would hold, measured now."""
+
+    folders: list[dict[str, Any]] = Field(description="path, size_bytes, left_out")
+    excluded: list[dict[str, Any]] = Field(description="path, exists, size_bytes, in_backup")
+    suggested: list[dict[str, Any]] = Field(description="Map tile folders: path, name, size_bytes")
+    total_bytes: int
+    free_bytes: int
+
+
+class CleanupList(Open):
+    """What the clean-up offers, and what's in its bin."""
+
+    items: list[dict[str, Any]] = Field(
+        description="path, kind (old_log, crash_report, set_aside, unused_dimension), "
+        "size_bytes, modified"
+    )
+    total_bytes: int
+    dimensions_checked: bool = Field(
+        description="False when unused dimensions couldn't be told (a mod couldn't be read)"
+    )
+    free_bytes: int
+    bin: list[dict[str, Any]] = Field(
+        description="batch, created_at, items, size_bytes, empties_at"
+    )
+
+
+class CleanupDone(Open):
+    ok: bool
+    batch: str | None = Field(None, description="The batch Undo puts back; null when nothing moved")
+    moved: list[str]
+    skipped: list[dict[str, Any]]
+    size_bytes: int
+    bin_days: int
+
+
+class CleanupUndone(Open):
+    ok: bool
+    put_back: list[str]
+    left_in_bin: list[str]
+
+
+class CleanupEmptied(Open):
+    ok: bool
+    emptied: int
+    freed_bytes: int
 
 
 class BackupCheck(Open):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
@@ -24,13 +26,15 @@ from ..responses import (
     BackupCheck,
     BackupCopied,
     BackupDeleted,
+    BackupKept,
     BackupList,
     BackupMade,
+    BackupSize,
     Offsite,
     OffsiteSaved,
     Restored,
 )
-from .models import BackupRequest, OffsiteRequest, RestoreRequest
+from .models import BackupRequest, KeepRequest, OffsiteRequest, RestoreRequest
 
 router = APIRouter()
 
@@ -61,6 +65,33 @@ async def create_backup(
         result = await ctx.backups.create(
             name=payload.name, includes=payload.includes, user=principal.user, note=payload.note
         )
+    return {"ok": True, **result}
+
+
+@router.get("/backups/size", response_model=BackupSize)
+async def backup_size(
+    principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
+):
+    """How big a backup would be now, folder by folder, with what is left
+    out and the map tile folders that could be. Walks the world, so it runs
+    in a worker thread."""
+    with respond_as(400):
+        return await asyncio.to_thread(ctx.backups.size_preview)
+
+
+@router.post("/backups/{backup_id}/keep", response_model=BackupKept)
+async def keep_backup(
+    backup_id: int,
+    payload: KeepRequest,
+    request: Request,
+    principal: Principal = Depends(require(BACKUPS_DELETE)),
+    ctx=Depends(get_server),
+):
+    """Keep this backup (or stop keeping it): the clean-up never deletes a
+    kept one. Needs the right to delete backups, as it decides what goes."""
+    with respond_as(404):
+        result = ctx.backups.set_kept(backup_id, payload.keep, user=principal.user)
+    request.state.audited = True  # set_kept writes its own entry
     return {"ok": True, **result}
 
 

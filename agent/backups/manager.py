@@ -50,6 +50,20 @@ if TYPE_CHECKING:
 log = logging.getLogger("msc.backups")
 
 ARCHIVE_EXT = {".zip"}
+# Backups that leave out the excluded folders. A backup made before a change
+# (safety) or a season is that change's Undo, so it always holds everything.
+EXCLUDING_KINDS = ("manual", "scheduled")
+MAX_EXCLUDES = 30
+# Where the map add-ons the app knows (agent/suggestions.py MAPS) keep their
+# drawn tiles. Offered as exclusions only when the folder is really there.
+MAP_TILES = {
+    "plugins/dynmap/web/tiles": "Dynmap",
+    "dynmap/web/tiles": "Dynmap",
+    "plugins/BlueMap/web/maps": "BlueMap",
+    "bluemap/web/maps": "BlueMap",
+    "plugins/squaremap/web/tiles": "squaremap",
+    "config/squaremap/web/tiles": "squaremap",
+}
 
 
 class BackupError(RuntimeError):
@@ -90,6 +104,34 @@ def in_scope(member: str, only: set[str]) -> bool:
     """Whether an archive member is one of ``only`` or inside one of them.
     An entry is a top-level name ("world") or a path ("plugins/a/b.yml")."""
     return any(member == e or member.startswith(e.rstrip("/") + "/") for e in only)
+
+
+def check_excludes(value: Any, base: Path, worlds: set[str]) -> list[str]:
+    """The exclusions as typed, cleaned: paths inside the server folder,
+    written with "/", never a world itself. Raises BackupError in plain
+    words when one isn't allowed."""
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise BackupError("Exclusions are a list of folder paths.")
+    if len(value) > MAX_EXCLUDES:
+        raise BackupError(f"Up to {MAX_EXCLUDES} folders can be left out.")
+    out: list[str] = []
+    for raw in value:
+        entry = raw.strip().replace("\\", "/").strip("/")
+        if not entry:
+            continue
+        try:
+            safe_join(base, *entry.split("/"))
+        except PathSafetyError as exc:
+            raise BackupError(f"{raw} isn't a folder inside the server folder.") from exc
+        if entry.split("/")[0] in worlds and "/" not in entry:
+            raise BackupError(f"{entry} is the world, which every backup holds.")
+        if entry not in out:
+            out.append(entry)
+    return out
+
+
+def split(value: str | None) -> list[str]:
+    return [p for p in (value or "").split(",") if p]
 
 
 def single_files(row: dict[str, Any]) -> set[str] | None:
@@ -262,6 +304,16 @@ class BackupManager:
         sources = self._sources(includes)
         if not sources:
             raise BackupError("Nothing to back up: none of the configured folders exist")
+        excludes = set(self.config.backups.exclude) if kind in EXCLUDING_KINDS else set()
+        # A whole folder left out isn't in the backup at all (not even empty,
+        # which a restore would put back as empty).
+        sources = [
+            s
+            for s in sources
+            if not in_scope(s.relative_to(self.config.server_dir).as_posix(), excludes)
+        ]
+        if not sources:
+            raise BackupError("Nothing to back up: every folder is left out")
 
         stamp = time.strftime("%Y%m%d-%H%M%S")
         target = _unique(self.directory / f"{kind}-{stamp}{('-' + name) if name else ''}.zip")
@@ -332,6 +384,12 @@ class BackupManager:
             # them again after a restore instead of keeping copies.
             skipped = sides.backup_skips(self.config, self.db)
             members = [m for m in members if m not in skipped]
+            if excludes:
+                members = [
+                    m
+                    for m in members
+                    if not in_scope(m.relative_to(self.config.server_dir).as_posix(), excludes)
+                ]
             used = {m.relative_to(self.config.server_dir).parts[0] for m in members}
             empty = [s for s in sources if s.is_dir() and s.name not in used]
             if job:
@@ -363,6 +421,7 @@ class BackupManager:
                     "sha256": None,
                     "status": "failed",
                     "note": str(exc)[:400],
+                    "excludes": ",".join(sorted(excludes)) or None,
                 },
             )
             await self.bus.publish(
@@ -401,6 +460,7 @@ class BackupManager:
                 "includes": included,
                 "sha256": digest,
                 "status": "ok" if verification["ok"] else "unverified",
+                "excludes": ",".join(sorted(excludes)) or None,
                 "note": note
                 if verification["ok"]
                 else f"FAILED VERIFICATION: {verification['reason']}",
@@ -616,6 +676,62 @@ class BackupManager:
         )
         return {"deleted": row["name"]}
 
+    def set_kept(self, backup_id: int, kept: bool, user: str = "system") -> dict[str, Any]:
+        """ "Keep this backup": the clean-up (retention) never deletes it.
+        Deleting it by hand still works."""
+        row = self.get(backup_id)
+        if kept and row["status"] != "ok":
+            raise BackupError("Only a checked backup can be kept.")
+        self.db.execute("UPDATE backups SET kept = ? WHERE id = ?", (1 if kept else 0, backup_id))
+        self.db.audit("backup_keep" if kept else "backup_unkeep", user=user, target=row["name"])
+        return {"id": backup_id, "name": row["name"], "kept": kept}
+
+    def size_preview(self) -> dict[str, Any]:
+        """What a manual or scheduled backup would hold, measured now
+        (blocking: walks the world). Each folder's size, each exclusion's
+        size, and map tile folders that could be left out."""
+        from ..security.paths import directory_size
+
+        base = self.config.server_dir
+        sources = self._sources()
+        names = [p.relative_to(base).as_posix() for p in sources]
+        excludes = list(self.config.backups.exclude)
+        folders: list[dict[str, Any]] = [
+            {
+                "path": name,
+                "size_bytes": directory_size(path),
+                "left_out": in_scope(name, set(excludes)),
+            }
+            for name, path in zip(names, sources, strict=True)
+        ]
+
+        def measured(path: str) -> dict[str, Any]:
+            full = safe_join(base, *path.split("/"))
+            return {
+                "path": path,
+                "exists": full.exists(),
+                "size_bytes": directory_size(full) if full.exists() else 0,
+                "in_backup": any(in_scope(path, {n}) for n in names),
+            }
+
+        left_out = [measured(path) for path in excludes]
+        suggested = [
+            {**measured(path), "name": add_on}
+            for path, add_on in MAP_TILES.items()
+            if path not in excludes and (base / path).is_dir()
+        ]
+        suggested = [s for s in suggested if s["in_backup"]]
+        total = sum(f["size_bytes"] for f in folders if not f["left_out"])
+        # Exclusions inside an included folder come off that folder's size.
+        saved = sum(e["size_bytes"] for e in left_out if e["in_backup"] and "/" in e["path"])
+        return {
+            "folders": folders,
+            "excluded": left_out,
+            "suggested": suggested,
+            "total_bytes": max(total - saved, 0),
+            "free_bytes": shutil.disk_usage(self.directory).free,
+        }
+
     # ------------------------------------------------------------------
     async def restore(
         self,
@@ -643,8 +759,10 @@ class BackupManager:
         if only is None:
             only = single_files(row)
 
+        left_out = split(row.get("excludes"))
+
         async def change(job: JobHandle | None) -> dict[str, Any]:
-            replaced = await asyncio.to_thread(self._extract, path, base, only)
+            replaced = await asyncio.to_thread(self._extract, path, base, only, left_out)
             return {"restored": row["name"], "replaced": replaced}
 
         async def verify_result(result: dict[str, Any]) -> tuple[bool, str]:
@@ -722,11 +840,20 @@ class BackupManager:
             self._extract, Path(row["path"]), self.config.server_dir, single_files(row)
         )
 
-    def _extract(self, path: Path, base: Path, only: set[str] | None = None) -> list[str]:
+    def _extract(
+        self,
+        path: Path,
+        base: Path,
+        only: set[str] | None = None,
+        left_out: list[str] | None = None,
+    ) -> list[str]:
         """Move the archive's top-level folders aside, then extract it. If
         anything fails, what was moved aside is put back. With ``only``,
         just those entries are touched: top-level names, or single files
-        inside a folder, which are moved aside on their own."""
+        inside a folder, which are moved aside on their own. ``left_out``
+        are the folders the backup didn't hold (map tiles): today's copy is
+        moved back in from the folder set aside, so a restore never loses
+        them."""
         replaced: list[str] = []
         moved: list[tuple[Path, Path]] = []
         try:
@@ -763,6 +890,20 @@ class BackupManager:
             raise BackupError(
                 f"Restore failed and the previous files were put back: {exc}"
             ) from exc
+        for entry in left_out or ():
+            for live, retired in moved:
+                unit_name = live.relative_to(base).as_posix()
+                if not entry.startswith(unit_name + "/"):
+                    continue
+                rest = entry[len(unit_name) + 1 :].split("/")
+                old, new = retired.joinpath(*rest), base.joinpath(*entry.split("/"))
+                if old.exists() and not new.exists():
+                    try:
+                        new.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(old), str(new))
+                    except OSError:
+                        # Still safe in the folder set aside, which is kept.
+                        log.warning("could not move %s back in", entry, exc_info=True)
         return replaced
 
     def _verify_restored(
@@ -803,8 +944,8 @@ class BackupManager:
     # ------------------------------------------------------------------
     async def apply_retention(self) -> dict[str, Any]:
         """Keep N daily, weekly and monthly backups. Safety backups are kept
-        for 14 days regardless; manual and season backups are never
-        auto-deleted."""
+        for 14 days regardless; manual, season and kept ("Keep this
+        backup") backups are never auto-deleted."""
         keep_daily = self.config.backups.keep_daily
         keep_weekly = self.config.backups.keep_weekly
         keep_monthly = self.config.backups.keep_monthly
@@ -813,7 +954,7 @@ class BackupManager:
         keep: set[int] = set()
         buckets: dict[str, dict[str, dict]] = {"daily": {}, "weekly": {}, "monthly": {}}
         for row in sorted(rows, key=lambda r: r["created_at"], reverse=True):
-            if row["kind"] in ("manual", "season"):
+            if row["kind"] in ("manual", "season") or row.get("kept"):
                 keep.add(row["id"])
                 continue
             if row["kind"] == "safety":
