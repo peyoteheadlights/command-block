@@ -31,7 +31,7 @@ from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from ..events import Event
-from ..minecraft import raknet
+from ..minecraft import nethernet, raknet
 from ..minecraft.analyzer import analyze
 from ..minecraft.console import BEDROCK_LIST_RE, PLAYER_LIST_RE
 
@@ -119,6 +119,10 @@ def java_ping(host: str, port: int, timeout: float = 3.0) -> dict[str, Any]:
 def ping(protocol: str, host: str, port: int) -> dict[str, Any]:
     """The game port's answer, whichever edition this server is."""
     if protocol == "raknet":
+        # Bedrock 1.26.50+ talks NetherNet (a TCP join page); older ones RakNet.
+        answer = nethernet.ping(host, port, timeout=3.0)
+        if answer is not None:
+            return {"connected": True, "answer": answer}
         answer = raknet.ping(host, port, timeout=3.0)
         # UDP has no connection, so whether something is there is unknown.
         return {"connected": None, "answer": answer}
