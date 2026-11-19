@@ -39,13 +39,17 @@ def port_problem(ctx: ServerContext, port: int) -> str | None:
     """Why this server can't use ``port``, or None. Another server on the
     list using it, or another program holding it now, both count."""
     protocol = ctx.config.server_type.game_protocol
-    owner = ctx.core.ports.used(exclude=ctx.server_id).get((protocol, int(port)))
+    bedrock = ctx.config.server_type.edition == "bedrock"
+    # A Bedrock game port is UDP (RakNet) and TCP (NetherNet's join page).
+    protocols = (protocol, "tcp") if bedrock else (protocol,)
+    used = ctx.core.ports.used(exclude=ctx.server_id)
+    owner = next((used[(p, int(port))] for p in protocols if (p, int(port)) in used), None)
     if owner:
         return (
             f"The server '{ctx.core.servers[owner].name}' already uses port {port}. "
             "Pick another one."
         )
-    if ctx.config.server_type.edition == "bedrock":
+    if bedrock:
         # A Bedrock server also listens on server-portv6, which this page
         # doesn't change; the two can't be the same port.
         from .ports import bedrock_v6_port
@@ -55,7 +59,7 @@ def port_problem(ctx: ServerContext, port: int) -> str | None:
                 f"This server already uses port {port} for IPv6 (server-portv6). Pick another one."
             )
     current = ctx.core.ports.port_of(ctx).port
-    if int(port) != current and not is_free(int(port), protocol):
+    if int(port) != current and not all(is_free(int(port), p) for p in protocols):
         return f"Another program on this PC is using port {port}. Pick another one."
     return None
 
@@ -126,9 +130,22 @@ async def save(
         if edited.text() == current_text:
             return {"changed": {}, "keys": [], "nothing_changed": True, **_after(ctx)}
     else:
+        before_file = properties.PropertiesFile.read(path) if path.is_file() else None
+        old_port = ((before_file and before_file.get("server-port")) or "").strip()
         edited, changed = properties.apply_form(
             directory, updates or {}, lambda port: port_problem(ctx, port), server_type
         )
+        # server-udp-ports set to the game port's number (agent/ports.py
+        # set_udp_ports) moves with it; an owner's own value stays.
+        new_port = changed.get("server-port")
+        if (
+            new_port
+            and server_type.edition == "bedrock"
+            and old_port
+            and (edited.get("server-udp-ports") or "").strip() == old_port
+            and edited.set("server-udp-ports", str(new_port))
+        ):
+            changed["server-udp-ports"] = str(new_port)
         others = sorted(changed)
         if not changed:
             return {"changed": {}, "keys": [], "nothing_changed": True, **_after(ctx)}
