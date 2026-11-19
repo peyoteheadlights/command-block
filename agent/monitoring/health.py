@@ -227,7 +227,9 @@ def port(port_number: int, state: str, listening: bool | None, method: str = "tc
         "listening" if listening else "not listening",
         "listening",
         "Minecraft accepts connections when the server is online",
-        source="Bedrock (RakNet) ping over UDP" if method == "raknet" else "TCP connect attempt",
+        source="Bedrock ping (NetherNet over TCP, then RakNet over UDP)"
+        if method == "raknet"
+        else "TCP connect attempt",
     )
 
 
