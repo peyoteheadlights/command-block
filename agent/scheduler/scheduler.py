@@ -456,6 +456,9 @@ class Scheduler:
                     file.unlink(missing_ok=True)
                     removed += 1
         self.db.prune(metrics_days=self.config.monitor.history_days)
+        from ..cleanup import empty_old_batches
+
+        empty_old_batches(self.config)
         return f"Removed {removed} old log file(s) and pruned old metrics"
 
     async def _task_notify(self, payload: dict) -> str:

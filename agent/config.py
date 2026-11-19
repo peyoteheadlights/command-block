@@ -294,6 +294,10 @@ class BackupSettings(Section):
     # cloud folder (OneDrive, Google Drive, Dropbox). Empty: no second copy.
     # See agent/backups/offsite.py.
     offsite_directory: str = ""
+    # Folders left out of manual and scheduled backups, as paths inside the
+    # server folder ("plugins/dynmap/web/tiles"): map tiles the map add-on
+    # can draw again. Backups made before a change always hold everything.
+    exclude: list[str] = field(default_factory=list)
     # Back up after a planned stop if someone played since the last backup
     # (off by default: weak mini PCs stop quicker without it).
     on_stop: bool = False

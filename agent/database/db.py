@@ -747,6 +747,15 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX stored_files_sha512 ON stored_files(sha512);
         """,
     ),
+    (
+        25,
+        # "Keep this backup": the clean-up never deletes it. What a backup
+        # left out on purpose (map tiles), so a restore keeps today's copy.
+        """
+        ALTER TABLE backups ADD COLUMN kept INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE backups ADD COLUMN excludes TEXT;
+        """,
+    ),
 ]
 
 

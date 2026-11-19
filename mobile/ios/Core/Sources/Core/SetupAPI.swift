@@ -80,8 +80,11 @@ extension AgentClient {
     }
 
     /// Starts the copy as a task; the new server appears once it is checked.
-    public func duplicate(serverId: String, name: String, directory: String, world: String) async throws -> DuplicateStarted {
-        let body = try AgentClient.encode(["name": name, "directory": directory, "world": world])
+    public func duplicate(serverId: String, name: String, directory: String, world: String, fromBackup: Int64? = nil) async throws -> DuplicateStarted {
+        var fields: [String: JSONValue] = ["name": .string(name), "directory": .string(directory), "world": .string(world)]
+        // Restore as a new server: the backup's world, settings and add-ons.
+        if let fromBackup = fromBackup { fields["from_backup"] = .number(Double(fromBackup)) }
+        let body = try AgentClient.encode(fields)
         return try await call("POST", setup(serverId) + "/duplicate", body: body, as: DuplicateStarted.self)
     }
 

@@ -115,6 +115,32 @@ class BackupsPage(Page):
         layout.addWidget(self.keeping)
         self.column.addWidget(listed)
 
+        # Left out of backups (agent/backups/manager.py size_preview): map
+        # tiles and other folders the owner picks, with what a backup weighs.
+        self.leftout_card, layout = card(text("leftout.title"))
+        layout.addWidget(label(text("leftout.lead"), "sub"))
+        self.leftout_size = label()
+        layout.addWidget(self.leftout_size)
+        self.leftout_rows = QVBoxLayout()
+        layout.addLayout(self.leftout_rows)
+        row = QHBoxLayout()
+        self.leftout_path = QLineEdit()
+        self.leftout_path.setPlaceholderText(text("leftout.path_hint"))
+        self.leftout_path.setAccessibleName(text("leftout.title"))
+        self.leftout_add = push(text("leftout.leave_out"))
+        self.leftout_add.clicked.connect(lambda: self.leave_out(self.leftout_path.text()))
+        row.addWidget(self.leftout_path, 1)
+        row.addWidget(self.leftout_add)
+        layout.addLayout(row)
+        self.measure = push(text("leftout.measure"), "plain")
+        self.measure.clicked.connect(self.load_size)
+        row = QHBoxLayout()
+        row.addWidget(self.measure)
+        row.addStretch()
+        layout.addLayout(row)
+        self.column.addWidget(self.leftout_card)
+        self.size_data: dict = {}
+
         self.offsite_card, layout = card(text("offsite.title"))
         layout.addWidget(label(text("offsite.lead"), "sub"))
         self.offsite_words = label()
@@ -188,6 +214,36 @@ class BackupsPage(Page):
         layout.addLayout(row)
         self.column.addWidget(self.season_card)
 
+        # Clean-up (agent/cleanup.py): shown first, moved to a bin, Undo.
+        self.cleanup_card, layout = card(text("cleanup.title"))
+        layout.addWidget(label(text("cleanup.lead", days=7), "sub"))
+        self.find_button = push(text("cleanup.look"))
+        self.find_button.clicked.connect(self.load_cleanup)
+        self.cleanup_rows = QVBoxLayout()
+        self.cleanup_note = label(kind="sub")
+        self.to_bin = push(text("cleanup.move"), "primary")
+        self.to_bin.clicked.connect(self.clean_up)
+        self.bin_words = label(kind="sub")
+        self.undo_last = push(text("cleanup.undo_last"), "plain")
+        self.undo_last.clicked.connect(lambda: self.cleanup_undo(self.bin[0]["batch"]))
+        self.empty_bin = push(text("cleanup.empty"), "plain")
+        self.empty_bin.clicked.connect(self.cleanup_empty)
+        row = QHBoxLayout()
+        row.addWidget(self.find_button)
+        row.addWidget(self.to_bin)
+        row.addStretch()
+        layout.addLayout(self.cleanup_rows)
+        layout.addWidget(self.cleanup_note)
+        layout.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(self.bin_words, 1)
+        row.addWidget(self.undo_last)
+        row.addWidget(self.empty_bin)
+        layout.addLayout(row)
+        self.column.addWidget(self.cleanup_card)
+        self.picks: dict[str, QCheckBox] = {}
+        self.bin: list[dict] = []
+
         self.worlds_card, layout = card(text("backups.worlds"))
         self.worlds = QVBoxLayout()
         layout.addLayout(self.worlds)
@@ -236,6 +292,16 @@ class BackupsPage(Page):
         self.worlds_card.setVisible(technical)
         self.saves_title.hide()
         refill(self.saves, [])
+        self.leftout_card.setVisible(self.may("settings.server"))
+        self.leftout_path.setVisible(technical)
+        self.leftout_add.setVisible(technical)
+        self.leftout_size.setText("")
+        refill(self.leftout_rows, [])
+        self.size_data = {}
+        if self.leftout_card.isVisibleTo(self):
+            self.load_size()
+        self.cleanup_card.setVisible(self.may("backups.delete"))
+        self.show_cleanup({})
 
         def offsite_first(data: dict) -> None:
             # The list shows each backup's second copy, so the folder comes first.
@@ -298,6 +364,8 @@ class BackupsPage(Page):
             parts.append(f"{text('offsite.col')}: {state}")
         if mode["technical"]:
             parts.insert(0, made)
+        if b.get("kept") and b.get("kind") != "season":
+            parts.append(text("backups.kept"))
         if b.get("status") != "ok":
             parts.append(text("backup.unchecked"))
         words.addWidget(label("  ·  ".join(str(p) for p in parts if p), "sub"))
@@ -329,8 +397,15 @@ class BackupsPage(Page):
             actions.append(("offsite.copy_now", lambda: self.copy(b)))
         if self.may("backups.restore"):
             actions.append(("desktop.backups.restore_all", lambda: self.restore_all(b)))
-        if b.get("kind") == "season" and self.may("servers.manage"):
-            actions.append(("season.open", lambda: self.open_season(b)))
+        whole = "/" not in (b.get("includes") or "")  # not a backup of single files
+        if b.get("status") == "ok" and whole and self.may("servers.manage"):
+            season = b.get("kind") == "season"
+            key = "season.open" if season else "backups.open_as_server"
+            actions.append((key, lambda: self.open_as_server(b, season)))
+        if b.get("status") == "ok" and b.get("kind") not in ("manual", "season"):
+            if self.may("backups.delete"):
+                key = "backups.unkeep" if b.get("kept") else "backups.keep"
+                actions.append((key, lambda: self.keep(b, not b.get("kept"))))
         if self.may("backups.delete"):
             actions.append(("backups.delete", lambda: self.delete(b)))
         for key, do in actions:
@@ -483,18 +558,27 @@ class BackupsPage(Page):
             slow=True,
         )
 
-    def open_season(self, b: dict) -> None:
-        """An old season as a server of its own: Duplicate, with the season
-        backup's world, settings and add-ons."""
+    def keep(self, b: dict, keep: bool) -> None:
+        def done(_r) -> None:
+            self.say(text("backups.kept_toast" if keep else "backups.unkept_toast"))
+            self.load_list()
+
+        self.ask("POST", f"/backups/{b['id']}/keep", done, self.said, body={"keep": keep})
+
+    def open_as_server(self, b: dict, season: bool = False) -> None:
+        """A backup (or an old season) as a server of its own: Duplicate,
+        with the backup's world, settings and add-ons. The server it came
+        from stays as it is."""
         made = time.strftime("%Y-%m-%d", time.localtime(b.get("created_at") or 0))
-        name = text("season.copy_name", name=self.row["name"], date=made)[:60]
+        key = "season.copy_name" if season else "backups.copy_name"
+        name = text(key, name=self.row["name"], date=made)[:60]
 
         def suggested(found: dict) -> None:
             body = {
                 "name": name,
                 "directory": str(Path(found["directory"]).parent / name),
                 "world": "fresh",
-                "season_backup": b["id"],
+                "from_backup": b["id"],
             }
             self.ask(
                 "POST",
@@ -721,3 +805,162 @@ class BackupsPage(Page):
             self.take_home.setEnabled(True)
 
         self.ask("POST", "/world/download", packed, failed, slow=True)
+
+    # ------------------------------------------------------------ left out of backups
+    def load_size(self) -> None:
+        self.measure.setEnabled(False)
+        self.leftout_size.setText(text("leftout.measuring"))
+        self.ask(
+            "GET",
+            "/backups/size",
+            self.show_size,
+            self.said,
+            always=lambda: self.measure.setEnabled(True),
+        )
+
+    def show_size(self, data: dict) -> None:
+        self.size_data = data
+        self.leftout_size.setText(
+            text(
+                "leftout.size",
+                size=size(data.get("total_bytes")),
+                free=size(data.get("free_bytes")),
+            )
+        )
+        rows: list[QWidget] = []
+        for item in data.get("excluded") or []:
+            rows.append(self.leftout_row(item["path"], size(item.get("size_bytes")), False))
+        for tip in data.get("suggested") or []:
+            words = text(
+                "leftout.suggest", name=tip["name"], path=tip["path"], size=size(tip["size_bytes"])
+            )
+            rows.append(self.leftout_row(tip["path"], words, True))
+        if not data.get("excluded"):
+            rows.insert(0, label(text("leftout.none"), "sub"))
+        refill(self.leftout_rows, rows)
+
+    def leftout_row(self, path: str, words: str, add: bool) -> QWidget:
+        line = QWidget()
+        h = QHBoxLayout(line)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(label(words if add else f"{path}  ·  {words}"), 1)
+        button = push(text("leftout.leave_out" if add else "leftout.put_back"), "plain")
+        button.setAccessibleName(f"{button.text()}: {path}")
+        button.clicked.connect(
+            lambda: (
+                self.leave_out(path)
+                if add
+                else self.save_excludes(
+                    [e["path"] for e in self.size_data.get("excluded") or [] if e["path"] != path]
+                )
+            )
+        )
+        h.addWidget(button)
+        return line
+
+    def leave_out(self, path: str) -> None:
+        path = path.strip()
+        if not path:
+            return
+        now = [e["path"] for e in self.size_data.get("excluded") or []]
+        self.save_excludes([*now, path])
+
+    def save_excludes(self, paths: list[str]) -> None:
+        def done(result: dict) -> None:
+            refused = (result.get("rejected") or {}).get("backups.exclude")
+            if refused:
+                self.say(refused)
+                return
+            self.leftout_path.clear()
+            self.say(text("leftout.saved"))
+            self.load_size()
+
+        self.ask("PUT", "/settings", done, self.said, body={"updates": {"backups.exclude": paths}})
+
+    # ------------------------------------------------------------ clean-up
+    def load_cleanup(self) -> None:
+        self.find_button.setEnabled(False)
+        self.ask(
+            "GET",
+            "/cleanup",
+            self.show_cleanup,
+            self.said,
+            always=lambda: self.find_button.setEnabled(True),
+        )
+
+    def show_cleanup(self, data: dict) -> None:
+        items = data.get("items")
+        self.picks = {}
+        rows: list[QWidget] = []
+        for item in items or []:
+            words = [text(f"cleanup.kind.{item['kind']}"), size(item.get("size_bytes"))]
+            words.insert(1 if mode["technical"] else 2, item["path"])
+            if item.get("modified"):
+                words.append(clock(item["modified"]))
+            box = QCheckBox("  ·  ".join(words))
+            # Logs and crash reports are ticked; the bigger things are the owner's pick.
+            box.setChecked(item["kind"] in ("old_log", "crash_report"))
+            self.picks[item["path"]] = box
+            rows.append(box)
+        if items is not None and not items:
+            rows.append(label(text("cleanup.nothing"), "sub"))
+        refill(self.cleanup_rows, rows)
+        note = "" if data.get("dimensions_checked", True) else text("cleanup.dimensions_unknown")
+        self.cleanup_note.setText(note)
+        self.cleanup_note.setVisible(bool(note))
+        self.to_bin.setVisible(bool(items))
+        self.bin = data.get("bin") or []
+        if self.bin:
+            when = time.strftime("%Y-%m-%d", time.localtime(min(b["empties_at"] for b in self.bin)))
+            total = sum(b.get("size_bytes") or 0 for b in self.bin)
+            self.bin_words.setText(text("cleanup.bin", size=size(total), when=when))
+        for widget in (self.bin_words, self.undo_last, self.empty_bin):
+            widget.setVisible(bool(self.bin))
+
+    def clean_up(self) -> None:
+        paths = [path for path, box in self.picks.items() if box.isChecked()]
+        if not paths:
+            return
+        self.to_bin.setEnabled(False)
+
+        def done(result: dict) -> None:
+            words = text(
+                "cleanup.done",
+                count=len(result.get("moved") or []),
+                size=size(result.get("size_bytes")),
+                days=result.get("bin_days"),
+            )
+            if result.get("skipped"):
+                words += " " + text("cleanup.skipped", count=len(result["skipped"]))
+            batch = result.get("batch")
+            self.say(words, (lambda: self.cleanup_undo(batch)) if batch else None)
+            self.load_cleanup()
+
+        self.ask(
+            "POST",
+            "/cleanup",
+            done,
+            self.said,
+            body={"paths": paths},
+            always=lambda: self.to_bin.setEnabled(True),
+        )
+
+    def cleanup_undo(self, batch: str) -> None:
+        def done(result: dict) -> None:
+            left = result.get("left_in_bin") or []
+            self.say(text("cleanup.left", count=len(left)) if left else text("cleanup.undone"))
+            self.load_cleanup()
+
+        self.ask("POST", "/cleanup/undo", done, self.said, body={"batch": batch})
+
+    def cleanup_empty(self) -> None:
+        if not self.window_.confirm(
+            text("cleanup.empty_title"), text("cleanup.empty_body"), text("cleanup.empty")
+        ):
+            return
+
+        def done(result: dict) -> None:
+            self.say(text("cleanup.emptied", size=size(result.get("freed_bytes"))))
+            self.load_cleanup()
+
+        self.ask("POST", "/cleanup/empty", done, self.said, body={})

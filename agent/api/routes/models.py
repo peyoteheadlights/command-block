@@ -58,6 +58,18 @@ class RestoreRequest(BaseModel):
     safety_backup: bool = True
 
 
+class KeepRequest(BaseModel):
+    keep: bool = True
+
+
+class CleanupRequest(BaseModel):
+    paths: list[str] = Field(max_length=500)
+
+
+class CleanupBatchRequest(BaseModel):
+    batch: str | None = Field(default=None, max_length=40)
+
+
 class UndoRequest(BaseModel):
     start_after: bool = False
     # The change the person was shown; refused if it is no longer the newest.
@@ -326,7 +338,8 @@ class DuplicateRequest(BaseModel):
     # Make the copy a Test server.
     test: bool = False
     # Open an old season: the world comes from this season backup.
-    season_backup: int | None = None
+    # A backup to make the new server from (Restore as a new server).
+    from_backup: int | None = None
 
 
 class ModpackNewRequest(BaseModel):
