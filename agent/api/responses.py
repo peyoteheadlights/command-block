@@ -1337,6 +1337,35 @@ class ModList(Open):
     overlaps: list[Overlap] = []
 
 
+class ModSideServer(Open):
+    id: str
+    name: str
+    filename: str
+    version: str | None = None
+    side_from: str | None = Field(
+        None, description="you, modpack, modrinth, curseforge, file or unknown; null: player-only"
+    )
+    enabled: bool = True
+
+
+class ModSideRow(Open):
+    name: str
+    mod_id: str | None = None
+    side: str = Field(description="server, players or both")
+    servers: list[ModSideServer]
+
+
+class ModSideNotRead(Open):
+    id: str
+    name: str
+    detail: str
+
+
+class ModSides(Open):
+    mods: list[ModSideRow]
+    not_read: list[ModSideNotRead] = []
+
+
 class ModSideChanged(Open):
     ok: bool
     filename: str

@@ -525,3 +525,68 @@ async def test_a_real_backup_holds_the_marks_and_player_files_and_skips_listed_o
     sides.set_options(ctx, backup=False, skip_listed=False)
     held = names(await backups.create(user="owner"))
     assert sides.MARKS_FILE in held and not any(n.startswith("player-only") for n in held)
+
+
+# ---------------------------------------------------------------- on all servers
+def test_on_all_servers_lists_each_mod_and_side_with_its_servers(multi_client, multi):
+    creative, survival = multi.for_server("creative"), multi.for_server("survival")
+    for config in (creative, survival):
+        config.mods_dir.mkdir(parents=True, exist_ok=True)
+    make_jar(creative.mods_dir / "chunky.jar", "chunky", name="Chunky", environment="server")
+    make_jar(survival.mods_dir / "chunky.jar", "chunky", name="Chunky", environment="server")
+    make_jar(survival.mods_dir / "create.jar", "create", name="Create")
+    make_jar(survival.mods_dir / "d.jar", "forgething", loader="forge")
+    (creative.server_dir / sides.FOLDER).mkdir()
+    make_jar(creative.server_dir / sides.FOLDER / "minimap.jar", "minimap", name="Minimap")
+    # The owner's mark in the server's file beats the jar.
+    (creative.server_dir / sides.MARKS_FILE).write_text(json.dumps({"chunky": "both"}))
+
+    found = multi_client.get("/api/mod-sides")
+    assert found.status_code == 200, found.text
+    rows = {
+        (r["name"], r["side"]): [(s["id"], s["side_from"]) for s in r["servers"]]
+        for r in found.json()["mods"]
+    }
+    assert rows == {
+        ("Chunky", "both"): [("creative", "you")],
+        ("Chunky", "server"): [("survival", "file")],
+        ("Create", "both"): [("survival", "file")],
+        # A Forge jar doesn't say: Both, marked as not sure.
+        ("d", "both"): [("survival", "unknown")],
+        ("Minimap", "players"): [("creative", None)],
+    }
+    assert found.json()["not_read"] == []
+
+
+def test_on_all_servers_leaves_out_servers_a_moderator_cant_see(multi_client, multi):
+    from agent.security import permissions as P
+
+    from .test_helpers import add_helper
+
+    survival = multi.for_server("survival")
+    survival.mods_dir.mkdir(parents=True, exist_ok=True)
+    make_jar(survival.mods_dir / "chunky.jar", "chunky", name="Chunky", environment="server")
+    owner = dict(multi_client.headers)
+    multi_client.headers.pop("Authorization")
+    sam = add_helper(multi_client, owner)
+    given = multi_client.put(
+        "/api/accounts/sam",
+        json={"grants": {"survival": [], "creative": sorted(P.START_AND_STOP)}},
+        headers=owner,
+    )
+    assert given.status_code == 200, given.text
+    assert multi_client.get("/api/mod-sides", headers=sam).json()["mods"] == []
+    assert len(multi_client.get("/api/mod-sides", headers=owner).json()["mods"]) == 1
+
+
+def test_a_server_whose_folder_cant_be_read_is_named(ctx, monkeypatch):
+    def broken(**_kw):
+        raise OSError("Access is denied")
+
+    monkeypatch.setattr(ctx.mods, "scan", broken)
+    ctx.name = "Survival"
+    found = sides.on_all_servers([ctx])
+    assert found == {
+        "mods": [],
+        "not_read": [{"id": "test", "name": "Survival", "detail": "Access is denied"}],
+    }

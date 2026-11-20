@@ -596,11 +596,22 @@ struct ContentView: View {
                 text: kind == .plugins ? model.t("page.plugins") + " · \(list.mods.count)" : strings.tn("mods.installed", count: list.mods.count),
                 palette: palette
             )
-            if list.mods.isEmpty {
-                EmptyCard(title: model.t("mods.none"), hint: changes == .ready ? model.t("mods.none_hint") : nil, palette: palette)
+            // Plugins only ever run on the server, so the filter is for mods.
+            if kind == .mods && !list.mods.isEmpty {
+                sidesFilter(content)
             }
-            ForEach(list.mods) { mod in
-                modCard(content, mod, changes, palette)
+            if kind == .mods, let everywhere = content.everywhere {
+                everywhereList(content, everywhere, palette)
+            } else if list.mods.isEmpty {
+                EmptyCard(title: model.t("mods.none"), hint: changes == .ready ? model.t("mods.none_hint") : nil, palette: palette)
+            } else {
+                let shown = Sides.shown(list.mods, content.sideFilter)
+                if shown.isEmpty {
+                    Hint(text: model.t("sides.none_filtered"), palette: palette)
+                }
+                ForEach(shown) { mod in
+                    modCard(content, mod, changes, palette)
+                }
             }
             if !list.oddSetups.isEmpty {
                 CardBox(palette: palette) {
@@ -686,6 +697,48 @@ struct ContentView: View {
                 }
             }
             .foregroundStyle(palette.textPrimary)
+        }
+    }
+
+    /// Server / Players / Both, and "On all servers".
+    private func sidesFilter(_ content: ContentPages) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker(model.t("sides.who"), selection: Binding(get: { content.sideFilter }, set: { content.sideFilter = $0 })) {
+                ForEach(Sides.filters, id: \.self) { side in
+                    Text(model.t("sides." + side)).tag(side)
+                }
+            }
+            .pickerStyle(.segmented)
+            Toggle(
+                model.t("sides.all_servers"),
+                isOn: Binding(get: { content.everywhere != nil }, set: { on in Task { await content.showEverywhere(on) } })
+            )
+        }
+        .padding(.horizontal)
+    }
+
+    @ViewBuilder
+    private func everywhereList(_ content: ContentPages, _ read: PageRead<ModSides>, _ palette: Palette) -> some View {
+        if let problem = read.problem {
+            ProblemCard(problem: problem, palette: palette) { await content.showEverywhere(true) }
+        }
+        if let found = read.value {
+            ForEach(found.notRead, id: \.id) { missed in
+                Text(hiding: model.t("sides.not_read", ["name": missed.name, "reason": missed.detail]))
+                    .font(.footnote).foregroundStyle(palette.tone(.warning))
+            }
+            let shown = Sides.shown(found, content.sideFilter)
+            if shown.isEmpty {
+                Hint(text: model.t("sides.none_filtered"), palette: palette)
+            }
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, row in
+                CardBox(palette: palette) {
+                    Text(hiding: row.name).foregroundStyle(palette.textPrimary)
+                    Hint(text: model.t("sides.for", ["side": model.t("sides." + row.side)]) + " · " + Sides.servers(model.strings, row), palette: palette)
+                }
+            }
+        } else if read.problem == nil {
+            Hint(text: model.t("mobile.common.loading"), palette: palette)
         }
     }
 

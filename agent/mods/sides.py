@@ -203,6 +203,49 @@ def add_marks(ctx: ServerContext, rows: list[dict[str, Any]]) -> None:
             row["side"], row["side_from"] = mark(ctx.mods, mod, from_pack_, marks)
 
 
+def on_all_servers(servers: list[ServerContext]) -> dict[str, Any]:
+    """Who needs each mod, on every one of these servers: one row per mod
+    and side, with the servers it's on. Read from each server's marks file
+    and mods scan (the same as its Mods page), so the files stay the truth.
+    Players-only mods in a player-only folder count as Players. A server
+    whose folder can't be read is named, never left out quietly."""
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    not_read = []
+    for ctx in servers:
+        if not ctx.mods.server_type.has_content:
+            continue  # vanilla, Bedrock: no mods
+        try:
+            packs, marks = pack_sides(ctx), read_marks(ctx.config)
+            found: list[tuple[ModInfo, str, str | None]] = [
+                (m, *mark(ctx.mods, m, packs, marks)) for m in ctx.mods.scan(use_cache=True)
+            ]
+            found += [(m, "players", None) for m in _player_mods(ctx)]
+        except (OSError, ModError) as exc:
+            not_read.append({"id": ctx.server_id, "name": ctx.name, "detail": str(exc)})
+            continue
+        for mod, side, source in found:
+            group = groups.setdefault(
+                (mod.mod_id or mod.filename, side),
+                {
+                    "name": mod.name or mod.mod_id or mod.filename,
+                    "mod_id": mod.mod_id,
+                    "side": side,
+                },
+            )
+            group.setdefault("servers", []).append(
+                {
+                    "id": ctx.server_id,
+                    "name": ctx.name,
+                    "filename": mod.filename,
+                    "version": mod.version,
+                    "side_from": source,
+                    "enabled": mod.enabled,
+                }
+            )
+    rows = sorted(groups.values(), key=lambda g: (g["name"].lower(), g["side"]))
+    return {"mods": rows, "not_read": not_read}
+
+
 async def catch_up(mods: ModManager) -> None:
     """Ask Modrinth once for the sides of Modrinth mods that don't have
     them saved yet (all in one call). Nothing is guessed if it can't
