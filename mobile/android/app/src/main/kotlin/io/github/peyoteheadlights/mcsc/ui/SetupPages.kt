@@ -527,6 +527,8 @@ class SetupPages(
     // ------------------------------------------------------------ playit.gg
     /** playit.gg on the server's PC (agent/playit.py). */
     var playit: Read<PlayitState> by mutableStateOf(Read())
+    /** playit's config.yml box, pasted for WaterdogPE (holds the tunnel's token; never saved). */
+    var waterdogBox: String by mutableStateOf("")
         private set
 
     fun loadPlayit() {
@@ -551,6 +553,8 @@ class SetupPages(
                 val now = work(c)
                 playit = Read(now)
                 now.stopProblem?.let { said = Said(strings.t("playit.stop_problem", "problem" to it), good = false) }
+                if (now.internetOff) said = Said(strings.t("playit.waterdog_internet_off"), good = true)
+                if (now.waterdog != null) waterdogBox = "" // the token isn't kept on the phone
             } catch (e: AgentException) {
                 noted(e)
                 said = Said(Message.of(e).text(strings), good = false)

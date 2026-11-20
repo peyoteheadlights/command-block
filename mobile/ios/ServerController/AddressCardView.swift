@@ -67,7 +67,7 @@ struct AddressCardView: View {
         if let state = setup.ddns.value {
             NamesView(setup: setup, state: state, owner: owner, palette: palette, ask: ask)
         }
-        if let state = setup.playit.value, state.supported {
+        if let state = setup.playit.value {
             PlayitView(setup: setup, serverId: serverId, state: state, owner: owner, palette: palette, ask: ask)
         }
     }
@@ -322,6 +322,14 @@ private struct PlayitView: View {
         case "link": link(model.t("playit.link_open"), state.claim?.url)
         case "reconnect": Button(model.t("playit.reconnect")) { act("reconnect") }.disabled(setup.busy != nil)
         case "make": link(model.t("playit.make_open"), state.newTunnel)
+        case "waterdog":
+            link(model.t("playit.make_open"), state.newTunnel)
+            TextField(model.t("playit.bedrock_paste"), text: Bindable(setup).waterdogBox, axis: .vertical)
+                .lineLimit(4...8)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            Button(model.t("playit.bedrock_set_up")) { ask(.waterdogOn) }
+                .disabled(setup.busy != nil || setup.waterdogBox.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         default: EmptyView()
         }
         if step.checkAgain {
@@ -338,6 +346,9 @@ private struct PlayitView: View {
             .disabled(setup.busy != nil)
         }
         if setup.busy == "playit" { Hint(text: model.t("address.busy"), palette: palette) }
+        if owner && state.waterdog != nil {
+            Button(model.t("playit.waterdog_stop"), role: .destructive) { ask(.waterdogOff) }.disabled(setup.busy != nil)
+        }
         if owner && state.on {
             Button(model.t("playit.stop"), role: .destructive) { ask(.playitStop) }.disabled(setup.busy != nil)
         }

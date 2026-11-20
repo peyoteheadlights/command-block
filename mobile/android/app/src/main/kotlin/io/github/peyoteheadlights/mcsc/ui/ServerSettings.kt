@@ -159,6 +159,28 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
                     },
                     onDismiss = { asking = null },
                 )
+                SetupAsk.WATERDOG_ON -> Confirm(
+                    t("playit.bedrock_confirm_title"),
+                    t("playit.bedrock_confirm_body"),
+                    t("playit.bedrock_set_up"),
+                    danger = false,
+                    onConfirm = {
+                        asking = null
+                        setup.playitCall(strings) { it.setUpWaterdog(serverId, setup.waterdogBox) }
+                    },
+                    onDismiss = { asking = null },
+                )
+                SetupAsk.WATERDOG_OFF -> Confirm(
+                    t("playit.waterdog_stop"),
+                    t("playit.waterdog_stop_body"),
+                    t("playit.waterdog_stop"),
+                    danger = true,
+                    onConfirm = {
+                        asking = null
+                        setup.playitCall(strings) { it.stopWaterdog(serverId) }
+                    },
+                    onDismiss = { asking = null },
+                )
                 SetupAsk.REMOVE_DUCKDNS, SetupAsk.REMOVE_NOIP -> {
                     val kind = if (asking == SetupAsk.REMOVE_DUCKDNS) "duckdns" else "noip"
                     val saved = setup.ddns.value?.let { if (kind == "duckdns") it.duckdns else it.noip }
@@ -350,7 +372,6 @@ private fun PlayitPart(vm: AppViewModel, setup: SetupPages, serverId: String, ow
     val context = LocalContext.current
     setup.playit.problem?.let { Text(it.text(vm.strings), color = colors.danger) }
     val state = setup.playit.value ?: return
-    if (!state.supported) return // a plain Bedrock server goes through WaterdogPE, later
     val step = Playit.step(vm.strings, state, owner)
     val free = setup.busy == null
     Text(t("playit.title"), color = colors.text)
@@ -360,6 +381,18 @@ private fun PlayitPart(vm: AppViewModel, setup: SetupPages, serverId: String, ow
         "link" -> Button(onClick = { openLink(context, state.claim?.url.orEmpty()) }) { Text(t("playit.link_open")) }
         "reconnect" -> Button(onClick = { setup.playitCall(vm.strings) { it.playitAction(serverId, "reconnect") } }, enabled = free) { Text(t("playit.reconnect")) }
         "make" -> Button(onClick = { openLink(context, state.newTunnel) }) { Text(t("playit.make_open")) }
+        "waterdog" -> {
+            OutlinedButton(onClick = { openLink(context, state.newTunnel) }) { Text(t("playit.make_open")) }
+            OutlinedTextField(
+                setup.waterdogBox,
+                { setup.waterdogBox = it.take(64 * 1024) },
+                label = { Text(t("playit.bedrock_paste")) },
+                minLines = 4,
+                maxLines = 8,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(onClick = { ask(SetupAsk.WATERDOG_ON) }, enabled = free && setup.waterdogBox.isNotBlank()) { Text(t("playit.bedrock_set_up")) }
+        }
     }
     if (step.checkAgain) OutlinedButton(onClick = { setup.loadPlayit() }) { Text(t("playit.check")) }
     if (owner && state.on && state.phase == "running" && Playit.javaAddress(state) != null) {
@@ -369,6 +402,7 @@ private fun PlayitPart(vm: AppViewModel, setup: SetupPages, serverId: String, ow
         ) { Text(t("address.test")) }
     }
     if (setup.busy == "playit") Text(t("address.busy"), color = colors.text2)
+    if (owner && state.waterdog != null) OutlinedButton(onClick = { ask(SetupAsk.WATERDOG_OFF) }, enabled = free) { Text(t("playit.waterdog_stop")) }
     if (owner && state.on) OutlinedButton(onClick = { ask(SetupAsk.PLAYIT_STOP) }, enabled = free) { Text(t("playit.stop")) }
 }
 
