@@ -459,7 +459,9 @@ def test_a_moderator_without_mods_rights_sees_no_change_buttons(qapp, agent_http
     wait_for(qapp, lambda: window.role is not None and not window._tasks)
     wait_for(qapp, lambda: "3 mods installed" in shown_text(page))
     assert not buttons_named(page, "Turn off") and not buttons_named(page, "Update all")
-    assert not [s for s in page.findChildren(parts.Switch) if s.isVisibleTo(page)]
+    # "On all servers" only changes what the list shows; no switch changes a mod.
+    switches = [s for s in page.findChildren(parts.Switch) if s.isVisibleTo(page)]
+    assert switches == [page.everywhere]
     assert not row_buttons(page, "Remove", "Alpha")
     assert not page.search_card.isVisibleTo(page)
 
@@ -1197,3 +1199,28 @@ def test_the_anti_cheat_picker_offers_grim_with_the_fabric_warning(qapp, agent_h
     words = shown_text(page)
     assert "Try it with a friend first." in words
     assert button(page, "Add Grim")
+
+
+def test_the_side_filter_and_on_all_servers(qapp, agent_http):
+    folder = with_mods(agent_http)
+    make_jar(folder / "chunky.jar", "chunky", name="Chunky", environment="server")
+    creative = mods_folder(agent_http, "creative")
+    creative.mkdir(exist_ok=True)
+    make_jar(creative / "chunky.jar", "chunky", name="Chunky", environment="server")
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: can(page, "Remove", "Alpha"))
+
+    page.filters.buttons["server"].click()
+    wait_for(qapp, lambda: can(page, "Remove", "Chunky"))
+    assert not row_buttons(page, "Remove", "Alpha")
+    page.filters.buttons["players"].click()
+    wait_for(qapp, lambda: "No mods with this mark." in shown_text(page))
+
+    page.filters.buttons["server"].click()
+    page.everywhere.click()
+    wait_for(qapp, lambda: "On: Survival, Creative" in shown_text(page))
+    assert "Alpha" not in shown_text(page)
+    page.filters.buttons["all"].click()
+    wait_for(qapp, lambda: "Alpha" in shown_text(page) and "For: Both" in shown_text(page))
+    page.everywhere.click()
+    wait_for(qapp, lambda: can(page, "Remove", "Alpha"))

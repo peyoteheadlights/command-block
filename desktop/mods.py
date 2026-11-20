@@ -39,7 +39,7 @@ from .fixes import install
 from .make_modpack import MakeCard
 from .modrinth_card import ModrinthCard
 from .overview import card, dot_of, title_of
-from .parts import IconButton, InfoDot, Row, Search, Switch
+from .parts import IconButton, InfoDot, Row, Search, Segmented, Switch
 from .ui import Page, clock, label, push, refill, size
 from .words import mode, text
 
@@ -319,10 +319,27 @@ class ModsPage(Page):
         self.read.clicked.connect(self.read_link)
         line.addWidget(self.link_box, 1)
         line.addWidget(self.read)
+        # Server / Players / Both filter, and the same marks on every server.
+        self.side_filter = "all"
+        self.everywhere_found: dict | None = None
+        self.sides_row = QWidget()
+        line = QHBoxLayout(self.sides_row)
+        line.setContentsMargins(0, 0, 0, 0)
+        self.filters = Segmented(
+            [(k, text(f"sides.{k}")) for k in ("all", *SIDES)], "all", self.pick_side
+        )
+        self.everywhere = Switch(text("sides.all_servers"))
+        self.everywhere.toggled.connect(lambda _on: self.show_rows())
+        self.everywhere_words = label(text("sides.all_servers"), "sub")
+        line.addWidget(self.filters)
+        line.addStretch()
+        line.addWidget(self.everywhere_words)
+        line.addWidget(self.everywhere)
         self.rows = QVBoxLayout()
         layout.addWidget(self.needs)
         layout.addLayout(buttons)
         layout.addWidget(self.link_row)
+        layout.addWidget(self.sides_row)
         layout.addLayout(self.rows)
         self.column.addWidget(self.list_card)
 
@@ -460,6 +477,8 @@ class ModsPage(Page):
             (dot_of(self.players_card).say, "desktop.mods.for_players_intro"),
             (dot_of(self.player_only_card).say, "sides.players_intro"),
             (title_of(self.ideas_card).setText, "desktop.mods.good_to_have"),
+            (self.everywhere_words.setText, "sides.all_servers"),
+            *((b.setText, f"sides.{k}") for k, b in self.filters.buttons.items()),
         ]
 
     # ------------------------------------------------------------ loading
@@ -579,11 +598,9 @@ class ModsPage(Page):
         needs = data.get("needs_you") or []
         self.needs_you_card.setVisible(bool(needs))
         refill(self.needs_you_rows, [self.need_row(n) for n in needs])
-        refill(
-            self.rows,
-            [self.mod_row(m) for m in mods]
-            or [label(text("mods.none"), "step"), label(text("mods.none_hint"), "sub")],
-        )
+        # Plugins only ever run on the server, so the filter is for mods.
+        self.sides_row.setVisible(not plugins)
+        self.show_rows()
         self.search_hint.say(
             text(
                 "mobile.content.search_hint",
@@ -913,6 +930,65 @@ class ModsPage(Page):
             site = {"modrinth": "Modrinth", "curseforge": "CurseForge"}.get(source, source)
             words += " " + text("sides.from_site", site=site)
         return words
+
+    def pick_side(self, side: str) -> None:
+        self.side_filter = side
+        self.show_rows(ask_again=False)
+
+    def show_rows(self, ask_again: bool = True) -> None:
+        """This server's mods, or with "On all servers" every server's,
+        narrowed to the side picked."""
+        if self.everywhere.isChecked() and not self.sides_row.isHidden():
+            if self.everywhere_found and not ask_again:
+                self.show_everywhere(self.everywhere_found)
+                return
+            refill(self.rows, [label(text("mobile.common.loading"), "sub")])
+            window = self.window_
+            here = window.still_on(self.row["id"])
+            window.run(
+                lambda: window.agent.call("GET", "/mod-sides"),
+                here(self.show_everywhere),
+                here(self.said),
+            )
+            return
+        mods = self.data.get("mods") or []
+        shown = [m for m in mods if self.side_filter in ("all", m.get("side"))]
+        refill(
+            self.rows,
+            [self.mod_row(m) for m in shown]
+            or (
+                [label(text("sides.none_filtered"), "sub")]
+                if mods
+                else [label(text("mods.none"), "step"), label(text("mods.none_hint"), "sub")]
+            ),
+        )
+
+    def show_everywhere(self, found: dict) -> None:
+        self.everywhere_found = found
+        shown = [r for r in found.get("mods") or [] if self.side_filter in ("all", r["side"])]
+        problems = [
+            label(text("sides.not_read", name=n["name"], reason=n["detail"]), "problem")
+            for n in found.get("not_read") or []
+        ]
+        refill(
+            self.rows,
+            [*problems, *(self.everywhere_row(r) for r in shown)]
+            or [label(text("sides.none_filtered"), "sub")],
+        )
+
+    def everywhere_row(self, item: dict) -> QWidget:
+        """One mod with one mark: "For: Server · On: Survival, Creative"."""
+        row = Row()
+        words = QVBoxLayout()
+        words.addWidget(label(item["name"], "step"))
+        on = ", ".join(
+            s["name"] + (" " + text("sides.not_sure") if s.get("side_from") == "unknown" else "")
+            for s in item["servers"]
+        )
+        side = text("sides.for", side=text(f"sides.{item['side']}"))
+        words.addWidget(label(f"{side}  ·  {text('sides.on_servers', servers=on)}", "sub"))
+        row.line.addLayout(words, 1)
+        return row
 
     def show_sides(self, data: dict) -> None:
         odd = [o["text"] for o in data.get("odd_setups") or []]

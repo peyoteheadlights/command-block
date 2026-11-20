@@ -24,6 +24,11 @@ extension AgentClient {
         try await call("GET", content(serverId) + "/mods", as: ModList.self)
     }
 
+    /// "On all servers": who needs each mod on every server this account sees.
+    public func modSides() async throws -> ModSides {
+        try await call("GET", "/api/mod-sides", as: ModSides.self)
+    }
+
     /// Turns a mod or plugin on or off without removing it.
     public func setModEnabled(serverId: String, filename: String, enabled: Bool) async throws -> ModChanged {
         try await call("POST", content(serverId) + "/mods/" + (enabled ? "enable" : "disable"), body: try fileBody(filename), as: ModChanged.self)

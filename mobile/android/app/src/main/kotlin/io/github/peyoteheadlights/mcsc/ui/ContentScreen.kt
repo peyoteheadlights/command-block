@@ -3,7 +3,10 @@ package io.github.peyoteheadlights.mcsc.ui
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,6 +22,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.TextButton
@@ -51,6 +57,8 @@ import io.github.peyoteheadlights.mcsc.core.Install
 import io.github.peyoteheadlights.mcsc.core.Mod
 import io.github.peyoteheadlights.mcsc.core.ModFit
 import io.github.peyoteheadlights.mcsc.core.ModList
+import io.github.peyoteheadlights.mcsc.core.ModSideRow
+import io.github.peyoteheadlights.mcsc.core.ModSides
 import io.github.peyoteheadlights.mcsc.core.ModVersion
 import io.github.peyoteheadlights.mcsc.core.SameJob
 import io.github.peyoteheadlights.mcsc.core.Modpacks
@@ -203,8 +211,18 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
             else vm.strings.tn("mods.installed", list.mods.size),
         )
     }
-    if (list.mods.isEmpty()) item { Card { Item(t("mods.none"), subtitle = t("mods.none_hint").takeIf { changes == Changes.READY }) } }
-    items(list.mods, key = { it.filename }) { mod -> ModCard(vm, content, mod, changes, ask) }
+    // Plugins only ever run on the server, so the filter is for mods.
+    if (kind == ContentKind.MODS && list.mods.isNotEmpty()) item { SidesFilter(content) }
+    val everywhere = content.everywhere.takeIf { kind == ContentKind.MODS }
+    when {
+        everywhere != null -> everywhereList(content, everywhere)
+        list.mods.isEmpty() -> item { Card { Item(t("mods.none"), subtitle = t("mods.none_hint").takeIf { changes == Changes.READY }) } }
+        else -> {
+            val shown = Sides.shown(list.mods, content.sideFilter)
+            if (shown.isEmpty()) item { Note(t("sides.none_filtered"), color = LocalColors.current.text3) }
+            items(shown, key = { it.filename }) { mod -> ModCard(vm, content, mod, changes, ask) }
+        }
+    }
     if (list.oddSetups.isNotEmpty()) {
         item {
             Card {
@@ -246,6 +264,44 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
                 )
             }
         }
+    }
+}
+
+/** Server / Players / Both, and "On all servers". */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SidesFilter(content: ContentPages) {
+    FlowRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (side in Sides.FILTERS) {
+            FilterChip(selected = content.sideFilter == side, onClick = { content.sideFilter = side }, label = { Text(t("sides.$side")) })
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(t("sides.all_servers"), Modifier.weight(1f))
+        Switch(checked = content.everywhere != null, onCheckedChange = content::showEverywhere)
+    }
+}
+
+private fun LazyListScope.everywhereList(content: ContentPages, read: Read<ModSides>) {
+    read.problem?.let { problem -> item { ProblemNote(problem, onRetry = { content.showEverywhere(true) }) } }
+    val found = read.value
+    if (found == null) {
+        if (read.problem == null) item { Note(t("mobile.common.loading")) }
+        return
+    }
+    for (missed in found.notRead) {
+        item { Note(t("sides.not_read", "name" to missed.name, "reason" to missed.detail), color = LocalColors.current.warning) }
+    }
+    val shown = Sides.shown(found, content.sideFilter)
+    if (shown.isEmpty()) item { Note(t("sides.none_filtered"), color = LocalColors.current.text3) }
+    items(shown) { row -> EverywhereCard(row) }
+}
+
+@Composable
+private fun EverywhereCard(row: ModSideRow) {
+    val strings = LocalStrings.current
+    Card {
+        Item(row.name, subtitle = t("sides.for", "side" to t("sides.${row.side}")) + " · " + Sides.servers(strings, row))
     }
 }
 

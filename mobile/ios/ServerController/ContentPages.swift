@@ -95,6 +95,27 @@ final class ContentPages {
         } catch {}
     }
 
+    /// The Server / Players / Both filter ("all": every mod).
+    var sideFilter = "all"
+    /// "On all servers": every server's marks; nil while it's off.
+    private(set) var everywhere: PageRead<ModSides>? = nil
+
+    func showEverywhere(_ on: Bool) async {
+        guard on, let client = client() else {
+            everywhere = nil
+            return
+        }
+        everywhere = PageRead(loading: true)
+        do {
+            everywhere = PageRead(value: try await client.modSides())
+        } catch let problem as AgentError {
+            noted(problem)
+            everywhere = PageRead(problem: problem)
+        } catch {
+            everywhere = nil
+        }
+    }
+
     func setEnabled(_ mod: Mod, _ on: Bool, _ strings: Strings) async {
         await work("toggle:\(mod.filename)", strings, reload: loadMods) { client, id in
             _ = try await client.setModEnabled(serverId: id, filename: mod.filename, enabled: on)
