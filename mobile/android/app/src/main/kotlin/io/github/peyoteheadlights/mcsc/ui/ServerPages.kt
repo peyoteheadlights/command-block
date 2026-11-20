@@ -16,6 +16,8 @@ import io.github.peyoteheadlights.mcsc.core.Crash
 import io.github.peyoteheadlights.mcsc.core.DiscordLinks
 import io.github.peyoteheadlights.mcsc.core.EventRow
 import io.github.peyoteheadlights.mcsc.core.JoinInfo
+import io.github.peyoteheadlights.mcsc.core.LogFile
+import io.github.peyoteheadlights.mcsc.core.LogFileText
 import io.github.peyoteheadlights.mcsc.core.PlayerAction
 import io.github.peyoteheadlights.mcsc.core.PlayerActionWatch
 import io.github.peyoteheadlights.mcsc.core.PlayerActions
@@ -73,6 +75,34 @@ class ServerPages(
         private set
 
     fun loadConsole() = load({ console }, { console = it }) { ConsoleBuffer.replace(it.consoleLog(serverId).lines) }
+
+    /** The running server's own command names, for the chips above the box. */
+    var commands: List<String> by mutableStateOf(emptyList())
+        private set
+
+    fun loadCommands() {
+        val c = client() ?: return
+        scope.launch {
+            // Nothing to complete is fine: the box works the same without.
+            commands = try { c.consoleCommands(serverId).commands.map { it.name } } catch (e: AgentException) { emptyList() }
+        }
+    }
+
+    // ------------------------------------------------------------ older logs
+    var logFiles: Read<List<LogFile>> by mutableStateOf(Read())
+        private set
+    var logText: Read<LogFileText> by mutableStateOf(Read())
+        private set
+
+    fun loadLogFiles() = load({ logFiles }, { logFiles = it }) { it.logFiles(serverId).files }
+
+    fun openLog(name: String?) {
+        if (name == null) {
+            logText = Read()
+            return
+        }
+        load({ logText }, { logText = it }) { it.logFile(serverId, name) }
+    }
 
     fun onConsoleLine(line: ConsoleLine) {
         console = console.copy(value = ConsoleBuffer.add(console.value.orEmpty(), line))

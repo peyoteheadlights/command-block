@@ -142,6 +142,26 @@ class AgentClient(
 
     suspend fun servers(): ServerList = get("/api/servers", ServerList.serializer())
 
+    /** Start all or Stop all ([action] "start" or "stop") for [ids], the
+     * servers shown. The agent skips the ones this account may not control. */
+    suspend fun allServers(action: String, ids: List<String>): AllServersAction {
+        require(action in setOf("start", "stop")) { "Not an action the app offers: $action" }
+        val body = buildJsonObject { put("ids", JsonArray(ids.map(::JsonPrimitive))) }
+        return call(post("/api/servers/$action-all", body), AllServersAction.serializer(), slow = action == "stop")
+    }
+
+    /** The order of All servers, first to last (the owner's, the same on every app). */
+    suspend fun saveServerOrder(ids: List<String>) {
+        val body = buildJsonObject { put("ids", JsonArray(ids.map(::JsonPrimitive))) }
+        call(request("/api/servers/order").put(body.toBody()).build(), JsonObject.serializer())
+    }
+
+    /** The heading [serverId] is under on All servers; empty takes it out of its group. */
+    suspend fun saveServerGroup(serverId: String, group: String) {
+        val body = buildJsonObject { put("group", group) }
+        call(request("${server(serverId)}/group").put(body.toBody()).build(), JsonObject.serializer())
+    }
+
     suspend fun status(serverId: String): ServerStatus =
         get("/api/servers/${path(serverId)}/status", ServerStatus.serializer())
 
@@ -958,6 +978,30 @@ class AgentClient(
 
     suspend fun removeAddon(serverId: String, uuid: String): AddonResult =
         call(request("${server(serverId)}/addons/${path(uuid)}").delete().build(), AddonResult.serializer())
+
+    /** Every game rule as the running server says it; none while it's stopped. */
+    suspend fun gameRules(serverId: String): GameRules =
+        get("${server(serverId)}/gamerules", GameRules.serializer(), slow = true)
+
+    /** Changes [rules] (name to true/false or a number), or applies [preset]. */
+    suspend fun saveGameRules(serverId: String, rules: JsonObject, preset: String? = null): GameRulesSaved {
+        val body = buildJsonObject {
+            put("rules", rules)
+            if (preset != null) put("preset", preset)
+        }
+        return call(request("${server(serverId)}/gamerules").put(body.toBody()).build(), GameRulesSaved.serializer(), slow = true)
+    }
+
+    /** The commands the running server's help lists; empty while it's stopped. */
+    suspend fun consoleCommands(serverId: String): CommandList =
+        get("${server(serverId)}/console/commands", CommandList.serializer())
+
+    /** Minecraft's own log files (logs/), newest first. */
+    suspend fun logFiles(serverId: String): LogFiles = get("${server(serverId)}/logs/files", LogFiles.serializer())
+
+    /** One of them, read-only. */
+    suspend fun logFile(serverId: String, name: String): LogFileText =
+        get("${server(serverId)}/logs/files/${path(name)}", LogFileText.serializer())
 
     suspend fun gameSettings(serverId: String): GameSettings =
         get("${server(serverId)}/game-settings", GameSettings.serializer())

@@ -26,6 +26,10 @@ SAVE_QUERY = os.environ.get("FAKE_SAVE_QUERY", "ok")
 BOOT_DELAY = float(os.environ.get("FAKE_BOOT_DELAY", "0.2"))
 
 
+# Game rules, all on one line the way Bedrock's /gamerule answers.
+GAME_RULES: dict[str, str] = {"keepinventory": "false", "mobgriefing": "true", "spawnradius": "5"}
+
+
 def stamp() -> str:
     now = time.time()
     return (
@@ -193,6 +197,21 @@ def main() -> None:
                 log("No targets matched selector")
         elif word == "say":
             pass  # Bedrock's console doesn't print chat or say
+        elif word == "gamerule":
+            name, _, value = rest.strip().partition(" ")
+            if not name:
+                plain(", ".join(f"{k} = {v}" for k, v in GAME_RULES.items()))
+            elif value:
+                GAME_RULES[name] = value
+                plain(f"Game rule {name} has been updated to {value}")
+        elif word == "help":
+            page = int(rest or 1)
+            plain(f"§2--- Showing help page {page} of 2 (/help <page>) ---")
+            plain(
+                "/gamerule [rule: string] [value: value]"
+                if page == 1
+                else "/say <message: message>"
+            )
         else:
             log(
                 f"Unknown command: {word}. Please check that the command exists and that you "

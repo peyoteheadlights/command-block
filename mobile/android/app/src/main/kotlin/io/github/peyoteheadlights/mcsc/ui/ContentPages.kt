@@ -11,6 +11,7 @@ import io.github.peyoteheadlights.mcsc.core.Content
 import io.github.peyoteheadlights.mcsc.core.DependencyPlan
 import io.github.peyoteheadlights.mcsc.core.DependencyReport
 import io.github.peyoteheadlights.mcsc.core.GameForm
+import io.github.peyoteheadlights.mcsc.core.GameRules
 import io.github.peyoteheadlights.mcsc.core.GameSettings
 import io.github.peyoteheadlights.mcsc.core.Install
 import io.github.peyoteheadlights.mcsc.core.Job
@@ -44,6 +45,8 @@ import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.coroutines.withContext
 
 /** A remove waiting for "yes", with what else needs the mod. */
@@ -778,6 +781,69 @@ class ContentPages(
 
     fun gameRestarted() {
         gameRestart = false
+    }
+
+    // ------------------------------------------------------------ game rules
+    /** Read from the running server only when the screen asks (one question per rule). */
+    var rules: Read<GameRules> by mutableStateOf(Read())
+        private set
+
+    /** Changed values by rule name, waiting for Save rules. */
+    var ruleEdits: Map<String, JsonPrimitive> by mutableStateOf(emptyMap())
+        private set
+
+    /** What the last change was before, for Undo; empty: nothing to undo. */
+    var rulesBefore: JsonObject by mutableStateOf(JsonObject(emptyMap()))
+        private set
+
+    var rulesSaid: Message? by mutableStateOf(null)
+        private set
+
+    /** Rules of a preset this server doesn't have, from the last change. */
+    var rulesSkipped: List<String> by mutableStateOf(emptyList())
+        private set
+
+    fun loadRules() {
+        val c = client() ?: return
+        rules = rules.copy(loading = true)
+        scope.launch {
+            rules = try {
+                Read(c.gameRules(serverId)).also { ruleEdits = emptyMap() }
+            } catch (e: AgentException) {
+                noted(e)
+                Read(problem = Message.of(e))
+            }
+        }
+    }
+
+    fun editRule(name: String, value: JsonPrimitive) {
+        val said = rules.value?.rules?.firstOrNull { it.name == name }?.value
+        ruleEdits = if (said == value) ruleEdits - name else ruleEdits + (name to value)
+    }
+
+    /** Saves [changed] (Save rules or Undo), or applies [preset]. */
+    fun saveRules(changed: JsonObject = JsonObject(ruleEdits), preset: String? = null) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = "rules"
+        scope.launch {
+            try {
+                val done = c.saveGameRules(serverId, changed, preset)
+                val current = rules.value ?: GameRules(running = true)
+                rules = Read(current.copy(rules = done.rules))
+                ruleEdits = emptyMap()
+                rulesBefore = done.before
+                rulesSaid = if (done.before.isEmpty()) Message("gamerules.no_change")
+                else Message("gamerules.saved", mapOf("n" to done.before.size.toString()))
+                rulesSkipped = done.skipped
+            } catch (e: AgentException) {
+                noted(e)
+                rulesSaid = Message.of(e)
+                rulesSkipped = emptyList()
+            } finally {
+                busy = null
+            }
+        }
     }
 
     // ------------------------------------------------------------ server icon
