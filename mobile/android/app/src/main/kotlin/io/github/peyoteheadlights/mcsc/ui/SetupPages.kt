@@ -550,18 +550,26 @@ class SetupPages(
         }
     }
 
+    /** The Java options from before the last save, while Undo can put them back. */
+    var argsBefore: List<String>? by mutableStateOf(null)
+        private set
+
     /** Saves the Java options typed in Technical mode, then reads the form
-     * and the memory card again so both show them. */
-    fun saveJavaOptions(args: List<String>, strings: Strings) {
+     * and the memory card again so both show them. [undoing]: putting the
+     * old ones back, which can't itself be undone. */
+    fun saveJavaOptions(args: List<String>, strings: Strings, undoing: Boolean = false) {
         val c = client() ?: return
         if (busy != null) return
+        val before = memory.value?.jvmArgs
         busy = "java"
         said = null
         scope.launch {
             try {
                 val done = c.saveServerSettings(serverId, buildJsonObject { put("server.jvm_args", JsonArray(args.map(::JsonPrimitive))) })
                 val refused = done.rejected["server.jvm_args"]
-                said = Said(refused ?: strings.t("mobile.raw.args_saved"), good = refused == null)
+                val words = if (undoing) "memory.raw_undone" else "mobile.raw.args_saved"
+                said = Said(refused ?: strings.t(words), good = refused == null)
+                argsBefore = if (refused == null && !undoing) before else null
                 loadMemory()
                 loadSettings()
             } catch (e: AgentException) {

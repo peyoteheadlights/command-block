@@ -130,7 +130,7 @@ struct DiagnoseView: View {
                         Task { await page.answer(false) }
                     }
                 },
-                message: { question in Text(verbatim: question.askMods ?? question.ask ?? "") }
+                message: { question in Text(hiding: question.askMods ?? question.ask ?? "") }
             )
         }
         .task(id: serverId) { await page.load() }
@@ -215,10 +215,10 @@ struct DiagnoseView: View {
 
     private func row(_ title: String, _ detail: String?, _ palette: Palette, danger: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(verbatim: title)
+            Text(hiding: title)
                 .foregroundStyle(danger ? palette.danger : palette.textPrimary)
             if let detail = detail, !detail.isEmpty {
-                Text(verbatim: detail)
+                Text(hiding: detail)
                     .font(.footnote)
                     .foregroundStyle(palette.textSecondary)
             }

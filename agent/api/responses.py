@@ -2090,6 +2090,7 @@ class GameSetting(Open):
     min: int | None = None
     max: int | None = None
     max_length: int | None = None
+    lines: int = Field(1, description="How many lines the value can have (the MOTD has 2)")
     read_only: str | None = Field(
         None, description='"world_exists" for the seed once there is a world'
     )
@@ -2102,6 +2103,9 @@ class GameSettings(Open):
     fields: list[GameSetting]
     running: bool
     restart_needed: bool
+    icon: bool | None = Field(
+        None, description="Whether server-icon.png is there; null on Bedrock, which shows none"
+    )
 
 
 class GameSettingsSaved(Open):
@@ -2113,6 +2117,17 @@ class GameSettingsSaved(Open):
     undo: Undo | None = None
     running: bool
     restart_needed: bool
+
+
+class ServerIcon(Open):
+    png: str | None = Field(None, description="server-icon.png in base64; null when there is none")
+
+
+class ServerIconSaved(Open):
+    ok: bool
+    icon: bool
+    undo: Undo | None = None
+    running: bool
 
 
 # ------------------------------------------------------------ server settings

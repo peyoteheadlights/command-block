@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ... import colors, memory
 from ...config import SERVER_OVERRIDES, ConfigError
 from ...events import Event
-from ...minecraft import cpu
+from ...minecraft import cpu, java
 from ...security.auth import Principal
 from ...security.permissions import SETTINGS_SERVER, SETTINGS_VIEW, require
 from ..deps import audit, get_server
@@ -139,6 +139,11 @@ async def update_server_settings(
                 value = check_excludes(value, base, world_folders(base, ctx.config.server_type))
             except BackupError as exc:
                 rejected[key] = str(exc)
+                continue
+        if key == "server.jvm_args":
+            found_args = java.jvm_args_problem(value, principal.is_owner)
+            if found_args:
+                rejected[key] = found_args
                 continue
         if key == "server.cpu_cores":
             found = cpu.shape_problems(value) or cpu.problems(value)

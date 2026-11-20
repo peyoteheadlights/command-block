@@ -202,3 +202,50 @@ def memory_limit_mb(jvm_args: list[str] | tuple[str, ...]) -> int | None:
             scale = {"": 1 / (1024 * 1024), "k": 1 / 1024, "m": 1, "g": 1024, "t": 1024 * 1024}
             limit = int(number * scale[unit])
     return limit
+
+
+# The Java arguments editor (Technical). Flags that load other code into
+# Java or run another program: only the owner may set them, or a moderator
+# could run programs on this PC.
+RUNS_CODE = (
+    "-javaagent",
+    "-agentlib",
+    "-agentpath",
+    "-Xbootclasspath",
+    "-XX:OnError",
+    "-XX:OnOutOfMemoryError",
+    "-Djava.library.path",
+    "-Djava.system.class.loader",
+)
+# Flags that change what gets launched. The app builds that part itself
+# (agent/minecraft/process.py build_command).
+LAUNCH_FLAGS = (
+    "-jar",
+    "-cp",
+    "-classpath",
+    "--class-path",
+    "-m",
+    "--module",
+    "-p",
+    "--module-path",
+)
+MAX_JVM_ARGS = 100
+
+
+def jvm_args_problem(args: Any, owner: bool) -> str | None:
+    """Why these Java arguments can't be saved, or None. Written for people."""
+    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+        return "Java arguments have to be a list of words."
+    if len(args) > MAX_JVM_ARGS:
+        return f"That's more than {MAX_JVM_ARGS} Java arguments."
+    for arg in args:
+        if not arg.startswith("-"):
+            return f"'{arg}' isn't a Java argument. Each one starts with a dash (-)."
+        if arg.split("=", 1)[0] in LAUNCH_FLAGS:
+            return f"{arg} can't be set here: Command Block starts the server itself."
+        if not owner and arg.startswith(RUNS_CODE):
+            return (
+                f"Only the owner can add {arg.split('=', 1)[0].split(':', 1)[0]}: "
+                "it loads other code or runs a program on this PC."
+            )
+    return None

@@ -218,6 +218,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var refreshJob: Job? = null
 
     init {
+        StreamerMode.rules = shared.streamer
+        StreamerMode.on = prefs.streamer
         viewModelScope.launch {
             graph.signedOut.collect {
                 // The widget stops showing servers at once, not at its next refresh.
@@ -751,6 +753,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         prefs.technical = on
         graph.strings.technical = on
         technical = on
+    }
+
+    fun chooseStreamer(on: Boolean) {
+        prefs.streamer = on
+        StreamerMode.on = on
     }
 
     fun chooseUnlock(on: Boolean) {

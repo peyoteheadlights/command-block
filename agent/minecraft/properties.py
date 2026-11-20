@@ -225,6 +225,7 @@ class Field:
     minimum: int | None = None
     maximum: int | None = None
     max_length: int = MAX_TEXT
+    lines: int = 1  # the MOTD can be two lines in the server list
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -238,7 +239,7 @@ FIELDS: tuple[Field, ...] = (
     Field("pvp", "bool", "true"),
     Field("view-distance", "int", "10", minimum=3, maximum=32),
     Field("simulation-distance", "int", "10", minimum=3, maximum=32),
-    Field("motd", "text", "A Minecraft Server"),
+    Field("motd", "text", "A Minecraft Server", lines=2),
     Field("server-port", "port", "25565", minimum=1024, maximum=65535),
 )
 # Bedrock Dedicated Server's own keys and defaults (its server.properties
@@ -315,8 +316,12 @@ def check_value(spec: Field, value: Any) -> str:
             raise PropertiesError(f"The biggest it can be is {spec.maximum}.")
         return str(number)
     text = "" if value is None else str(value)
-    if "\n" in text or "\r" in text or "\0" in text:
-        raise PropertiesError("This has to be one line.")
+    if "\r" in text or "\0" in text or text.count("\n") >= spec.lines:
+        raise PropertiesError(
+            "This has to be one line."
+            if spec.lines == 1
+            else f"This can be at most {spec.lines} lines."
+        )
     if len(text) > spec.max_length:
         raise PropertiesError(f"This can be at most {spec.max_length} characters.")
     if spec.kind == "seed":
@@ -414,6 +419,7 @@ def form_view(directory: Path, server_type: Any = None) -> dict[str, Any]:
                 "min": spec.minimum,
                 "max": spec.maximum,
                 "max_length": spec.max_length,
+                "lines": spec.lines,
                 "read_only": read_only,
             }
         )

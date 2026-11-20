@@ -21,7 +21,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -203,6 +202,10 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
                             busy = setup.busy != null,
                             onSave = { setup.saveJavaOptions(RawText.args(typed), strings) },
                         )
+                        Note(t("memory.raw_warning"), color = LocalColors.current.warning)
+                        setup.argsBefore?.let { before ->
+                            Presses(listOf(Press(t("changes.undo"), { setup.saveJavaOptions(before, strings, undoing = true) }, enabled = setup.busy == null)))
+                        }
                     }
                 }
             }

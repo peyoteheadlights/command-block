@@ -48,7 +48,7 @@ struct EventsView: View {
                     .frame(width: 10, height: 10)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: event.message.isEmpty ? event.type : event.message)
+                    Text(hiding: event.message.isEmpty ? event.type : event.message)
                         .foregroundStyle(palette.textPrimary)
                     Text(Display.ago(model.strings, event.ts, now: now))
                         .font(.footnote)
@@ -153,10 +153,10 @@ struct CrashView: View {
             field(model.t("crashes.col_confidence"), model.t(Display.confidence(crash.confidence).key), palette)
             field(model.t("crashes.col_code"), Display.exitCode(model.strings, crash.exitCode), palette)
             if let summary = crash.summary, !summary.isEmpty {
-                Text(verbatim: summary).foregroundStyle(palette.textPrimary)
+                Text(hiding: summary).foregroundStyle(palette.textPrimary)
             }
             if let advice = analysis?.advice, !advice.isEmpty {
-                Text(verbatim: advice).foregroundStyle(palette.textPrimary)
+                Text(hiding: advice).foregroundStyle(palette.textPrimary)
             }
             if let mods = analysis?.suspectMods, !mods.isEmpty {
                 Text(model.t("crashes.suspect_mods") + mods.joined(separator: ", ") + model.t("crashes.suspect_hint"))
@@ -205,7 +205,7 @@ struct CrashView: View {
             Text(label)
                 .font(.footnote)
                 .foregroundStyle(palette.textSecondary)
-            Text(verbatim: value)
+            Text(hiding: value)
                 .foregroundStyle(palette.textPrimary)
                 .textSelection(.enabled)
         }
@@ -222,7 +222,7 @@ struct CrashView: View {
 
     private func mono(_ lines: [String], _ palette: Palette) -> some View {
         ScrollView(.horizontal) {
-            Text(verbatim: lines.joined(separator: "\n"))
+            Text(hiding: lines.joined(separator: "\n"))
                 .font(.system(.footnote, design: .monospaced))
                 .foregroundStyle(palette.textPrimary)
                 .textSelection(.enabled)

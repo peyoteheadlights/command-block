@@ -56,9 +56,9 @@ struct ChatView: View {
         let who = server ? model.t("chat.server") : message.kind == "discord" ? model.t("chat.from_discord", ["name": name]) : name
         let words = message.kind == "action" ? "• " + message.text : message.text
         return (
-            Text(verbatim: Display.clock(message.ts) + "  ").foregroundStyle(palette.textSecondary)
-                + Text(verbatim: who).fontWeight(.semibold).foregroundStyle(server ? palette.accentInk : palette.textPrimary)
-                + Text(verbatim: "  " + words).foregroundStyle(palette.textPrimary)
+            Text(hiding: Display.clock(message.ts) + "  ").foregroundStyle(palette.textSecondary)
+                + Text(hiding: who).fontWeight(.semibold).foregroundStyle(server ? palette.accentInk : palette.textPrimary)
+                + Text(hiding: "  " + words).foregroundStyle(palette.textPrimary)
         )
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
