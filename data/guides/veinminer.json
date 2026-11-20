@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "id": "veinminer",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "veinminer"
+    ],
+    "modrinth": "veinminer"
+  },
+  "versions": ">=2.12.0 <3",
+  "title": "Veinminer",
+  "what": "Break one ore and the whole vein comes with it.",
+  "steps": [
+    "It works for ores out of the box.",
+    "Players can add more blocks and change settings with /veinminer in the game.",
+    "After changing its settings file, press Read settings again."
+  ],
+  "source": "https://github.com/MiraculixxT/Veinminer/blob/main/veinminer/common/src/main/kotlin/de/miraculixx/veinminer/command/VeinminerCommand.kt",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "info",
+      "label": "Show its version",
+      "command": "veinminer"
+    },
+    {
+      "id": "reload",
+      "label": "Read settings again",
+      "command": "veinminer reload"
+    },
+    {
+      "id": "toggle",
+      "label": "Turn it on or off for everyone",
+      "help": "Each press flips it. The console says which it is now.",
+      "command": "veinminer toggle"
+    }
+  ]
+}

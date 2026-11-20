@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "gravestone",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "gravestone"
+    ],
+    "modrinth": "gravestone-mod"
+  },
+  "versions": ">=1.0.0 <2",
+  "title": "Gravestone",
+  "what": "When a player dies, their items go into a grave where they died instead of falling on the ground.",
+  "steps": [
+    "The player goes back to the grave and breaks it to get their things.",
+    "The player also gets a note telling where and when they died.",
+    "If a grave is lost, an operator can give the items back with /restore in the game, using the death ID from that note."
+  ],
+  "source": "https://github.com/henkelmax/gravestone/blob/master/src/main/java/de/maxhenkel/gravestone/commands/RestoreCommand.java",
+  "checked": "2026-11-20",
+  "buttons": []
+}
