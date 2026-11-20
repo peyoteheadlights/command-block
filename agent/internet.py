@@ -44,6 +44,7 @@ class State:
     problem: str | None = None  # no_router, refused, shared, private
     detail: str = ""
     test: dict[str, Any] | None = None
+    playit_test: dict[str, Any] | None = None  # agent/playit.py's outside test
     busy: bool = False
     since: float = field(default_factory=time.time)
 

@@ -148,3 +148,43 @@ def test_a_saved_noip_name_opens_noip_then_i_confirmed_it(qapp, agent_http, monk
     button(frame, "Open noip.com").click()
     assert opened == ["https://my.noip.com/dynamic-dns"]
     assert button(frame, "I confirmed it")
+
+
+def test_playit_installs_on_click_links_and_shows_the_tunnel(
+    qapp, agent_http, monkeypatch, tmp_path
+):
+    from agent import playit
+
+    from .test_playit import FakeProgram, running, tunnel
+
+    fake = FakeProgram()
+    fake.life = None  # no program yet, so no pipe
+    exe = tmp_path / "playit.exe"
+    monkeypatch.setattr(playit, "PROGRAM", exe)  # not there yet: not installed
+    monkeypatch.setattr(playit, "ask", fake.ask)
+    monkeypatch.setattr(downloads, "fetch_json", fake.fetch_json)
+    window, page = settings_page(qapp, agent_http)
+    frame = card_of(page, TITLE)
+    wait_for(qapp, lambda: "without opening a port" in shown_text(frame))
+    monkeypatch.setattr(window, "confirm", lambda *a, **k: True)
+
+    def install() -> None:
+        window.pc.playit_installs += 1
+        exe.write_text("")
+        fake.life = {"state": "waiting_for_secret"}
+
+    monkeypatch.setattr(window.pc, "install_playit", install)
+    button(frame, "Use playit.gg").click()
+    wait_for(qapp, lambda: "approve this PC" in shown_text(frame), 20)
+    assert window.pc.playit_installs == 1
+    wait_for(qapp, lambda: any(r["type"] == "set_secret" for r in fake.asked), 20)
+    button(frame, "Check again").click()
+    wait_for(qapp, lambda: "Make a tunnel on playit.gg" in shown_text(frame), 20)
+    port = internet.router_ports(agent_http.agent.app.state.core.servers["survival"])[0][1]
+    fake.life = running(tunnel("cool-name.gl.joinmc.link", port))
+    button(frame, "Check again").click()
+    wait_for(qapp, lambda: "Friends join with: cool-name.gl.joinmc.link" in shown_text(frame), 20)
+    # Stop, then the program is offered for removal (said yes here).
+    button(frame, "Stop using playit.gg").click()
+    wait_for(qapp, lambda: window.pc.playit_uninstalls == 1, 20)
+    assert {"type": "reset_secret"} in fake.asked

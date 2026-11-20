@@ -334,6 +334,23 @@ class AgentClient(
         InternetReach.serializer(),
     )
 
+    /** playit.gg on the server's PC, for this server's tunnels (agent/playit.py). */
+    suspend fun playit(serverId: String): PlayitState = get("${server(serverId)}/playit", PlayitState.serializer())
+
+    /** [action] is use, reconnect or stop. Installing it is the desktop app's job. */
+    suspend fun playitAction(serverId: String, action: String): PlayitState = call(
+        post("${server(serverId)}/playit/$action", JsonObject(emptyMap())),
+        PlayitState.serializer(),
+        slow = true,
+    )
+
+    /** mcsrvstat.us pings the tunnel's address; [allow] as for testInternet. */
+    suspend fun testPlayit(serverId: String, allow: Boolean): PlayitState = call(
+        post("${server(serverId)}/playit-test", buildJsonObject { put("allow_mcsrvstat", allow) }),
+        PlayitState.serializer(),
+        slow = true,
+    )
+
     /** This PC's DuckDNS and No-IP names (agent/ddns.py). Saved only after the site said yes. */
     suspend fun ddns(): DdnsState = get("/api/ddns", DdnsState.serializer())
 

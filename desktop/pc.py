@@ -45,6 +45,30 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APP_ID = "CommandBlock.Desktop"
 APP_ID_KEY = rf"Software\Classes\AppUserModelId\{APP_ID}"
 TAILSCALE_SIGNER = "Tailscale Inc."
+PLAYIT_SIGNER = "Developed Methods LLC"
+# playit's signed setup on its GitHub releases. shortcut: 64-bit Intel/AMD
+# only (it runs emulated on ARM); upgrade when playit ships an ARM setup.
+PLAYIT_MSI = (
+    "https://github.com/playit-cloud/playit-agent/releases/latest/download/"
+    "playit-windows-x86_64-signed.msi"
+)
+# Every playit version's setup shares this (packages/playit-cli/wix/main.wxs).
+PLAYIT_UPGRADE_CODE = "{2640FEA4-3120-4DB0-93A9-6B04A4EFE7D2}"
+# What install_signed says, for each program it installs.
+MSI_WORDS = {
+    "tailscale": {
+        "wrong_signer": "desktop.tailscale.wrong_signer",
+        "uac_refused": "desktop.tailscale.uac_refused",
+        "install_failed": "desktop.tailscale.install_failed",
+        "download_failed": "desktop.tailscale.download_failed",
+    },
+    "playit": {
+        "wrong_signer": "playit.wrong_signer",
+        "uac_refused": "playit.uac_refused",
+        "install_failed": "playit.install_failed",
+        "download_failed": "playit.download_failed",
+    },
+}
 CANCELLED = 1223  # ERROR_CANCELLED: the UAC prompt was answered No
 DETACHED = 0x00000008 | 0x00000200 | NO_WINDOW  # on its own, in a new process group
 TAILSCALE_RANGE = ipaddress.ip_network("100.64.0.0/10")
@@ -58,6 +82,12 @@ SIGNER_SCRIPT = (
 INSTALL_SCRIPT = (
     "try { $p = Start-Process msiexec.exe -Verb RunAs -Wait -PassThru "
     "-ArgumentList ('/i \"' + $env:CB_FILE + '\" /quiet /norestart'); exit $p.ExitCode } "
+    f"catch {{ exit {CANCELLED} }}"
+)
+# The same for removing one, by its product code.
+UNINSTALL_SCRIPT = (
+    "try { $p = Start-Process msiexec.exe -Verb RunAs -Wait -PassThru "
+    "-ArgumentList ('/x ' + $env:CB_FILE + ' /quiet /norestart'); exit $p.ExitCode } "
     f"catch {{ exit {CANCELLED} }}"
 )
 
@@ -319,32 +349,61 @@ class WindowsPC:
     def install_tailscale(self) -> None:
         """Download Tailscale's setup, refuse it unless Windows says Tailscale
         Inc. signed it, then install it (one UAC prompt)."""
+        arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "amd64"
+        url = f"https://pkgs.tailscale.com/stable/tailscale-setup-latest-{arch}.msi"
+        self.install_signed(url, TAILSCALE_SIGNER, "tailscale")
+
+    def install_playit(self) -> None:
+        """playit.gg's own program, signed by its maker (house rule 2's
+        playit exception, after "Use playit.gg"). One UAC prompt."""
+        self.install_signed(PLAYIT_MSI, PLAYIT_SIGNER, "playit")
+
+    def install_signed(self, url: str, signer_wanted: str, words: str) -> None:
+        """Download a setup, refuse it unless Windows says ``signer_wanted``
+        signed it, then install it. ``words``: tailscale or playit (MSI_WORDS)."""
         folder = Path(tempfile.mkdtemp(prefix="command-block-"))
         try:
-            msi = self.download_tailscale(folder)
+            msi = self.download_msi(url, folder, words)
             signer = self.msi_signer(msi)
-            if signer != TAILSCALE_SIGNER:
-                raise PCError(text("desktop.tailscale.wrong_signer", signer=signer or "-"))
+            if signer != signer_wanted:
+                raise PCError(text(MSI_WORDS[words]["wrong_signer"], signer=signer or "-"))
             code = self.install_msi(msi)
             if code == CANCELLED:
-                raise PCError(text("desktop.tailscale.uac_refused"))
+                raise PCError(text(MSI_WORDS[words]["uac_refused"]))
             if code not in (0, 1641, 3010):  # 1641 and 3010: done, Windows wants a restart
-                raise PCError(text("desktop.tailscale.install_failed", code=code))
+                raise PCError(text(MSI_WORDS[words]["install_failed"], code=code))
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 
-    def download_tailscale(self, folder: Path) -> Path:
+    def download_msi(self, url: str, folder: Path, words: str) -> Path:
         from agent import downloads
 
-        arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "amd64"
-        spec = downloads.FileSpec(
-            url=f"https://pkgs.tailscale.com/stable/tailscale-setup-latest-{arch}.msi",
-            name="tailscale-setup.msi",  # checked by its signature, not a checksum
-        )
+        # Checked by its signature, not a checksum.
+        spec = downloads.FileSpec(url=url, name="setup.msi")
         try:
             return asyncio.run(downloads.download(spec, folder)).path
         except (downloads.DownloadError, OSError) as exc:
-            raise PCError(text("desktop.tailscale.download_failed", why=exc)) from exc
+            raise PCError(text(MSI_WORDS[words]["download_failed"], why=exc)) from exc
+
+    def uninstall_playit(self) -> None:
+        """Removes playit.gg's program (every version found), one UAC prompt each."""
+        import ctypes
+
+        msi = ctypes.windll.msi
+        found: list[str] = []
+        buffer = ctypes.create_unicode_buffer(39)
+        while msi.MsiEnumRelatedProductsW(PLAYIT_UPGRADE_CODE, 0, len(found), buffer) == 0:
+            found.append(buffer.value)
+        for product in found:
+            done = subprocess.run(
+                [*POWERSHELL, UNINSTALL_SCRIPT],
+                env={**os.environ, "CB_FILE": product},
+                creationflags=NO_WINDOW,
+            )
+            if done.returncode == CANCELLED:
+                raise PCError(text("playit.uac_refused"))
+            if done.returncode not in (0, 1605, 1641, 3010):  # 1605: already gone
+                raise PCError(text("playit.uninstall_failed", code=done.returncode))
 
     def msi_signer(self, path: Path) -> str | None:
         """Who signed the file, when Windows says the signature is valid."""

@@ -437,6 +437,38 @@ final class SetupPages {
         }
     }
 
+    // MARK: - playit.gg
+
+    /// playit.gg on the server's PC (agent/playit.py).
+    private(set) var playit = PageRead<PlayitState>()
+
+    func loadPlayit() async {
+        guard let client = client() else { return }
+        do {
+            playit = PageRead(value: try await client.playit(serverId: serverId))
+        } catch let problem as AgentError {
+            noted(problem)
+            playit = PageRead(problem: problem)
+        } catch {}
+    }
+
+    func playitCall(_ strings: Strings, _ work: (AgentClient) async throws -> PlayitState) async {
+        guard let client = client(), busy == nil else { return }
+        busy = "playit"
+        said = nil
+        defer { busy = nil }
+        do {
+            let now = try await work(client)
+            playit = PageRead(value: now)
+            if let problem = now.stopProblem {
+                said = Said(text: strings.t("playit.stop_problem", ["problem": problem]), good: false)
+            }
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+    }
+
     // MARK: - DuckDNS and No-IP
 
     /// This PC's names for its internet address (agent/ddns.py).

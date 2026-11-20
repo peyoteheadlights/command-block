@@ -8,12 +8,12 @@ from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ... import ddns, internet, joininfo, protection
+from ... import ddns, internet, joininfo, playit, protection
 from ...config import ConfigError
 from ...security.auth import Principal
 from ...security.permissions import PC_SETTINGS, SERVER_VIEW, SETTINGS_SERVER, require
 from ..deps import audit, get_core, get_server
-from ..responses import DdnsState, InternetReach, JoinInfo
+from ..responses import DdnsState, InternetReach, JoinInfo, PlayitState
 from .models import (
     DuckDnsRequest,
     InternetRequest,
@@ -106,6 +106,80 @@ async def internet_phone_test(
     """The phone app pinged the internet address over mobile data (Wi-Fi off)."""
     internet.phone_test(ctx, payload.address, payload.port, payload.works)
     return await asyncio.to_thread(internet.summary, ctx)
+
+
+# ---------------------------------------------------------------- playit.gg
+# One program for the whole PC; each server asks for its own tunnels.
+async def _playit(ctx, principal: Principal) -> dict:
+    try:
+        await ctx.core.playit.refresh()
+    except TimeoutError:
+        pass  # the program hangs: the last answer stands
+    found = ctx.core.playit.summary(ctx)
+    if not principal.is_owner:
+        # Whoever opens the claim page links the program to their own playit
+        # account, and a guest account's login link opens it: owner only.
+        found["claim"] = found["claim"] and {**found["claim"], "url": ""}
+        found["new_tunnel"] = playit.NEW_TUNNEL
+    return found
+
+
+@router.get("/playit", response_model=PlayitState)
+async def playit_status(
+    principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
+):
+    return await _playit(ctx, principal)
+
+
+@router.post("/playit/{action}", response_model=PlayitState)
+async def playit_action(
+    action: str,
+    request: Request,
+    principal: Principal = Depends(require(PC_SETTINGS)),
+    ctx=Depends(get_server),
+):
+    """use: link the installed program (or carry on if it is linked).
+    reconnect: playit's own ``playit start``. stop: unlink it, its tunnels stop."""
+    _owner(principal)
+    found = ctx.core.playit
+    if action not in ("use", "reconnect", "stop"):
+        raise HTTPException(status_code=404, detail="No such action.")
+    problem = None
+    try:
+        if action == "use":
+            await found.use()
+        elif action == "reconnect":
+            await found.reconnect()
+        else:
+            problem = await found.stop()
+    except playit.PlayitError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="playit didn't answer.") from exc
+    audit(ctx.core, request, f"playit_{action}")
+    return {**await _playit(ctx, principal), "stop_problem": problem}
+
+
+@router.post("/playit-test", response_model=PlayitState)
+async def playit_test(
+    payload: InternetTestRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    """Test the tunnel from the internet through mcsrvstat.us (asked once, as above)."""
+    _owner(principal)
+    if payload.allow_mcsrvstat:
+        ctx.core.db.set_setting(internet.MCSRVSTAT_OK, True)
+    if not ctx.core.db.get_setting(internet.MCSRVSTAT_OK, False):
+        raise HTTPException(status_code=409, detail="Say yes to asking mcsrvstat.us first.")
+    await _playit(ctx, principal)
+    address = ctx.core.playit.tunnel_address(ctx)
+    if not address:
+        raise HTTPException(status_code=409, detail="This server has no playit tunnel yet.")
+    await playit.test_tunnel(ctx, address)
+    audit(ctx, request, "playit_test")
+    return ctx.core.playit.summary(ctx)
 
 
 # ---------------------------------------------------------------- DuckDNS and No-IP
