@@ -208,3 +208,114 @@ def test_the_paper_plugin_also_turns_on_required_to_join(paper):
     client, headers, folder = paper
     (folder / "companion.jar").write_bytes(plugin_jar(companion.PLUGIN_NAME))
     assert options(client, headers)["required_to_join"]["available"] is True
+
+
+# ---------------------------------------------------------------- plugin servers' players
+class CompanionModrinth(ExportModrinth):
+    """Modrinth with the Companion's project: the server's Paper plugin
+    known by its hash, two Fabric jars, and Fabric API they need."""
+
+    def __init__(self, plugin: bytes):
+        super().__init__({"cbc": plugin})
+        self.projects = {
+            "cbc": {
+                "project_id": "cbc",
+                "title": "Command Block Companion",
+                "mod_id": companion.MOD_ID,
+                "versions": [("0.2.0+fabric", ["fapi"]), ("0.1.0+fabric", ["fapi"])],
+            },
+            "fapi": {"project_id": "fapi", "title": "Fabric API", "versions": [("0.140", [])]},
+        }
+        self.by_id = {"cbc": "cbc", "fapi": "fapi"}
+
+    async def installed_versions(self, sha1s):
+        found = await super().installed_versions(sha1s)
+        for version in found.values():
+            version["version_number"] = "0.1.0+paper"
+        return found
+
+
+@pytest.fixture
+def paper_companion(paper, monkeypatch):
+    """A Paper server with the Companion plugin from Modrinth."""
+    client, headers, folder = paper
+    from agent.servertypes import versions
+
+    class Plan:
+        loader = "0.16.9"
+
+    async def plan(type_id, minecraft, loader=None):
+        return Plan()
+
+    monkeypatch.setattr(versions, "make_plan", plan)
+    jar = plugin_jar(companion.PLUGIN_NAME, "0.1.0")
+    (folder / "companion.jar").write_bytes(jar)
+    client.app.state.core.mods.modrinth = CompanionModrinth(jar)
+    return client, headers
+
+
+def test_a_plugin_servers_modpack_gets_the_players_companion(paper_companion, tmp_path):
+    client, headers = paper_companion
+    made = make(client, headers, required=True).json()
+    assert made["ok"] and made["get_yourself"] == [], made
+    with zipfile.ZipFile(saved(client, headers, made, tmp_path)) as zf:
+        index = json.loads(zf.read("modrinth.index.json"))
+    by_path = {f["path"]: f for f in index["files"]}
+    # The same version as the server's plugin, not the newest, and what it needs.
+    assert sorted(by_path) == ["mods/cbc-0.1.0+fabric.jar", "mods/fapi-0.140.jar"]
+    jar = by_path["mods/cbc-0.1.0+fabric.jar"]
+    assert jar["env"] == {"client": "required", "server": "unsupported"}
+    assert jar["downloads"] == ["https://cdn.modrinth.com/cbc.jar"]
+    assert index["dependencies"]["fabric-loader"] == "0.16.9"
+    # The check asks for both, with no server copy for spot checks.
+    got = settings(client, companion.PLUGIN_FILE)
+    assert got["required"] is True
+    assert {f["path"]: f["on_server"] for f in got["files"]} == {
+        "mods/cbc-0.1.0+fabric.jar": None,
+        "mods/fapi-0.140.jar": None,
+    }
+
+
+def test_a_players_companion_put_in_by_hand_isnt_added_twice(paper_companion, relay):
+    client, headers = paper_companion
+    from .test_dependency_resolution import jar_bytes
+
+    base = server_dir(client)
+    (base / sides.FOLDER).mkdir()
+    (base / sides.FOLDER / "mine.jar").write_bytes(jar_bytes(companion.MOD_ID, "0.1.0"))
+    made = make(client, headers).json()
+    assert made["ok"], made
+    paths = {f["path"] for f in settings(client, companion.PLUGIN_FILE)["files"]}
+    assert paths == {"mods/mine.jar", "mods/fapi-0.140.jar"}
+
+
+def test_a_plugin_not_from_modrinth_says_get_the_players_companion(paper_companion):
+    client, headers = paper_companion
+    client.app.state.core.mods.modrinth = ExportModrinth({})
+    made = make(client, headers).json()
+    assert made["ok"], made
+    assert made["get_yourself"] == [{"name": "Command Block Companion for Fabric", "page": None}]
+    assert settings(client, companion.PLUGIN_FILE)["files"] == []
+
+
+@pytest.mark.parametrize("server_type", ["purpur", "leaf"])
+def test_purpur_and_leaf_run_the_paper_plugin(tmp_path, monkeypatch, sites, server_type):
+    from .test_api import auth, token_for
+    from .test_hangar_and_links import app_for
+
+    with app_for(tmp_path, monkeypatch, server_type) as client:
+        (client.app.state.core.mods.mods_dir / "companion.jar").write_bytes(
+            plugin_jar(companion.PLUGIN_NAME)
+        )
+        got = options(client, auth(token_for(client)))
+    assert got["required_to_join"]["available"] is True
+
+
+def test_quilt_runs_the_fabric_companion(tmp_path, monkeypatch, sites):
+    from .test_api import auth, token_for
+    from .test_hangar_and_links import app_for
+
+    with app_for(tmp_path, monkeypatch, "quilt") as client:
+        with_companion(client)
+        got = options(client, auth(token_for(client)))
+    assert got["required_to_join"]["available"] is True
