@@ -209,6 +209,16 @@ def facts(ctx: ServerContext) -> Facts:
         values = PropertiesFile.read(path).values() if path.is_file() else None
     except (OSError, ValueError):
         values = None
+    behind = ctx.core.waterdog.of(ctx)
+    if values is not None and behind:
+        # Behind WaterdogPE the file says online-mode and allow-list off, but
+        # WaterdogPE checks every Xbox sign-in and its plugin keeps the allow
+        # list (agent/waterdog.py).
+        values = {
+            **values,
+            "online-mode": "true",
+            "allow-list": "true" if behind.get("list_on") else "false",
+        }
     port = ctx.core.ports.port_of(ctx)
     plugins = server_type.content == "plugins" and server_type.changes_farms
     paper = None
@@ -486,6 +496,9 @@ def _props(values: dict[str, str], title: str):
 
 async def _whitelist_on(ctx: ServerContext, user: str, body: dict[str, Any]) -> dict[str, Any]:
     key = "allow-list" if ctx.config.server_type.edition == "bedrock" else "white-list"
+    if await ctx.core.waterdog.set_list(ctx, True):  # behind WaterdogPE: its plugin's list
+        ctx.db.audit("game_settings", user=user, target=ctx.server_id, detail=key)
+        return {"changed": {key: "true"}, "keys": [key], "undo": None, **gamesettings._after(ctx)}
     result = await gamesettings.set_values(ctx, {key: "true"}, "Turning the whitelist on", user)
     await live_whitelist_on(ctx)
     return result
@@ -497,6 +510,8 @@ async def live_whitelist_on(ctx: ServerContext) -> bool:
     from .minecraft.commands import validate
     from .minecraft.process import ServerError
 
+    if await ctx.core.waterdog.set_list(ctx, True):  # behind WaterdogPE: at once, by its plugin
+        return True
     if not ctx.server.running or ctx.server.state.value != "ONLINE":
         return False
     command = "allowlist on" if ctx.config.server_type.edition == "bedrock" else "whitelist on"
