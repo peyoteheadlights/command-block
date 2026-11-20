@@ -18,10 +18,10 @@ fun sharedFolder(context: Context, kind: String): File = File(File(context.cache
  * Files or Drive, or send it to another app. Only the app that is picked
  * can read it, and only that once.
  */
-fun shareFile(context: Context, file: File, title: String) {
+fun shareFile(context: Context, file: File, title: String, type: String = "application/zip") {
     val uri = FileProvider.getUriForFile(context, context.packageName + ".files", file)
     val send = Intent(Intent.ACTION_SEND)
-        .setType("application/zip")
+        .setType(type)
         .putExtra(Intent.EXTRA_STREAM, uri)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     try {

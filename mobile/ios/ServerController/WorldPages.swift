@@ -532,6 +532,35 @@ final class WorldPages {
 
     // MARK: - Performance
 
+    /// The graphs as a CSV file waiting in the share sheet, and why it couldn't be made.
+    var sharingCsv: Downloaded? = nil
+    var csvProblem: AgentError? = nil
+
+    /// The graphs' points for the time shown, as a CSV file for a spreadsheet.
+    func shareCsv() async {
+        guard let client = client() else { return }
+        csvProblem = nil
+        do {
+            let csv = try await client.performanceCsv(serverId: serverId, hours: range)
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let file = folder.appendingPathComponent((csv.filename as NSString).lastPathComponent)
+            try csv.text.write(to: file, atomically: true, encoding: .utf8)
+            sharingCsv = Downloaded(name: file.lastPathComponent, file: file)
+        } catch let problem as AgentError {
+            noted(problem)
+            csvProblem = problem
+        } catch {
+            csvProblem = nil
+        }
+    }
+
+    func finishSharingCsv() {
+        guard let done = sharingCsv else { return }
+        sharingCsv = nil
+        try? FileManager.default.removeItem(at: done.file.deletingLastPathComponent())
+    }
+
     private(set) var range = Graphs.DEFAULT_RANGE
     private(set) var performance = PageRead<Performance>()
     private(set) var health = PageRead<ServerHealth>()

@@ -20,6 +20,7 @@ from .fixes import run_fix
 from .graphs import Graph
 from .overview import card
 from .parts import Segmented
+from .pc import PCError
 from .ui import Page, clock, label, push, refill
 from .words import text
 
@@ -60,6 +61,9 @@ class PerformancePage(Page):
         )
         top.addWidget(self.ranges)
         top.addStretch()
+        csv = push(words("perf.save_csv"), "plain")
+        csv.clicked.connect(self.save_csv)
+        top.addWidget(csv)
         self.column.addLayout(top)
 
         tiles = QHBoxLayout()
@@ -171,6 +175,20 @@ class PerformancePage(Page):
     def pick_range(self, hours: int) -> None:
         self.hours = hours
         self.ask("GET", f"/performance?hours={hours}", self.show_performance)
+
+    def save_csv(self) -> None:
+        """The graphs' points for the time shown, as a CSV file for a spreadsheet."""
+
+        def save(found: dict) -> None:
+            try:
+                place = self.window_.pc.save_file(found["filename"], found["text"].encode("utf-8"))
+            except PCError as exc:
+                self.say(str(exc))
+                return
+            if place:
+                self.say(words("perf.csv_saved", place=place))
+
+        self.ask("GET", f"/performance/csv?hours={self.hours}", save)
 
     def style_graphs(self, look: dict[str, str]) -> None:
         colors = {

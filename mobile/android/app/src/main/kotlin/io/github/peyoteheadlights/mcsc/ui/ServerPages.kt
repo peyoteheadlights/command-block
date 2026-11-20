@@ -22,7 +22,10 @@ import io.github.peyoteheadlights.mcsc.core.PlayerAction
 import io.github.peyoteheadlights.mcsc.core.PlayerActionWatch
 import io.github.peyoteheadlights.mcsc.core.PlayerActions
 import io.github.peyoteheadlights.mcsc.core.PlayersPage
+import io.github.peyoteheadlights.mcsc.core.PickedFile
 import io.github.peyoteheadlights.mcsc.core.Recommendations
+import io.github.peyoteheadlights.mcsc.core.ServerFiles
+import io.github.peyoteheadlights.mcsc.core.Strings
 import io.github.peyoteheadlights.mcsc.core.WhitelistHelp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -102,6 +105,58 @@ class ServerPages(
             return
         }
         load({ logText }, { logText = it }) { it.logFile(serverId, name) }
+    }
+
+    // ------------------------------------------------------------ server files
+    /** The open folder of the server's folder (owner only). */
+    var files: Read<ServerFiles> by mutableStateOf(Read())
+        private set
+    var filesSaid: Said? by mutableStateOf(null)
+        private set
+    var filesBusy: Boolean by mutableStateOf(false)
+        private set
+
+    fun loadFiles(folder: String = files.value?.path.orEmpty()) =
+        load({ files }, { files = it }) { it.serverFiles(serverId, folder) }
+
+    /** Streams one file into the place the person picked; [discard] removes it on failure. */
+    fun downloadFile(file: String, open: () -> java.io.OutputStream?, discard: () -> Unit, strings: Strings) =
+        fileWork(strings) { c ->
+            try {
+                val out = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { open() }
+                    ?: throw java.io.IOException(strings.t("value.unknown"))
+                out.use { c.downloadServerFile(serverId, file, it) }
+            } catch (e: Exception) {
+                discard()
+                throw e
+            }
+            Said(strings.t("files.downloaded", "place" to file.substringAfterLast('/')), good = true)
+        }
+
+    /** Puts [file] into the open folder; never over a file that's there. */
+    fun uploadFile(file: PickedFile, strings: Strings) = fileWork(strings) { c ->
+        val saved = c.uploadServerFile(serverId, files.value?.path.orEmpty(), file)
+        loadFiles()
+        Said(strings.t("files.uploaded", "name" to saved.name), good = true)
+    }
+
+    private fun fileWork(strings: Strings, work: suspend (AgentClient) -> Said) {
+        val c = client() ?: return
+        if (filesBusy) return
+        filesBusy = true
+        filesSaid = null
+        scope.launch {
+            filesSaid = try {
+                work(c)
+            } catch (e: AgentException) {
+                noted(e)
+                Said(Message.of(e).text(strings), good = false)
+            } catch (e: java.io.IOException) {
+                Said(strings.t("mobile.backups.save_failed", "reason" to (e.message ?: strings.t("value.unknown"))), good = false)
+            } finally {
+                filesBusy = false
+            }
+        }
     }
 
     fun onConsoleLine(line: ConsoleLine) {

@@ -19,7 +19,8 @@ object ServerForm {
     /** bool, int, number (seconds, may have a fraction) or text. */
     data class Field(val key: String, val kind: String, val labelKey: String, val hintKey: String? = null)
 
-    data class Group(val titleKey: String, val fields: List<Field>, val noteKey: String? = null)
+    /** [technical]: shown only in Technical mode. */
+    data class Group(val titleKey: String, val fields: List<Field>, val noteKey: String? = null, val technical: Boolean = false)
 
     val GROUPS = listOf(
         Group("serverset.crashes", listOf(
@@ -46,6 +47,10 @@ object ServerForm {
             Field("server.stop_timeout", "number", "serverset.stop_timeout", "serverset.stop_timeout_hint"),
             Field("server.autostart_minecraft", "bool", "mobile.serverset.autostart", "mobile.serverset.autostart_hint"),
         )),
+        Group("serverset.technical_running", listOf(
+            Field("monitor.ignored_exit_codes", "text", "serverset.ignored_codes", "serverset.ignored_codes_hint"),
+            Field("server.low_priority", "bool", "serverset.low_priority", "serverset.low_priority_hint"),
+        ), technical = true),
     )
 
     const val NAME = "server.name"

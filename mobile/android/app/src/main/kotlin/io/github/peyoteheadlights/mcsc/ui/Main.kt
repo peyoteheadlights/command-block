@@ -131,12 +131,17 @@ fun Main(vm: AppViewModel) {
                     GameSettingsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
                 }
                 composable("server/{id}/settings") { back ->
+                    val id = back.serverId()
                     ServerSettingsScreen(
-                        vm, back.serverId(),
+                        vm, id,
                         onBack = { nav.popBackStack() },
+                        onFiles = { nav.navigate("server/${Uri.encode(id)}/files") },
                         // The server is gone: back to All servers, not to its page.
                         onRemoved = { nav.popBackStack("servers", inclusive = false) },
                     )
+                }
+                composable("server/{id}/files") { back ->
+                    FilesScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
                 }
                 composable("server/{id}/diagnose") { back ->
                     DiagnoseScreen(vm, back.serverId(), onBack = { nav.popBackStack() })

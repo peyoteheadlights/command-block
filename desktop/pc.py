@@ -159,6 +159,18 @@ class WindowsPC:
         if Path(path).is_dir():
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
+    def play_sound(self, crash: bool) -> None:
+        """Windows' own short sound: the error one for a crash, a softer one
+        for someone joining. A beep where there's no winsound (not Windows)."""
+        try:
+            import winsound
+        except ImportError:
+            from PySide6.QtWidgets import QApplication
+
+            QApplication.beep()
+            return
+        winsound.MessageBeep(winsound.MB_ICONHAND if crash else winsound.MB_ICONASTERISK)
+
     def save_path(self, name: str) -> str | None:
         """Windows' own save box, starting in Downloads with ``name``. The
         place chosen, or None when they cancelled."""

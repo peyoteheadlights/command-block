@@ -25,6 +25,10 @@ struct PerformanceView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    Button(model.t("perf.save_csv")) { Task { await world.shareCsv() } }
+                    if let problem = world.csvProblem {
+                        ProblemCard(problem: problem, palette: palette) { await world.shareCsv() }
+                    }
                     content(world, palette)
                     health(world, palette)
                 }
@@ -35,6 +39,12 @@ struct PerformanceView: View {
             .refreshable { await world.loadPerformance() }
         }
         .task(id: serverId) { await world.loadPerformance() }
+        .sheet(
+            item: Binding(get: { world.sharingCsv }, set: { _ in }),
+            onDismiss: { world.finishSharingCsv() }
+        ) { done in
+            ShareSheet(file: done.file)
+        }
     }
 
     @ViewBuilder
