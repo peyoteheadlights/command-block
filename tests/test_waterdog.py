@@ -206,6 +206,7 @@ def test_an_allow_list_turned_on_later_becomes_the_plugins(client):
 FAKE_WATERDOG = """
 import sys
 print("Starting WaterdogPE", flush=True)
+print("[CommandBlockCompanion] Command Block allow list ready", flush=True)
 print("Registered with the external signaling service. Players can join", flush=True)
 for line in sys.stdin:
     if line.strip() == "end":
@@ -214,18 +215,35 @@ for line in sys.stdin:
 """
 
 
-def test_waterdog_runs_with_the_server_and_the_plugin_gets_the_list(client, monkeypatch):
-    client.post(f"{BASE}/playit-bedrock", json={"box": BOX})
-    hub = client.app.state.core.waterdog
+def fake_waterdog(monkeypatch, program=FAKE_WATERDOG) -> list:
+    """WaterdogPE's start runs ``program`` instead; returns what was started."""
     started = []
 
     async def start(config, cmd, *, cwd, **popen):
         started.append((cmd, cwd))
         return await asyncio.create_subprocess_exec(
-            sys.executable, "-c", FAKE_WATERDOG, cwd=str(cwd), **popen
+            sys.executable, "-c", program, cwd=str(cwd), **popen
         )
 
     monkeypatch.setattr(waterdog.serveruser, "start", start)
+    return started
+
+
+def alerts(hub) -> list:
+    """What WaterdogPE's alerts say from now on."""
+    said: list[str] = []
+
+    async def keep(c, words):
+        said.append(words)
+
+    hub._said = keep
+    return said
+
+
+def test_waterdog_runs_with_the_server_and_the_plugin_gets_the_list(client, monkeypatch):
+    client.post(f"{BASE}/playit-bedrock", json={"box": BOX})
+    hub = client.app.state.core.waterdog
+    started = fake_waterdog(monkeypatch)
 
     async def run():
         await hub.start(ctx(client))
@@ -260,6 +278,159 @@ def test_stop_using_puts_the_server_back_and_deletes_the_token(client):
     assert after["online-mode"] == "true" and after["enable-lan-visibility"] == "true"
     assert after["allow-list"] == "false"
     assert not home.exists()
+
+
+def test_waterdog_is_stopped_when_the_allow_list_plugin_didnt_load(client, monkeypatch):
+    # WaterdogPE only logs a plugin it can't load and carries on: without the
+    # plugin's ready line before playit's, anyone could join.
+    client.post(f"{BASE}/playit-bedrock", json={"box": BOX})
+    hub = client.app.state.core.waterdog
+    no_plugin = FAKE_WATERDOG.replace(
+        waterdog.PLUGIN_READY, "Error while loading plugin main class"
+    )
+    fake_waterdog(monkeypatch, no_plugin)
+    said = alerts(hub)
+
+    async def run():
+        await hub.start(ctx(client))
+        process = hub.processes["bedrock"]
+        await asyncio.wait_for(hub._readers["bedrock"], 10)
+        return process
+
+    process = asyncio.run(run())
+    assert process.returncode is not None  # killed, not left running
+    assert "bedrock" not in hub.processes and hub.state["bedrock"] == "stopped"
+    assert len(said) == 1 and "allow list add-on didn't load" in said[0]
+
+
+def test_waterdog_isnt_started_when_the_plugins_settings_cant_be_written(client, monkeypatch):
+    # An older config.json could still say "no allow list": fail closed.
+    client.post(f"{BASE}/playit-bedrock", json={"box": BOX})
+    hub = client.app.state.core.waterdog
+    started = fake_waterdog(monkeypatch)
+    said = alerts(hub)
+
+    def cant(folder, allow_list):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(waterdog, "_write_plugin_config", cant)
+    asyncio.run(hub.start(ctx(client)))
+    assert started == [] and "bedrock" not in hub.processes
+    assert len(said) == 1 and "settings couldn't be written" in said[0]
+
+
+def test_a_second_set_up_is_refused_and_keeps_the_allow_list(client, downloaded):
+    path = ctx(client).config.server_dir / "server.properties"
+    before = props(client)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("allow-list=false", "allow-list=true"),
+        encoding="utf-8",
+    )
+    assert client.post(f"{BASE}/playit-bedrock", json={"box": BOX}).status_code == 200
+    hub = client.app.state.core.waterdog
+    saved = hub.of(ctx(client))
+    again = client.post(f"{BASE}/playit-bedrock", json={"box": BOX})
+    assert again.status_code == 409 and "already set up" in again.json()["detail"]
+    assert hub.of(ctx(client)) == saved and saved["list_on"] is True
+    assert len(downloaded) == 2  # nothing downloaded the second time
+    # Stop using still finds the old port and the allow list.
+    assert client.delete(f"{BASE}/playit-bedrock").status_code == 200
+    after = props(client)
+    assert after["server-port"] == before["server-port"] and after["allow-list"] == "true"
+
+
+def test_the_security_card_sees_waterdogs_checks(client):
+    client.post(f"{BASE}/playit-bedrock", json={"box": BOX})  # allow list was off
+    ids = [line["id"] for line in client.get(f"{BASE}/protection").json()["lines"]]
+    # WaterdogPE checks every Xbox sign-in: not "anyone can join".
+    assert "offline_open" not in ids and "not_protected_none" not in ids
+    assert "whitelist_off" in ids
+    fixed = client.post(f"{BASE}/protection/fix", json={"fix": "whitelist_on"})
+    assert fixed.status_code == 200, fixed.text
+    assert client.app.state.core.waterdog.of(ctx(client))["list_on"] is True
+    assert props(client)["allow-list"] == "false"  # the server's own stays off
+    ids = [line["id"] for line in client.get(f"{BASE}/protection").json()["lines"]]
+    assert "whitelist_on" in ids and "whitelist_off" not in ids
+
+
+def test_game_settings_turn_the_plugins_allow_list_on_and_off(client):
+    client.post(f"{BASE}/playit-bedrock", json={"box": BOX})
+    hub = client.app.state.core.waterdog
+
+    def shown():
+        fields = client.get(f"{BASE}/game-settings").json()["fields"]
+        return next(f["value"] for f in fields if f["key"] == "allow-list")
+
+    assert shown() is False
+    on = client.put(f"{BASE}/game-settings", json={"values": {"allow-list": True}})
+    assert on.status_code == 200, on.text
+    assert on.json()["changed"] == {"allow-list": "true"}
+    assert hub.of(ctx(client))["list_on"] is True and shown() is True
+    assert props(client)["allow-list"] == "false"
+    off = client.put(f"{BASE}/game-settings", json={"values": {"allow-list": False}})
+    assert off.status_code == 200 and hub.of(ctx(client))["list_on"] is False
+    assert shown() is False
+
+
+def test_the_port_cant_move_away_from_waterdog(client):
+    client.post(f"{BASE}/playit-bedrock", json={"box": BOX})
+    moved = client.put(f"{BASE}/game-settings", json={"values": {"server-port": 19200}})
+    assert moved.status_code in (400, 422) and "WaterdogPE" in moved.text
+    text = (ctx(client).config.server_dir / "server.properties").read_text(encoding="utf-8")
+    raw = client.put(
+        f"{BASE}/game-settings/raw",
+        json={"text": text.replace("online-mode=false", "online-mode=true")},
+    )
+    assert raw.status_code in (400, 422) and "WaterdogPE" in raw.text
+    assert props(client)["server-port"] == "19142" and props(client)["online-mode"] == "false"
+
+
+def test_an_allow_list_turned_on_while_running_counts_at_once(client, monkeypatch):
+    client.post(f"{BASE}/playit-bedrock", json={"box": BOX})
+    hub = client.app.state.core.waterdog
+    fake_waterdog(monkeypatch)
+    plugin = hub.folder(ctx(client)) / waterdog.PLUGIN_CONFIG
+
+    async def run():
+        await hub.start(ctx(client))
+        await hub.set_list(ctx(client), True)
+        now = json.loads(plugin.read_text(encoding="utf-8"))
+        await hub.stop(ctx(client))
+        return now
+
+    now = asyncio.run(run())
+    assert now["allow_list"] == str(ctx(client).config.server_dir / "allowlist.json")
+
+
+def test_every_waterdog_setting_comes_back_before_a_start(client):
+    # An Undo of "Moving the server behind WaterdogPE" or a hand edit must not
+    # leave a LAN-visible port without the Xbox check.
+    client.post(f"{BASE}/playit-bedrock", json={"box": BOX})
+    path = ctx(client).config.server_dir / "server.properties"
+    text = path.read_text(encoding="utf-8")
+    for key, old in (
+        ("server-port=19142", "server-port=19132"),
+        ("server-portv6=19143", "server-portv6=19133"),
+        ("enable-lan-visibility=false", "enable-lan-visibility=true"),
+    ):
+        text = text.replace(key, old)
+    path.write_text(text, encoding="utf-8")
+    said = client.app.state.core.waterdog.before_launch(ctx(client))
+    assert "server-port=19142" in said and "enable-lan-visibility=false" in said
+    now = props(client)
+    assert (now["server-port"], now["server-portv6"]) == ("19142", "19143")
+    assert now["enable-lan-visibility"] == "false" and now["online-mode"] == "false"
+
+
+def test_waterdogs_safe_settings_beat_the_box(client):
+    box = BOX.replace("online_mode: true", "online_mode: false\nreplace_username_spaces: true")
+    client.post(f"{BASE}/playit-bedrock", json={"box": box})
+    import yaml
+
+    home = client.app.state.core.waterdog.folder(ctx(client))
+    written = yaml.safe_load((home / "config.yml").read_text(encoding="utf-8"))
+    assert written["online_mode"] is True and written["upstream_encryption"] is True
+    assert written["replace_username_spaces"] is False
 
 
 # ---------------------------------------------------------------- the download

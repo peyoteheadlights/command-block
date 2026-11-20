@@ -37,7 +37,6 @@ from __future__ import annotations
 import asyncio
 import collections
 import json
-import logging
 import os
 import shutil
 from pathlib import Path
@@ -52,8 +51,6 @@ from .minecraft import properties
 if TYPE_CHECKING:
     from .core import AgentCore, ServerContext
 
-log = logging.getLogger("msc.waterdog")
-
 SETTING = "waterdog"  # {server_id: {"listen", "media", "server_port", "list_on", "before"}}
 REPO = "WaterdogPE/WaterdogPE"
 TAG = "latest"  # the rolling build; the numbered releases have no NetherNet
@@ -61,6 +58,11 @@ JAR = "Waterdog.jar"
 MIN_JAVA = 17  # playit's guide
 MAX_BOX = 64 * 1024
 REGISTERED = "Registered with the external signaling service"
+# The Companion plugin's last line when it loads (AllowList.READY). WaterdogPE
+# loads plugins before it registers with playit, so this always comes first.
+# A plugin that failed to load only gets a line in WaterdogPE's log, and
+# WaterdogPE carries on: without this line it is stopped (never open by mistake).
+PLUGIN_READY = "Command Block allow list ready"
 # The Companion's release that carries the WaterdogPE plugin (companion-release.yml).
 COMPANION_VERSION = "0.1.0"
 COMPANION_TAG = f"companion-v{COMPANION_VERSION}"
@@ -68,15 +70,39 @@ PLUGIN_JAR = f"commandblock-companion-waterdog-{COMPANION_VERSION}.jar"
 # WaterdogPE makes a plugin's folder from its name in lower case.
 PLUGIN_CONFIG = Path("plugins") / "commandblockcompanion" / "config.json"
 PLUGIN_FORMAT = 1
-# Nothing about the owner's server leaves the PC.
-PRIVATE = {"enable_statistics": False, "enable_error_reporting": False}
+# Always set, whatever the box says: nothing about the owner's server leaves
+# the PC, every player's Xbox sign-in is checked and encrypted, and names keep
+# their spaces (the plugin matches them against allowlist.json).
+FORCED = {
+    "enable_statistics": False,
+    "enable_error_reporting": False,
+    "online_mode": True,
+    "upstream_encryption": True,
+    "replace_username_spaces": False,
+}
 STOP_WAIT = 15.0
 # What playit's guide says the server needs behind WaterdogPE, plus LAN
 # visibility off: with online-mode off, the server must not offer itself to
 # the home network without WaterdogPE's sign-in check.
 # Bedrock's own defaults, for a key server.properties didn't have before.
-MISSING = {"online-mode": "true", "allow-list": "false", "enable-lan-visibility": "true"}
+MISSING = {
+    "online-mode": "true",
+    "allow-list": "false",
+    "enable-lan-visibility": "true",
+    "server-portv6": "19133",
+}
 SERVER_KEYS = ("server-port", "server-portv6", "online-mode", "allow-list", "enable-lan-visibility")
+
+
+def server_values(port: int) -> dict[str, str]:
+    """What server.properties must say behind WaterdogPE (SERVER_KEYS)."""
+    return {
+        "server-port": str(port),
+        "server-portv6": str(port + 1),
+        "online-mode": "false",
+        "allow-list": "false",
+        "enable-lan-visibility": "false",
+    }
 
 
 class WaterdogError(RuntimeError):
@@ -212,6 +238,12 @@ class Waterdog:
 
         if ctx.config.server_type.edition != "bedrock":
             raise WaterdogError("WaterdogPE is only for Bedrock servers.")
+        # A second click (two apps open, a slow network) would read the moved
+        # server.properties and lose the allow list and the old port.
+        if self.of(ctx) is not None:
+            raise WaterdogError(
+                "WaterdogPE is already set up. Stop using it first to paste a new box."
+            )
         if ctx.server.running:
             raise WaterdogError("Stop the server first: its port changes.")
         found = read_box(box)
@@ -223,18 +255,12 @@ class Waterdog:
         folder = self.folder(ctx)
         await download(folder, REPO, TAG, JAR, JAR)
         await download(folder / "plugins", downloads.REPO, COMPANION_TAG, PLUGIN_JAR, PLUGIN_JAR)
-        await asyncio.to_thread(_write_config, folder, {**found["config"], **PRIVATE})
+        await asyncio.to_thread(_write_config, folder, {**found["config"], **FORCED})
 
         edited = properties.PropertiesFile.read(path)
         before = {key: edited.get(key) for key in (*SERVER_KEYS, "server-udp-ports")}
         port = found["server_port"]
-        wanted = {
-            "server-port": str(port),
-            "server-portv6": str(port + 1),
-            "online-mode": "false",
-            "allow-list": "false",
-            "enable-lan-visibility": "false",
-        }
+        wanted = server_values(port)
         # server-udp-ports set to the game port's number (11c part 0b) moves with it.
         old_port = (before.get("server-port") or "").strip()
         if old_port and (before.get("server-udp-ports") or "").strip() == old_port:
@@ -319,11 +345,37 @@ class Waterdog:
         await asyncio.to_thread(shutil.rmtree, self.folder(ctx), True)
         self._put(ctx, None)
 
+    def list_path(self, ctx: ServerContext) -> Path | None:
+        """The allowlist.json the plugin keeps, or None when everyone may join."""
+        entry = self.of(ctx) or {}
+        return ctx.config.server_dir / "allowlist.json" if entry.get("list_on") else None
+
+    async def set_list(self, ctx: ServerContext, on: bool) -> bool:
+        """Turn the allow list on or off behind WaterdogPE: the plugin keeps
+        it, the server's own stays off. The plugin reads its settings for
+        every join, so it counts at once. False when WaterdogPE isn't used."""
+        entry = self.of(ctx)
+        if entry is None:
+            return False
+        self._put(ctx, {**entry, "list_on": on})
+        if ctx.server_id in self.processes:
+            try:
+                await asyncio.to_thread(_write_plugin_config, self.folder(ctx), self.list_path(ctx))
+            except OSError as exc:  # the old settings would stay: never open by mistake
+                await self.stop(ctx)
+                await self._said(
+                    ctx,
+                    f"The allow list add-on's settings couldn't be written ({exc}), so "
+                    "WaterdogPE was stopped. Restart the server to try again.",
+                )
+        return True
+
     # ------------------------------------------------------------ with the server
     def before_launch(self, ctx: ServerContext) -> str | None:
-        """Before every start: the allow list and online mode stay off (the
-        server won't start behind WaterdogPE otherwise). An allow list turned
-        on since becomes ours to keep. Returns a line for the console."""
+        """Before every start: server.properties says what WaterdogPE needs
+        again (an Undo or a hand edit may have changed it): the box's port,
+        LAN visibility, allow list and online mode off. An allow list turned
+        on since becomes the plugin's to keep. Returns a line for the console."""
         entry = self.of(ctx)
         path = ctx.config.server_dir / properties.FILENAME
         if entry is None or not path.is_file():
@@ -331,13 +383,15 @@ class Waterdog:
         edited = properties.PropertiesFile.read(path)
         if (edited.get("allow-list") or "").strip().lower() == "true":
             self._put(ctx, {**entry, "list_on": True})
-        changed = [key for key in ("allow-list", "online-mode") if edited.set(key, "false")]
+        wanted = server_values(entry["server_port"])
+        changed = [f"{key}={value}" for key, value in wanted.items() if edited.set(key, value)]
         if not changed:
             return None
         edited.write(path)
         return (
-            f"[agent] set {', '.join(k + '=false' for k in changed)}: players come in through "
-            "WaterdogPE, which checks their Xbox sign-in, and the agent keeps the allow list"
+            f"[agent] set {', '.join(changed)}: players come in through WaterdogPE, which "
+            "checks their Xbox sign-in, and the agent keeps the allow list. "
+            "Stop using WaterdogPE to change these."
         )
 
     async def start(self, ctx: ServerContext) -> None:
@@ -352,12 +406,15 @@ class Waterdog:
                 ctx, "WaterdogPE isn't downloaded. Use playit.gg for this server again."
             )
             return
-        entry = self.of(ctx) or {}
-        allow_list = ctx.config.server_dir / "allowlist.json" if entry.get("list_on") else None
         try:
-            await asyncio.to_thread(_write_plugin_config, folder, allow_list)
-        except OSError as exc:  # the plugin then lets nobody in: never open by mistake
-            log.warning("the allow list plugin's settings weren't written: %s", exc)
+            await asyncio.to_thread(_write_plugin_config, folder, self.list_path(ctx))
+        except OSError as exc:  # an older config.json would stay: never open by mistake
+            await self._said(
+                ctx,
+                f"The allow list add-on's settings couldn't be written ({exc}), so WaterdogPE "
+                "wasn't started and friends can't join through playit.gg.",
+            )
+            return
         java = ctx.config.server.java or "java"
         argv = [java, "-Xms256M", "-Xmx1G", "-jar", JAR]
         self.state[ctx.server_id] = "starting"
@@ -389,13 +446,32 @@ class Waterdog:
     async def _read(self, ctx: ServerContext, process: asyncio.subprocess.Process) -> None:
         assert process.stdout is not None
         tail = self.tails[ctx.server_id]
+        ready = False
         while True:
             raw = await process.stdout.readline()
             if not raw:
                 break
             line = raw.decode("utf-8", errors="replace").rstrip()
             tail.append(line)
-            if REGISTERED in line:
+            if PLUGIN_READY in line:
+                ready = True
+            elif REGISTERED in line and not ready:
+                # The allow list plugin didn't load: players would reach the
+                # server with no allow list. Stopped before anyone can join.
+                if self.processes.get(ctx.server_id) is process:
+                    self.processes.pop(ctx.server_id, None)
+                self.state[ctx.server_id] = "stopped"
+                if process.returncode is None:
+                    process.kill()
+                await process.wait()
+                await self._said(
+                    ctx,
+                    "The allow list add-on didn't load, so WaterdogPE was stopped and friends "
+                    "can't join through playit.gg. Update Command Block, then Stop using "
+                    "WaterdogPE and set it up again.",
+                )
+                return
+            elif REGISTERED in line:
                 self.state[ctx.server_id] = "registered"
         await process.wait()
         if self.processes.get(ctx.server_id) is process:  # not our stop
