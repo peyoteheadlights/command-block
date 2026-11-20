@@ -207,6 +207,18 @@ class ServerColorRequest(BaseModel):
 class PreferencesRequest(BaseModel):
     mode: Literal["simple", "technical"] | None = None
     theme: Literal["system", "light", "dark", "graphite", "contrast"] | None = None
+    tips: Literal["on", "off"] | None = None
+
+
+class WelcomeRequest(BaseModel):
+    # None: "I know what I'm doing".
+    first_time: bool | None = None
+    kinds: list[Literal["vanilla", "mods", "plugins", "bedrock"]] = Field(
+        default_factory=list, max_length=4
+    )
+    played_by: Literal["", "friends", "kids", "community"] = ""
+    # False (PC settings): change the answers only, not the mode and tips.
+    set_defaults: bool = True
 
 
 class RecommendationActionRequest(BaseModel):
@@ -262,6 +274,10 @@ class CreateServerRequest(BaseModel):
     eula_accepted: bool = False
     # A Test server (agent/testserver.py).
     test: bool = False
+    # "Who's this server for?"; null takes this PC's first-run answer.
+    played_by: Literal["", "friends", "kids", "community"] | None = None
+    # Friends' names for the whitelist (friends or kids only), added on first start.
+    players: list[str] = Field(default_factory=list, max_length=50)
 
 
 class CustomServerRequest(BaseModel):

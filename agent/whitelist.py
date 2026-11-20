@@ -64,6 +64,7 @@ FORM_LIFE = 7 * 86400.0
 MAX_FORMS = 30  # open requests per server
 MAX_WHY = 300
 REMOVALS_KEY = "whitelist_removals"  # server id -> names to take off once it's online
+ADDITIONS_KEY = "whitelist_additions"  # server id -> names to add once it's online (new servers)
 MAX_REMOVALS = 200
 # A colour code some consoles leave in front of a plugin's line. On Windows a
 # Java server writes "§" in the PC's own code page, so it can reach us as "\ufffd".
@@ -384,17 +385,29 @@ class Whitelist:
         ctx.db.audit("whitelist_remove_later", user=by, target=name)
         return "later"
 
-    async def _removals(self, ctx: ServerContext) -> None:
-        waiting = self.db.get_setting(REMOVALS_KEY, {}) or {}
+    # -- putting people on before the first start ----------------------------------
+    def add_later(self, ctx: ServerContext, names: list[str], by: str) -> None:
+        """A new server's friends (first run's "Who's this server for?"): the
+        whitelist command needs Minecraft running, so they're added once it's
+        online."""
+        waiting = self.db.get_setting(ADDITIONS_KEY, {}) or {}
+        waiting[ctx.server_id] = list(dict.fromkeys([*waiting.get(ctx.server_id, []), *names]))[
+            -MAX_REMOVALS:
+        ]
+        self.db.set_setting(ADDITIONS_KEY, waiting)
+        ctx.db.audit("whitelist_add_later", user=by, target=", ".join(names))
+
+    async def _later(self, ctx: ServerContext, key: str, kind: str) -> None:
+        waiting = self.db.get_setting(key, {}) or {}
         names = waiting.pop(ctx.server_id, [])
         if not names:
             return
-        self.db.set_setting(REMOVALS_KEY, waiting)
+        self.db.set_setting(key, waiting)
         for name in names:
             try:
-                await ctx.player_actions.send("whitelist_remove", name)
+                await ctx.player_actions.send(kind, name)
             except PlayerActionError as exc:
-                log.info("couldn't take %s off the whitelist: %s", name, exc)
+                log.info("couldn't send %s for %s: %s", kind, name, exc)
 
     async def _event(self, event: Event) -> None:
         ctx = self.core.servers.get(event.server_id or "")
@@ -403,7 +416,8 @@ class Whitelist:
         if event.type == "server_started":
             if ip_addon(ctx) is None:
                 self.purge(ctx.server_id)
-            await self._removals(ctx)
+            await self._later(ctx, ADDITIONS_KEY, "whitelist_add")
+            await self._later(ctx, REMOVALS_KEY, "whitelist_remove")
         elif event.type == "player_action":
             data = event.data or {}
             if data.get("action") == "whitelist_remove" and data.get("username"):

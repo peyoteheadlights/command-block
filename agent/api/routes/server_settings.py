@@ -38,6 +38,7 @@ SERVER_SETTABLE = (
     "server.bedrock_auto_update",
     "server.join_protection",
     "server.join_size",
+    "server.played_by",
     "server.join_limits",
     "server.join_home_only",
     "server.start_on_join",

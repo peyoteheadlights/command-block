@@ -443,6 +443,27 @@ class SettingsPage(Page):
         other.clicked.connect(any_color)
         colors.addWidget(other)
         layout.addLayout(colors)
+        from .welcome import PLAYED_BY
+
+        who = QComboBox()
+        who.setObjectName("playedBy")
+        who.addItem(text("welcome.for_unset"), "")
+        for value, words in PLAYED_BY:
+            who.addItem(text(words), value)
+        now = (data.get("server") or {}).get("played_by") or ""
+        who.setCurrentIndex(max(0, who.findData(now)))
+
+        def save_who(_index: int) -> None:
+            self.ask(
+                "PUT",
+                "/settings",
+                lambda result: self.saved(said, result),
+                problem,
+                body={"updates": {"server.played_by": who.currentData()}},
+            )
+
+        who.currentIndexChanged.connect(save_who)
+        layout.addWidget(field(text("welcome.who_question"), who, text("serverset.played_by_hint")))
         layout.addWidget(said)
         return frame
 

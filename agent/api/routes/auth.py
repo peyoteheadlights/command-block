@@ -10,9 +10,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ... import API_VERSION
 from ...events import Event
-from ...security.auth import AccountError, InviteError, Principal, token_hash
+from ...security.auth import (
+    PLAYED_BY_DEFAULT,
+    AccountError,
+    InviteError,
+    Principal,
+    token_hash,
+)
 from ...security.permissions import (
     ACCOUNT,
+    PC_SETTINGS,
     SERVER_PERMISSIONS,
     can_see_server,
     held_anywhere,
@@ -21,7 +28,17 @@ from ...security.permissions import (
     require,
 )
 from ..deps import audit, client_ip, get_core
-from ..responses import DeviceList, Health, InviteCheck, LoginResult, Me, Ok, Preferences, Rotated
+from ..responses import (
+    DeviceList,
+    Health,
+    InviteCheck,
+    LoginResult,
+    Me,
+    Ok,
+    Preferences,
+    Rotated,
+    Welcome,
+)
 from .models import (
     InviteAcceptRequest,
     InviteCheckRequest,
@@ -29,6 +46,7 @@ from .models import (
     OneTimeSignInRequest,
     PasswordChangeRequest,
     PreferencesRequest,
+    WelcomeRequest,
 )
 
 router = APIRouter()
@@ -200,3 +218,34 @@ async def set_preferences(
 ):
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
     return core.auth.set_preferences(principal.user, updates)
+
+
+# The first-run questions. The answers only set defaults; "played_by" is
+# this PC's default for new servers, so answering is the owner's.
+
+
+def _welcome(core, user: str) -> dict:
+    return {
+        **core.auth.welcome(user),
+        "played_by": core.db.get_setting(PLAYED_BY_DEFAULT, "") or "",
+    }
+
+
+@router.get("/account/welcome", response_model=Welcome)
+async def get_welcome(principal: Principal = Depends(require(ACCOUNT)), core=Depends(get_core)):
+    return _welcome(core, principal.user)
+
+
+@router.put("/account/welcome", response_model=Welcome)
+async def set_welcome(
+    payload: WelcomeRequest,
+    request: Request,
+    principal: Principal = Depends(require(PC_SETTINGS)),
+    core=Depends(get_core),
+):
+    """Saves the answers. First run (``set_defaults``) also picks the mode
+    and tips from them; PC settings changes only the answers."""
+    core.auth.set_welcome(principal.user, payload.first_time, payload.kinds, payload.set_defaults)
+    core.db.set_setting(PLAYED_BY_DEFAULT, payload.played_by)
+    audit(core, request, "welcome_answered")
+    return _welcome(core, principal.user)

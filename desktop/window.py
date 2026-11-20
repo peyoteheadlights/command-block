@@ -658,6 +658,8 @@ class MainWindow(FramelessWindow):
         self.quitting = False
         mode["technical"] = False
         self.mode_picked = False  # picked here since signing in
+        self.welcome_open = False  # the first-run questions are showing
+        self.tips_on = True  # the account's "tips" preference
         self.ask_answered = False  # the donation card was answered here
         self.setWindowTitle(text("app.name"))
         self.resize(1280, 800)
@@ -1768,6 +1770,23 @@ class MainWindow(FramelessWindow):
             self.server_screen.show_page(self.server_screen.current_page)
         if self.role == "owner" and self.agent.place == "this PC":
             self.run(self.agent.tailscale, self.tailscale_loaded, lambda _e: None)
+        if self.role == "owner":
+            self.run(
+                lambda: self.agent.call("GET", "/account/welcome"),
+                self.welcome_loaded,
+                lambda _e: None,
+            )
+
+    def welcome_loaded(self, answers: dict) -> None:
+        """The first-run questions, once, until answered or skipped."""
+        if answers.get("answered") or self.welcome_open:
+            return
+        from .welcome import WelcomeDialog
+
+        self.welcome_open = True
+        dialog = WelcomeDialog(self)
+        dialog.finished.connect(lambda _r: setattr(self, "welcome_open", False))
+        dialog.open()
 
     def tailscale_loaded(self, state: dict) -> None:
         self.setup_unfinished = bool(state.get("skipped")) and not state.get("moved")
@@ -1826,6 +1845,7 @@ class MainWindow(FramelessWindow):
 
     # ------------------------------------------------------------ Simple and Technical
     def mode_loaded(self, prefs: dict) -> None:
+        self.tips_on = prefs.get("tips", "on") == "on"
         if self.mode_picked:  # a slow answer mustn't undo the person's own pick
             return
         mode["technical"] = prefs.get("mode") == "technical"
