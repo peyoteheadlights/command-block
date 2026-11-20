@@ -86,6 +86,29 @@ final class ServerPages {
         await load(\.console) { client, id in ConsoleBuffer.replace(try await client.consoleLog(serverId: id).lines) }
     }
 
+    /// The running server's own command names, for the chips above the box.
+    var commands: [String] = []
+
+    func loadCommands() async {
+        guard let client = client() else { return }
+        // Nothing to complete is fine: the box works the same without.
+        commands = (try? await client.consoleCommands(serverId: serverId).commands.map(\.name)) ?? []
+    }
+
+    // MARK: Older logs
+
+    var logFiles = PageRead<[LogFile]>()
+    var logText = PageRead<LogFileText>()
+
+    func loadLogFiles() async {
+        await load(\.logFiles) { client, id in try await client.logFiles(serverId: id).files }
+    }
+
+    func openLog(_ name: String) async {
+        logText = PageRead()
+        await load(\.logText) { client, id in try await client.logFile(serverId: id, name: name) }
+    }
+
     func onConsoleLine(_ line: ConsoleLine) {
         console.value = ConsoleBuffer.add(console.value ?? [], line)
     }

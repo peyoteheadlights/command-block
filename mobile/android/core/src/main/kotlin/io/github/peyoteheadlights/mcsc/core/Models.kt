@@ -103,11 +103,44 @@ data class ServerRow(
     val edition: String? = null,
     val capabilities: Capabilities? = null,
     val answering: Answering? = null,
+    /** Where the owner put it on All servers; null: never moved. */
+    val position: Int? = null,
+    /** The heading it's under on All servers; empty: none. */
+    val group: String? = null,
 )
 
 /** Does the server answer on its game port? ok is null until checked. */
 @Serializable
 data class Answering(val ok: Boolean? = null)
+
+@Serializable
+data class AllServersResult(
+    val id: String,
+    val name: String,
+    /** started, already, stopped, stopping or failed. */
+    val result: String,
+    val detail: String? = null,
+)
+
+@Serializable
+data class AllServersAction(val servers: List<AllServersResult> = emptyList())
+
+/** A command the running server's own help lists, for completing the console box. */
+@Serializable
+data class CommandUsage(val name: String, val usage: String)
+
+@Serializable
+data class CommandList(val commands: List<CommandUsage> = emptyList())
+
+/** One of Minecraft's own log files in the server's logs folder. */
+@Serializable
+data class LogFile(val name: String, val size: Long = 0, val changed: Double = 0.0)
+
+@Serializable
+data class LogFiles(val files: List<LogFile> = emptyList())
+
+@Serializable
+data class LogFileText(val name: String, val lines: List<String> = emptyList(), val cut: Boolean = false)
 
 @Serializable
 data class ServerList(

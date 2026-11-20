@@ -102,6 +102,8 @@ final class AppModel {
     var serversFresh = false
     var serversCheckedAt: Double? = nil
     var serversProblem: AgentError? = nil
+    /// What Start all, Stop all or a move just did, in words.
+    var serversSaid: [String] = []
     var alertState: AlertState
     var live = false
     /// Lock-screen alerts on for this sign-in, and what went wrong turning them on.
@@ -420,6 +422,47 @@ final class AppModel {
         }
         serversLoaded = true
         WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    /// Start all or Stop all for `ids`, the servers shown.
+    func allServers(_ action: String, ids: [String]) async {
+        guard let client = client, signedIn else { return }
+        serversSaid = []
+        do {
+            let rows = try await client.allServers(action: action, ids: ids).servers
+            let done = rows.filter { ["started", "stopped", "stopping"].contains($0.result) }.count
+            serversSaid = [done > 0 ? t("servers.all_done_\(action)", ["n": done]) : t("servers.all_none_\(action)")]
+                + rows.filter { $0.result == "failed" }.map {
+                    t("servers.all_failed", ["name": $0.name, "reason": $0.detail ?? ""])
+                }
+        } catch let problem as AgentError {
+            note(problem)
+            serversSaid = [problem.message(strings)]
+        } catch {}
+        await refreshServers()
+    }
+
+    /// Moves `id` one place up or down among `shown` (its group's servers).
+    func moveServer(_ id: String, shown: [String], up: Bool) async {
+        guard let order = ServerListing.moved(order: servers.map(\.id), shown: shown, id: id, up: up) else { return }
+        await arrangeServers { try await $0.saveServerOrder(ids: order) }
+    }
+
+    func groupServer(_ id: String, group: String) async {
+        let name = group.trimmingCharacters(in: .whitespaces)
+        await arrangeServers { try await $0.saveServerGroup(serverId: id, group: name) }
+    }
+
+    private func arrangeServers(_ call: (AgentClient) async throws -> Void) async {
+        guard let client = client, signedIn else { return }
+        do {
+            try await call(client)
+            serversSaid = []
+        } catch let problem as AgentError {
+            note(problem)
+            serversSaid = [problem.message(strings)]
+        } catch {}
+        await refreshServers()
     }
 
     func syncAlerts() async {
