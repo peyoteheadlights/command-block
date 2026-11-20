@@ -39,6 +39,8 @@ import psutil
 
 from .. import colors, servertypes
 from ..config import PROJECT_ROOT, check_server_id
+from ..minecraft.playeractions import PlayerActionError, check_name
+from ..security.auth import PLAYED_BY_DEFAULT
 from ..security.paths import check_new_server_folder
 from .install import InstallError, install_plan
 from .versions import java_for, list_versions, make_plan
@@ -67,6 +69,7 @@ DEFAULT_PROPERTIES: dict[str, str] = {
     "enable-command-block": "false",
     "white-list": "false",
 }
+PLAYED_BY = ("", "friends", "kids", "community")
 # Memory for a new server, from the PC's real RAM.
 MIN_MEMORY_MB = 2048
 MAX_DEFAULT_MEMORY_MB = 8192
@@ -114,7 +117,9 @@ def write_properties(
     return path
 
 
-def set_bedrock_properties(directory: Path, port: int, port_v6: int, name: str) -> Path:
+def set_bedrock_properties(
+    directory: Path, port: int, port_v6: int, name: str, allow_list: bool = False
+) -> Path:
     """Set the ports, the name players see and the world name in Mojang's own
     server.properties from the download, keeping its comments and every
     other value as Mojang wrote them."""
@@ -127,6 +132,8 @@ def set_bedrock_properties(directory: Path, port: int, port_v6: int, name: str) 
     parsed.set("server-portv6", str(int(port_v6)))
     if not parsed.get("level-name"):
         parsed.set("level-name", "Bedrock level")
+    if allow_list:
+        parsed.set("allow-list", "true")
     parsed.write(path)
     return path
 
@@ -206,6 +213,7 @@ async def options(core: AgentCore) -> dict[str, Any]:
         "color": colors.next_unused(ctx.color for ctx in core.servers.values()),
         "palette": colors.palette(),
         "eula_url": EULA_URL,
+        "played_by": core.db.get_setting(PLAYED_BY_DEFAULT, "") or "",
         "bedrock": {
             "port": bedrock_ports[0] if bedrock_ports else None,
             "port_v6": bedrock_ports[1] if bedrock_ports else None,
@@ -234,6 +242,8 @@ async def create_server(
     after_install: Callable[[Any, Path, Any], Awaitable[dict[str, Any]]] | None = None,
     title: str | None = None,
     test: bool = False,
+    played_by: str | None = None,
+    players: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create a new server. Returns the new server's summary and the job.
 
@@ -259,6 +269,24 @@ async def create_server(
             "Minecraft's rules (the EULA) have to be accepted before a server can be "
             "created. Tick the box to accept them."
         )
+    # "Who's this server for?": None takes this PC's first-run answer. A few
+    # friends or kids: whitelist on with their names; a community or no
+    # answer: Minecraft's own default (off).
+    if played_by is None:
+        played_by = core.db.get_setting(PLAYED_BY_DEFAULT, "") or ""
+    if played_by not in PLAYED_BY:
+        raise InstallError("Who the server is for has to be friends, kids or community.")
+    whitelist_on = played_by in ("friends", "kids")
+    try:
+        names = [check_name(n.strip(), server_type.dialect) for n in players or [] if n.strip()]
+    except PlayerActionError as exc:
+        raise InstallError(str(exc)) from None
+    seen: dict[str, str] = {}
+    for n in names:  # Minecraft names ignore case
+        seen.setdefault(n.lower(), n)
+    names = list(seen.values())
+    if names and not whitelist_on:
+        raise InstallError("Friends' names are only asked for when the whitelist is on.")
     registered = [(ctx.name, ctx.config.server_dir) for ctx in core.servers.values()]
     folder = check_new_server_folder(
         directory, protected=[PROJECT_ROOT, core.config.data_dir], registered=registered
@@ -307,7 +335,12 @@ async def create_server(
             if server_type.content_folder:
                 (folder / server_type.content_folder).mkdir(exist_ok=True)
             if not is_bedrock:
-                write_properties(folder, port, name)
+                write_properties(
+                    folder,
+                    port,
+                    name,
+                    {"white-list": "true", "enforce-whitelist": "true"} if whitelist_on else None,
+                )
                 write_eula(folder, eula_accepted)
             entry_config = {
                 "id": server_id,
@@ -334,7 +367,9 @@ async def create_server(
         try:
             result = await install_plan(ctx, plan, folder, job=job)
             if is_bedrock:
-                written = set_bedrock_properties(folder, port, port_v6 or port + 1, name)
+                written = set_bedrock_properties(
+                    folder, port, port_v6 or port + 1, name, allow_list=whitelist_on
+                )
                 # The player limit the app shows is Mojang's own default from
                 # the file, not this app's Java default.
                 from ..minecraft.properties import PropertiesFile
@@ -346,7 +381,11 @@ async def create_server(
             ctx.config.set("server.args_file", result["args_file"])
             if server_type.content_folder:
                 ctx.config.set("mods.directory", server_type.content_folder)
+            if played_by:
+                ctx.config.set("server.played_by", played_by)
             ctx.config.save()
+            if names:  # sent once the server is online (it needs Minecraft running)
+                core.whitelist.add_later(ctx, names, user)
             if vanilla_spawns and server_type.changes_farms:
                 from ..gamesettings import write_vanilla_spawns
 
