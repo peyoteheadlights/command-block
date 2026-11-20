@@ -61,6 +61,8 @@ Your servers run on your own PC, so friends can only play while that PC is on. *
 
 Friends outside your home can join with **Let friends join from the internet** in Server settings: the app asks your router to open the server's port while it runs (UPnP) and tests it from outside. If your router or internet provider doesn't allow that, the app shows the port forwarding steps or points you to playit.gg.
 
+To give your internet address a name friends can remember (like `myserver.duckdns.org`), save a free DuckDNS or No-IP name in the same card. The app keeps it pointed at your PC. It's only a name, so the port still has to be open.
+
 ## Planned features
 
 This app is in no way done and will be supported for a good long while. Here's everything that's been planned so far:

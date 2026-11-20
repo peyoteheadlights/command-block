@@ -334,6 +334,34 @@ class AgentClient(
         InternetReach.serializer(),
     )
 
+    /** This PC's DuckDNS and No-IP names (agent/ddns.py). Saved only after the site said yes. */
+    suspend fun ddns(): DdnsState = get("/api/ddns", DdnsState.serializer())
+
+    suspend fun saveDuckDns(name: String, token: String): DdnsState = call(
+        request("/api/ddns/duckdns").put(buildJsonObject {
+            put("name", name)
+            put("token", token)
+        }.toBody()).build(),
+        DdnsState.serializer(),
+        slow = true,
+    )
+
+    suspend fun saveNoIp(name: String, username: String, password: String): DdnsState = call(
+        request("/api/ddns/noip").put(buildJsonObject {
+            put("name", name)
+            put("username", username)
+            put("password", password)
+        }.toBody()).build(),
+        DdnsState.serializer(),
+        slow = true,
+    )
+
+    /** The owner confirmed the No-IP name on noip.com: 30 more days. */
+    suspend fun noIpConfirmed(): DdnsState = call(post("/api/ddns/noip/confirmed", JsonObject(emptyMap())), DdnsState.serializer())
+
+    /** [kind] is duckdns or noip. */
+    suspend fun removeDdns(kind: String): DdnsState = call(request("/api/ddns/$kind").delete().build(), DdnsState.serializer())
+
     // ------------------------------------------------------------------
     // Backups, Restore world, Schedules and Performance. Making a backup,
     // a restore and Run now answer only once the work is done, which can

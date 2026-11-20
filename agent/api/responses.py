@@ -390,6 +390,32 @@ class BedrockJoin(Open):
     own_server: bool | None = Field(None, description="true for a Bedrock server of its own")
 
 
+class DdnsNameShort(Open):
+    provider: str = Field(description="duckdns or noip")
+    name: str
+
+
+class DdnsName(Open):
+    name: str = Field(description="The whole name friends type, like myserver.duckdns.org")
+    ip: str | None = Field(None, description="The address the site last set")
+    updated_at: float | None = None
+    problem: str | None = Field(None, description="Why updates stopped; null when working")
+
+
+class NoIpName(DdnsName):
+    confirm_by: float = Field(description="When No-IP deletes the free name unless confirmed")
+    confirm_soon: bool = Field(description="Within a week of confirm_by")
+
+
+class DdnsState(Open):
+    """DuckDNS and No-IP names for this PC's internet address (agent/ddns.py)."""
+
+    duckdns: DdnsName | None = None
+    noip: NoIpName | None = None
+    duckdns_site: str
+    noip_site: str
+
+
 class InternetReach(Open):
     """ "Let friends join from the internet" (agent/internet.py)."""
 
@@ -410,6 +436,9 @@ class InternetReach(Open):
     problem: str | None = None
     mcsrvstat_ok: bool = False
     playit: str | None = None
+    names: list[DdnsNameShort] = Field(
+        default_factory=list, description="This PC's DuckDNS / No-IP names that work"
+    )
 
 
 class JoinInfo(Open):

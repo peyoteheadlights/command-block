@@ -183,6 +183,7 @@ def summary(ctx: ServerContext) -> dict[str, Any]:
         "detail": found.detail,
         "mcsrvstat_ok": bool(ctx.core.db.get_setting(MCSRVSTAT_OK, False)),
         "playit": PLAYIT if found.problem in ("shared", "private") else None,
+        "names": ctx.core.ddns.names(),
     }
     return out
 

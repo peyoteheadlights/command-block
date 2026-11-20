@@ -437,6 +437,38 @@ final class SetupPages {
         }
     }
 
+    // MARK: - DuckDNS and No-IP
+
+    /// This PC's names for its internet address (agent/ddns.py).
+    private(set) var ddns = PageRead<DdnsState>()
+
+    func loadDdns() async {
+        guard let client = client() else { return }
+        do {
+            ddns = PageRead(value: try await client.ddns())
+        } catch let problem as AgentError {
+            noted(problem)
+            ddns = PageRead(problem: problem)
+        } catch {}
+    }
+
+    /// True when it worked, so the form can close.
+    @discardableResult
+    func ddnsCall(_ strings: Strings, _ work: (AgentClient) async throws -> DdnsState) async -> Bool {
+        guard let client = client(), busy == nil else { return false }
+        busy = "ddns"
+        said = nil
+        defer { busy = nil }
+        do {
+            ddns = PageRead(value: try await work(client))
+            return true
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+        return false
+    }
+
     // MARK: - Duplicate
 
     private(set) var copyOptions = PageRead<DuplicateOptions>()
