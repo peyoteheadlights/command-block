@@ -266,12 +266,35 @@ data class JoinWay(
     @SerialName("own_server") val ownServer: Boolean? = null,
 )
 
-/** GET /join. The internet is never tested, so it is never claimed. */
+/** GET /join. Reaching it from the internet is "not known" until an outside test answered. */
 @Serializable
 data class JoinInfo(
     val java: JoinWay? = null,
     val bedrock: JoinWay? = null,
     val running: Boolean? = null,
+    val internet: InternetReach? = null,
+)
+
+/** One port the router is asked to open. */
+@Serializable
+data class RouterPort(val protocol: String = "", val port: Int = 0)
+
+/** GET /internet: "Let friends join from the internet" (agent/internet.py). */
+@Serializable
+data class InternetReach(
+    val on: Boolean = false,
+    val busy: Boolean = false,
+    val known: Boolean = false,
+    val works: Boolean? = null,
+    @SerialName("tested_by") val testedBy: String? = null,
+    val reason: String? = null,
+    val address: String? = null,
+    val port: Int? = null,
+    val ports: List<RouterPort> = emptyList(),
+    @SerialName("local_address") val localAddress: String? = null,
+    val detail: String? = null,
+    @SerialName("mcsrvstat_ok") val mcsrvstatOk: Boolean = false,
+    val playit: String? = null,
 )
 
 @Serializable

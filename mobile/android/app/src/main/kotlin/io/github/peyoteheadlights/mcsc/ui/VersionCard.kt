@@ -29,7 +29,7 @@ import io.github.peyoteheadlights.mcsc.core.Display
 import io.github.peyoteheadlights.mcsc.core.VersionChange
 
 /** What Server settings asks to confirm. */
-enum class SetupAsk { CHANGE, ROLL_BACK, CROSSPLAY_ON, REMOVE }
+enum class SetupAsk { CHANGE, ROLL_BACK, CROSSPLAY_ON, REMOVE, MCSRVSTAT }
 
 /**
  * The server's kind and version as its console said them, the EULA when
