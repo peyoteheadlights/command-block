@@ -132,6 +132,7 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "tailscale_key_expiring": ("tailscale", 0xFAA61A, "The Tailscale key runs out soon"),
     "noip_confirm": ("tailscale", 0xFAA61A, "Confirm your No-IP name this week"),
     "ddns_failed": ("tailscale", 0xED4245, "Your server's name stopped updating"),
+    "playit_stopped": ("tailscale", 0xED4245, "Friends can't join through playit.gg"),
     "discord_token_rejected": ("discord_bot", 0xED4245, "Discord refused the bot's token"),
     "discord_link_request": ("discord_bot", 0x5865F2, "{server}: a Discord member asks to link"),
     "start_request": ("start_requests", 0xFAA61A, "{server}: start request"),

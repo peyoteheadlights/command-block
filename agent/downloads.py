@@ -118,6 +118,8 @@ ALLOWED_HOSTS = frozenset(
         # The DuckDNS and No-IP names' update addresses (agent/ddns.py).
         "www.duckdns.org",
         "dynupdate.no-ip.com",
+        # playit.gg's link step, only its two claim calls (agent/playit.py).
+        "api.playit.gg",
     }
 )
 
@@ -127,7 +129,12 @@ REPO = "peyoteheadlights/command-block"
 # Adoptium's Temurin release files.
 GITHUB_PATHS = {
     "api.github.com": (f"/repos/{REPO}/releases",),
-    "github.com": (f"/{REPO}/releases/download/", "/adoptium/"),
+    "github.com": (
+        f"/{REPO}/releases/download/",
+        "/adoptium/",
+        # playit.gg's signed Windows setup, for the desktop app's "Use playit.gg".
+        "/playit-cloud/playit-agent/releases/",
+    ),
 }
 # The same for Mojang's Bedrock hosts, Tailscale's package site, Hangar,
 # Google's sign-in and Firebase hosts and CurseForge's file servers, which
@@ -149,6 +156,7 @@ SHARED_HOST_PATHS = {
     "plugin.tebex.io": ("/information", "/packages"),
     "nodejs.org": ("/dist/",),
     "api.spiget.org": ("/v2/resources/",),
+    "api.playit.gg": ("/claim/setup", "/claim/exchange"),
 }
 # One more repo whose release list and release files may be read, while an
 # add-on from a GitHub link is read or updated (see allow_releases).
