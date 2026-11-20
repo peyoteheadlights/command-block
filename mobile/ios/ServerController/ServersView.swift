@@ -73,10 +73,14 @@ struct ServersListView: View {
                         }
                     }
                 }
+                RentedSection()
             }
             .refreshable {
                 await model.refreshServers()
+                await model.rented.load()
             }
+            // Rented servers: an agent without them answers 404 and none show.
+            .task(id: model.me?.user) { await model.rented.load() }
             .scrollContentBackground(.hidden)
             .background(model.basePalette(colorScheme).sheet)
             .binder(current: nil)
@@ -157,6 +161,12 @@ struct ServersListView: View {
                     QuestsView(serverId: id)
                 case .diagnose(let id):
                     DiagnoseView(serverId: id)
+                case .store(let id):
+                    StoreScreen(serverId: id)
+                case .rented(let id):
+                    RentedView(id: id)
+                case .connectRented:
+                    ConnectPanelView()
                 case .add:
                     AddServerView()
                 }

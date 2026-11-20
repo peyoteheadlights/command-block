@@ -29,6 +29,7 @@ import io.github.peyoteheadlights.mcsc.core.ServerForm
 import io.github.peyoteheadlights.mcsc.core.Permissions
 import io.github.peyoteheadlights.mcsc.core.QuickAction
 import io.github.peyoteheadlights.mcsc.core.States
+import io.github.peyoteheadlights.mcsc.core.Store
 
 /** One server, in its own color: what it's doing, who's playing, Start,
  * Stop and Restart (the last two ask first), its other screens, and the
@@ -138,6 +139,8 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                 if (vm.canDo(Permissions.SERVER_DIAGNOSE)) Item(t("action.diagnose"), onClick = { onOpen("diagnose") })
                 if (vm.canDo(Permissions.QUESTS_MANAGE)) Item(t("page.quests"), onClick = { onOpen("quests") })
                 if (ServerForm.visible(vm.me)) Item(t("page.server_settings"), onClick = { onOpen("settings") })
+                // Only the owner, in Technical, on a community server (agent/store.py).
+                if (Store.shown(row, vm.me, vm.technical)) Item(t("desktop.page.store"), onClick = { onOpen("store") })
             }
         }
         joinCard(vm, pages)
