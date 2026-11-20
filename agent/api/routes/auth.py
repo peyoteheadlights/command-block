@@ -31,6 +31,7 @@ from ..deps import audit, client_ip, get_core
 from ..responses import (
     DeviceList,
     Health,
+    Hidden,
     InviteCheck,
     LoginResult,
     Me,
@@ -40,6 +41,7 @@ from ..responses import (
     Welcome,
 )
 from .models import (
+    HideRequest,
     InviteAcceptRequest,
     InviteCheckRequest,
     LoginRequest,
@@ -186,6 +188,7 @@ async def me(principal: Principal = Depends(require(ACCOUNT)), core=Depends(get_
             if can_see_server(principal, sid)
         },
         "preferences": core.auth.preferences(principal.user),
+        "hidden": core.auth.hidden(principal.user),
     }
 
 
@@ -224,6 +227,11 @@ async def set_preferences(
 # this PC's default for new servers, so answering is the owner's.
 
 
+def _account(core, principal: Principal) -> str:
+    # The installer on an "Agent only" PC answers with the API token, for the owner.
+    return core.auth.owner_username if principal.kind == "api_token" else principal.user
+
+
 def _welcome(core, user: str) -> dict:
     return {
         **core.auth.welcome(user),
@@ -233,7 +241,7 @@ def _welcome(core, user: str) -> dict:
 
 @router.get("/account/welcome", response_model=Welcome)
 async def get_welcome(principal: Principal = Depends(require(ACCOUNT)), core=Depends(get_core)):
-    return _welcome(core, principal.user)
+    return _welcome(core, _account(core, principal))
 
 
 @router.put("/account/welcome", response_model=Welcome)
@@ -245,7 +253,28 @@ async def set_welcome(
 ):
     """Saves the answers. First run (``set_defaults``) also picks the mode
     and tips from them; PC settings changes only the answers."""
-    core.auth.set_welcome(principal.user, payload.first_time, payload.kinds, payload.set_defaults)
+    user = _account(core, principal)
+    core.auth.set_welcome(user, payload.first_time, payload.kinds, payload.set_defaults)
     core.db.set_setting(PLAYED_BY_DEFAULT, payload.played_by)
     audit(core, request, "welcome_answered")
-    return _welcome(core, principal.user)
+    return _welcome(core, user)
+
+
+# "Don't show again" on a warning or tip, and PC settings' "Show all warnings
+# again". /auth/me lists the hidden ones. Questions that protect a world
+# never use this.
+
+
+@router.post("/account/hidden", response_model=Hidden)
+async def hide(
+    payload: HideRequest,
+    principal: Principal = Depends(require(ACCOUNT)),
+    core=Depends(get_core),
+):
+    return {"hidden": core.auth.hide(principal.user, payload.key)}
+
+
+@router.delete("/account/hidden", response_model=Hidden)
+async def show_all_again(principal: Principal = Depends(require(ACCOUNT)), core=Depends(get_core)):
+    core.auth.show_all_again(principal.user)
+    return {"hidden": []}

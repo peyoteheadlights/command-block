@@ -638,6 +638,30 @@ public enum AddServer {
 
     public static func memoryShown(_ type: ServerTypeInfo) -> Bool { type.takesMemoryLimit && type.edition != "bedrock" }
 
+    /// "Who's this server for?" (desktop/welcome.py PLAYED_BY), as value and words key.
+    public static let playedBy: [(value: String, key: String)] = [
+        ("friends", "welcome.for_friends"), ("kids", "welcome.for_kids"), ("community", "welcome.for_community"),
+    ]
+
+    /// A few friends or kids: the whitelist goes on, with the names typed.
+    public static func namesAsked(_ playedBy: String) -> Bool { playedBy == "friends" || playedBy == "kids" }
+
+    /// The names typed, split by commas or semicolons; only when they're asked for.
+    public static func players(_ playedBy: String, _ typed: String) -> [String] {
+        guard namesAsked(playedBy) else { return [] }
+        return typed.split(whereSeparator: { $0 == "," || $0 == ";" })
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    /// The first-run kind a type belongs to, for its tips: vanilla, mods, plugins or bedrock.
+    public static func tipKind(_ type: ServerTypeInfo) -> String { type.edition == "bedrock" ? "bedrock" : type.content ?? "vanilla" }
+
+    /// This type's tip key, when the agent says its kind's tips show and it isn't hidden.
+    public static func tip(_ options: NewServerOptions, _ type: ServerTypeInfo, hidden: Set<String>) -> String? {
+        let key = "tip.kind.\(tipKind(type))"
+        return options.kindTips.contains(tipKind(type)) && !hidden.contains(key) ? key : nil
+    }
+
     /// One kind's column of the table, as label and value; Technical mode
     /// adds the loader, files and source.
     public static func rows(_ strings: Strings, _ type: ServerTypeInfo, technical: Bool) -> [(String, String)] {

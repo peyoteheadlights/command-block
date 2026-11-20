@@ -8,6 +8,8 @@ GET /api/health
 POST /api/auth/login
 POST /api/auth/logout
 GET /api/auth/me
+POST /api/account/hidden
+DELETE /api/account/hidden
 GET /api/servers
 GET /api/servers/{server_id}/status
 POST /api/servers/{server_id}/server/start

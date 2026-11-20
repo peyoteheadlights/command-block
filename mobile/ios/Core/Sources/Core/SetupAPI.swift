@@ -93,6 +93,16 @@ extension AgentClient {
         try await call("DELETE", setup(serverId), as: ServerRemoved.self)
     }
 
+    /// "Don't show again" on a warning or tip, for this account on every device.
+    public func hide(_ key: String) async throws -> Hidden {
+        try await call("POST", "/api/account/hidden", body: try AgentClient.encode(["key": key]), as: Hidden.self)
+    }
+
+    /// Settings' "Show all warnings again".
+    public func showAllAgain() async throws -> Hidden {
+        try await call("DELETE", "/api/account/hidden", as: Hidden.self)
+    }
+
     public func newServerOptions() async throws -> NewServerOptions {
         try await call("GET", "/api/new-server/options", as: NewServerOptions.self)
     }
@@ -102,6 +112,7 @@ extension AgentClient {
         var body: [String: JSONValue] = [
             "name": .string(new.name), "directory": .string(new.directory), "type": .string(new.type),
             "minecraft_version": .string(new.minecraft), "eula_accepted": .bool(new.eulaAccepted),
+            "played_by": .string(new.playedBy), "players": .array(new.players.map { .string($0) }),
         ]
         if let loader = new.loader { body["loader_version"] = .string(loader) }
         if let memory = new.memoryMb { body["memory_mb"] = .number(Double(memory)) }

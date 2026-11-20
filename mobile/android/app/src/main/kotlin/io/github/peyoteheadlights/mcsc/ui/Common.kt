@@ -341,6 +341,20 @@ fun Item(
     }
 }
 
+/**
+ * A warning or tip with "Don't show again" (kept per account on the agent).
+ * [key] is its words' key; a hidden one shows nothing. Never for questions
+ * that protect a world.
+ */
+@Composable
+fun HideableNote(vm: AppViewModel, key: String, text: String = t(key)) {
+    if (key in vm.hidden) return
+    Column {
+        Note(text, color = LocalColors.current.warning)
+        TextButton(onClick = { vm.hide(key) }, modifier = Modifier.padding(horizontal = 8.dp)) { Text(t("tips.dont_show")) }
+    }
+}
+
 @Composable
 fun Note(text: String, color: Color = LocalColors.current.text2, modifier: Modifier = Modifier) {
     Text(

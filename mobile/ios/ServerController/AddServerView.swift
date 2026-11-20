@@ -138,6 +138,10 @@ struct AddServerView: View {
             Section { Text(model.t("new.bedrock_versions")).font(.footnote).foregroundStyle(.secondary) }
         }
         if let kind = adding.type {
+            // This kind's tips: always with tips on, else once when it's new to them.
+            if let tip = AddServer.tip(options, kind, hidden: model.hidden) {
+                Section { HideableNote(key: tip, palette: model.basePalette(colorScheme)) }
+            }
             versionStep(adding)
             detailsStep(adding, options, memory: AddServer.memoryShown(kind))
             rulesStep(adding, options, kind.edition)
@@ -208,6 +212,16 @@ struct AddServerView: View {
         Section(model.t("new.step_details")) {
             TextField(model.t("add.name"), text: Binding(get: { adding.name }, set: { adding.name = String($0.prefix(60)) }))
             folderRows(adding, label: "new.folder", hint: "new.folder_hint")
+            Picker(model.t("welcome.who_question"), selection: Binding(get: { adding.playedBy }, set: { adding.playedBy = $0 })) {
+                Text(model.t("welcome.for_unset")).tag("")
+                ForEach(AddServer.playedBy.indices, id: \.self) { i in
+                    Text(model.t(AddServer.playedBy[i].key)).tag(AddServer.playedBy[i].value)
+                }
+            }
+            if AddServer.namesAsked(adding.playedBy) {
+                TextField(model.t("new.players"), text: Binding(get: { adding.players }, set: { adding.players = $0 }), prompt: Text(model.t("new.players_placeholder")))
+                Text(model.t("new.players_hint")).font(.footnote).foregroundStyle(.secondary)
+            }
             if memory, let mb = adding.memoryMb {
                 Stepper(value: Binding(get: { mb }, set: { adding.nudgeMemory($0 - mb) }), in: 1024...(64 * 1024), step: 512) {
                     Text(hiding: model.t("new.memory") + ": " + Memory.gb(mb))

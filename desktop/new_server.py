@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 from .mods import find_pack, pack_lines
 from .overview import card
 from .parts import Segmented
-from .ui import clock, field, label, push, refill, size, swatches
+from .ui import clock, field, label, notice, push, refill, size, swatches
 from .words import has, mode, text
 
 if TYPE_CHECKING:
@@ -347,15 +347,23 @@ class NewServerScreen(QScrollArea):
         if self.choice["type"] is not kind:
             return  # another kind was chosen meanwhile
         frame, layout = card(text("new.step_version"))
+        # This kind's tips: always with tips on, else once when it's new to them.
+        tip = "bedrock" if kind.get("edition") == "bedrock" else kind.get("content") or "vanilla"
+        if tip in self.options.get("kind_tips", []):
+            layout.addWidget(notice(f"tip.kind.{tip}"))
         self.spawns: QCheckBox | None = None
         if self.goal == "vanilla" and kind["id"] in (self.advice or {}).get("warn", []):
-            layout.addWidget(label(text("new.farms_warning", name=kind["name"]), "notice"))
+            layout.addWidget(
+                notice("new.farms_warning", text("new.farms_warning", name=kind["name"]))
+            )
             if mode["technical"]:
                 self.spawns = QCheckBox(text("new.vanilla_spawns"))
                 layout.addWidget(self.spawns)
                 layout.addWidget(label(text("spawns.hint"), "sub"))
         if kind.get("never_recommended"):
-            layout.addWidget(label(text("new.fork_warning", name=kind["name"]), "notice"))
+            layout.addWidget(
+                notice("new.fork_warning", text("new.fork_warning", name=kind["name"]))
+            )
         if payload.get("latest_only"):
             layout.addWidget(label(text("new.bedrock_versions"), "sub"))
         if payload.get("source_problem"):
@@ -610,7 +618,7 @@ class NewServerScreen(QScrollArea):
         row.addWidget(field(text("add.name"), name), 1)
         row.addWidget(folder, 1)
         layout.addLayout(row)
-        layout.addWidget(label(text("custom.warning"), "notice"))
+        layout.addWidget(notice("custom.warning"))
         trust = QCheckBox(text("custom.trust"))
         eula = QCheckBox(text("new.eula_tick"))
         layout.addWidget(trust)
@@ -724,7 +732,7 @@ class NewServerScreen(QScrollArea):
             row.addWidget(field(text("custom.based_on"), bases), 1)
             row.addWidget(field(text("bring.which_jar"), jars), 1)
             layout.addLayout(row)
-            layout.addWidget(label(text("custom.warning"), "notice"))
+            layout.addWidget(notice("custom.warning"))
             layout.addWidget(trust)
         name = QLineEdit(Path(found["path"]).stem[:60])
         name.setMaxLength(60)

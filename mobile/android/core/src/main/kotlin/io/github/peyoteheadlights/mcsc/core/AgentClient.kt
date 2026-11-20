@@ -482,6 +482,12 @@ class AgentClient(
     suspend fun downloadHelpFile(made: HelpFileMade, out: java.io.OutputStream): Long =
         downloadZip("/api/help-bundle/${path(made.token)}?filename=${path(made.filename)}", out, { _, _ -> })
 
+    /** "Don't show again" on a warning or tip, for this account on every device. */
+    suspend fun hide(key: String): Hidden = call(post("/api/account/hidden", buildJsonObject { put("key", key) }), Hidden.serializer())
+
+    /** PC settings' "Show all warnings again". */
+    suspend fun showAllAgain(): Hidden = call(request("/api/account/hidden").delete().build(), Hidden.serializer())
+
     suspend fun newServerOptions(): NewServerOptions = get("/api/new-server/options", NewServerOptions.serializer())
 
     /** Downloads and sets up a new server as a task; it isn't started. */
@@ -495,6 +501,8 @@ class AgentClient(
             new.memoryMb?.let { put("memory_mb", it) }
             new.color?.let { put("color", it) }
             put("eula_accepted", new.eulaAccepted)
+            put("played_by", new.playedBy)
+            put("players", JsonArray(new.players.map(::JsonPrimitive)))
         }),
         ServerCreated.serializer(),
         slow = true,

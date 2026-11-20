@@ -3444,5 +3444,15 @@
 "serverset.played_by_hint": ["Changes what's suggested for this server. The whitelist itself is in Game settings.", "Sets server.played_by (suggestions, Discord age note). The whitelist is in Game settings."],
 "new.players": ["Friends' Minecraft names", "Player names for the whitelist"],
 "new.players_placeholder": ["Alex, Sam", "Alex, Sam"],
-"new.players_hint": ["Split names with commas. They're added once the server has started for the first time.", "Comma-separated. Sent as whitelist add after the first start."]
+"new.players_hint": ["Split names with commas. They're added once the server has started for the first time.", "Comma-separated. Sent as whitelist add after the first start."],
+"tips.dont_show": ["Don't show again", "Don't show again"],
+"tips.show_all": ["Show all warnings again", "Show all warnings again"],
+"tips.show_all_hint": ["Brings back every warning and tip you hid with \"Don't show again\".", "Clears this account's hidden warnings and tips on every device."],
+"tips.show_all_done": ["Every warning and tip shows again.", "Hidden list cleared."],
+"tips.show_all_failed": ["The PC didn't answer, so nothing changed. Try again.", "Agent unreachable; hidden list unchanged."],
+"tip.kind.vanilla": ["Tip: Plain Minecraft is exactly like the game. There's nothing to add, so it's the easiest to keep running.", "Vanilla: Mojang's own server jar, no mod or plugin loader."],
+"tip.kind.mods": ["Tip: with mods, every player needs the same mods as the server or they can't join. Pick mods made for this loader and this Minecraft version.", "Mod loaders: clients need matching mods; check each mod's loader and Minecraft version."],
+"tip.kind.plugins": ["Tip: with plugins, players join with the normal game and install nothing. A few farms may work differently from plain Minecraft.", "Plugin servers: vanilla clients join as-is; some spawning and redstone behaviour differs from vanilla."],
+"tip.kind.bedrock": ["Tip: Bedrock is for phones, consoles and Minecraft for Windows. Java players can't join it, and Java mods and plugins don't work on it.", "BDS: Bedrock clients only; no Java mods or plugins, add-ons are behaviour and resource packs."],
+"discord.kids_age": ["Discord is only for people aged 13 and up, so kids under 13 can't use the bot.", "Discord requires users to be 13 or older (older in some countries)."]
 }

@@ -567,9 +567,9 @@ final class SetupTests: XCTestCase {
         XCTAssertEqual(read.recommended, "fabric")
         XCTAssertEqual(path(0), "/api/new-server/options")
         StubAgent.json(#"{"ok": true, "server_id": "fresh", "name": "Fresh", "directory": "D:/Fresh", "job_id": "j", "server": {"id": "fresh", "name": "Fresh", "state": "OFFLINE"}}"#)
-        let made = try await c.createServer(NewServerRequest(name: "Fresh", directory: "D:/Fresh", type: "fabric", minecraft: "1.21.4", loader: nil, memoryMb: 4096, color: "#F87906", eulaAccepted: true))
+        let made = try await c.createServer(NewServerRequest(name: "Fresh", directory: "D:/Fresh", type: "fabric", minecraft: "1.21.4", loader: nil, memoryMb: 4096, color: "#F87906", eulaAccepted: true, playedBy: "kids", players: ["Alex"]))
         XCTAssertEqual(made.serverId, "fresh")
-        XCTAssertEqual(body(1), ##"{"color":"#F87906","directory":"D:/Fresh","eula_accepted":true,"memory_mb":4096,"minecraft_version":"1.21.4","name":"Fresh","type":"fabric"}"##)
+        XCTAssertEqual(body(1), ##"{"color":"#F87906","directory":"D:/Fresh","eula_accepted":true,"memory_mb":4096,"minecraft_version":"1.21.4","name":"Fresh","played_by":"kids","players":["Alex"],"type":"fabric"}"##)
         StubAgent.json(#"{"ok": true, "server": {"id": "sky", "name": "Sky", "state": "OFFLINE"}, "warnings": []}"#)
         let added = try await c.addServer(name: "Sky", directory: "D:/Sky", type: "paper", jar: "")
         XCTAssertEqual(added.server.id, "sky")
@@ -587,5 +587,30 @@ final class SetupTests: XCTestCase {
         XCTAssertEqual(method(5), "DELETE")
         XCTAssertEqual(path(5), "/api/modpacks/abc")
     }
-}
+    func testNamesAreAskedOnlyForFriendsOrKids() {
+        XCTAssertEqual(AddServer.players("kids", "Alex, Sam;  "), ["Alex", "Sam"])
+        XCTAssertEqual(AddServer.players("community", "Alex"), [])
+        XCTAssertEqual(AddServer.playedBy.map { $0.value }, ["friends", "kids", "community"])
+    }
 
+    func testAKindsTipShowsWhenTheAgentSaysSoAndItIsNotHidden() {
+        let options = NewServerOptions(kindTips: ["plugins", "bedrock"])
+        let paper = ServerTypeInfo(id: "paper", content: "plugins")
+        XCTAssertEqual(AddServer.tip(options, paper, hidden: []), "tip.kind.plugins")
+        XCTAssertNil(AddServer.tip(options, paper, hidden: ["tip.kind.plugins"]))
+        XCTAssertNil(AddServer.tip(options, ServerTypeInfo(id: "vanilla"), hidden: []))
+        XCTAssertEqual(AddServer.tip(options, ServerTypeInfo(id: "bedrock", edition: "bedrock"), hidden: []), "tip.kind.bedrock")
+    }
+
+    func testDontShowAgainAndShowAllAgainGoToTheAgent() async throws {
+        let c = client()
+        StubAgent.json(#"{"hidden": ["tip.kind.mods"]}"#)
+        let hid = try await c.hide("tip.kind.mods")
+        XCTAssertEqual(hid.hidden, ["tip.kind.mods"])
+        XCTAssertEqual(path(0), "/api/account/hidden")
+        XCTAssertEqual(body(0), #"{"key":"tip.kind.mods"}"#)
+        StubAgent.json(#"{"hidden": []}"#)
+        _ = try await c.showAllAgain()
+        XCTAssertEqual(method(1), "DELETE")
+    }
+}
