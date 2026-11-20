@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.CpuCores
 import io.github.peyoteheadlights.mcsc.core.Crossplay
 import io.github.peyoteheadlights.mcsc.core.Duplicate
+import io.github.peyoteheadlights.mcsc.core.FolderPicker
 import io.github.peyoteheadlights.mcsc.core.Memory
 import io.github.peyoteheadlights.mcsc.core.RawText
 import io.github.peyoteheadlights.mcsc.core.RemoveServer
@@ -52,7 +53,7 @@ import io.github.peyoteheadlights.mcsc.core.VersionChange
  * Someone who may only look sees it all read-only.
  */
 @Composable
-fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onRemoved: () -> Unit) {
+fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onRemoved: () -> Unit, onFiles: () -> Unit = {}) {
     val setup = vm.pages(serverId).setup
     val strings = vm.strings
     val canEdit = ServerForm.editable(vm.me)
@@ -148,6 +149,7 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             }
         }
         for (group in ServerForm.GROUPS) {
+            if (group.technical && !vm.technical) continue
             item { SectionTitle(t(group.titleKey)) }
             item {
                 Card {
@@ -178,6 +180,10 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             }
         }
         item { SaidNote(setup.said) }
+        if (FolderPicker.allowed(vm.me)) {
+            item { SectionTitle(t("files.title")) }
+            item { Card { Item(t("files.open"), subtitle = t("files.hint"), onClick = onFiles) } }
+        }
         item { SectionTitle(t("serverset.cpu")) }
         item { Card { CoresCard(vm, setup, canEdit) } }
         item { SectionTitle(t("version.title")) }

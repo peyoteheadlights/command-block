@@ -567,6 +567,8 @@ class MinecraftServer:
             self.pid = self.process.pid
             if self.config.server.cpu_cores:
                 await self.apply_cpu_cores()
+            if self.config.server.low_priority:
+                self.apply_priority()
             self._reader_task = asyncio.create_task(self._pump_output(), name="mc-console")
             self._waiter_task = asyncio.create_task(self._wait_exit(), name="mc-wait")
             if self.db:
@@ -602,6 +604,16 @@ class MinecraftServer:
                 )
             )
         return result
+
+    def apply_priority(self) -> None:
+        """Below normal priority when server.low_priority is on, normal when
+        it's off. A refusal (the separate Windows user's process) is said in
+        the console; the server runs on either way."""
+        if not self.running or not self.pid:
+            return
+        why = cpu.set_low_priority(self.pid, self.config.server.low_priority)
+        if why:
+            self._emit_console(f"[agent] couldn't change the server's priority: {why}")
 
     async def wait_online(self, timeout: float | None = None) -> bool:
         timeout = timeout or self.config.server.start_timeout
@@ -825,6 +837,11 @@ class MinecraftServer:
             return ExitReason.CLEAN_EXIT
         if self.state == ServerState.STARTING:
             return ExitReason.STARTUP_FAILURE
+        try:
+            if code in cpu.exit_codes(self.config.monitor.ignored_exit_codes):
+                return ExitReason.CLEAN_EXIT
+        except ValueError:
+            pass  # a bad setting is refused when saved; never blocks a crash alert
         if code == 0 and self._saw_clean_shutdown():
             return ExitReason.CLEAN_EXIT
         return ExitReason.CRASH

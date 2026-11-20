@@ -52,6 +52,7 @@ TAILSCALE_MACHINES = "https://login.tailscale.com/admin/machines"
 THRESHOLDS = [
     ("thresholds.cpu_percent", "appset.cpu_alert"),
     ("thresholds.ram_percent", "appset.ram_alert"),
+    ("thresholds.high_minutes", "appset.high_minutes"),
     ("thresholds.disk_free_gb", "appset.disk_alert"),
     ("thresholds.tps_min", "appset.tps_alert"),
     ("thresholds.mspt_max", "appset.mspt_alert"),
@@ -1207,6 +1208,15 @@ class Account(Section):
         here.setChecked(pc.setting("show_alerts") not in (False, "false"))
         here.toggled.connect(lambda on: pc.set_setting("show_alerts", on))
         layout.addWidget(here)
+        # A sound on this PC only (off unless picked), whatever the alert list says.
+        for key, words in (
+            ("sound_crash", "desktop.device_alerts.sound_crash"),
+            ("sound_join", "desktop.device_alerts.sound_join"),
+        ):
+            sound = QCheckBox(text(words))
+            sound.setChecked(pc.setting(key) in (True, "true"))
+            sound.toggled.connect(lambda on, k=key: pc.set_setting(k, on))
+            layout.addWidget(sound)
         own = QCheckBox(text("desktop.device_alerts.own"))
         own.setChecked(bool(found.get("own")))
         layout.addWidget(own)

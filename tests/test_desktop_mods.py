@@ -745,8 +745,14 @@ def test_the_settings_page_lists_the_folders_other_config_files(qapp, agent_http
     (ctx.config.server_dir / "bukkit.yml").write_text("a: 1\n", encoding="utf-8")
     window = signed_in_on(qapp, agent_http)
     page = open_page(qapp, window, "Settings")
-    wait_for(qapp, lambda: page.findChildren(QtWidgets.QListWidget))
-    listed = page.findChildren(QtWidgets.QListWidget)[0]
+    # The config files' list, not the Server files card's (both are lists).
+    lists = lambda: [  # noqa: E731
+        w
+        for w in page.findChildren(QtWidgets.QListWidget)
+        if w.accessibleName() == "Other settings files"
+    ]
+    wait_for(qapp, lists)
+    listed = lists()[0]
     names = [listed.item(i).text() for i in range(listed.count())]
     assert "bukkit.yml" in names and "plugins/Chunky/config.yml" in names
     assert "server.properties" not in names
