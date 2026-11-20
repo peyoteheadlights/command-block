@@ -4,8 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.google.gson.JsonObject;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class AllowListTest {
     private static final String LIST =
@@ -66,5 +71,42 @@ class AllowListTest {
         assertThrows(IllegalArgumentException.class, () -> AllowList.fromConfig("{\"format\": 2}"));
         assertThrows(IllegalArgumentException.class, () -> AllowList.fromConfig("[]"));
         assertThrows(IllegalArgumentException.class, () -> AllowList.fromConfig("{"));
+    }
+
+    @Test
+    void theReadyLineIsTheOneTheAgentWaitsFor() {
+        // agent/waterdog.py PLUGIN_READY: without it WaterdogPE is stopped.
+        assertEquals("Command Block allow list ready", AllowList.READY);
+    }
+
+    @Test
+    void configAndListAreReadForEveryJoin(@TempDir Path dir) throws IOException {
+        Path config = dir.resolve("config.json");
+        Path list = dir.resolve("allowlist.json");
+        Files.writeString(list, LIST, StandardCharsets.UTF_8);
+        Files.writeString(config, configFor(null), StandardCharsets.UTF_8);
+        assertNull(AllowList.check(config, "Stranger", "", true));
+        // The owner turns the allow list on: the next join is checked against it.
+        Files.writeString(config, configFor(list), StandardCharsets.UTF_8);
+        assertEquals(AllowList.NOT_LISTED, AllowList.check(config, "Stranger", "", true));
+        assertNull(AllowList.check(config, "alex", "", true));
+    }
+
+    @Test
+    void aMissingOrBrokenConfigTurnsEveryoneAway(@TempDir Path dir) throws IOException {
+        Path config = dir.resolve("config.json");
+        assertEquals(AllowList.CANT_READ, AllowList.check(config, "alex", "", true));
+        Files.writeString(config, "{", StandardCharsets.UTF_8);
+        assertEquals(AllowList.CANT_READ, AllowList.check(config, "alex", "", true));
+        Files.writeString(config, configFor(dir.resolve("gone.json")), StandardCharsets.UTF_8);
+        assertEquals(AllowList.CANT_READ, AllowList.check(config, "alex", "", true));
+    }
+
+    /** The plugin's config.json as the agent writes it. */
+    private static String configFor(Path list) {
+        JsonObject config = new JsonObject();
+        config.addProperty("format", 1);
+        config.addProperty("allow_list", list == null ? null : list.toString());
+        return config.toString();
     }
 }
