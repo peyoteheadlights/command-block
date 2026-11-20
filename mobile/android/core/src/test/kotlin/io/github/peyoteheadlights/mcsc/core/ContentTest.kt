@@ -574,10 +574,11 @@ class ContentTest {
     fun `make a modpack sends the answers, then downloads it and posts it in discord`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)
-            agent.server.enqueue(agent.json("""{"name": "Friends", "version": "2", "configs": [{"path": "config/a.toml", "size_bytes": 9}], "players_loaders": [{"id": "fabric", "name": "Fabric"}], "discord": true, "discord_limit_bytes": 10485760, "required_to_join": {"available": false}}"""))
+            agent.server.enqueue(agent.json("""{"name": "Friends", "version": "2", "configs": [{"path": "config/a.toml", "size_bytes": 9}], "players_loaders": [{"id": "fabric", "name": "Fabric"}], "discord": true, "discord_limit_bytes": 10485760, "required_to_join": {"available": false, "needs_fabric": true}}"""))
             val options = c.makeModpackOptions("s")
             assertEquals("config/a.toml", options.configs.single().path)
             assertEquals(false, options.requiredToJoin.available)
+            assertEquals(true, options.requiredToJoin.needsFabric)
             assertEquals(true, options.chatLine.on)
             assertEquals("/api/servers/s/modpack/make", agent.server.takeRequest().path)
 

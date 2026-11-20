@@ -1745,8 +1745,17 @@ private struct MakeModpackSheet: View {
                 Section {
                     // Needs the Companion mod on the server, which does the join check.
                     Toggle(model.t("make.required"), isOn: $required).disabled(!options.requiredToJoin)
-                    Text(hiding: model.t(options.requiredToJoin ? "make.required_hint" : "make.required_later"))
-                        .font(.footnote).foregroundStyle(.secondary)
+                    if options.needsFabric {
+                        // Vanilla can't run the Companion: Fabric with no other mods plays the same.
+                        Text(hiding: model.t("make.required_vanilla")).font(.footnote).foregroundStyle(.secondary)
+                        Button(model.t("make.change_type")) {
+                            dismiss()
+                            model.serversPath.append(.settings(content.serverId))
+                        }
+                    } else {
+                        Text(hiding: model.t(options.requiredToJoin ? "make.required_hint" : "make.required_later"))
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     if options.requiredToJoin {
                         Toggle(model.t("make.chat_line"), isOn: $chatOn).disabled(required)
                         TextField(model.t("make.chat_line"), text: $chatText).disabled(required)

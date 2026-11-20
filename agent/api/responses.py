@@ -2239,7 +2239,8 @@ class ModpackMakeOptions(Open):
     discord: bool
     discord_limit_bytes: int
     required_to_join: dict[str, Any] = Field(
-        description="available: the Companion mod is on the server; on: ticked last time"
+        description="available: the Companion mod is on the server; on: ticked last time; "
+        "needs_fabric: a vanilla server, which can't run the Companion (show Change server type)"
     )
     chat_line: dict[str, Any] = Field(
         description="on, text: the line for players without the modpack, with {name}, "
