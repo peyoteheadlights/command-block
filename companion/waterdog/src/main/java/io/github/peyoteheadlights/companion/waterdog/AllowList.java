@@ -5,6 +5,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -20,6 +23,8 @@ final class AllowList {
     static final String NOT_LISTED = "You are not on this server's allow list. Ask its owner to add you.";
     static final String NOT_SIGNED_IN = "Sign in to Xbox to join this server.";
     static final String CANT_READ = "This server's allow list can't be read right now. Tell its owner.";
+    /** Logged when the plugin is in place; agent/waterdog.py PLUGIN_READY waits for it. */
+    static final String READY = "Command Block allow list ready";
 
     private AllowList() {
     }
@@ -36,6 +41,29 @@ final class AllowList {
         } catch (JsonParseException | IllegalStateException | UnsupportedOperationException e) {
             throw new IllegalArgumentException("config.json can't be read: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Why this player can't join, or null when they can, from the plugin's
+     * config.json and the allowlist.json it names, both read now (so a change
+     * counts at once). A file that can't be read turns everyone away.
+     */
+    static String check(Path config, String name, String xuid, boolean xboxSignedIn) {
+        Path list;
+        try {
+            list = fromConfig(Files.readString(config, StandardCharsets.UTF_8));
+        } catch (IOException | IllegalArgumentException e) {
+            return CANT_READ;
+        }
+        String text = null;
+        if (list != null) {
+            try {
+                text = Files.readString(list, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                text = "not a list"; // can't be read: refusal() turns everyone away
+            }
+        }
+        return refusal(text, name, xuid, xboxSignedIn);
     }
 
     /**
