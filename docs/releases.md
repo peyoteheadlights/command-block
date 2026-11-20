@@ -111,7 +111,7 @@ attests them, and publishes the same files on GitHub and on Modrinth.
 **Once, before the first one:**
 
 1. On Modrinth, make the project under your own account (type Mod, with
-   the Fabric, NeoForge, Paper and Purpur loaders) and say in its
+   the Fabric, Quilt, NeoForge, Paper and Purpur loaders) and say in its
    description that it was written with AI help, as Modrinth's rules ask.
    Copy its project ID (the project's page, the three dots, Copy ID).
 2. On Modrinth, Settings, Personal access tokens: make one with only
