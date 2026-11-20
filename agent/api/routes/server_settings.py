@@ -32,6 +32,7 @@ SERVER_SETTABLE = (
     "server.autostart_minecraft",
     "server.jvm_args",
     "server.cpu_cores",
+    "server.low_priority",
     "server.autosleep",
     "server.autosleep_minutes",
     "server.bedrock_auto_update",
@@ -157,6 +158,12 @@ async def update_server_settings(
             if found:
                 rejected[key] = found[0]
                 continue
+        if key == "monitor.ignored_exit_codes":
+            try:
+                value = ", ".join(str(c) for c in sorted(cpu.exit_codes(value)))
+            except ValueError as exc:
+                rejected[key] = str(exc)
+                continue
         target = _where(ctx, key)
         previous = target.get(key)
         target.set(key, value)
@@ -187,6 +194,8 @@ async def update_server_settings(
     if "server.cpu_cores" in applied and ctx.server.running:
         # Applied to the running server at once, and read back from it.
         result["cpu_cores"] = await ctx.server.apply_cpu_cores()
+    if "server.low_priority" in applied:
+        ctx.server.apply_priority()  # at once on a running server
     return result
 
 

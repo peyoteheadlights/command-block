@@ -154,6 +154,9 @@ class ServerSettings(Section):
     # Logical CPU cores this server may use, counted from 0 (Task Manager's
     # "Set affinity" order). Empty: every core. See agent/minecraft/cpu.py.
     cpu_cores: list[int] = field(default_factory=list)
+    # Run Java at "below normal" priority, so the PC stays usable when it's
+    # busy (Technical, off by default). See agent/minecraft/cpu.py.
+    low_priority: bool = False
     # Let Bedrock players join through Geyser and Floodgate, and the UDP
     # port Geyser listens on (0: none picked yet). See agent/crossplay.py.
     crossplay: bool = False
@@ -200,6 +203,9 @@ class MonitorSettings(Section):
     # Any other value is used as-is; "" or "off" disables TPS monitoring.
     tps_command: str = "auto"
     history_days: int = 14
+    # Exit codes that mean "stopped", not "crashed" (Technical), for example
+    # "1, 130" from a plugin's own restart command: no crash alert, no restart.
+    ignored_exit_codes: str = ""
 
 
 @dataclass(frozen=True)
@@ -209,6 +215,8 @@ class ThresholdSettings(Section):
     disk_free_gb: float = 20.0
     tps_min: float = 18.0
     mspt_max: float = 50.0
+    # CPU and memory alerts wait until it has stayed high this long.
+    high_minutes: float = 5.0
 
 
 @dataclass(frozen=True)

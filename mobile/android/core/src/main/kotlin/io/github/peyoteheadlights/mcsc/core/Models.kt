@@ -139,6 +139,29 @@ data class LogFile(val name: String, val size: Long = 0, val changed: Double = 0
 @Serializable
 data class LogFiles(val files: List<LogFile> = emptyList())
 
+/** One entry of a folder in the server's folder (Server files). */
+@Serializable
+data class ServerFileEntry(val name: String, val folder: Boolean = false, val size: Long? = null, val changed: Double = 0.0)
+
+/** A folder in the server's folder; [path] is relative with "/", "" for the server folder itself. */
+@Serializable
+data class ServerFiles(
+    val path: String = "",
+    val parent: String? = null,
+    val entries: List<ServerFileEntry> = emptyList(),
+    val truncated: Boolean = false,
+) {
+    /** The path of [name] inside this folder. */
+    fun inside(name: String): String = if (path.isEmpty()) name else "$path/$name"
+}
+
+@Serializable
+data class ServerFileUploaded(val ok: Boolean = true, val path: String = "", val name: String = "", val size: Long = 0)
+
+/** The graphs' points as a CSV file's text. */
+@Serializable
+data class PerformanceCsv(val filename: String, val text: String)
+
 @Serializable
 data class LogFileText(val name: String, val lines: List<String> = emptyList(), val cut: Boolean = false)
 

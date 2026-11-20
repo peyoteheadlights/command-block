@@ -20,6 +20,7 @@ class FakePC(WindowsPC):
         self.remote = False  # shown over Remote Desktop
         self.animated = False  # Windows' "Show animations"; off so tests don't wait
         self.alerts: list[tuple[str, str]] = []  # Windows alerts shown, as (title, body)
+        self.sounds: list[bool] = []  # sounds played: True for a crash, False for a join
         self.alert_keys: list[tuple[str, tuple]] = []  # and each one's key and buttons
         self.alert_clicked = lambda key, action: None
         self.settings: dict = {}
@@ -91,6 +92,9 @@ class FakePC(WindowsPC):
 
     def animations(self) -> bool:
         return self.animated and not self.remote
+
+    def play_sound(self, crash: bool) -> None:
+        self.sounds.append(crash)
 
     def show_alert(self, title: str, body: str, key: str = "", buttons=()) -> None:
         self.alerts.append((title, body))

@@ -407,6 +407,7 @@ public enum PcSettings {
     public static let thresholds = [
         Threshold(key: "cpu_percent", label: "appset.cpu_alert"),
         Threshold(key: "ram_percent", label: "appset.ram_alert"),
+        Threshold(key: "high_minutes", label: "appset.high_minutes"),
         Threshold(key: "disk_free_gb", label: "appset.disk_alert"),
         Threshold(key: "tps_min", label: "appset.tps_alert"),
         Threshold(key: "mspt_max", label: "appset.mspt_alert"),

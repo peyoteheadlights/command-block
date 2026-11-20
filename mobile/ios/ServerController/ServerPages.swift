@@ -109,6 +109,65 @@ final class ServerPages {
         await load(\.logText) { client, id in try await client.logFile(serverId: id, name: name) }
     }
 
+    // MARK: Server files
+
+    /// The open folder of the server's folder (owner only).
+    var files = PageRead<ServerFiles>()
+    var filesSaid: Said? = nil
+    var filesBusy = false
+    /// A downloaded file waiting in the share sheet.
+    var sharingFile: Downloaded? = nil
+
+    func loadFiles(_ folder: String? = nil) async {
+        let path = folder ?? files.value?.path ?? ""
+        await load(\.files) { client, id in try await client.serverFiles(serverId: id, folder: path) }
+    }
+
+    /// Downloads one file into the app's own folder, then the share sheet
+    /// (save to Files, or send it); the copy goes when the sheet closes.
+    func downloadFile(_ file: String, _ strings: Strings) async {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let name = (file as NSString).lastPathComponent
+        let target = folder.appendingPathComponent(name)
+        await fileWork(strings) { client, id in
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            _ = try await client.downloadServerFile(serverId: id, file: file, to: target)
+            self.sharingFile = Downloaded(name: name, file: target)
+            return nil
+        }
+    }
+
+    /// Puts `file` into the open folder; never over a file that's there.
+    func uploadFile(_ file: PickedFile, _ strings: Strings) async {
+        let folder = files.value?.path ?? ""
+        await fileWork(strings) { client, id in
+            let saved = try await client.uploadServerFile(serverId: id, folder: folder, file: file)
+            await self.loadFiles()
+            return Said(text: strings.t("files.uploaded", ["name": saved.name]), good: true)
+        }
+    }
+
+    func finishSharingFile() {
+        guard let done = sharingFile else { return }
+        sharingFile = nil
+        try? FileManager.default.removeItem(at: done.file.deletingLastPathComponent())
+    }
+
+    private func fileWork(_ strings: Strings, _ work: (AgentClient, String) async throws -> Said?) async {
+        guard let client = client(), !filesBusy else { return }
+        filesBusy = true
+        filesSaid = nil
+        defer { filesBusy = false }
+        do {
+            filesSaid = try await work(client, serverId)
+        } catch let problem as AgentError {
+            noted(problem)
+            filesSaid = Said(text: problem.message(strings), good: false)
+        } catch {
+            filesSaid = Said(text: strings.t("mobile.backups.save_failed", ["reason": error.localizedDescription]), good: false)
+        }
+    }
+
     func onConsoleLine(_ line: ConsoleLine) {
         console.value = ConsoleBuffer.add(console.value ?? [], line)
     }

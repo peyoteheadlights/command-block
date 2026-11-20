@@ -8,16 +8,19 @@ import androidx.compose.ui.platform.LocalContext
 import java.io.OutputStream
 
 /**
- * Asks where to save a .zip with the phone's own file picker (it can be
+ * Asks where to save a .zip (or a file of another [type]) with the phone's own file picker (it can be
  * Downloads, a USB drive or a cloud app). [onPicked] gets the file to
  * write and a way to remove it again if the download doesn't finish;
  * nothing happens when the person cancels. The result starts the picker
  * with a suggested file name.
  */
 @Composable
-fun rememberZipSaver(onPicked: (open: () -> OutputStream?, discard: () -> Unit) -> Unit): (String) -> Unit {
+fun rememberZipSaver(
+    type: String = "application/zip",
+    onPicked: (open: () -> OutputStream?, discard: () -> Unit) -> Unit,
+): (String) -> Unit {
     val context = LocalContext.current
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(type)) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         onPicked(
             { context.contentResolver.openOutputStream(uri, "w") },
