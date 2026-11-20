@@ -66,6 +66,18 @@ class DemoWizard:
         self.connect_install = False  # removing a copy for connecting only
         self.relaunched: list[bool] = []
         self.relaunch_works = True
+        # The Tailscale step ("Agent only"): a pretend Tailscale that steps
+        # from not installed to signing in when connect_tailscale() is called.
+        self.tailscale_state: dict[str, Any] = {
+            "installed": False,
+            "connected": False,
+            "account": None,
+            "error": "",
+            "busy": False,
+            "page": None,
+            "problem": "",
+        }
+        self.tailscale_clicks = 0
 
     def state(self) -> dict[str, Any]:
         best = {"path": "C:\\Program Files\\Eclipse Adoptium\\jre-21\\bin\\java.exe", "major": 21}
@@ -114,6 +126,14 @@ class DemoWizard:
         if self.players_online is None:
             return {"known": False, "online": None, "running": self.running}
         return {"known": True, "online": self.players_online, "running": self.running}
+
+    def tailscale(self) -> dict[str, Any]:
+        return dict(self.tailscale_state)
+
+    def connect_tailscale(self) -> dict[str, Any]:
+        self.tailscale_clicks += 1
+        self.tailscale_state.update(installed=True, page="https://login.tailscale.com/a/demo")
+        return {"ok": True}
 
     def start(self, body: dict[str, Any]) -> dict[str, Any]:
         self.started.append(body)

@@ -651,6 +651,9 @@ class MainWindow(FramelessWindow):
         self.waking = False  # Wake was pressed; waiting for the PC to answer
         self.user: str | None = None  # the account's name, once known
         self.agent_version: str | None = None
+        # The agent's PC was installed "Agent only": it has no desktop app,
+        # so "do it on that PC" means running setup there (from /version).
+        self.agent_only = False
         self.setup_unfinished = False  # the Tailscale step was skipped (yellow dot)
         self.quitting = False
         mode["technical"] = False
@@ -1692,6 +1695,7 @@ class MainWindow(FramelessWindow):
                 return None  # not a plain version: say nothing rather than guess
 
         self.agent_version = found.get("version")
+        self.agent_only = bool(found.get("agent_only"))
         mine, theirs = parts(APP_VERSION), parts(str(found.get("version") or ""))
         note = self.screens["All servers"].note  # type: ignore[attr-defined]
         values = {"pc": self.agent.place, "agent": found.get("version"), "app": APP_VERSION}

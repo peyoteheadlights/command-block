@@ -44,6 +44,7 @@ from .text import players, t
 
 MIN_PASSWORD = 10
 POLL_MS = 400
+TAILSCALE_POLL_MS = 3000  # asks Tailscale while the person signs in
 
 
 # ====================================================================
@@ -273,6 +274,7 @@ class SetupWindow(QWidget):
             "allow_devices": True,
             "server_ports_only": True,
             "install_java": None,
+            "agent_only": False,
         }
         self.path = "new"  # new | none | import | update
         self.screen_name = ""  # not "screen": that is QWidget.screen()
@@ -282,6 +284,12 @@ class SetupWindow(QWidget):
         self.timer = QTimer(self)
         self.timer.setInterval(POLL_MS)
         self.timer.timeout.connect(self.poll)
+        self.tailscale_timer = QTimer(self)
+        self.tailscale_timer.setInterval(TAILSCALE_POLL_MS)
+        self.tailscale_timer.timeout.connect(self.show_tailscale)
+        self.tailscale_shown: tuple | None = None
+        self.tailscale_opened: str | None = None
+        self.tailscale_back: Callable[[], None] = self.options_screen
         if dark is None:
             dark = QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
         self.dark = dark
@@ -427,6 +435,7 @@ class SetupWindow(QWidget):
             else:
                 self.elevate()
         elif self.state["found"]:
+            self.answers["agent_only"] = bool(self.state["found"][0].get("agent_only"))
             self.found_screen(0) if admin else self.elevate()
         elif self.state.get("run_servers"):
             self.new_screen()
@@ -541,6 +550,8 @@ class SetupWindow(QWidget):
             )
             return
         word = t("repair") if pick["action"] == "repair" else t("update")
+        widgets.append(label(t("kind_title")))  # running setup again switches it
+        widgets.extend(self.kind_choices(lambda: self.found_screen(index)))
         widgets.append(self.java_for_servers(pick))
         self.show_screen(
             "found",
@@ -610,6 +621,7 @@ class SetupWindow(QWidget):
     def _pick_found(self, i: int, shown: int) -> Callable[[], None]:
         def pick() -> None:
             if i != shown:
+                self.answers["agent_only"] = bool(self.state["found"][i].get("agent_only"))
                 self.found_screen(i)
 
         return pick
@@ -626,6 +638,9 @@ class SetupWindow(QWidget):
         if question and not self.ask(question, t("update_now"), t("wait")):
             return
         self.answers["found"] = index
+        if self.answers["agent_only"] and not self.wizard.tailscale().get("connected"):
+            self.tailscale_screen(lambda: self.found_screen(index))
+            return
         self.run()
 
     def new_screen(self) -> None:
@@ -862,7 +877,7 @@ class SetupWindow(QWidget):
         if java.get("best"):
             self.answers["java_path"] = java["best"]["path"]
             self.answers["install_java"] = None
-            self.options_screen()
+            self.kind_screen()
             return
         newest = next((j for j in java["found"] if j.get("major")), None)
         intro = (
@@ -881,7 +896,7 @@ class SetupWindow(QWidget):
             self.answers["install_java"] = (
                 java["install"] if self.answers.get("java_choice", True) else None
             )
-            self.options_screen()
+            self.kind_screen()
 
         self.show_screen(
             "java",
@@ -897,6 +912,32 @@ class SetupWindow(QWidget):
                 Choice(t("java_skip"), t("java_skip_sub"), not install, lambda: choose(False)),
             ],
             [button(t("back"), self.password_screen), button(t("next"), go_on, "primary")],
+        )
+
+    # ------------------------------------------------------------ Full app or Agent only
+    def kind_choices(self, again: Callable[[], None]) -> list[QWidget]:
+        agent_only = bool(self.answers["agent_only"])
+
+        def pick(value: bool) -> None:
+            if agent_only != value:
+                self.answers["agent_only"] = value
+                again()
+
+        return [
+            Choice(t("full_app"), t("full_app_sub"), not agent_only, lambda: pick(False)),
+            Choice(t("agent_only"), t("agent_only_sub"), agent_only, lambda: pick(True)),
+        ]
+
+    def kind_screen(self) -> None:
+        """Full app (the default), or Agent only for a weak PC that's run
+        from a phone or another PC."""
+        back = self.password_screen if self.state["java"].get("best") else self.java_screen
+        self.show_screen(
+            "kind",
+            t("kind_title"),
+            None,
+            list(self.kind_choices(self.kind_screen)),
+            [button(t("back"), back), button(t("next"), self.options_screen, "primary")],
         )
 
     # ------------------------------------------------------------ options
@@ -946,7 +987,10 @@ class SetupWindow(QWidget):
                     folder.selectAll()
                     return
             self.answers["program_dir"] = chosen
-            self.run()
+            if self.answers["agent_only"] and self.answers["allow_devices"]:
+                self.tailscale_screen(self.options_screen)
+            else:
+                self.run()
 
         line = QFrame()
         line.setProperty("kind", "line")
@@ -980,15 +1024,100 @@ class SetupWindow(QWidget):
                 advanced,
                 advanced_body,
             ],
-            [button(t("back"), self.java_screen), button(t("next"), go_on, "primary")],
+            [button(t("back"), self.kind_screen), button(t("next"), go_on, "primary")],
         )
         self.install_folder_field = folder
+
+    # ------------------------------------------------------------ Tailscale ("Agent only")
+    def tailscale_screen(self, back: Callable[[], None]) -> None:
+        """Nothing but Tailscale can reach an Agent only PC, so setup does
+        the Tailscale step itself, before installing. Skipping is allowed;
+        the last screen then says how to finish it."""
+        self.tailscale_back = back
+        self.tailscale_shown = None
+        self.tailscale_timer.start()
+        self.show_tailscale()
+
+    def show_tailscale(self) -> None:
+        state = self.wizard.tailscale()
+        page = state.get("page")
+        if page and page != self.tailscale_opened:
+            self.tailscale_opened = page
+            self.open_target(page)
+        error = str(state.get("error") or "")
+        problem = str(state.get("problem") or "")
+        if state.get("connected"):
+            key: tuple = ("connected", state.get("account"))
+        elif "in use by" in error.lower() or "another user" in error.lower():
+            key = ("other_user", error)  # someone else's: never installed or signed in over
+        elif state.get("busy"):
+            key = ("busy",)
+        elif problem:
+            key = ("problem", problem)
+        elif page:
+            key = ("waiting", page)
+        else:
+            key = ("sign_in",) if state.get("installed") else ("install",)
+        if key == self.tailscale_shown:
+            return  # asked again every few seconds: redraw only on a change
+        self.tailscale_shown = key
+
+        def leave(then: Callable[[], None], skipped: bool = False) -> Callable[[], None]:
+            def go() -> None:
+                self.tailscale_timer.stop()
+                self.answers["tailscale_skipped"] = skipped
+                then()
+
+            return go
+
+        def connect() -> None:
+            self.wizard.connect_tailscale()
+            self.show_tailscale()
+
+        back = button(t("back"), leave(self.tailscale_back))
+        skip = button(t("ts_skip"), leave(self.run, skipped=True))
+        go_on = button(t("next"), leave(self.run), "primary")
+        kind = key[0]
+        account = state.get("account")
+        words = {
+            "connected": t("ts_done", account=account) if account else t("ts_done_no_account"),
+            "other_user": t("ts_other_user", why=error),
+            "busy": t("ts_working"),
+            "problem": t("ts_intro"),
+            "waiting": t("ts_waiting"),
+            "sign_in": t("ts_sign_in_words"),
+            "install": t("ts_intro"),
+        }[kind]
+        choices: dict[str, list[QWidget | None]] = {
+            "connected": [back, go_on],
+            "other_user": [back, go_on],
+            "busy": [skip],
+            "problem": [back, skip, button(t("try_again"), connect, "primary")],
+            "waiting": [
+                skip,
+                button(t("ts_open_again"), lambda: self.open_target(str(page)), "primary"),
+            ],
+            "sign_in": [back, skip, button(t("ts_sign_in"), connect, "primary")],
+            "install": [back, skip, button(t("ts_install"), connect, "primary")],
+        }
+        buttons = choices[kind]
+        self.show_screen(
+            "tailscale",
+            t("ts_title"),
+            t("ts_why"),
+            [label(words), label(problem, "problem") if kind == "problem" else None],
+            buttons,
+        )
 
     # ------------------------------------------------------------ the work
     def choices(self) -> dict[str, Any]:
         keep = ("folder", "name", "color", "type")
         return {
-            **{k: v for k, v in self.answers.items() if k not in ("java_choice", "advanced_open")},
+            **{
+                k: v
+                for k, v in self.answers.items()
+                if k not in ("java_choice", "advanced_open", "tailscale_skipped")
+            },
             "servers": [{k: s.get(k) for k in keep} for s in self.answers["servers"]],
         }
 
@@ -1128,13 +1257,25 @@ class SetupWindow(QWidget):
                 [button(t("close"), self.close), button(t("open_app"), open_app, "primary")],
             )
             return
+        agent_only = bool(self.answers.get("agent_only"))
         if pairing.get("ok"):
             phone = column(
                 label(t("on_phone")), label(str(pairing.get("address_url") or ""), "address")
             )
+            if agent_only:  # another PC's app takes the whole link (too long to type)
+                copy = QPushButton(t("copy_link"))
+
+                def copy_link() -> None:
+                    QGuiApplication.clipboard().setText(str(pairing.get("url") or ""))
+                    copy.setText(t("copied"))
+
+                copy.clicked.connect(lambda _c=False: copy_link())
+                phone = column(phone, label(t("on_other_pc")), left(copy), spacing=10)
         else:
             phone = column(label(t("no_qr")), label(str(pairing.get("reason") or ""), "muted"))
         notes = [label(str(note), "notice") for note in result.get("notes") or []]
+        if agent_only and self.answers.get("tailscale_skipped"):
+            notes.append(label(t("ts_skipped"), "notice"))
         grid = QWidget()
         layout = QHBoxLayout(grid)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1145,9 +1286,11 @@ class SetupWindow(QWidget):
         self.show_screen(
             "done",
             t("done_title"),
-            t("done_sub"),
+            t("done_agent_only_sub") if agent_only else t("done_sub"),
             [grid, self.support()],
-            [button(t("close"), self.close), button(t("open_app"), open_app, "primary")],
+            [button(t("close"), self.close, "primary")]
+            if agent_only  # no app on this PC to open
+            else [button(t("close"), self.close), button(t("open_app"), open_app, "primary")],
         )
 
     def support(self) -> QWidget:
