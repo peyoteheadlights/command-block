@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "id": "distanthorizons",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "distanthorizons"
+    ],
+    "modrinth": "distanthorizons"
+  },
+  "versions": ">=3.3.0 <4",
+  "title": "Distant Horizons",
+  "what": "Players with Distant Horizons see land much further away. The server can make that far land ahead of time.",
+  "steps": [
+    "Players need Distant Horizons in their own game too.",
+    "Making far land takes a long time and uses a lot of the PC's power. Best done when nobody is playing.",
+    "Progress shows in the console."
+  ],
+  "source": "https://gitlab.com/distant-horizons-team/distant-horizons/-/blob/main/common/src/main/java/com/seibel/distanthorizons/common/commands/PregenCommand.java",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "start",
+      "label": "Make far land ahead",
+      "command": "dh pregen start {dimension} 0 0 {chunks}",
+      "help": "Around 0, 0. The world gets bigger on disk.",
+      "fields": [
+        {
+          "id": "dimension",
+          "kind": "choice",
+          "label": "World",
+          "options": [
+            {
+              "value": "overworld",
+              "label": "Overworld"
+            },
+            {
+              "value": "the_nether",
+              "label": "Nether"
+            },
+            {
+              "value": "the_end",
+              "label": "The End"
+            }
+          ]
+        },
+        {
+          "id": "chunks",
+          "kind": "number",
+          "label": "Chunks out from the middle",
+          "min": 32,
+          "max": 2000,
+          "default": 256
+        }
+      ],
+      "changes_world": true,
+      "warning": "This adds land to the world files. It can't be undone without a backup."
+    },
+    {
+      "id": "status",
+      "label": "Show progress",
+      "command": "dh pregen status"
+    },
+    {
+      "id": "stop",
+      "label": "Stop",
+      "command": "dh pregen stop"
+    }
+  ]
+}

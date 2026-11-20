@@ -232,7 +232,12 @@ def for_server(ctx: ServerContext, held: frozenset[str]) -> list[dict[str, Any]]
     content = ctx.config.server_type.content
     if not ctx.config.server_type.has_content:
         return []
-    installed = ctx.mods.scan(use_cache=True)
+    server_type = ctx.config.server_type
+    # Only jars this server can load: a plugin dropped into a mod server's
+    # folder doesn't run, so its mod guide would be wrong.
+    installed = [
+        m for m in ctx.mods.scan(use_cache=True) if server_type.accepts_any(m.loaders or [m.loader])
+    ]
     shown: list[dict[str, Any]] = []
     world_names = None
     for guide in shipped().values():
