@@ -25,6 +25,7 @@ import io.github.peyoteheadlights.mcsc.core.PlayersPage
 import io.github.peyoteheadlights.mcsc.core.PickedFile
 import io.github.peyoteheadlights.mcsc.core.Recommendations
 import io.github.peyoteheadlights.mcsc.core.ServerFiles
+import io.github.peyoteheadlights.mcsc.core.StoreView
 import io.github.peyoteheadlights.mcsc.core.Strings
 import io.github.peyoteheadlights.mcsc.core.WhitelistHelp
 import kotlinx.coroutines.CoroutineScope
@@ -105,6 +106,49 @@ class ServerPages(
             return
         }
         load({ logText }, { logText = it }) { it.logFile(serverId, name) }
+    }
+
+    // ------------------------------------------------------------ store
+    /** The Store tab (owner only, agent/store.py). */
+    var store: Read<StoreView> by mutableStateOf(Read())
+        private set
+    var storeSaid: Said? by mutableStateOf(null)
+        private set
+    var storeBusy: Boolean by mutableStateOf(false)
+        private set
+
+    fun loadStore() = load({ store }, { store = it }) { it.store(serverId) }
+
+    /** [done] empties the key box once the PC has it. */
+    fun connectStore(key: String, strings: Strings, done: () -> Unit) = storeWork(strings) {
+        store = Read(it.connectStore(serverId, key))
+        done()
+        strings.t("desktop.store.connected_note")
+    }
+
+    /** Reads the packages back; [remind] gets the ones the app didn't make, seen for the first time. */
+    fun checkStore(strings: Strings, remind: (List<String>) -> Unit) = storeWork(strings) {
+        val checked = it.checkStore(serverId)
+        store = Read(checked)
+        if (checked.remind.isNotEmpty()) remind(checked.remind)
+        null
+    }
+
+    private fun storeWork(strings: Strings, call: suspend (AgentClient) -> String?) {
+        val c = client() ?: return
+        if (storeBusy) return
+        storeBusy = true
+        storeSaid = null
+        scope.launch {
+            storeSaid = try {
+                call(c)?.let { Said(it, good = true) }
+            } catch (e: AgentException) {
+                noted(e)
+                Said(Message.of(e).text(strings), good = false)
+            } finally {
+                storeBusy = false
+            }
+        }
     }
 
     // ------------------------------------------------------------ server files

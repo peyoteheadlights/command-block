@@ -115,7 +115,8 @@ struct ServerSettingsView: View {
                     colors: settings.palette, current: setup.color ?? settings.color, locked: !canEdit, palette: palette
                 ) { setup.pickColor($0) }
             }
-            ForEach(ServerForm.GROUPS.filter { !$0.technical || model.technical }, id: \.titleKey) { group in
+            let edition = model.servers.first(where: { $0.id == serverId })?.edition
+            ForEach(ServerForm.GROUPS.filter { ServerForm.shown($0, technical: model.technical, me: model.me, edition: edition) }, id: \.titleKey) { group in
                 SectionTitle(text: model.t(group.titleKey), palette: palette)
                 CardBox(palette: palette) {
                     ForEach(group.fields, id: \.key) { field in

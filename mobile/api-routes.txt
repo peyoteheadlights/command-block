@@ -252,3 +252,18 @@ GET /api/servers/{server_id}/files
 POST /api/servers/{server_id}/files/upload
 # Server files: a file itself, not JSON. Download it from
 # GET /api/servers/{server_id}/files/download?path=...
+# Rented servers on a host's panel and the Store tab.
+GET /api/rented
+POST /api/rented/check
+POST /api/rented/panels
+DELETE /api/rented/panels/{panel_id}
+GET /api/rented/{server_id}/status
+POST /api/rented/{server_id}/power
+GET /api/rented/{server_id}/console
+POST /api/rented/{server_id}/command
+GET /api/rented/{server_id}/backups
+POST /api/rented/{server_id}/backups
+PUT /api/rented/{server_id}/discord
+GET /api/servers/{server_id}/store
+POST /api/servers/{server_id}/store/connect
+POST /api/servers/{server_id}/store/check

@@ -171,9 +171,14 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
     public var position: Int?
     /// The heading it's under on All servers; empty: none.
     public var group: String?
+    /// A Test server: never gets a store.
+    public var test: Bool
+    /// Who it's for (first run's question): "community" servers may get the Store.
+    public var playedBy: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, color, state, uptime, content, edition, capabilities, answering, position, group
+        case id, name, color, state, uptime, content, edition, capabilities, answering, position, group, test
+        case playedBy = "played_by"
         case stateVerified = "state_verified"
         case playersOnline = "players_online"
         case playersVerified = "players_verified"
@@ -199,7 +204,9 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         capabilities: Capabilities? = nil,
         answering: Answering? = nil,
         position: Int? = nil,
-        group: String? = nil
+        group: String? = nil,
+        test: Bool = false,
+        playedBy: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -218,6 +225,8 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         self.answering = answering
         self.position = position
         self.group = group
+        self.test = test
+        self.playedBy = playedBy
     }
 
     public init(from decoder: Decoder) throws {
@@ -239,6 +248,8 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         answering = try? c.decodeIfPresent(Answering.self, forKey: .answering)
         position = try? c.decodeIfPresent(Int.self, forKey: .position)
         group = try? c.decodeIfPresent(String.self, forKey: .group)
+        test = (try? c.decodeIfPresent(Bool.self, forKey: .test)) ?? false
+        playedBy = try? c.decodeIfPresent(String.self, forKey: .playedBy)
     }
 }
 

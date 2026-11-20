@@ -1134,11 +1134,13 @@ public struct UpdateAllRow: Decodable, Equatable, Identifiable, Sendable {
     public var installedVersion: String
     public var latestVersion: String
     public var versionId: String?
+    /// How old the site's list was when it came from a saved copy; nil when asked just now.
+    public var saved: String?
 
     public var id: String { filename }
 
     enum CodingKeys: String, CodingKey {
-        case name, filename, enabled
+        case name, filename, enabled, saved
         case modId = "mod_id"
         case installedVersion = "installed_version"
         case latestVersion = "latest_version"
@@ -1147,7 +1149,7 @@ public struct UpdateAllRow: Decodable, Equatable, Identifiable, Sendable {
 
     public init(
         modId: String = "", name: String = "", filename: String, enabled: Bool = true,
-        installedVersion: String = "", latestVersion: String = "", versionId: String? = nil
+        installedVersion: String = "", latestVersion: String = "", versionId: String? = nil, saved: String? = nil
     ) {
         self.modId = modId
         self.name = name
@@ -1156,6 +1158,7 @@ public struct UpdateAllRow: Decodable, Equatable, Identifiable, Sendable {
         self.installedVersion = installedVersion
         self.latestVersion = latestVersion
         self.versionId = versionId
+        self.saved = saved
     }
 
     public init(from decoder: Decoder) throws {
@@ -1167,6 +1170,7 @@ public struct UpdateAllRow: Decodable, Equatable, Identifiable, Sendable {
         installedVersion = c.value(.installedVersion, "")
         latestVersion = c.value(.latestVersion, "")
         versionId = c.maybe(.versionId)
+        saved = c.maybe(.saved)
     }
 }
 
