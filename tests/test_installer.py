@@ -95,11 +95,12 @@ class FakeSystem:
     def server_ports(self, script, ports):
         self.calls.append(("server_ports", tuple(ports)))
 
-    def register_updater_task(self, program_dir):
-        self.calls.append(("updater_task", str(program_dir)))
+    def register_updater_task(self, program_dir, reopen=True):
+        self.calls.append(("updater_task", str(program_dir), reopen))
 
-    def create_shortcuts(self, program_dir, folder=None, desktop=False):
+    def create_shortcuts(self, program_dir, folder=None, desktop=False, app_link=True):
         self.calls.append(("shortcuts", folder, desktop))
+        self.app_link = app_link
         return ["Command Block.lnk"]
 
     def write_uninstall_entry(self, program_dir, version, size_kb, per_user=False):
@@ -1212,6 +1213,144 @@ def test_connect_only_installs_the_app_and_no_agent(places, program_files):
     assert not (places["data"] / "config" / ".env").exists()
     record = json.loads((places["program"] / "install.json").read_text())
     assert record["connect_only"] is True  # a later update keeps it that way
+
+
+# ====================================================================
+# "Agent only": the agent without the desktop app
+# ====================================================================
+def test_agent_only_installs_the_agent_without_the_desktop_app(places, program_files):
+    choices = Choices(
+        action=engine.INSTALL,
+        program_dir=places["program"],
+        data_root=places["data"],
+        password=PASSWORD,
+        agent_only=True,
+    )
+    _, result, system = run_engine(choices, program_files)
+    assert result.ok, result.message + result.details
+    program = places["program"]
+    assert (program / "CommandBlockAgent.exe").is_file() and (program / "mcsc.exe").is_file()
+    assert not (program / "CommandBlock.exe").exists()
+    # Everything an install with the app has: the agent starts with the PC,
+    # devices may connect, updates work.
+    for done in ("register_startup", "firewall", "start_agent"):
+        assert system.called(done), done
+    # Updates still run, but nothing opens a desktop app afterwards.
+    assert system.called("updater_task") == [("updater_task", str(program), False)]
+    assert system.app_link is False  # only the setup in the Start menu
+    record = json.loads((program / "install.json").read_text())
+    assert record["agent_only"] is True  # a later update keeps it that way
+
+
+def test_switching_a_full_copy_to_agent_only_removes_the_desktop_app(places, program_files):
+    found = make_installer_copy(places, "1.0.0")
+    (places["program"] / "CommandBlock.exe").write_bytes(b"old desktop app")
+    system = FakeSystem()
+    system.running = True
+    choices = Choices(
+        action=engine.UPDATE,
+        program_dir=places["program"],
+        data_root=places["data"],
+        found=found,
+        agent_only=True,
+        from_app=True,
+    )
+    _, result, _ = run_engine(choices, program_files, system)
+    assert result.ok, result.message + result.details
+    assert not (places["program"] / "CommandBlock.exe").exists()
+    assert system.called("close_app")  # the open app was shut first
+    assert not system.called("reopen_app")  # and isn't opened again: it's gone
+    assert system.called("open_at_sign_in") == [("open_at_sign_in", None)]
+
+
+@pytest.mark.parametrize("agent_only", [True, False])
+def test_running_setup_again_moves_an_agent_only_pc_onto_tailscale(
+    places, program_files, agent_only
+):
+    """Nothing else can reach an Agent only PC on 127.0.0.1, so setup run
+    again after connecting Tailscale moves it. A full copy has its app's
+    Tailscale step for that, so it's left alone."""
+    from agent.config import Config
+
+    found = make_installer_copy(places)
+    system = FakeSystem()
+    system.running = True
+    system.tailscale = "100.101.102.103"
+    choices = Choices(
+        action=engine.REPAIR,
+        program_dir=places["program"],
+        data_root=places["data"],
+        found=found,
+        agent_only=agent_only,
+    )
+    _, result, _ = run_engine(choices, program_files, system, version="1.0.0")
+    assert result.ok, result.message + result.details
+    host = Config.load(places["data"] / "config" / "config.yaml").network.host
+    assert host == ("100.101.102.103" if agent_only else "127.0.0.1")
+
+
+def test_an_update_keeps_agent_only_unless_setup_switches_it(places, program_files, monkeypatch):
+    from installer import wizard
+
+    found = make_installer_copy(places, "1.0.0")
+    record = json.loads((places["program"] / "install.json").read_text())
+    (places["program"] / "install.json").write_text(json.dumps({**record, "agent_only": True}))
+    monkeypatch.setattr(
+        wizard.detect,
+        "probe_windows",
+        lambda: {"task_folder": places["program"], "registry_folder": None},
+    )
+    w = connect_wizard(program_files, FakeSystem(), data_root=str(places["data"]))
+    assert w.state()["found"][0]["agent_only"] is True  # the window picks it again
+    assert w.choices_from({"found": 0}).agent_only is True  # an update from the app
+    assert w.choices_from({"found": 0, "agent_only": False}).agent_only is False
+    assert found.program_dir == places["program"]
+
+
+@pytest.mark.parametrize("signed", [True, False])
+def test_setup_installs_and_signs_in_tailscale_for_agent_only(program_files, monkeypatch, signed):
+    from desktop import pc as desktop_pc
+    from installer import wizard
+
+    did: list[str] = []
+
+    class Tailscale:
+        """The two desktop/pc.py calls setup uses, after the click."""
+
+        def install_tailscale(self):
+            did.append("install")
+            if not signed:
+                raise desktop_pc.PCError("The download wasn't signed by Tailscale Inc.")
+
+        def tailscale_up(self):
+            did.append("up")
+            return "https://login.tailscale.com/a/1234"
+
+    monkeypatch.setattr(desktop_pc, "WindowsPC", Tailscale)
+    monkeypatch.setattr(
+        "agent.tailscale.tailscale_status", lambda: {"cli_found": False, "connected": None}
+    )
+    monkeypatch.setattr(
+        wizard.detect, "probe_windows", lambda: {"task_folder": None, "registry_folder": None}
+    )
+    system = FakeSystem()
+    w = connect_wizard(program_files, system)
+    assert did == []  # nothing runs before the click
+    assert w.tailscale()["connected"] is False and not w.tailscale()["installed"]
+    assert w.connect_tailscale()["ok"]
+    assert w.tailscale_thread is not None
+    w.tailscale_thread.join(5)
+    state = w.tailscale()
+    assert not state["busy"]
+    if signed:
+        assert did == ["install", "up"]
+        assert state["page"] == "https://login.tailscale.com/a/1234" and not state["problem"]
+        assert state["connected"] is False  # the sign-in isn't done yet
+        system.tailscale = "100.64.1.2"  # Tailscale itself says connected
+        assert w.tailscale()["connected"] is True
+    else:
+        assert did == ["install"]  # never signed in with a setup it refused
+        assert "Tailscale Inc." in state["problem"] and state["page"] is None
 
 
 def connect_wizard(program_files, system, **args):
