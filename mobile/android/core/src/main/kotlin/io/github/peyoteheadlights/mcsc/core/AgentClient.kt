@@ -1216,6 +1216,16 @@ class AgentClient(
         slow = true,
     )
 
+    /** The MCXboxBroadcast add-on; on only after the risks were shown. */
+    suspend fun setConsoleFriends(serverId: String, enabled: Boolean): CrossplayInfo = call(
+        request("${server(serverId)}/crossplay/console-friends").put(buildJsonObject {
+            put("enabled", enabled)
+            put("accept_risks", enabled)
+        }.toBody()).build(),
+        CrossplayInfo.serializer(),
+        slow = true,
+    )
+
     suspend fun duplicateOptions(serverId: String): DuplicateOptions =
         get("${server(serverId)}/duplicate", DuplicateOptions.serializer())
 

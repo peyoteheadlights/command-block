@@ -2730,8 +2730,25 @@ class EulaAccepted(Open):
 
 
 # ------------------------------------------------------------ crossplay and duplicate
+class SignInCode(Open):
+    url: str
+    code: str
+
+
+class ConsoleFriends(Open):
+    """The MCXboxBroadcast add-on (agent/consolefriends.py)."""
+
+    available: bool
+    on: bool
+    sign_in: SignInCode | None = Field(None, description="Owner only")
+    gamertag: str | None = None
+    problem: str | None = None
+
+
 class Crossplay(Open):
     """Whether Bedrock players can join this Java server (Geyser)."""
+
+    console_friends: ConsoleFriends | None = None
 
     available: bool
     unavailable_reason: str | None = None

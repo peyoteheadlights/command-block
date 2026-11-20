@@ -226,6 +226,9 @@ class BackupManager:
                     # session.lock is held open by the JVM on Windows
                     if name in ("session.lock",):
                         continue
+                    # MCXboxBroadcast's Microsoft sign-in (agent/consolefriends.py)
+                    if name == "cache.json" and full.parent.name == "mcxboxbroadcast":
+                        continue
                     files.append(full)
         return files
 

@@ -363,6 +363,17 @@ object Crossplay {
         strings.t(if (info.ready) "cross.ready_yes" else "cross.files_missing")
 }
 
+/** "Let console friends join": what to say about its sign-in, read from the agent. */
+object ConsoleFriendsText {
+    fun state(strings: Strings, info: ConsoleFriends): String? = when {
+        !info.on -> if (info.available) null else strings.t("console.needs_crossplay")
+        !info.available -> strings.t("console.needs_crossplay")
+        info.gamertag != null -> strings.t("console.signed_in", "gamertag" to info.gamertag)
+        info.signIn != null -> strings.t("console.sign_in", "url" to info.signIn.url, "code" to info.signIn.code)
+        else -> strings.t("console.waiting")
+    }
+}
+
 /** Duplicate: a copy of the server with its own port and color, owner only. */
 object Duplicate {
     const val COPY = "copy"

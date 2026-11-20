@@ -389,6 +389,20 @@ final class SetupPages {
         } catch {}
     }
 
+    func setConsoleFriends(_ on: Bool, _ strings: Strings) async {
+        guard let client = client(), busy == nil else { return }
+        busy = "console"
+        said = nil
+        defer { busy = nil }
+        do {
+            crossplay = PageRead(value: try await client.setConsoleFriends(serverId: serverId, enabled: on))
+            said = Said(text: strings.t(on ? "console.on_done" : "console.off_done"), good: true)
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+    }
+
     // MARK: - Server address
 
     /// "Let friends join from the internet" (agent/internet.py).

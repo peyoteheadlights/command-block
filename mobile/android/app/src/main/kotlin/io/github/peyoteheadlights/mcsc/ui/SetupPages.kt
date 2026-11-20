@@ -476,6 +476,24 @@ class SetupPages(
         }
     }
 
+    fun setConsoleFriends(on: Boolean, strings: Strings) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = "console"
+        said = null
+        scope.launch {
+            try {
+                crossplay = Read(c.setConsoleFriends(serverId, on))
+                said = Said(strings.t(if (on) "console.on_done" else "console.off_done"), good = true)
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
+    }
+
     // ------------------------------------------------------------ server address
     /** "Let friends join from the internet" (agent/internet.py). */
     var internet: Read<InternetReach> by mutableStateOf(Read())

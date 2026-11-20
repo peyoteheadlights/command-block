@@ -75,6 +75,12 @@ extension AgentClient {
         return try await call("PUT", setup(serverId) + "/crossplay", body: try AgentClient.encode(body), slow: true, as: CrossplayInfo.self)
     }
 
+    /// The MCXboxBroadcast add-on; on only after the risks were shown.
+    public func setConsoleFriends(serverId: String, enabled: Bool) async throws -> CrossplayInfo {
+        let body: [String: JSONValue] = ["enabled": .bool(enabled), "accept_risks": .bool(enabled)]
+        return try await call("PUT", setup(serverId) + "/crossplay/console-friends", body: try AgentClient.encode(body), slow: true, as: CrossplayInfo.self)
+    }
+
     public func duplicateOptions(serverId: String) async throws -> DuplicateOptions {
         try await call("GET", setup(serverId) + "/duplicate", as: DuplicateOptions.self)
     }

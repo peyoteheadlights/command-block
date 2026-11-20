@@ -21,6 +21,7 @@ struct AddressCardView: View {
             if let problem = setup.internet.problem {
                 Text(problem.message(model.strings)).foregroundStyle(palette.danger)
             }
+            Hint(text: model.t("address.consoles"), palette: palette)
             if let info = setup.internet.value {
                 details(info)
             }
