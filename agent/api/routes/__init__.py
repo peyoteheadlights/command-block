@@ -123,6 +123,8 @@ router.include_router(servertypes.global_router)
 router.include_router(modpacks.global_router)
 # So is "On all servers" on the Mods page.
 router.include_router(mods.global_router)
+# And the PC's DuckDNS and No-IP names.
+router.include_router(friends.global_router)
 # A helper limited to some servers is refused the others' routes here, once,
 # rather than in each route.
 for module in PER_SERVER:

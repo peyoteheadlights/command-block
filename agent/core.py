@@ -463,6 +463,10 @@ class AgentCore:
         self.mod_files = Upkeep(self)
         # Moves the agent onto Tailscale and checks it every minute after.
         self.tailscale = TailscaleWatch(self)
+        # DuckDNS and No-IP names for the home address (agent/ddns.py).
+        from .ddns import Names
+
+        self.ddns = Names(self)
         self.wake = Wake(self)
         # Join protection and "Start when someone joins" (agent/joinguard.py).
         self.guard = GuardHub(self)
@@ -613,6 +617,7 @@ class AgentCore:
         self.software.start()
         self.mod_files.start()
         self.tailscale.start()
+        self.ddns.start()
         self.wake.start()
         self.guard.start()
         try:
@@ -754,6 +759,7 @@ class AgentCore:
         await self.software.stop()
         self.mod_files.stop()
         self.tailscale.stop()
+        self.ddns.stop()
         self.wake.stop()
         if self.discord is not None:
             await self.discord.stop()

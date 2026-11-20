@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.CpuCores
 import io.github.peyoteheadlights.mcsc.core.Crossplay
@@ -67,6 +68,7 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
         setup.loadVersion()
         setup.loadCrossplay()
         setup.loadInternet()
+        setup.loadDdns()
         if (Duplicate.allowed(vm.me)) setup.loadCopyOptions()
     }
 
@@ -81,6 +83,7 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             setup.loadVersion()
             setup.loadCrossplay()
             setup.loadInternet()
+            setup.loadDdns()
         },
         overlay = {
             when (asking) {
@@ -131,6 +134,21 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
                     },
                     onDismiss = { asking = null },
                 )
+                SetupAsk.REMOVE_DUCKDNS, SetupAsk.REMOVE_NOIP -> {
+                    val kind = if (asking == SetupAsk.REMOVE_DUCKDNS) "duckdns" else "noip"
+                    val saved = setup.ddns.value?.let { if (kind == "duckdns") it.duckdns else it.noip }
+                    Confirm(
+                        t("ddns.remove"),
+                        t("ddns.remove_body", "name" to (saved?.name ?: "")),
+                        t("ddns.remove"),
+                        danger = false,
+                        onConfirm = {
+                            asking = null
+                            setup.ddnsCall("ddns", strings) { it.removeDdns(kind) }
+                        },
+                        onDismiss = { asking = null },
+                    )
+                }
                 null -> Unit
             }
         },
@@ -288,11 +306,85 @@ private fun AddressCard(vm: AppViewModel, setup: SetupPages, serverId: String, a
             }
             if (!mobile) Text(t("address.wifi_off"), color = colors.text2)
         }
+        for (line in Internet.nameLines(vm.strings, info)) Text(line, color = colors.text2)
         val steps = Internet.forwardSteps(vm.strings, info, vm.technical)
         if (steps.isNotEmpty()) {
             Text(t("address.forward_title"), color = colors.text)
             for (step in steps) Text(step, color = colors.text2)
         }
+        NamesPart(vm, setup, owner, ask)
+    }
+}
+
+/**
+ * A name for the internet address (agent/ddns.py): DuckDNS, with No-IP next
+ * to it. The names are this PC's, so every server shows the same ones.
+ */
+@Composable
+private fun NamesPart(vm: AppViewModel, setup: SetupPages, owner: Boolean, ask: (SetupAsk) -> Unit) {
+    val colors = LocalColors.current
+    val context = LocalContext.current
+    val state = setup.ddns.value ?: return
+    var open by remember { mutableStateOf<String?>(null) }
+    // One form open at a time, so one set of fields.
+    var name by remember(open) { mutableStateOf("") }
+    var user by remember(open) { mutableStateOf("") }
+    var secret by remember(open) { mutableStateOf("") }
+    Text(t("ddns.title"), color = colors.text)
+    Text(t("ddns.note"), color = colors.text2)
+    for (kind in listOf("duckdns", "noip")) {
+        val saved = if (kind == "duckdns") state.duckdns else state.noip
+        if (saved != null) {
+            val date = { at: Double -> java.text.DateFormat.getDateInstance().format(java.util.Date((at * 1000).toLong())) }
+            for (line in Internet.savedLines(vm.strings, kind, saved, date)) Text(line.text, color = colors.tone(line.tone))
+            if (!owner) continue
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (kind == "noip") {
+                    // One tap to No-IP's hostname page (its Confirm button is there), then "I confirmed it".
+                    Button(onClick = { openLink(context, state.noipSite) }) { Text(t("ddns.noip_open")) }
+                    OutlinedButton(onClick = { setup.ddnsCall("ddns", vm.strings) { it.noIpConfirmed() } }, enabled = setup.busy == null) {
+                        Text(t("ddns.noip_confirmed"))
+                    }
+                }
+                OutlinedButton(
+                    onClick = { ask(if (kind == "duckdns") SetupAsk.REMOVE_DUCKDNS else SetupAsk.REMOVE_NOIP) },
+                    enabled = setup.busy == null,
+                ) { Text(t("ddns.remove")) }
+            }
+            continue
+        }
+        if (!owner) continue
+        if (open != kind) {
+            OutlinedButton(onClick = { open = kind }) { Text(t("ddns.${kind}_use")) }
+            continue
+        }
+        Text(t("ddns.${kind}_steps"), color = colors.text2)
+        OutlinedButton(onClick = { openLink(context, if (kind == "duckdns") state.duckdnsSite else state.noipSite) }) {
+            Text(t("ddns.${kind}_open"))
+        }
+        OutlinedTextField(name, { name = it.take(253) }, label = { Text(t("ddns.${kind}_name")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        if (kind == "noip") {
+            OutlinedTextField(user, { user = it.take(100) }, label = { Text(t("ddns.noip_username")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        }
+        OutlinedTextField(
+            secret,
+            { secret = it.take(200) },
+            label = { Text(t(if (kind == "duckdns") "ddns.duckdns_token" else "ddns.noip_password")) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (setup.busy == "ddns") Text(t("ddns.checking"), color = colors.text2)
+        setup.said?.let { if (!it.good) Text(it.text, color = colors.danger) }
+        Button(
+            onClick = {
+                setup.ddnsCall("ddns", vm.strings, done = { open = null }) {
+                    if (kind == "duckdns") it.saveDuckDns(name.trim(), secret.trim()) else it.saveNoIp(name.trim(), user.trim(), secret)
+                }
+            },
+            enabled = setup.busy == null && name.isNotBlank() && secret.isNotEmpty() && (kind == "duckdns" || user.isNotBlank()),
+        ) { Text(t("ddns.save")) }
     }
 }
 

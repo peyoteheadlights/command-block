@@ -51,6 +51,8 @@ def setup_logging(log_dir: Path, level: str = "INFO", console: bool = True) -> l
         root.addHandler(stream)
 
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # httpx logs every address it asks at INFO, and DuckDNS's holds the token.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     _CONFIGURED = True
     return logging.getLogger("msc")
 
