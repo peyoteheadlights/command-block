@@ -26,6 +26,8 @@ public enum ServerForm {
         public let noteKey: String?
         /// Shown only in Technical mode.
         public var technical: Bool = false
+        /// Only the owner, only on a Bedrock server.
+        public var bedrockOwner: Bool = false
     }
 
     public static let GROUPS: [Group] = [
@@ -57,7 +59,16 @@ public enum ServerForm {
             Field("monitor.ignored_exit_codes", "text", "serverset.ignored_codes", "serverset.ignored_codes_hint"),
             Field("server.low_priority", "bool", "serverset.low_priority", "serverset.low_priority_hint"),
         ], noteKey: nil, technical: true),
+        // Players' games update themselves; off by default (agent/softwarecheck.py).
+        Group(titleKey: "serverset.bedrock_update", fields: [
+            Field("server.bedrock_auto_update", "bool", "serverset.bedrock_update_label"),
+        ], noteKey: "serverset.bedrock_update_note", bedrockOwner: true),
     ]
+
+    /// Whether `group` shows for this account, mode and server.
+    public static func shown(_ group: Group, technical: Bool, me: Me?, edition: String?) -> Bool {
+        (!group.technical || technical) && (!group.bedrockOwner || (me?.isOwner == true && edition == "bedrock"))
+    }
 
     public static let NAME = "server.name"
     public static let NAME_LIMIT = 60

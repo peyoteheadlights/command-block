@@ -1162,6 +1162,7 @@ private fun UpdateAllDialog(vm: AppViewModel, content: ContentPages) {
                     Text(row.name.ifBlank { row.filename }, color = LocalColors.current.text)
                     Text(Content.change(strings, row.installedVersion, row.latestVersion))
                     if (!row.enabled) Text(t("mobile.content.update_all_off"), color = LocalColors.current.text3)
+                    row.saved?.let { Text(it, color = LocalColors.current.text3) }
                 }
             }
         }

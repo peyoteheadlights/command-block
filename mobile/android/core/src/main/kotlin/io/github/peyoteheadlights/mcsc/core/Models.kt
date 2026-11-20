@@ -107,6 +107,10 @@ data class ServerRow(
     val position: Int? = null,
     /** The heading it's under on All servers; empty: none. */
     val group: String? = null,
+    /** A Test server: never gets a store. */
+    val test: Boolean = false,
+    /** Who it's for (first run's question): "community" servers may get the Store. */
+    @SerialName("played_by") val playedBy: String? = null,
 )
 
 /** Does the server answer on its game port? ok is null until checked. */

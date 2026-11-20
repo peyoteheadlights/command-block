@@ -54,6 +54,8 @@ final class AppModel {
     @ObservationIgnored private(set) lazy var pcSettings = makePcPages()
     /// Settings > Discord bot (owner only).
     @ObservationIgnored private(set) lazy var discord = makeDiscordPages()
+    /// Rented servers on a host's panel (All servers).
+    @ObservationIgnored private(set) lazy var rented = makeRentedPages()
 
     // The pages of the signed-in account, made again when it signs out so
     // nothing of one PC or account shows on the next.
@@ -71,6 +73,10 @@ final class AppModel {
 
     private func makeDiscordPages() -> DiscordPages {
         DiscordPages(client: { [weak self] in self?.client }, noted: { [weak self] problem in self?.note(problem) }, strings: strings)
+    }
+
+    private func makeRentedPages() -> RentedPages {
+        RentedPages(client: { [weak self] in self?.client }, noted: { [weak self] problem in self?.note(problem) }, strings: strings)
     }
 
     // Settings.
@@ -386,6 +392,7 @@ final class AppModel {
         yourAccount = makeAccountPages()
         pcSettings = makePcPages()
         discord = makeDiscordPages()
+        rented = makeRentedPages()
         startAnswers = [:]
     }
 
