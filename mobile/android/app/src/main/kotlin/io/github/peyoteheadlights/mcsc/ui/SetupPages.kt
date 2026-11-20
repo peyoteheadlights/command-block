@@ -12,6 +12,7 @@ import io.github.peyoteheadlights.mcsc.core.Duplicate
 import io.github.peyoteheadlights.mcsc.core.DdnsState
 import io.github.peyoteheadlights.mcsc.core.InternetReach
 import io.github.peyoteheadlights.mcsc.core.OutsidePing
+import io.github.peyoteheadlights.mcsc.core.PlayitState
 import io.github.peyoteheadlights.mcsc.core.DuplicateOptions
 import io.github.peyoteheadlights.mcsc.core.Job
 import io.github.peyoteheadlights.mcsc.core.Memory
@@ -521,6 +522,42 @@ class SetupPages(
             if (bedrock) OutsidePing.bedrock(address, port) else OutsidePing.java(address, port)
         }
         c.phoneTest(serverId, address, port, works)
+    }
+
+    // ------------------------------------------------------------ playit.gg
+    /** playit.gg on the server's PC (agent/playit.py). */
+    var playit: Read<PlayitState> by mutableStateOf(Read())
+        private set
+
+    fun loadPlayit() {
+        val c = client() ?: return
+        scope.launch {
+            playit = try {
+                Read(c.playit(serverId))
+            } catch (e: AgentException) {
+                noted(e)
+                Read(problem = Message.of(e))
+            }
+        }
+    }
+
+    fun playitCall(strings: Strings, work: suspend (AgentClient) -> PlayitState) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = "playit"
+        said = null
+        scope.launch {
+            try {
+                val now = work(c)
+                playit = Read(now)
+                now.stopProblem?.let { said = Said(strings.t("playit.stop_problem", "problem" to it), good = false) }
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
     }
 
     // ------------------------------------------------------------ DuckDNS and No-IP

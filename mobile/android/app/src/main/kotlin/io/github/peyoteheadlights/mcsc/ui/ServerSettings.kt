@@ -41,6 +41,7 @@ import io.github.peyoteheadlights.mcsc.core.Crossplay
 import io.github.peyoteheadlights.mcsc.core.Duplicate
 import io.github.peyoteheadlights.mcsc.core.FolderPicker
 import io.github.peyoteheadlights.mcsc.core.Internet
+import io.github.peyoteheadlights.mcsc.core.Playit
 import io.github.peyoteheadlights.mcsc.core.Memory
 import io.github.peyoteheadlights.mcsc.core.RawText
 import io.github.peyoteheadlights.mcsc.core.RemoveServer
@@ -69,6 +70,7 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
         setup.loadCrossplay()
         setup.loadInternet()
         setup.loadDdns()
+        setup.loadPlayit()
         if (Duplicate.allowed(vm.me)) setup.loadCopyOptions()
     }
 
@@ -84,6 +86,7 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             setup.loadCrossplay()
             setup.loadInternet()
             setup.loadDdns()
+            setup.loadPlayit()
         },
         overlay = {
             when (asking) {
@@ -131,6 +134,28 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
                     onConfirm = {
                         asking = null
                         setup.testInternet(true, strings)
+                    },
+                    onDismiss = { asking = null },
+                )
+                SetupAsk.PLAYIT_MCSRVSTAT -> Confirm(
+                    t("address.test"),
+                    t("address.test_ask", "address" to (setup.playit.value?.let(Playit::javaAddress) ?: "")),
+                    t("address.test"),
+                    danger = false,
+                    onConfirm = {
+                        asking = null
+                        setup.playitCall(strings) { it.testPlayit(serverId, true) }
+                    },
+                    onDismiss = { asking = null },
+                )
+                SetupAsk.PLAYIT_STOP -> Confirm(
+                    t("playit.stop"),
+                    t("playit.stop_body"),
+                    t("playit.stop"),
+                    danger = true,
+                    onConfirm = {
+                        asking = null
+                        setup.playitCall(strings) { it.playitAction(serverId, "stop") }
                     },
                     onDismiss = { asking = null },
                 )
@@ -288,9 +313,6 @@ private fun AddressCard(vm: AppViewModel, setup: SetupPages, serverId: String, a
         }
         if (setup.busy == "internet") Text(t("address.busy"), color = colors.text2)
         for (line in Internet.lines(vm.strings, info, owner)) Text(line.text, color = colors.tone(line.tone))
-        info.playit?.let { link ->
-            OutlinedButton(onClick = { openLink(context, link) }) { Text(t("address.playit")) }
-        }
         val address = info.address
         val port = info.port
         if (Internet.testable(info) && address != null && port != null) {
@@ -313,7 +335,41 @@ private fun AddressCard(vm: AppViewModel, setup: SetupPages, serverId: String, a
             for (step in steps) Text(step, color = colors.text2)
         }
         NamesPart(vm, setup, owner, ask)
+        PlayitPart(vm, setup, serverId, owner, ask)
     }
+}
+
+/**
+ * playit.gg (agent/playit.py): link the program on the server's PC, the
+ * tunnel to make on playit.gg, its address and test. Installing it is done
+ * from the desktop app on that PC.
+ */
+@Composable
+private fun PlayitPart(vm: AppViewModel, setup: SetupPages, serverId: String, owner: Boolean, ask: (SetupAsk) -> Unit) {
+    val colors = LocalColors.current
+    val context = LocalContext.current
+    setup.playit.problem?.let { Text(it.text(vm.strings), color = colors.danger) }
+    val state = setup.playit.value ?: return
+    if (!state.supported) return // a plain Bedrock server goes through WaterdogPE, later
+    val step = Playit.step(vm.strings, state, owner)
+    val free = setup.busy == null
+    Text(t("playit.title"), color = colors.text)
+    for (line in step.lines) Text(line.text, color = colors.tone(line.tone))
+    when (step.button) {
+        "use" -> Button(onClick = { setup.playitCall(vm.strings) { it.playitAction(serverId, "use") } }, enabled = free) { Text(t("playit.use")) }
+        "link" -> Button(onClick = { openLink(context, state.claim?.url.orEmpty()) }) { Text(t("playit.link_open")) }
+        "reconnect" -> Button(onClick = { setup.playitCall(vm.strings) { it.playitAction(serverId, "reconnect") } }, enabled = free) { Text(t("playit.reconnect")) }
+        "make" -> Button(onClick = { openLink(context, state.newTunnel) }) { Text(t("playit.make_open")) }
+    }
+    if (step.checkAgain) OutlinedButton(onClick = { setup.loadPlayit() }) { Text(t("playit.check")) }
+    if (owner && state.on && state.phase == "running" && Playit.javaAddress(state) != null) {
+        OutlinedButton(
+            onClick = { if (state.mcsrvstatOk) setup.playitCall(vm.strings) { it.testPlayit(serverId, false) } else ask(SetupAsk.PLAYIT_MCSRVSTAT) },
+            enabled = free,
+        ) { Text(t("address.test")) }
+    }
+    if (setup.busy == "playit") Text(t("address.busy"), color = colors.text2)
+    if (owner && state.on) OutlinedButton(onClick = { ask(SetupAsk.PLAYIT_STOP) }, enabled = free) { Text(t("playit.stop")) }
 }
 
 /**
