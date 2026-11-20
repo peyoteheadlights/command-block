@@ -425,6 +425,24 @@ def test_a_restart_countdown_shows_with_cancel_and_restart_now(qapp, agent_http)
     assert not header.notice.isVisibleTo(window)
 
 
+def test_changes_waiting_offer_restart_when_nobody_is_on(qapp, agent_http):
+    window = signed_in_on(qapp, agent_http)
+    header = window.server_screen.header
+    header.show_status({"restart_waiting": ["mods", "settings"]})
+    assert header.notice.text() == "Changes are waiting for a restart: mods, game settings."
+    shown = [a for a, b in header.notice_buttons.items() if b.isVisibleTo(window)]
+    assert shown == ["restart-when-empty"]
+    header.show_status({"restart_waiting": ["mods"], "restart_when_empty": True})
+    assert header.notice.text() == "It restarts as soon as nobody's playing."
+    shown = [a for a, b in header.notice_buttons.items() if b.isVisibleTo(window)]
+    assert shown == ["cancel-restart-when-empty"]
+    # A countdown after a crash says more than waiting changes.
+    header.show_status({"restart_in": 30, "restart_waiting": ["mods"]})
+    assert header.notice.text() == "Restarting in 30 seconds."
+    header.show_status({})
+    assert not header.notice.isVisibleTo(window)
+
+
 def test_undo_and_redo_are_named_and_undo_on_the_agent(qapp, agent_http):
     headers = owner(agent_http)
     base = "/api/servers/creative"
@@ -898,16 +916,20 @@ def test_the_feed_comes_back_after_the_agent_restarts_without_repeats(qapp, agen
     headers = owner(agent_http)
     run_on_agent(agent_http, "survival", "start", headers)
     wait_for(qapp, lambda: len(pc.alerts) == 1, 30)
+    # Stopped first: an agent that stops now stops its running servers and
+    # starts them again (test_less_downtime), which would be real new alerts.
+    run_on_agent(agent_http, "survival", "stop", headers)
+    wait_for(qapp, lambda: len(pc.alerts) == 2, 30)  # "Survival stopped"
     agent_http.agent.stop()
     agent_http.agent.start()
     headers = owner(agent_http)
     wait_for(qapp, lambda: window.feed.connected, 30)
     run_on_agent(agent_http, "creative", "start", headers)
-    wait_for(qapp, lambda: len(pc.alerts) >= 2, 30)
+    wait_for(qapp, lambda: len(pc.alerts) >= 3, 30)
     time.sleep(1.0)
     qapp.processEvents()
     titles = [title for title, _body in pc.alerts]
-    assert len(titles) == len(set(titles)) and len(titles) == 2, titles
+    assert len(titles) == len(set(titles)) and len(titles) == 3, titles
 
 
 # ------------------------------------------------------------- the notification area

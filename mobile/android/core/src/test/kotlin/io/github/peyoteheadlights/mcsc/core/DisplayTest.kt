@@ -94,4 +94,23 @@ class DisplayTest {
         assertTrue(Display.worthShowing("state", technical = true))
         assertEquals("22:13:20", Display.clock(1_700_000_000.0, java.time.ZoneOffset.UTC))
     }
+
+    @Test
+    fun `changes waiting for a restart offer restart when nobody's on`() {
+        val status = AgentJson.decodeFromString(
+            ServerStatus.serializer(),
+            """{"state": "ONLINE", "restart_waiting": ["mods", "settings"], "restart_when_empty": false}""",
+        )
+        val (words, action) = Display.restartWaiting(s, status, canControl = true)!!
+        assertEquals("Changes are waiting for a restart: mods, game settings.", words)
+        assertEquals("restart-when-empty", action?.action)
+        // A moderator who can't control the server reads it, with no button.
+        assertNull(Display.restartWaiting(s, status, canControl = false)!!.second)
+        val set = status.copy(restartWhenEmpty = true)
+        assertEquals("cancel-restart-when-empty", Display.restartWaiting(s, set, true)!!.second?.action)
+        assertNull(Display.restartWaiting(s, status.copy(restartWaiting = emptyList()), true))
+        // An older agent sends neither field: nothing shows.
+        val old = AgentJson.decodeFromString(ServerStatus.serializer(), """{"state": "ONLINE"}""")
+        assertNull(Display.restartWaiting(s, old, true))
+    }
 }

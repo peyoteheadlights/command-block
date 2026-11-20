@@ -46,6 +46,8 @@ FEED = {
         "auth_failure",
         "agent_started",
         "agent_stopping",
+        "start_slow",
+        "restart_when_empty",
     )
 }
 # Steps on the way to something that matters: Simple leaves them out.

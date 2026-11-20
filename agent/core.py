@@ -19,7 +19,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from . import __version__, colors, linkedpack, memory, protection, supportask, watchers
+from . import __version__, colors, downtime, linkedpack, memory, protection, supportask, watchers
 from .autosleep import AutoSleep
 from .backups.manager import BackupManager
 from .config import ConfigError
@@ -108,6 +108,8 @@ class ServerContext:
         self.answering = AnswerWatch(self)
         # Diagnose server's last (or running) result (agent/diagnose.py).
         self.diagnosis: dict[str, Any] | None = None
+        # "Restart when nobody's on" watching the player count (agent/downtime.py).
+        self._empty_task: asyncio.Task | None = None
 
         self.server.signal_hook = self._console_signals
         self.server.crash_hook = self.crashes.collect
@@ -203,7 +205,9 @@ class ServerContext:
 
         async def run(job: JobHandle) -> Any:
             job.step(title)
-            return await change()
+            result = await change()
+            downtime.mark(self, "mods")  # Minecraft reads mods only at start
+            return result
 
         _, result = await self.core.jobs.run(
             "mods", f"{title} on {self.name}", run, server_id=self.server_id, risky=True, user=user
@@ -249,7 +253,7 @@ class ServerContext:
             return False
         if event.data.get("reason") not in ("user_stop", "scheduled_stop"):
             return False
-        if event.data.get("restart") or self.server.held_by:
+        if event.data.get("restart") or self.server.held_by or self.core.stopping:
             return False
         if self.core.jobs.risky_job(self.server_id):
             return False
@@ -294,20 +298,6 @@ class ServerContext:
         self.autosleep.start()
         self.answering.start()
 
-    async def autostart(self) -> None:
-        if not self.config.server.autostart_minecraft:
-            return
-        try:
-            await self.server.start(actor="agent-autostart")
-        except ServerError as exc:
-            await self.bus.publish(
-                Event(
-                    type="autostart_failed",
-                    level="error",
-                    message=f"Automatic start failed: {exc}",
-                )
-            )
-
     async def _update_check_loop(self) -> None:
         hours = self.config.mods.update_check_hours
         if hours <= 0:
@@ -336,6 +326,8 @@ class ServerContext:
     async def stop(self) -> None:
         if self._update_task:
             self._update_task.cancel()
+        if self._empty_task:
+            self._empty_task.cancel()
         self.fit.stop()
         await self.autosleep.stop()
         await self.answering.stop()
@@ -363,6 +355,7 @@ class ServerContext:
         status["agent"] = self.core.agent_status(self)
         status["sleep"] = self.autosleep.status()
         status["answering"] = self.answering.status()
+        status["restart_waiting"] = downtime.waiting(self)
         return status
 
     def summary(self) -> dict[str, Any]:
@@ -514,6 +507,9 @@ class AgentCore:
         self._cert_alerted: str | None = None
         self._servers_lock = asyncio.Lock()
         self.restart: Callable[[], None] | None = None
+        # True while stop() runs: the servers stopping then are not "a stop"
+        # to back up after; they start again with the agent.
+        self.stopping = False
 
     def request_restart(self) -> None:
         """Stop so the startup task starts the agent again. agent/main.py
@@ -630,8 +626,7 @@ class AgentCore:
         # After the bot, so a request that ran out while the agent was off
         # still tells its asker.
         self.start_requests.load()
-        for ctx in list(self.servers.values()):
-            await ctx.autostart()
+        await downtime.start_after_agent(self)
 
     async def _check_database_access(self, windows: bool = os.name == "nt") -> None:
         """The database holds every password hash: only the agent's Windows
@@ -747,7 +742,11 @@ class AgentCore:
             await asyncio.sleep(max(hours, 0.25) * 3600)
 
     async def stop(self) -> None:
+        self.stopping = True
         await self.bus.publish(Event(type="agent_stopping", message="Server agent stopping"))
+        # First, while the rest still works: warn players, stop every server
+        # together and let each save (agent/downtime.py).
+        await downtime.stop_for_agent(self)
         if self._cert_task:
             self._cert_task.cancel()
         await self.updates.stop()

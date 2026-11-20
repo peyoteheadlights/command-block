@@ -537,6 +537,7 @@ final class AppModel {
             switch action {
             case "start": return t("mobile.server.done_start")
             case "stop": return t("mobile.server.done_stop")
+            case "restart-when-empty", "cancel-restart-when-empty": return t("mobile.server.done_\(action.replacingOccurrences(of: "-", with: "_"))")
             default: return t("mobile.server.done_restart")
             }
         } catch let problem as AgentError {
