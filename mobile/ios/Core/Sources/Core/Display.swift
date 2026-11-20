@@ -102,6 +102,23 @@ public enum Display {
     /// offered while the agent is busy, or to an account that may not
     /// control the server. A crash with a restart counting down offers no
     /// Start: the agent starts it itself.
+    /// The note about changes waiting for a restart, and the one button it
+    /// offers: "Restart when nobody's on", or Cancel once that is set. Nil
+    /// when nothing waits. No button when the account can't control the server.
+    public static func restartWaiting(
+        _ strings: Strings, _ status: ServerStatus?, canControl: Bool
+    ) -> (words: String, action: QuickAction?)? {
+        guard let status = status else { return nil }
+        if status.restartWhenEmpty {
+            let cancel = QuickAction(action: "cancel-restart-when-empty", labelKey: "action.cancel", confirm: false)
+            return (strings.t("restart.when_empty_set"), canControl ? cancel : nil)
+        }
+        if status.restartWaiting.isEmpty { return nil }
+        let what = status.restartWaiting.map { strings.t("restart.what.\($0)") }.joined(separator: ", ")
+        let later = QuickAction(action: "restart-when-empty", labelKey: "action.restart_when_empty", confirm: false)
+        return (strings.t("restart.waiting", ["what": what]), canControl ? later : nil)
+    }
+
     public static func actions(_ state: String?, canControl: Bool) -> [QuickAction] {
         if !canControl { return [] }
         switch state ?? "" {

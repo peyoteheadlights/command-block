@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from . import downtime
 from .events import Event
 from .safechange import SafeChange, run_safe_change
 from .security.paths import PathSafetyError, assert_not_symlink, safe_filename, safe_join
@@ -417,6 +418,7 @@ async def save(
         risky=True,
         user=user,
     )
+    downtime.mark(ctx, "files")
     await ctx.bus.publish(
         Event(
             type="config_file_changed",

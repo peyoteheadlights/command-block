@@ -51,6 +51,8 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     # Same switch as crashes: a stuck server is as down as a crashed one.
     "server_not_answering": ("server_crashed", 0xED4245, "{server} isn't answering"),
     "server_answering_again": ("server_recovered", 0x3BA55D, "{server} answers again"),
+    # Only an alert: the server is never stopped for starting slowly.
+    "start_slow": ("server_crashed", 0xFAA61A, "{server} is taking long to start"),
     "restart_scheduled": (
         "server_restarted",
         0xFAA61A,
@@ -180,6 +182,7 @@ THROTTLED = {
 ALERT_PAGES = {
     "server_crashed": "crashes",
     "crash_loop": "crashes",
+    "start_slow": "crashes",
     "backup_completed": "backups",
     "backup_failed": "backups",
     "backup_copy_failed": "backups",

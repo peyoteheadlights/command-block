@@ -306,9 +306,14 @@ public struct ServerStatus: Codable, Equatable, Sendable {
     public var players: [OnlinePlayer]
     public var maxPlayers: Int?
     public var answering: Answering?
+    /// What changed since it started that it only reads at start ("mods", "settings"...).
+    public var restartWaiting: [String]
+    public var restartWhenEmpty: Bool
 
     enum CodingKeys: String, CodingKey {
         case name, state, uptime, players, answering
+        case restartWaiting = "restart_waiting"
+        case restartWhenEmpty = "restart_when_empty"
         case serverId = "server_id"
         case stateVerified = "state_verified"
         case minecraftVersion = "minecraft_version"
@@ -330,8 +335,12 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         playersVerified: Bool? = nil,
         players: [OnlinePlayer] = [],
         maxPlayers: Int? = nil,
-        answering: Answering? = nil
+        answering: Answering? = nil,
+        restartWaiting: [String] = [],
+        restartWhenEmpty: Bool = false
     ) {
+        self.restartWaiting = restartWaiting
+        self.restartWhenEmpty = restartWhenEmpty
         self.serverId = serverId
         self.name = name
         self.state = state
@@ -360,6 +369,8 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         players = try c.decodeIfPresent([OnlinePlayer].self, forKey: .players) ?? []
         maxPlayers = try c.decodeIfPresent(Int.self, forKey: .maxPlayers)
         answering = try? c.decodeIfPresent(Answering.self, forKey: .answering)
+        restartWaiting = try c.decodeIfPresent([String].self, forKey: .restartWaiting) ?? []
+        restartWhenEmpty = try c.decodeIfPresent(Bool.self, forKey: .restartWhenEmpty) ?? false
     }
 }
 

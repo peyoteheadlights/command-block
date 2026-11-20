@@ -144,6 +144,10 @@ class ServerStatus(Open):
     max_players: int | None = None
     metrics: dict[str, Any] | None = None
     job: Job | None = None
+    # What changed since it started that it only reads at start ("mods",
+    # "settings", "memory", "files", "addons", "join", "icon").
+    restart_waiting: list[str] = []
+    restart_when_empty: bool = False
 
 
 class ServerAction(Open):
