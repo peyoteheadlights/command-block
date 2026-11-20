@@ -79,7 +79,8 @@ def is_on(ctx: ServerContext) -> bool:
 async def open_port(ctx: ServerContext) -> bool:
     """On start (and when turned on while running). True when the router
     holds every port and its address can be reached from outside."""
-    if not is_on(ctx):
+    if not is_on(ctx) or ctx.core.waterdog.of(ctx):
+        # Behind WaterdogPE the server's own port lets anyone in unsigned.
         return False
     found = state(ctx)
     found.busy = True

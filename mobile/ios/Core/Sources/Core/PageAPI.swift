@@ -124,6 +124,15 @@ extension AgentClient {
     }
 
     /// mcsrvstat.us pings the tunnel's address; `allow` as for testInternet.
+    /// A plain Bedrock server behind WaterdogPE: playit's config.yml box (holds the tunnel's token).
+    public func setUpWaterdog(serverId: String, box: String) async throws -> PlayitState {
+        try await call("POST", server(serverId) + "/playit-bedrock", body: try AgentClient.encode(["box": box]), slow: true, as: PlayitState.self)
+    }
+
+    public func stopWaterdog(serverId: String) async throws -> PlayitState {
+        try await call("DELETE", server(serverId) + "/playit-bedrock", slow: true, as: PlayitState.self)
+    }
+
     public func testPlayit(serverId: String, allow: Bool) async throws -> PlayitState {
         try await call("POST", server(serverId) + "/playit-test", body: try AgentClient.encode(["allow_mcsrvstat": allow]), slow: true, as: PlayitState.self)
     }

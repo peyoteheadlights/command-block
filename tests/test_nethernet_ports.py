@@ -111,6 +111,7 @@ async def test_two_bedrock_servers_on_one_port_get_one_reason(tmp_path):
     try:
         first = core.servers["bedrock"]
         second = SimpleNamespace(
+            server_id="other",
             config=SimpleNamespace(
                 server_type=first.config.server_type,
                 server_dir=make_bedrock_folder(tmp_path / "other"),

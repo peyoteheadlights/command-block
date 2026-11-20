@@ -441,6 +441,8 @@ final class SetupPages {
 
     /// playit.gg on the server's PC (agent/playit.py).
     private(set) var playit = PageRead<PlayitState>()
+    /// playit's config.yml box, pasted for WaterdogPE (holds the tunnel's token; never saved).
+    var waterdogBox = ""
 
     func loadPlayit() async {
         guard let client = client() else { return }
@@ -463,6 +465,8 @@ final class SetupPages {
             if let problem = now.stopProblem {
                 said = Said(text: strings.t("playit.stop_problem", ["problem": problem]), good: false)
             }
+            if now.internetOff { said = Said(text: strings.t("playit.waterdog_internet_off"), good: true) }
+            if now.waterdog != nil { waterdogBox = "" } // the token isn't kept on the phone
         } catch let problem as AgentError {
             noted(problem)
             said = Said(text: problem.message(strings), good: false)

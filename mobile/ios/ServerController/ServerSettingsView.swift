@@ -50,6 +50,10 @@ struct ServerSettingsView: View {
                         case .removeNoIp: await setup.ddnsCall(strings) { try await $0.removeDdns(kind: "noip") }
                         case .playitMcsrvstat: await setup.playitCall(strings) { try await $0.testPlayit(serverId: serverId, allow: true) }
                         case .playitStop: await setup.playitCall(strings) { try await $0.playitAction(serverId: serverId, action: "stop") }
+                        case .waterdogOn:
+                            let box = setup.waterdogBox
+                            await setup.playitCall(strings) { try await $0.setUpWaterdog(serverId: serverId, box: box) }
+                        case .waterdogOff: await setup.playitCall(strings) { try await $0.stopWaterdog(serverId: serverId) }
                         // The server is gone: back to All servers, not to its page.
                         case .remove: if await setup.removeServer(strings) { model.serversPath = [] }
                         case nil: break
@@ -82,6 +86,8 @@ struct ServerSettingsView: View {
         case .removeDuckDns, .removeNoIp: return model.t("ddns.remove")
         case .playitMcsrvstat: return model.t("address.test")
         case .playitStop: return model.t("playit.stop")
+        case .waterdogOn: return model.t("playit.bedrock_confirm_title")
+        case .waterdogOff: return model.t("playit.waterdog_stop")
         case .remove: return model.t("serverset.remove_title", ["name": model.servers.first(where: { $0.id == serverId })?.name ?? serverId])
         case nil: return ""
         }
@@ -95,6 +101,8 @@ struct ServerSettingsView: View {
         case .removeDuckDns, .removeNoIp: return model.t("ddns.remove")
         case .playitMcsrvstat: return model.t("address.test")
         case .playitStop: return model.t("playit.stop")
+        case .waterdogOn: return model.t("playit.bedrock_set_up")
+        case .waterdogOff: return model.t("playit.waterdog_stop")
         case .remove: return model.t("serverset.remove_confirm")
         default: return model.t("version.confirm_button")
         }
@@ -109,6 +117,8 @@ struct ServerSettingsView: View {
         case .removeNoIp: return model.t("ddns.remove_body", ["name": setup.ddns.value?.noip?.name ?? ""])
         case .playitMcsrvstat: return model.t("address.test_ask", ["address": setup.playit.value.flatMap(Playit.javaAddress) ?? ""])
         case .playitStop: return model.t("playit.stop_body")
+        case .waterdogOn: return model.t("playit.bedrock_confirm_body")
+        case .waterdogOff: return model.t("playit.waterdog_stop_body")
         case .remove: return model.t("serverset.remove_body")
         default: return model.t("version.confirm_body")
         }

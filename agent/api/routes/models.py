@@ -837,6 +837,12 @@ class InternetTestRequest(BaseModel):
     allow_mcsrvstat: bool = False
 
 
+class WaterdogRequest(BaseModel):
+    # playit's config.yml box (tunnel page, Configuration help, WaterdogPE tab).
+    # It holds the tunnel's token: never logged or sent back.
+    box: str = Field(min_length=1, max_length=64 * 1024)
+
+
 class DuckDnsRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     token: str = Field(min_length=1, max_length=80)

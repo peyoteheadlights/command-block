@@ -63,6 +63,8 @@ Friends outside your home can join with **Let friends join from the internet** i
 
 Or use **playit.gg** in the same card: no port is opened and friends don't see your home address. The desktop app installs playit's own program after you click, you sign in on playit.gg and make a tunnel there, and the app shows the tunnel's address and puts it in invites and Discord. Stop using it any time; the app offers to remove the program too.
 
+A plain Bedrock server needs one more step for playit.gg: make a "Minecraft Bedrock (NetherNet)" tunnel, copy the WaterdogPE settings box from the tunnel's Configuration help and paste it in. After you click, the app downloads [WaterdogPE](https://github.com/WaterdogPE/WaterdogPE) (GPL-2.0), a free program that sits in front of the server, plus the Companion's small plugin for it that keeps your allow list, and runs WaterdogPE whenever the server runs. The server moves to the port in playit's settings.
+
 To give your internet address a name friends can remember (like `myserver.duckdns.org`), save a free DuckDNS or No-IP name in the same card. The app keeps it pointed at your PC. It's only a name, so the port still has to be open.
 
 ## Planned features

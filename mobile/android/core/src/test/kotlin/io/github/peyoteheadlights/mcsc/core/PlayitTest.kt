@@ -41,4 +41,28 @@ class PlayitTest {
         assertEquals("reconnect", step.button)
         assertEquals(Tone.DANGER, step.lines[0].tone)
     }
+
+    @Test
+    fun aPlainBedrockServerAsksForPlayitsBoxFirst() {
+        val bedrock = state("""{"on": true, "phase": "running", "proxy": "none", "new_tunnel": "x", "site": "y",
+            "plain_bedrock": true, "waterdog": null, "ways": []}""")
+        val step = Playit.step(strings, bedrock, owner = true)
+        assertEquals("waterdog", step.button)
+        assertEquals(strings.t("playit.bedrock_note"), step.lines.single().text)
+        assertNull(Playit.step(strings, bedrock, owner = false).button)
+    }
+
+    @Test
+    fun behindWaterdogTheNetherNetTunnelAndTheAllowListShow() {
+        val set = state("""{"on": true, "phase": "running", "proxy": "none", "new_tunnel": "x", "site": "y",
+            "plain_bedrock": true,
+            "waterdog": {"state": "registered", "listen_port": 19132, "media_port": 19132, "server_port": 19142, "list_on": true},
+            "ways": [{"kind": "nethernet", "local_port": 19132, "tunnel": {"address": "a.tun.ply.gg", "destination": "127.0.0.1:19132"}}]}""")
+        val step = Playit.step(strings, set, owner = true)
+        assertNull(step.button)
+        assertEquals(strings.t("playit.join_nethernet", "address" to "a.tun.ply.gg", "port" to 19132), step.lines[0].text)
+        assertEquals(strings.t("playit.waterdog_registered", "port" to 19142), step.lines[1].text)
+        assertEquals(strings.t("playit.waterdog_list_on"), step.lines[2].text)
+        assertNull(Playit.javaAddress(set)) // mcsrvstat.us can't test NetherNet
+    }
 }
