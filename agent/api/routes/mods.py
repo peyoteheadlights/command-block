@@ -27,6 +27,7 @@ from ...security.permissions import (
     check,
     check_server,
     may_add_own_jar,
+    on_server,
     require,
 )
 from ..deps import audit, get_core, get_server
@@ -49,6 +50,7 @@ from ..responses import (
     ModRolledBack,
     ModSearch,
     ModSideChanged,
+    ModSides,
     ModUpdated,
     ModUpdates,
     ModUploaded,
@@ -76,6 +78,17 @@ from .models import (
 )
 
 router = APIRouter()
+# Agent-wide: every server's mods at once.
+global_router = APIRouter()
+
+
+@global_router.get("/mod-sides", response_model=ModSides)
+async def mod_sides(principal: Principal = Depends(require(SERVER_VIEW)), core=Depends(get_core)):
+    """ "On all servers" on the Mods page: who needs each mod (Server,
+    Players or Both) and on which servers, for the servers this account
+    may see."""
+    servers = [c for c in core.servers.values() if SERVER_VIEW in on_server(principal, c.server_id)]
+    return await asyncio.to_thread(sides.on_all_servers, servers)
 
 
 @router.get("/mods", response_model=ModList)

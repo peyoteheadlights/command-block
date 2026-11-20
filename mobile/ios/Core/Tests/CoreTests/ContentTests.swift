@@ -232,6 +232,18 @@ final class ContentTests: XCTestCase {
         XCTAssertFalse(Sides.accepts("pack.mrpack"))
     }
 
+    func testTheSideFilterAndOnAllServers() throws {
+        let mods = [Mod(filename: "a.jar", side: "server"), Mod(filename: "b.jar", side: "both")]
+        XCTAssertEqual(Sides.shown(mods, "server").map(\.filename), ["a.jar"])
+        XCTAssertEqual(Sides.shown(mods, "all").count, 2)
+        XCTAssertEqual(Sides.shown(mods, "players"), [])
+        let found = try JSONDecoder().decode(ModSides.self, from: Data(#"{"mods": [{"name": "Chunky", "mod_id": "chunky", "side": "server", "servers": [{"id": "s", "name": "Survival", "filename": "c.jar", "side_from": "file"}, {"id": "c", "name": "Creative", "filename": "c.jar", "side_from": "unknown"}]}, {"name": "Minimap", "side": "players", "servers": [{"id": "s", "name": "Survival", "filename": "m.jar", "side_from": null}]}], "not_read": [{"id": "x", "name": "Old", "detail": "Access is denied"}]}"#.utf8))
+        let chunky = try XCTUnwrap(Sides.shown(found, "server").first)
+        XCTAssertEqual(Sides.servers(s, chunky), "On: Survival, Creative (not sure)")
+        XCTAssertEqual(Sides.shown(found, "players").map(\.name), ["Minimap"])
+        XCTAssertEqual(found.notRead.first?.name, "Old")
+    }
+
     func testALinkedModpacksCardAndModpackUpdatesQuestion() throws {
         let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [{"filename": "mine.jar", "added_by_you": true}], "server_state": "OFFLINE", "modpack": {"name": "Test Pack", "site": "Modrinth", "version": "1.2.0", "update": {"version_id": "v2", "version": "1.3.0"}, "added_by_you": 1}}"#.utf8))
         var pack = try XCTUnwrap(list.modpack)

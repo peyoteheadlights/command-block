@@ -291,6 +291,19 @@ object Sides {
         if (mod.side == null || mod.loader in PLUGINS) emptyList()
         else ALL.filter { it == "players" || it != mod.side }
 
+    /** The Server / Players / Both filter; "all" keeps every mod. */
+    val FILTERS = listOf("all") + ALL
+
+    fun shown(mods: List<Mod>, filter: String): List<Mod> = mods.filter { filter == "all" || it.side == filter }
+
+    fun shown(found: ModSides, filter: String): List<ModSideRow> = found.mods.filter { filter == "all" || it.side == filter }
+
+    /** "On: Survival, Creative (not sure)", the servers a mod is on with this mark. */
+    fun servers(strings: Strings, row: ModSideRow): String = strings.t(
+        "sides.on_servers",
+        "servers" to row.servers.joinToString(", ") { if (it.sideFrom == "unknown") "${it.name} ${strings.t("sides.not_sure")}" else it.name },
+    )
+
     /** A file the Players only list takes: a mod (.jar) or a pack (.zip). */
     fun accepts(name: String): Boolean = name.lowercase().let { it.endsWith(".jar") || it.endsWith(".zip") }
 }
