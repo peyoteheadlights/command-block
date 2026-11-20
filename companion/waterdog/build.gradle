@@ -1,0 +1,39 @@
+// The WaterdogPE plugin: keeps a plain Bedrock server's allow list when it
+// sits behind WaterdogPE for playit.gg (agent/waterdog.py). The server must
+// run with its own allow list off there, so this plugin turns away anyone
+// who isn't on it before they reach the server.
+base { archivesName = 'commandblock-companion-waterdog' }
+
+repositories {
+    maven { name = 'WaterdogPE'; url = 'https://repo.waterdog.dev/releases' }
+}
+
+dependencies {
+    // Only the classes we use; WaterdogPE brings the rest (and Gson) when it runs.
+    compileOnly("dev.waterdog.waterdogpe:waterdog:${project.waterdog_version}") { transitive = false }
+    compileOnly "com.google.code.gson:gson:${project.gson_version}"
+    compileOnly "org.apache.logging.log4j:log4j-api:${project.log4j_version}"
+    testImplementation "com.google.code.gson:gson:${project.gson_version}"
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.11.4'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging { events 'failed'; exceptionFormat 'full' }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17 // WaterdogPE runs on Java 17 or newer
+}
+
+processResources {
+    def version = project.version
+    inputs.property 'version', version
+    filesMatching('plugin.yml') { expand 'version': version }
+}
+
+jar {
+    from(rootProject.file('../LICENSE')) { rename { "LICENSE_command-block-companion" } }
+}
