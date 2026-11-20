@@ -88,12 +88,49 @@ def press(client, button, values=None, confirm=False, headers=None, guide="chunk
 def test_every_shipped_guide_passes_the_schema():
     files = sorted(guides.FOLDER.glob("*.json"))
     loaded = guides.load()
-    assert len(files) == len(loaded) == 26  # 25 plugins and EasyAuth (a Fabric mod)
+    assert len(files) == len(loaded) == 48  # 25 plugin guides, 23 mod guides
     for path in files:
         guides.check_guide(json.loads(path.read_text("utf-8")), path.stem)
-    # Two guides for one add-on would show twice.
-    names = [n.lower() for g in loaded.values() for n in g.names]
+    # Two guides for one add-on on the same kind of server would show twice.
+    # (A plugin and a mod can share a name: plugins and mods never meet.)
+    names = [(g.data["addon"]["content"], n.lower()) for g in loaded.values() for n in g.names]
     assert len(names) == len(set(names))
+
+
+# The version each mod's real jar says (read by the agent's own jar reader from
+# the Modrinth downloads on 2026-11-20), so the ranges fit real version styles.
+@pytest.mark.parametrize(
+    "guide, version",
+    [
+        ("chunky-mods", "1.5.66"),
+        ("spark-mods", "1.10.187"),
+        ("simple-voice-chat-mods", "2.6.27+26.3"),
+        ("luckperms-mods", "5.4.102"),
+        ("bluemap-mods", "5.12-mc1.20-6"),
+        ("worldedit-mods", "7.4.6+7648-00664b0"),
+        ("geyser-mods", "2.12.1-SNAPSHOT"),
+        ("floodgate-mods", "2.2.7-SNAPSHOT"),
+        ("veinminer", "2.14.0"),
+        ("servercore", "1.5.2+1.20.1"),
+        ("waystones", "14.1.21"),
+        ("waystones", "26.3.0.3"),
+        ("hardcore-revival", "20.1.19"),
+        ("serene-seasons", "9.1.0.3"),
+        ("serene-seasons", "26.1.2.0.7"),
+        ("gravestone", "1.0.41+26.3"),
+        ("open-parties-and-claims", "0.33.0"),
+        ("carpet", "1.4.112+v230608"),
+        ("carpet", "26.3+v260915"),
+        ("ledger", "1.3.18"),
+        ("universal-graves", "3.13.0+26.3"),
+        ("styled-chat", "2.2.4+1.20.1"),
+        ("vanish", "1.6.16+26.3"),
+        ("cobblemon", "1.5.2+1.20.1"),
+        ("distanthorizons", "3.3.4"),
+    ],
+)
+def test_mod_guides_fit_the_real_versions(guide, version):
+    assert guides.in_range(version, guides.load()[guide].data["versions"])
 
 
 def broken(**change):
@@ -164,6 +201,22 @@ def test_a_turned_off_add_on_has_no_guide(paper):
     path.rename(path.with_name(path.name + ".disabled"))
     ctx_of(paper).mods._cache = None
     assert shown(paper) == []
+
+
+def test_a_mod_guide_shows_on_a_mod_server_with_its_dimensions(multi_client):
+    ctx = ctx_of(multi_client)
+    ctx.config.mods_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(ctx.config.mods_dir / "Chunky-Fabric-1.5.66.jar", "w") as zf:
+        zf.writestr(
+            "fabric.mod.json",
+            json.dumps({"schemaVersion": 1, "id": "chunky", "version": "1.5.66"}),
+        )
+    ctx.mods._cache = None
+    found = multi_client.get(f"{BASE}/guides").json()["guides"]
+    assert [g["id"] for g in found] == ["chunky-mods"]
+    # Chunky on a mod server finds worlds by dimension, not by folder name.
+    options = found[0]["buttons"][0]["fields"][0]["options"]
+    assert [o["value"] for o in options] == ["overworld", "the_nether", "the_end"]
 
 
 def test_mod_servers_get_no_plugin_guides(multi_client):

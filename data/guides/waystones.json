@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "id": "waystones",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "waystones"
+    ],
+    "modrinth": "waystones"
+  },
+  "versions": ">=14.1.21 <27",
+  "title": "Waystones",
+  "what": "Stones players find or build and then teleport between.",
+  "steps": [
+    "Players right-click a waystone to add it to their list, then use it to travel.",
+    "These buttons fix a player's list or wait time."
+  ],
+  "source": "https://github.com/TwelveIterations/Waystones/blob/26.3/common/src/main/java/net/blay09/mods/waystones/command/ModCommands.java",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "count",
+      "label": "How many a player has",
+      "command": "waystones count {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "cooldown",
+      "label": "Reset a player's wait time",
+      "command": "waystones cooldown {player} reset all",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "permission": "players.manage"
+    },
+    {
+      "id": "forget",
+      "label": "Make a player forget all waystones",
+      "command": "waystones forget {player} all",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "permission": "players.manage",
+      "changes_world": true,
+      "warning": "The player has to find every waystone again."
+    }
+  ]
+}

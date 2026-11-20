@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "id": "ledger",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "ledger"
+    ],
+    "modrinth": "ledger"
+  },
+  "versions": ">=1.3.0 <2",
+  "title": "Ledger",
+  "what": "Remembers who placed, broke or took what, so griefing can be found and undone.",
+  "steps": [
+    "Look up a player first to see what they did, then undo it if needed.",
+    "Players with the right permission can also look up one block in the game with /ledger inspect."
+  ],
+  "source": "https://github.com/QuiltServerTools/Ledger/tree/master/src/main/kotlin/com/github/quiltservertools/ledger/commands",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "search",
+      "label": "What did a player do",
+      "command": "ledger search source:{player} after:{hours}h",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        },
+        {
+          "id": "hours",
+          "kind": "number",
+          "label": "In the last hours",
+          "min": 1,
+          "max": 720,
+          "default": 24
+        }
+      ]
+    },
+    {
+      "id": "rollback",
+      "label": "Undo what a player did",
+      "command": "ledger rollback source:{player} after:{hours}h",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        },
+        {
+          "id": "hours",
+          "kind": "number",
+          "label": "In the last hours",
+          "min": 1,
+          "max": 720,
+          "default": 24
+        }
+      ],
+      "changes_world": true,
+      "warning": "This puts blocks and items back as they were. Look first with What did a player do."
+    },
+    {
+      "id": "status",
+      "label": "Show status",
+      "command": "ledger status"
+    }
+  ]
+}

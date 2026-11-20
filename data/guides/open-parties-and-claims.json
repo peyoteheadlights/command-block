@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "open-parties-and-claims",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "openpartiesandclaims"
+    ],
+    "modrinth": "open-parties-and-claims"
+  },
+  "versions": ">=0.33.0 <1",
+  "title": "Open Parties and Claims",
+  "what": "Players claim land so others can't break or take things there, and make parties with friends.",
+  "steps": [
+    "Players claim land from the map or with /oclaims in the game, and make parties with /oparties.",
+    "Its commands work only for players in the game, so there are no buttons here.",
+    "Its server settings are in the world's serverconfig folder."
+  ],
+  "source": "https://github.com/thexaero/open-parties-and-claims/tree/main/Common/src/main/java/xaero/pac/common/server",
+  "checked": "2026-11-20",
+  "buttons": []
+}
