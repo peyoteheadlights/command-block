@@ -54,6 +54,7 @@ struct ServerSettingsView: View {
                             let box = setup.waterdogBox
                             await setup.playitCall(strings) { try await $0.setUpWaterdog(serverId: serverId, box: box) }
                         case .waterdogOff: await setup.playitCall(strings) { try await $0.stopWaterdog(serverId: serverId) }
+                        case .consoleOn: await setup.setConsoleFriends(true, strings)
                         // The server is gone: back to All servers, not to its page.
                         case .remove: if await setup.removeServer(strings) { model.serversPath = [] }
                         case nil: break
@@ -88,6 +89,7 @@ struct ServerSettingsView: View {
         case .playitStop: return model.t("playit.stop")
         case .waterdogOn: return model.t("playit.bedrock_confirm_title")
         case .waterdogOff: return model.t("playit.waterdog_stop")
+        case .consoleOn: return model.t("console.risk_title")
         case .remove: return model.t("serverset.remove_title", ["name": model.servers.first(where: { $0.id == serverId })?.name ?? serverId])
         case nil: return ""
         }
@@ -102,6 +104,7 @@ struct ServerSettingsView: View {
         case .playitMcsrvstat: return model.t("address.test")
         case .playitStop: return model.t("playit.stop")
         case .waterdogOn: return model.t("playit.bedrock_set_up")
+        case .consoleOn: return model.t("console.risk_button")
         case .waterdogOff: return model.t("playit.waterdog_stop")
         case .remove: return model.t("serverset.remove_confirm")
         default: return model.t("version.confirm_button")
@@ -119,6 +122,7 @@ struct ServerSettingsView: View {
         case .playitStop: return model.t("playit.stop_body")
         case .waterdogOn: return model.t("playit.bedrock_confirm_body")
         case .waterdogOff: return model.t("playit.waterdog_stop_body")
+        case .consoleOn: return model.t("console.risk_body")
         case .remove: return model.t("serverset.remove_body")
         default: return model.t("version.confirm_body")
         }

@@ -117,6 +117,14 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
                     },
                     onDismiss = { asking = null },
                 )
+                SetupAsk.CONSOLE_ON -> Confirm(
+                    t("console.risk_title"), t("console.risk_body"), t("console.risk_button"), danger = true,
+                    onConfirm = {
+                        asking = null
+                        setup.setConsoleFriends(true, strings)
+                    },
+                    onDismiss = { asking = null },
+                )
                 SetupAsk.REMOVE -> Confirm(
                     t("serverset.remove_title", "name" to (vm.servers.list.firstOrNull { it.id == serverId }?.name ?: serverId)),
                     t("serverset.remove_body"), t("serverset.remove_confirm"), danger = true,
@@ -324,6 +332,7 @@ private fun AddressCard(vm: AppViewModel, setup: SetupPages, serverId: String, a
     val owner = vm.me?.isOwner == true
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Gap) {
         read.problem?.let { Text(it.text(vm.strings), color = colors.danger) }
+        Text(t("address.consoles"), color = colors.text2)
         val info = read.value ?: return@Column
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(t("address.internet_label"), color = colors.text, modifier = Modifier.weight(1f))

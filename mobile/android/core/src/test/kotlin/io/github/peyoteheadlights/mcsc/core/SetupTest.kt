@@ -631,5 +631,21 @@ class SetupTest {
             assertEquals("DELETE", agent.server.takeRequest().method)
         }
     }
-}
 
+    @Test
+    fun `console friends show the sign-in code, then the gamertag, and ask the agent with the risks said yes to`() = runBlocking {
+        assertEquals(strings.t("console.needs_crossplay"), ConsoleFriendsText.state(strings, ConsoleFriends()))
+        assertNull(ConsoleFriendsText.state(strings, ConsoleFriends(available = true)))
+        val code = ConsoleFriends(available = true, on = true, signIn = SignInCode("https://www.microsoft.com/link", "ABCD1234"))
+        assertTrue(ConsoleFriendsText.state(strings, code)!!.contains("ABCD1234"))
+        val done = code.copy(signIn = null, gamertag = "SpareTag")
+        assertTrue(ConsoleFriendsText.state(strings, done)!!.contains("SpareTag"))
+        TestAgent().use { agent ->
+            agent.server.enqueue(agent.json("""{"available": true, "enabled": true, "console_friends": {"available": true, "on": true}}"""))
+            assertTrue(client(agent).setConsoleFriends("s1", true).consoleFriends!!.on)
+            val sent = agent.server.takeRequest()
+            assertEquals("/api/servers/s1/crossplay/console-friends", sent.path)
+            assertEquals("""{"enabled":true,"accept_risks":true}""", sent.body.readUtf8())
+        }
+    }
+}

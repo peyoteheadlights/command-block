@@ -727,4 +727,59 @@ def crossplay_card(page: SettingsPage, status: dict) -> QFrame:
     layout.addWidget(label(text("cross.differences"), "step"))
     for line in status.get("differences") or []:
         layout.addWidget(label(f"• {line}", "sub"))
+    if status.get("console_friends"):
+        console_friends(page, layout, status["console_friends"])
     return frame
+
+
+def console_friends(page: SettingsPage, layout: QVBoxLayout, found: dict) -> None:
+    """Let console friends join (agent/consolefriends.py): the risks come
+    first, and only the owner sees the sign-in code."""
+    layout.addWidget(label(text("console.title"), "step"))
+    layout.addWidget(label(text("console.what"), "sub"))
+    if not found.get("available"):
+        layout.addWidget(label(text("console.needs_crossplay"), "sub"))
+        if not found.get("on"):  # left on: it can still be turned off
+            return
+    if found.get("on"):
+        sign_in = found.get("sign_in")
+        if found.get("gamertag"):
+            layout.addWidget(label(text("console.signed_in", gamertag=found["gamertag"]), "notice"))
+        elif sign_in:
+            layout.addWidget(label(text("console.sign_in", **sign_in), "notice"))
+            go = push(sign_in["url"])
+            go.clicked.connect(lambda: page.window_.pc.open_link(sign_in["url"]))
+            layout.addWidget(go)
+        else:
+            layout.addWidget(label(text("console.waiting"), "sub"))
+        if found.get("problem"):
+            layout.addWidget(label(found["problem"], "problem"))
+    owner = page.window_.role in (None, "owner")
+    if not owner:
+        layout.addWidget(label(text("console.owner_only"), "muted"))
+        return
+    on = not found.get("on")
+    said = label(kind="sub")
+    turn = push(text("console.turn_on" if on else "console.turn_off"), "tonal" if on else "")
+
+    def switch() -> None:
+        if on and not page.window_.confirm(
+            text("console.risk_title"), text("console.risk_body"), text("console.risk_button")
+        ):
+            return
+        said.setText(text("console.turning_on" if on else "console.turning_off"))
+        page.ask(
+            "PUT",
+            "/crossplay/console-friends",
+            lambda _r: page.done(text("console.on_done" if on else "console.off_done")),
+            lambda e: said.setText(str(e)),
+            body={"enabled": on, "accept_risks": on},
+            slow=True,
+        )
+
+    turn.clicked.connect(switch)
+    row = QHBoxLayout()
+    row.addWidget(turn)
+    row.addWidget(label(text("console.stopped_first"), "muted"), 1)
+    layout.addLayout(row)
+    layout.addWidget(said)
