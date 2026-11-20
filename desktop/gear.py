@@ -250,6 +250,7 @@ class PCSettings(Section):
             window,
             [
                 "look",
+                "welcome",
                 "alerts",
                 "awake",
                 "mod_files",
@@ -268,6 +269,7 @@ class PCSettings(Section):
 
     def load(self) -> None:
         self.fill("look", self.look_card())
+        self.call("GET", "/account/welcome", lambda a: self.fill("welcome", self.welcome_card(a)))
         self.fill("help", self.help_card())
         self.fill("startup", self.startup_card())
         agent = self.window_.agent
@@ -361,6 +363,52 @@ class PCSettings(Section):
     def set_mode(self, technical: bool) -> None:
         self.window_.set_mode(technical)
         self.load()  # Technical opens the extra details here too
+
+    def welcome_card(self, answers: dict) -> QFrame:
+        """The first-run answers, changed here (the mode is just above)."""
+        from .welcome import PLAYED_BY, kind_boxes
+
+        frame, layout = card(text("welcome.settings"))
+        tips = QCheckBox(text("welcome.tips"))
+        tips.setChecked(self.window_.tips_on)
+
+        def set_tips(on: bool) -> None:
+            self.window_.tips_on = on
+            prefs = {"tips": "on" if on else "off"}
+            self.call("PUT", "/account/preferences", lambda _r: None, body=prefs)
+
+        tips.toggled.connect(set_tips)
+        layout.addWidget(tips)
+        layout.addWidget(label(text("welcome.who_question"), name="h2"))
+        who = QButtonGroup(frame)
+        boxes = kind_boxes(answers.get("kinds") or [])
+        for value, words in PLAYED_BY:
+            choice = QRadioButton(text(words))
+            choice.setChecked(answers.get("played_by") == value)
+            who.addButton(choice)
+            choice.setProperty("value", value)
+            layout.addWidget(choice)
+        layout.addWidget(label(text("welcome.kinds_question"), name="h2"))
+        for kind, box in boxes.items():
+            layout.addWidget(box)
+            layout.addWidget(label(text(f"welcome.kind_{kind}_names"), "sub"))
+
+        def save(*_args) -> None:
+            picked = who.checkedButton()
+            body = {
+                "kinds": [k for k, b in boxes.items() if b.isChecked()],
+                "played_by": picked.property("value") if picked else "",
+                "set_defaults": False,
+            }
+            self.call(
+                "PUT", "/account/welcome", lambda _r: self.say(text("welcome.saved")), body=body
+            )
+
+        who.buttonToggled.connect(lambda _b, on: save() if on else None)
+        for box in boxes.values():
+            box.toggled.connect(save)
+        layout.addWidget(label(text("welcome.pc_on"), "sub"))
+        return frame
 
     # -------------------------------------------------------- alerts
     def alerts_card(self, data: dict) -> QFrame:

@@ -9,6 +9,8 @@ POST /api/servers/{server_id}/server/start
 POST /api/servers/{server_id}/server/stop
 GET /api/account/preferences
 PUT /api/account/preferences
+GET /api/account/welcome
+PUT /api/account/welcome
 GET /api/servers/{server_id}/changes
 POST /api/servers/{server_id}/changes/undo
 POST /api/servers/{server_id}/changes/redo

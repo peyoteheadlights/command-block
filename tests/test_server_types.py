@@ -813,6 +813,89 @@ async def test_a_new_server_is_set_up_and_registered(core, tmp_path, network, mo
     assert new_ctx.server.status()["pending_version"]["minecraft_version"] == MC
 
 
+async def test_a_server_for_friends_starts_with_the_whitelist_on_and_their_names_waiting(
+    core, tmp_path, network, monkeypatch
+):
+    monkeypatch.setattr(create_module, "java_problem", lambda *args, **kwargs: None)
+    folder = tmp_path / "friends"
+    result = await create_module.create_server(
+        core,
+        name="Friends",
+        directory=str(folder),
+        type_id="vanilla",
+        minecraft=MC,
+        eula_accepted=True,
+        played_by="friends",
+        players=["Alex", " Sam ", "alex", "Alex"],
+    )
+    properties = (folder / "server.properties").read_text(encoding="utf-8")
+    assert "white-list=true" in properties and "enforce-whitelist=true" in properties
+    new_ctx = core.get_server(result["server_id"])
+    assert new_ctx.config.server.played_by == "friends"
+    # Minecraft has to run for the whitelist command, so they wait for the first start.
+    waiting = core.db.get_setting("whitelist_additions", {})[result["server_id"]]
+    assert waiting == ["Alex", "Sam"]  # Minecraft names ignore case
+
+    sent = []
+
+    async def send(kind, name):
+        sent.append((kind, name))
+
+    monkeypatch.setattr(new_ctx.player_actions, "send", send)
+    from agent.events import Event
+
+    await core.whitelist._event(Event(type="server_started", server_id=result["server_id"]))
+    assert sent == [("whitelist_add", "Alex"), ("whitelist_add", "Sam")]
+    assert result["server_id"] not in core.db.get_setting("whitelist_additions", {})
+
+
+async def test_a_new_server_takes_this_pcs_first_run_answer(core, tmp_path, network, monkeypatch):
+    monkeypatch.setattr(create_module, "java_problem", lambda *args, **kwargs: None)
+    core.db.set_setting("played_by_default", "community")
+    result = await create_module.create_server(
+        core,
+        name="Big",
+        directory=str(tmp_path / "big"),
+        type_id="vanilla",
+        minecraft=MC,
+        eula_accepted=True,
+    )
+    properties = (tmp_path / "big" / "server.properties").read_text(encoding="utf-8")
+    assert "white-list=false" in properties  # a community: everyone can join
+    assert core.get_server(result["server_id"]).config.server.played_by == "community"
+
+
+async def test_names_need_the_whitelist_and_must_be_real_names(core, tmp_path, network):
+    with pytest.raises(Exception, match="only asked for when the whitelist is on"):
+        await create_module.create_server(
+            core,
+            name="A",
+            directory=str(tmp_path / "a"),
+            type_id="vanilla",
+            minecraft=MC,
+            eula_accepted=True,
+            played_by="community",
+            players=["Alex"],
+        )
+    with pytest.raises(Exception, match="isn't a Minecraft name"):
+        await create_module.create_server(
+            core,
+            name="B",
+            directory=str(tmp_path / "b"),
+            type_id="vanilla",
+            minecraft=MC,
+            eula_accepted=True,
+            played_by="kids",
+            players=["not a name!"],
+        )
+    assert not (tmp_path / "a").exists() and not (tmp_path / "b").exists()
+
+
+def test_a_bedrock_allow_list_is_switched_on_for_friends(tmp_path):
+    create_module.set_bedrock_properties(tmp_path, 19132, 19133, "Kids", allow_list=True)
+    assert "allow-list=true" in (tmp_path / "server.properties").read_text(encoding="utf-8")
+
+
 async def test_a_new_servers_eula_file_says_false_until_it_is_accepted(tmp_path):
     create_module.write_eula(tmp_path, False)
     assert "eula=false" in (tmp_path / "eula.txt").read_text(encoding="utf-8")
