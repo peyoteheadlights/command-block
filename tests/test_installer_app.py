@@ -108,11 +108,14 @@ def test_new_install_with_a_server_folder(qapp, monkeypatch):
 
     assert window.screen_name == "java"  # this PC has Java 8 only
     press(window, TEXT["next"])
+    assert window.screen_name == "kind"  # Full app is picked
+    press(window, TEXT["next"])
     assert window.screen_name == "options"
     press(window, TEXT["next"])
 
     assert window.screen_name == "progress"
     body = window.wizard.started[0]
+    assert body["agent_only"] is False
     assert body["password"] == "a long enough password"
     assert body["install_java"] == 21
     assert body["start_with_pc"] is True and body["allow_devices"] is True
@@ -209,6 +212,100 @@ def test_the_first_screen_asks_run_servers_here_or_connect(qapp, monkeypatch):
     assert TEXT["disclaimer"] in shown_text(window)
     press(window, TEXT["open_app"])
     assert window.wizard.apps_opened == 1
+
+
+def pick(window, qapp, name):
+    [radio] = [r for r in window.findChildren(QtWidgets.QRadioButton) if r.accessibleName() == name]
+    radio.click()
+    qapp.processEvents()
+
+
+def agent_only_to_tailscale(qapp, monkeypatch):
+    window = make(qapp, monkeypatch)
+    window.path = "none"
+    window.answers["servers"] = []
+    window.kind_screen()
+    assert TEXT["full_app"] in shown_text(window) and TEXT["agent_only_sub"] in shown_text(window)
+    pick(window, qapp, TEXT["agent_only"])
+    press(window, TEXT["next"])
+    assert window.screen_name == "options"
+    press(window, TEXT["next"])
+    assert window.screen_name == "tailscale"
+    return window
+
+
+def test_agent_only_connects_tailscale_then_ends_on_pairing(qapp, monkeypatch):
+    window = agent_only_to_tailscale(qapp, monkeypatch)
+    wizard = window.wizard
+    assert TEXT["ts_intro"] in shown_text(window)
+    assert wizard.tailscale_clicks == 0  # nothing runs before the click
+    press(window, TEXT["ts_install"])
+    assert wizard.tailscale_clicks == 1
+    # The sign-in page opens in the browser once, and the screen waits.
+    assert window.opened == ["https://login.tailscale.com/a/demo"]
+    assert TEXT["ts_waiting"] in shown_text(window)
+    assert TEXT["next"] not in buttons(window)  # not connected yet: no going on
+    wizard.tailscale_state.update(connected=True, account="sam@example.com")
+    window.show_tailscale()  # the timer's next ask
+    assert "signed in as sam@example.com" in shown_text(window)
+    assert window.opened == ["https://login.tailscale.com/a/demo"]
+    press(window, TEXT["next"])
+    assert window.screen_name == "progress"
+    assert not window.tailscale_timer.isActive()
+    body = wizard.started[0]
+    assert body["agent_only"] is True and "tailscale_skipped" not in body
+    wizard.advance(20)
+    window.poll()
+    assert window.screen_name == "done"
+    shown = shown_text(window)
+    assert TEXT["done_agent_only_sub"] in shown and "scan this code" in shown
+    assert TEXT["on_other_pc"] in shown
+    assert TEXT["open_app"] not in buttons(window)  # no app on this PC
+    press(window, TEXT["copy_link"])
+    assert TEXT["copied"] in buttons(window)
+    assert "pair=1&fp=" in QtWidgets.QApplication.clipboard().text()  # the whole link
+    assert TEXT["ts_skipped"] not in shown
+
+
+def test_agent_only_can_skip_tailscale_and_is_told_how_to_finish(qapp, monkeypatch):
+    window = agent_only_to_tailscale(qapp, monkeypatch)
+    press(window, TEXT["ts_skip"])
+    assert window.screen_name == "progress"
+    window.wizard.advance(20)
+    window.poll()
+    assert TEXT["ts_skipped"] in shown_text(window)
+
+
+def test_someone_elses_tailscale_is_used_as_it_is(qapp, monkeypatch):
+    window = make(qapp, monkeypatch)
+    window.wizard.tailscale_state.update(installed=True, error="in use by OTHER-PC\\kim")
+    window.answers["agent_only"] = True
+    window.tailscale_screen(window.options_screen)
+    assert "used by another Windows user" in shown_text(window)
+    assert TEXT["ts_sign_in"] not in buttons(window) and TEXT["ts_install"] not in buttons(window)
+    press(window, TEXT["back"])
+    assert window.screen_name == "options" and not window.tailscale_timer.isActive()
+
+
+def test_running_setup_again_keeps_or_switches_agent_only(qapp, monkeypatch):
+    found = [
+        {
+            "describe": "We found Command Block 1.1.0 with 2 servers.",
+            "program_dir": "C:\\Program Files\\Command Block",
+            "action": "repair",
+            "refused": None,
+            "agent_only": True,
+        }
+    ]
+    window = make(qapp, monkeypatch, wizard=DemoWizard(found=found, players_online=0))
+    assert window.screen_name == "found" and TEXT["kind_title"] in shown_text(window)
+    # Agent only, Tailscale not connected yet: setup connects it first.
+    press(window, TEXT["repair"])
+    assert window.screen_name == "tailscale"
+    press(window, TEXT["back"])
+    pick(window, qapp, TEXT["full_app"])  # switching back to the full app
+    press(window, TEXT["repair"])
+    assert window.wizard.started[0]["agent_only"] is False
 
 
 def test_update_asks_only_when_players_are_online(qapp, monkeypatch):

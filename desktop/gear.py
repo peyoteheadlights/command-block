@@ -290,7 +290,12 @@ class PCSettings(Section):
             self.call("GET", "/tailscale", self.show_tailscale)
         else:
             frame, layout = card(text("security.tailscale"))
-            layout.addWidget(label(text("desktop.tailscale.not_here", pc=agent.place), "sub"))
+            words = (
+                "desktop.tailscale.agent_only"
+                if self.window_.agent_only
+                else "desktop.tailscale.not_here"
+            )
+            layout.addWidget(label(text(words, pc=agent.place), "sub"))
             self.fill("tailscale", frame)
         self.fill("wake")
         if mode["technical"]:  # never suggested in Simple
@@ -534,7 +539,8 @@ class PCSettings(Section):
         if not action:
             return frame
         if agent.place != "this PC":
-            layout.addWidget(label(text("serveruser.not_here", pc=agent.place), "sub"))
+            words = "serveruser.agent_only" if self.window_.agent_only else "serveruser.not_here"
+            layout.addWidget(label(text(words, pc=agent.place), "sub"))
             return frame
         layout.addWidget(label(text("serveruser.restarts"), "sub"))
         button = push(text(f"serveruser.{'turn_' + action if action != 'repair' else action}"))
