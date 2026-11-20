@@ -103,6 +103,16 @@ struct ServerView: View {
                 Text(model.t("mobile.server.restart_pending"))
                     .foregroundStyle(palette.textSecondary)
             }
+            // Changes that wait for a restart, and "Restart when nobody's on".
+            if let waiting = Display.restartWaiting(model.strings, status, canControl: model.canControl) {
+                Text(waiting.words)
+                    .foregroundStyle(palette.textSecondary)
+                if let action = waiting.action {
+                    Button(model.t(action.labelKey)) { run(action) }
+                        .frame(minHeight: 44)
+                        .disabled(working)
+                }
+            }
             if !loaded {
                 ProgressView()
             }

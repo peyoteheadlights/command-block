@@ -190,7 +190,7 @@ class Wizard:
             # The app answers but wouldn't list its servers: one may be
             # running with people on it, so ask rather than assume.
             return {"known": False, "online": None, "running": None}
-        counts = [r.get("players_online") for r in rows if r.get("state") == "running"]
+        counts = [r.get("players_online") for r in rows if r.get("state") in ("ONLINE", "STARTING")]
         if any(c is None for c in counts):
             return {"known": False, "online": None, "running": len(counts)}
         return {"known": True, "online": sum(counts), "running": len(counts)}

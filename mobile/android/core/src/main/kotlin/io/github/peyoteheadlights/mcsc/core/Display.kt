@@ -189,6 +189,23 @@ object Display {
      * control the server. A crash with a restart counting down offers no
      * Start: the agent starts it itself.
      */
+    /**
+     * The note about changes waiting for a restart, and the one button it
+     * offers: "Restart when nobody's on", or Cancel once that is set. Null
+     * when nothing waits or the account can't control the server.
+     */
+    fun restartWaiting(strings: Strings, status: ServerStatus?, canControl: Boolean): Pair<String, QuickAction?>? {
+        if (status == null) return null
+        if (status.restartWhenEmpty) {
+            val cancel = QuickAction("cancel-restart-when-empty", "action.cancel", confirm = false)
+            return strings.t("restart.when_empty_set") to cancel.takeIf { canControl }
+        }
+        if (status.restartWaiting.isEmpty()) return null
+        val what = status.restartWaiting.joinToString(", ") { strings.t("restart.what.$it") }
+        val later = QuickAction("restart-when-empty", "action.restart_when_empty", confirm = false)
+        return strings.t("restart.waiting", "what" to what) to later.takeIf { canControl }
+    }
+
     fun actions(state: String?, canControl: Boolean): List<QuickAction> {
         if (!canControl) return emptyList()
         return when (state) {

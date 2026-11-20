@@ -236,7 +236,9 @@ async def test_a_change_while_running_waits_for_a_restart(tmp_path):
         await ctx.server.start()
         assert await ctx.server.wait_online(20)
         await asyncio.sleep(0.05)
-        result = await gamesettings.save(ctx, updates={"difficulty": "hard"})
+        # Not difficulty: a running server takes that at once (see
+        # test_less_downtime). The player limit is only read at start.
+        result = await gamesettings.save(ctx, updates={"max-players": "7"})
         assert result["running"] is True
         # The file changed after the server started: what it runs is not
         # what the file says until it restarts.

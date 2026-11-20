@@ -609,7 +609,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 client.serverAction(serverId, action)
-                update(serverId) { it.copy(busyAction = null, done = Message("mobile.server.done_$action")) }
+                update(serverId) { it.copy(busyAction = null, done = Message("mobile.server.done_${action.replace('-', '_')}")) }
             } catch (e: AgentException) {
                 prefs.lastProblem = e.key
                 update(serverId) { it.copy(busyAction = null, problem = Message.of(e)) }

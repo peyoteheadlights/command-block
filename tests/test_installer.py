@@ -39,7 +39,7 @@ class FakeSystem:
         self.running = False
         self.hosts_asked: list[str] = []
         self.calls: list[tuple] = []
-        self.servers = [{"id": "main", "name": "Survival", "state": "stopped"}]
+        self.servers = [{"id": "main", "name": "Survival", "state": "OFFLINE"}]
         self.fail_start = False
         self.start_count = 0
         self.task_launch = None
@@ -64,7 +64,7 @@ class FakeSystem:
             return {"servers": self.servers}
         if path.endswith("/server/stop"):
             for row in self.servers:
-                row["state"] = "stopped"
+                row["state"] = "OFFLINE"
         return {"ok": True}
 
     def remove_after_exit(self, setup_exe, folder):
@@ -544,7 +544,7 @@ def test_an_installer_copy_is_updated_keeping_everything(tmp_path, places, progr
     env_before = found.env_path.read_text()
     system = FakeSystem()
     system.running = True
-    system.servers = [{"id": "s0", "name": "S0", "state": "running"}]
+    system.servers = [{"id": "s0", "name": "S0", "state": "ONLINE"}]
     system.task_launch = {
         "command": str(places["program"] / "CommandBlockAgent.exe"),
         "arguments": "--launched-by task",
@@ -735,7 +735,7 @@ def test_a_new_install_sets_everything_up(tmp_path, places, program_files):
 
     def start():
         original_start()
-        system.servers = [{"id": "survival", "name": "Survival", "state": "stopped"}]
+        system.servers = [{"id": "survival", "name": "Survival", "state": "OFFLINE"}]
 
     system.start_agent = start
     _, result, _ = run_engine(choices, program_files, system)
@@ -948,7 +948,7 @@ def test_an_update_failing_before_the_new_program_is_in_place_starts_the_old_one
     found = make_installer_copy(places, "1.0.0")
     system = FakeSystem()
     system.running = True
-    system.servers = [{"id": "s0", "name": "S0", "state": "running"}]
+    system.servers = [{"id": "s0", "name": "S0", "state": "ONLINE"}]
 
     def full_disk(pairs, report=None):
         raise OSError(28, "No space left on device")
@@ -970,7 +970,7 @@ def test_servers_stopped_before_the_app_refused_to_stop_are_started_again(places
     found = make_installer_copy(places, "1.0.0")
     system = FakeSystem()
     system.running = True
-    system.servers = [{"id": "s0", "name": "S0", "state": "running"}]
+    system.servers = [{"id": "s0", "name": "S0", "state": "ONLINE"}]
     system.stop_agent = lambda port, tls: False
     choices = Choices(
         action=engine.UPDATE, program_dir=places["program"], data_root=places["data"], found=found

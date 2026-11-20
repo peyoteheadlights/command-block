@@ -559,7 +559,7 @@ class Engine:
                 rows = []
                 self.log.write("servers_not_listed", error=str(exc))
             for row in rows:
-                if row.get("state") in ("running", "starting"):
+                if row.get("state") in ("ONLINE", "STARTING"):
                     self.system.api(port, tls, token, "POST", f"/servers/{row['id']}/server/stop")
                     self.stopped_servers.append(row["id"])
             if self.stopped_servers:
@@ -579,7 +579,7 @@ class Engine:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             rows = self.system.api(port, tls, token, "GET", "/servers")["servers"]
-            if all(r.get("state") in ("stopped", "crashed") for r in rows):
+            if all(r.get("state") in ("OFFLINE", "CRASHED") for r in rows):
                 return
             time.sleep(2)
         raise StepFailed(
