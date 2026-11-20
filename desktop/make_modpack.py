@@ -39,9 +39,11 @@ class MakeDialog(QDialog):
     a plugin server, the config files to put in, "Required to join", the
     chat line and the title screen (all need the Companion mod on the
     server). ``pick_background`` uploads a picture and returns the new
-    options, or None."""
+    options, or None. ``change_type`` opens Change server type (vanilla)."""
 
-    def __init__(self, parent: QWidget, options: dict, pick_background=None) -> None:
+    def __init__(
+        self, parent: QWidget, options: dict, pick_background=None, change_type=None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(text("make.title"))
         column = QVBoxLayout(self)
@@ -68,12 +70,15 @@ class MakeDialog(QDialog):
         self.required.setEnabled(bool(join.get("available")))
         self.required.setChecked(bool(join.get("available") and join.get("on")))
         column.addWidget(self.required)
-        column.addWidget(
-            label(
-                text("make.required_hint" if join.get("available") else "make.required_later"),
-                "sub",
-            )
-        )
+        hint = "make.required_hint" if join.get("available") else "make.required_later"
+        if join.get("needs_fabric"):
+            hint = "make.required_vanilla"
+        column.addWidget(label(text(hint), "sub"))
+        if join.get("needs_fabric") and change_type:
+            change = push(text("make.change_type"))
+            change.clicked.connect(self.reject)  # close this first, then open Settings
+            change.clicked.connect(change_type)
+            column.addWidget(change)
         self.chat_on = QCheckBox(text("make.chat_line"))
         self.chat_on.setChecked(bool(chat.get("on", True)))
         self.chat_text = QLineEdit(chat.get("text") or "")
@@ -236,7 +241,12 @@ class MakeCard:
         self.page.ask("GET", "/modpack/make", self.ask_details, self.page.said)
 
     def ask_details(self, options: dict) -> None:
-        dialog = MakeDialog(self.page, options, self.pick_background)
+        dialog = MakeDialog(
+            self.page,
+            options,
+            self.pick_background,
+            lambda: self.page.window_.open_page("Settings"),
+        )
         if not dialog.exec():
             return
         self.start.setEnabled(False)

@@ -155,9 +155,16 @@ data class ModpackConfigFile(val path: String, @SerialName("size_bytes") val siz
 @Serializable
 data class PlayersLoader(val id: String, val name: String = "")
 
-/** [available]: the Companion mod is on the server. [on]: ticked last time. */
+/**
+ * [available]: the Companion mod is on the server. [on]: ticked last time.
+ * [needsFabric]: a vanilla server, which can't run the Companion.
+ */
 @Serializable
-data class RequiredToJoin(val available: Boolean = false, val on: Boolean = false)
+data class RequiredToJoin(
+    val available: Boolean = false,
+    val on: Boolean = false,
+    @SerialName("needs_fabric") val needsFabric: Boolean = false,
+)
 
 /** The line players without the modpack see; {name}, {version}, {link}, {get_it} are filled in. */
 @Serializable

@@ -1545,6 +1545,8 @@ public struct ModpackMakeOptions: Decodable, Equatable, Sendable {
     public var requiredToJoin: Bool
     /// It was ticked last time.
     public var requiredOn: Bool
+    /// A vanilla server, which can't run the Companion: offer Change server type.
+    public var needsFabric: Bool
     public var chatLine: ChatLine
     public var titleScreen: TitleScreen
 
@@ -1556,7 +1558,16 @@ public struct ModpackMakeOptions: Decodable, Equatable, Sendable {
         case titleScreen = "title_screen"
     }
 
-    private struct Required: Decodable { var available: Bool?; var on: Bool? }
+    private struct Required: Decodable {
+        var available: Bool?
+        var on: Bool?
+        var needsFabric: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case available, on
+            case needsFabric = "needs_fabric"
+        }
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1568,6 +1579,7 @@ public struct ModpackMakeOptions: Decodable, Equatable, Sendable {
         let required: Required? = c.maybe(.requiredToJoin)
         requiredToJoin = required?.available ?? false
         requiredOn = required?.on ?? false
+        needsFabric = required?.needsFabric ?? false
         chatLine = c.maybe(.chatLine) ?? ChatLine()
         titleScreen = c.maybe(.titleScreen) ?? TitleScreen()
     }

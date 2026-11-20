@@ -1216,6 +1216,19 @@ def test_make_dialog_offers_required_and_the_chat_line_with_the_companion(qapp):
     assert dialog.body()["chat_line"] is None, "empty: the agent's own wording"
 
 
+def test_make_dialog_on_vanilla_offers_change_server_type(qapp):
+    from desktop import make_modpack
+
+    opened = []
+    options = {"name": "Friends", "required_to_join": {"available": False, "needs_fabric": True}}
+    dialog = make_modpack.MakeDialog(None, options, change_type=lambda: opened.append(1))
+    assert not dialog.required.isEnabled()
+    assert "Needs a Fabric server" in shown_text(dialog)
+    button(dialog, "Change server type").click()
+    assert opened == [1]
+    assert dialog.result() == make_modpack.QDialog.DialogCode.Rejected
+
+
 def test_make_dialog_sets_the_title_screen(qapp):
     from desktop import make_modpack
 

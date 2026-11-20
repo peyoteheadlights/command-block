@@ -162,7 +162,7 @@ def test_required_to_join_is_offered_only_with_the_companion_on_the_server(serve
 
     with_companion(client)
     got = options(client, headers)
-    assert got["required_to_join"] == {"available": True, "on": False}
+    assert got["required_to_join"] == {"available": True, "on": False, "needs_fabric": False}
     assert got["chat_line"] == {"on": True, "text": companion.CHAT_LINE_DEFAULT}
 
 
@@ -208,6 +208,19 @@ def test_the_paper_plugin_also_turns_on_required_to_join(paper):
     client, headers, folder = paper
     (folder / "companion.jar").write_bytes(plugin_jar(companion.PLUGIN_NAME))
     assert options(client, headers)["required_to_join"]["available"] is True
+
+
+def test_vanilla_says_it_needs_fabric(tmp_path, monkeypatch, sites):
+    from .test_api import auth, token_for
+    from .test_hangar_and_links import app_for
+
+    with app_for(tmp_path, monkeypatch, "vanilla") as client:
+        headers = auth(token_for(client))
+        got = options(client, headers)["required_to_join"]
+        refused = make(client, headers, required=True)
+    assert got == {"available": False, "on": False, "needs_fabric": True}
+    assert refused.status_code == 400
+    assert "Fabric" in refused.json()["detail"]
 
 
 # ---------------------------------------------------------------- plugin servers' players
