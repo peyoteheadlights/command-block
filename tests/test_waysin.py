@@ -182,8 +182,9 @@ async def test_the_internet_gets_no_answer_so_the_router_step_is_listed(core, wa
         ("From the internet (mcsrvstat.us): play.example.com", False, waysin.NO_ANSWER)
     ]
     assert found["steps"] == [
-        f"On your router, forward TCP port {port} to {HOME}. Command Block can't open "
-        "router ports yet. Your router's page or manual says how."
+        f'On your router, forward TCP port {port} to {HOME}, or turn on "Let friends join '
+        'from the internet" in Server settings so Command Block asks the router. '
+        "Your router's page or manual says how."
     ]
     assert [c["key"] for c in found["changes"]] == [f"firewall tcp {port}"]
 

@@ -59,6 +59,8 @@ This is a student project I've been working on as a hobby for my personal use, a
 
 Your servers run on your own PC, so friends can only play while that PC is on. **Keep this PC awake** in PC settings stops Windows from sleeping while a server is running.
 
+Friends outside your home can join with **Let friends join from the internet** in Server settings: the app asks your router to open the server's port while it runs (UPnP) and tests it from outside. If your router or internet provider doesn't allow that, the app shows the port forwarding steps or points you to playit.gg.
+
 ## Planned features
 
 This app is in no way done and will be supported for a good long while. Here's everything that's been planned so far:

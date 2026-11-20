@@ -389,6 +389,54 @@ final class SetupPages {
         } catch {}
     }
 
+    // MARK: - Server address
+
+    /// "Let friends join from the internet" (agent/internet.py).
+    private(set) var internet = PageRead<InternetReach>()
+
+    func loadInternet() async {
+        guard let client = client() else { return }
+        internet.loading = true
+        do {
+            internet = PageRead(value: try await client.internet(serverId: serverId))
+        } catch let problem as AgentError {
+            noted(problem)
+            internet = PageRead(problem: problem)
+        } catch {
+            internet.loading = false
+        }
+    }
+
+    private func internetCall(_ name: String, _ strings: Strings, _ work: (AgentClient) async throws -> InternetReach) async {
+        guard let client = client(), busy == nil else { return }
+        busy = name
+        said = nil
+        defer { busy = nil }
+        do {
+            internet = PageRead(value: try await work(client))
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+    }
+
+    func setInternet(_ on: Bool, _ strings: Strings) async {
+        await internetCall("internet", strings) { try await $0.setInternet(serverId: serverId, on: on) }
+    }
+
+    /// mcsrvstat.us; `allow` after the owner said yes to it once.
+    func testInternet(allow: Bool, _ strings: Strings) async {
+        await internetCall("internet_test", strings) { try await $0.testInternet(serverId: serverId, allow: allow) }
+    }
+
+    /// This phone pings the address itself (over mobile data), then tells the agent.
+    func phoneTest(address: String, port: Int, bedrock: Bool, _ strings: Strings) async {
+        await internetCall("phone_test", strings) { client in
+            let works = await OutsidePing.ask(host: address, port: port, bedrock: bedrock)
+            return try await client.phoneTest(serverId: serverId, address: address, port: port, works: works)
+        }
+    }
+
     // MARK: - Duplicate
 
     private(set) var copyOptions = PageRead<DuplicateOptions>()

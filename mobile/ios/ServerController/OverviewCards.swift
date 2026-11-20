@@ -30,7 +30,12 @@ struct JoinCard: View {
                 } else {
                     hint(model.t("value.unknown"))
                 }
-                hint(model.t("join.internet"))
+                if let internet = info.internet, internet.works == true, let tested = Internet.address(internet) {
+                    group("address.internet_label", "address.title")
+                    CopyRow(text: tested, note: Internet.lines(model.strings, internet, owner: true).last?.text, palette: palette)
+                } else {
+                    hint(model.t("join.internet"))
+                }
             } else {
                 ProgressView()
             }

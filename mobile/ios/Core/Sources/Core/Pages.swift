@@ -494,10 +494,11 @@ public struct JoinWay: Decodable, Equatable, Sendable {
     }
 }
 
-/// GET /join. The internet is never tested, so it is never claimed.
+/// GET /join. Reaching it from the internet is "not known" until an outside test answered.
 public struct JoinInfo: Decodable, Equatable, Sendable {
     public var java: JoinWay?
     public var bedrock: JoinWay?
+    public var internet: InternetReach?
 }
 
 public struct Ok: Decodable, Equatable, Sendable {
