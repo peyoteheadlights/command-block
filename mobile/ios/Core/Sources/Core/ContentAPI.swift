@@ -319,6 +319,21 @@ extension AgentClient {
         return try await call("PUT", content(serverId) + "/game-settings/raw", body: body, as: GameSettingsSaved.self)
     }
 
+    /// The server icon as base64 PNG, or nil when there is none.
+    public func serverIcon(serverId: String) async throws -> String? {
+        try await call("GET", content(serverId) + "/server-icon", as: ServerIcon.self).png
+    }
+
+    /// A new server icon: a 64 x 64 PNG in base64 (the app resizes it first).
+    public func saveServerIcon(serverId: String, png: String) async throws -> ServerIconSaved {
+        let body = try AgentClient.encode(["png": JSONValue.string(png)])
+        return try await call("PUT", content(serverId) + "/server-icon", body: body, as: ServerIconSaved.self)
+    }
+
+    public func removeServerIcon(serverId: String) async throws -> ServerIconSaved {
+        try await call("DELETE", content(serverId) + "/server-icon", as: ServerIconSaved.self)
+    }
+
     // MARK: - Plumbing
 
     private func content(_ id: String) -> String {

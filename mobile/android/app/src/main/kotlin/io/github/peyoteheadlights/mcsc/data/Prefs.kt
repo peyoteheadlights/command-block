@@ -39,6 +39,11 @@ class Prefs(context: Context) {
         get() = p.getBoolean("technical", false)
         set(value) = p.edit { putBoolean("technical", value) }
 
+    /** Streamer mode: hide addresses, folders and keys on screen. */
+    var streamer: Boolean
+        get() = p.getBoolean("streamer", false)
+        set(value) = p.edit { putBoolean("streamer", value) }
+
     /** Ask for the phone's unlock when opening the app. On by default. */
     var unlock: Boolean
         get() = p.getBoolean("unlock", true)

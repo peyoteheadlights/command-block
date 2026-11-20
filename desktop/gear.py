@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import motion
+from . import motion, streamer
 from .agent import AgentError
 from .fixes import get_help
 from .overview import card
@@ -344,6 +344,12 @@ class PCSettings(Section):
             choice.toggled.connect(lambda on, t=technical: self.set_mode(t) if on else None)
             details.addButton(choice)
             layout.addWidget(choice)
+        layout.addWidget(label(text("streamer.title"), name="h2"))
+        hide = QCheckBox(text("streamer.switch"))
+        hide.setChecked(streamer.state["on"])
+        hide.toggled.connect(window.set_streamer)
+        layout.addWidget(hide)
+        layout.addWidget(label(text("streamer.hint"), "sub"))
         return frame
 
     def set_mode(self, technical: bool) -> None:

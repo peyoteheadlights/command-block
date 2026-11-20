@@ -1,4 +1,5 @@
 import Core
+import PhotosUI
 import SwiftUI
 
 /// Game settings: the PC page's fields in its groups, each with its hint
@@ -40,6 +41,7 @@ struct GameSettingsView: View {
         .task(id: serverId) {
             content.said = nil
             await content.loadGame()
+            await content.loadIcon()
         }
     }
 
@@ -78,6 +80,12 @@ struct GameSettingsView: View {
                             palette: palette
                         ) { content.edit(field.key, $0) }
                     }
+                }
+            }
+            if settings.icon != nil {
+                SectionTitle(text: model.t("motd.icon"), palette: palette)
+                CardBox(palette: palette) {
+                    IconCard(content: content, canEdit: canEdit, palette: palette)
                 }
             }
             if canEdit {
@@ -141,7 +149,7 @@ private struct GameField: View {
                 Picker(label, selection: Binding(get: { value }, set: { change($0) })) {
                     // The file's own value stays listed even when it isn't one of the choices.
                     if !field.choices.contains(value) {
-                        Text(verbatim: value).tag(value)
+                        Text(hiding: value).tag(value)
                     }
                     ForEach(field.choices, id: \.self) { choice in
                         Text(GameForm.choiceLabel(strings, choice)).tag(choice)
@@ -152,6 +160,9 @@ private struct GameField: View {
             default:
                 Text(label)
                     .foregroundStyle(palette.textPrimary)
+                if Motd.keys.contains(field.key) {
+                    MotdField(field: field, value: value, locked: locked, palette: palette, change: change)
+                } else {
                 TextField(label, text: Binding(get: { value }, set: { typed in
                     change(field.maxLength.map { String(typed.prefix($0)) } ?? typed)
                 }))
@@ -160,14 +171,15 @@ private struct GameField: View {
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .disabled(locked)
+                }
             }
             if let problem = problem {
-                Text(verbatim: problem)
+                Text(hiding: problem)
                     .font(.footnote)
                     .foregroundStyle(palette.danger)
             }
             if let fileProblem = GameForm.fileProblem(strings, field) {
-                Text(verbatim: fileProblem)
+                Text(hiding: fileProblem)
                     .font(.footnote)
                     .foregroundStyle(palette.tone(.warning))
             }
@@ -177,5 +189,146 @@ private struct GameField: View {
             }
         }
         .frame(minHeight: 44, alignment: .leading)
+    }
+}
+
+/// The MOTD builder: the words (two lines on Java), a preview on the server
+/// list's dark background, and buttons that add Minecraft's colour codes
+/// (mirrors MotdField in GameSettings.kt).
+private struct MotdField: View {
+    let field: GameSetting
+    let value: String
+    let locked: Bool
+    let palette: Palette
+    let change: (String) -> Void
+
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        TextField(model.t("game.motd"), text: Binding(get: { value }, set: { typed in
+            let lines = typed.split(separator: "\n", omittingEmptySubsequences: false).prefix(field.lines).joined(separator: "\n")
+            change(field.maxLength.map { String(lines.prefix($0)) } ?? lines)
+        }), axis: .vertical)
+        .lineLimit(1...max(1, field.lines))
+        .textFieldStyle(.roundedBorder)
+        .autocorrectionDisabled()
+        .textInputAutocapitalization(.never)
+        .disabled(locked)
+        Text(preview)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(Color(red: 0x1D / 255, green: 0x1D / 255, blue: 0x1D / 255), in: RoundedRectangle(cornerRadius: 6))
+            .accessibilityLabel(model.t("motd.preview"))
+        if !locked {
+            Text(model.t("motd.colors"))
+                .font(.footnote)
+                .foregroundStyle(palette.textSecondary)
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(36)), count: 8), alignment: .leading, spacing: 6) {
+                ForEach(Motd.colors.indices, id: \.self) { index in
+                    let color = Motd.colors[index]
+                    Button {
+                        change(value + "\u{00A7}\(color.code)")
+                    } label: {
+                        Circle().fill(Self.color(color.rgb)).frame(width: 32, height: 32)
+                    }
+                    .accessibilityLabel(model.t("motd.color_\(color.code)"))
+                }
+            }
+            HStack {
+                ForEach(Motd.styles.indices, id: \.self) { index in
+                    let style = Motd.styles[index]
+                    Button(model.t(style.key)) { change(value + "\u{00A7}\(style.code)") }
+                        .buttonStyle(.bordered)
+                        .font(.footnote)
+                }
+            }
+        }
+    }
+
+    private var preview: AttributedString {
+        var out = AttributedString()
+        for piece in Motd.pieces(value) {
+            var part = AttributedString(piece.text)
+            part.foregroundColor = Self.color(piece.color)
+            var font = Font.body
+            if piece.bold { font = font.bold() }
+            if piece.italic { font = font.italic() }
+            part.font = font
+            if piece.underline { part.underlineStyle = .single }
+            if piece.strike { part.strikethroughStyle = .single }
+            out += part
+        }
+        return out
+    }
+
+    static func color(_ rgb: Int) -> Color {
+        Color(red: Double((rgb >> 16) & 0xFF) / 255, green: Double((rgb >> 8) & 0xFF) / 255, blue: Double(rgb & 0xFF) / 255)
+    }
+}
+
+/// The server icon: what it is now, Pick a picture (any picture: cut to a
+/// square from its middle and made 64 x 64 PNG here), and Remove.
+private struct IconCard: View {
+    let content: ContentPages
+    let canEdit: Bool
+    let palette: Palette
+
+    @Environment(AppModel.self) private var model
+    @State private var picked: PhotosPickerItem?
+    @State private var unreadable = false
+
+    var body: some View {
+        let strings = model.strings
+        let shown = content.icon.flatMap { Data(base64Encoded: $0) }.flatMap { UIImage(data: $0) }
+        HStack(spacing: 12) {
+            if let shown {
+                Image(uiImage: shown)
+                    .interpolation(.none)
+                    .resizable()
+                    .frame(width: 64, height: 64)
+                    .accessibilityLabel(model.t("motd.icon"))
+            }
+            Hint(text: model.t("motd.icon_hint"), palette: palette)
+        }
+        if unreadable {
+            Text(model.t("motd.icon_unreadable"))
+                .font(.footnote)
+                .foregroundStyle(palette.danger)
+        }
+        if canEdit {
+            HStack {
+                PhotosPicker(model.t("motd.icon_pick"), selection: $picked, matching: .images)
+                    .disabled(content.busy != nil)
+                if shown != nil {
+                    Button(model.t("motd.icon_remove")) { Task { await content.removeIcon(strings) } }
+                        .disabled(content.busy != nil)
+                }
+            }
+            .onChange(of: picked) { _, item in
+                guard let item else { return }
+                Task {
+                    let data = try? await item.loadTransferable(type: Data.self)
+                    let png = data.flatMap { UIImage(data: $0) }.flatMap(Self.iconPng)
+                    unreadable = png == nil
+                    picked = nil
+                    if let png { await content.saveIcon(png, strings) }
+                }
+            }
+        }
+    }
+
+    /// A picture cut to a square from its middle, made 64 x 64, as base64 PNG.
+    static func iconPng(_ picture: UIImage) -> String? {
+        let side = min(picture.size.width, picture.size.height)
+        guard side > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let small = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64), format: format).image { _ in
+            let scale = 64 / side
+            let width = picture.size.width * scale
+            let height = picture.size.height * scale
+            picture.draw(in: CGRect(x: (64 - width) / 2, y: (64 - height) / 2, width: width, height: height))
+        }
+        return small.pngData()?.base64EncodedString()
     }
 }

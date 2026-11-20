@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
 from agent import API_VERSION, appinfo
 from agent import __version__ as APP_VERSION
 
-from . import icons, motion, self_update, theme
+from . import icons, motion, self_update, streamer, theme
 from .agent import AgentClient, AgentError, SignedOut, Unreachable
 from .alerts import KEPT, PAGES, PC_PAGES, RESTART_FOR, NotificationsScreen
 from .backups import is_world
@@ -423,6 +423,7 @@ class MainWindow(FramelessWindow):
         pool.setMaxThreadCount(max(8, pool.maxThreadCount()))
         self.dark = dark if dark is not None else self.dark_look(pc.setting("look"))
         self.scale = pc.text_scale()
+        streamer.turn(str(pc.setting("streamer")).lower() == "true")
         self.servers: list[dict] = []
         self.all_servers: list[dict] = []  # with Test servers, which Simple mode hides
         # Other PCs' servers (Your PCs), by PC id: rows, or why there are none.
@@ -706,6 +707,13 @@ class MainWindow(FramelessWindow):
         if look in ("light", "dark"):
             return look == "dark"
         return QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
+
+    def set_streamer(self, on: bool) -> None:
+        """Streamer mode, kept on this PC like the look."""
+        self.pc.set_setting("streamer", "true" if on else "false")
+        streamer.turn(on)
+        if not on and self.server_screen.row:
+            self.load_server_parts()  # labels show their own words again
 
     def set_look(self, look: str) -> None:
         """Kept on this PC: each PC (and person) picks their own."""
