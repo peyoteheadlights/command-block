@@ -9,6 +9,7 @@ import io.github.peyoteheadlights.mcsc.core.CpuCores
 import io.github.peyoteheadlights.mcsc.core.Crossplay
 import io.github.peyoteheadlights.mcsc.core.CrossplayInfo
 import io.github.peyoteheadlights.mcsc.core.Duplicate
+import io.github.peyoteheadlights.mcsc.core.DdnsState
 import io.github.peyoteheadlights.mcsc.core.InternetReach
 import io.github.peyoteheadlights.mcsc.core.OutsidePing
 import io.github.peyoteheadlights.mcsc.core.DuplicateOptions
@@ -520,6 +521,42 @@ class SetupPages(
             if (bedrock) OutsidePing.bedrock(address, port) else OutsidePing.java(address, port)
         }
         c.phoneTest(serverId, address, port, works)
+    }
+
+    // ------------------------------------------------------------ DuckDNS and No-IP
+    /** This PC's names for its internet address (agent/ddns.py). */
+    var ddns: Read<DdnsState> by mutableStateOf(Read())
+        private set
+
+    fun loadDdns() {
+        val c = client() ?: return
+        scope.launch {
+            ddns = try {
+                Read(c.ddns())
+            } catch (e: AgentException) {
+                noted(e)
+                Read(problem = Message.of(e))
+            }
+        }
+    }
+
+    /** True when it worked, so the form can close. */
+    fun ddnsCall(name: String, strings: Strings, done: () -> Unit = {}, work: suspend (AgentClient) -> DdnsState) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = name
+        said = null
+        scope.launch {
+            try {
+                ddns = Read(work(c))
+                done()
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
     }
 
     // ------------------------------------------------------------ duplicate

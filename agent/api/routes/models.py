@@ -837,6 +837,17 @@ class InternetTestRequest(BaseModel):
     allow_mcsrvstat: bool = False
 
 
+class DuckDnsRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    token: str = Field(min_length=1, max_length=80)
+
+
+class NoIpRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=253)
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=200)
+
+
 class PhoneTestRequest(BaseModel):
     """The phone app's ping over mobile data."""
 

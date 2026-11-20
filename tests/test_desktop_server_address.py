@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent import internet, upnp, waysin
+from agent import downloads, internet, upnp, waysin
 
 from .test_desktop_app import button, owner, shown_text, wait_for
 from .test_desktop_settings import card_of, settings_page, switch_named
@@ -103,3 +103,48 @@ def test_the_providers_shared_address_offers_playit(qapp, agent_http, router):
     switch_named(frame, SWITCH).click()
     wait_for(qapp, lambda: "shares one internet address" in shown_text(frame), 20)
     assert button(frame, "Use playit.gg")
+
+
+def test_a_duckdns_name_is_saved_from_the_card_and_can_be_removed(qapp, agent_http, monkeypatch):
+    from .test_ddns import TOKEN, FakeSites
+
+    sites = FakeSites()
+    monkeypatch.setattr(downloads, "fetch_bytes", sites.fetch)
+    window, page = settings_page(qapp, agent_http)
+    frame = card_of(page, TITLE)
+    wait_for(qapp, lambda: "A name instead of numbers" in shown_text(frame))
+    button(frame, "Use a DuckDNS name").click()
+    boxes = {box.accessibleName(): box for box in frame.findChildren(QtWidgets.QLineEdit)}
+    boxes["Your DuckDNS name"].setText("myserver")
+    boxes["Token"].setText(TOKEN)
+    button(frame, "Save").click()
+    wait_for(qapp, lambda: "DuckDNS name: myserver.duckdns.org" in shown_text(frame), 20)
+    assert sites.asked[0][1]["domains"] == "myserver"
+    monkeypatch.setattr(window, "confirm", lambda *a, **k: True)
+    button(frame, "Remove name").click()
+    wait_for(qapp, lambda: "DuckDNS name:" not in shown_text(frame), 20)
+    wait_for(qapp, lambda: "A name instead of numbers" in shown_text(frame), 5)
+    assert button(frame, "Use a DuckDNS name")
+
+
+def test_a_saved_noip_name_opens_noip_then_i_confirmed_it(qapp, agent_http, monkeypatch):
+    from .test_ddns import FakeSites
+
+    sites = FakeSites()
+    monkeypatch.setattr(downloads, "fetch_bytes", sites.fetch)
+    window, page = settings_page(qapp, agent_http)
+    frame = card_of(page, TITLE)
+    wait_for(qapp, lambda: "A name instead of numbers" in shown_text(frame))
+    button(frame, "Use a No-IP name").click()
+    boxes = {box.accessibleName(): box for box in frame.findChildren(QtWidgets.QLineEdit)}
+    boxes["Your No-IP name, like myserver.ddns.net"].setText("mine.ddns.net")
+    boxes["No-IP username"].setText("me")
+    boxes["No-IP password"].setText("pw")
+    button(frame, "Save").click()
+    wait_for(qapp, lambda: "No-IP name: mine.ddns.net" in shown_text(frame), 20)
+    wait_for(qapp, lambda: "Confirm it on noip.com before" in shown_text(frame), 5)
+    opened = []
+    monkeypatch.setattr(window.pc, "open_link", opened.append)
+    button(frame, "Open noip.com").click()
+    assert opened == ["https://my.noip.com/dynamic-dns"]
+    assert button(frame, "I confirmed it")

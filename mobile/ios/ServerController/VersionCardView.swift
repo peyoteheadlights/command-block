@@ -3,7 +3,7 @@ import SwiftUI
 
 /// What Server settings asks to confirm.
 enum SetupAsk: Identifiable {
-    case change, rollBack, crossplayOn, remove, mcsrvstat
+    case change, rollBack, crossplayOn, remove, mcsrvstat, removeDuckDns, removeNoIp
 
     var id: Self { self }
 }

@@ -295,6 +295,31 @@ data class InternetReach(
     val detail: String? = null,
     @SerialName("mcsrvstat_ok") val mcsrvstatOk: Boolean = false,
     val playit: String? = null,
+    val names: List<DdnsNameShort> = emptyList(),
+)
+
+/** A DuckDNS or No-IP name that works right now. */
+@Serializable
+data class DdnsNameShort(val provider: String = "", val name: String = "")
+
+/** One saved name. The token or password never comes back. */
+@Serializable
+data class DdnsName(
+    val name: String = "",
+    val ip: String? = null,
+    @SerialName("updated_at") val updatedAt: Double? = null,
+    val problem: String? = null,
+    @SerialName("confirm_by") val confirmBy: Double? = null,
+    @SerialName("confirm_soon") val confirmSoon: Boolean = false,
+)
+
+/** GET /api/ddns: this PC's DuckDNS and No-IP names. */
+@Serializable
+data class DdnsState(
+    val duckdns: DdnsName? = null,
+    val noip: DdnsName? = null,
+    @SerialName("duckdns_site") val duckdnsSite: String = "",
+    @SerialName("noip_site") val noipSite: String = "",
 )
 
 @Serializable
