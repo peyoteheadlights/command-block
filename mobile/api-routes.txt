@@ -126,6 +126,9 @@ DELETE /api/servers/{server_id}/addons/{pack_uuid}
 GET /api/servers/{server_id}/game-settings
 PUT /api/servers/{server_id}/game-settings
 PUT /api/servers/{server_id}/game-settings/raw
+GET /api/servers/{server_id}/server-icon
+PUT /api/servers/{server_id}/server-icon
+DELETE /api/servers/{server_id}/server-icon
 GET /api/alerts
 GET /api/app/phone
 PUT /api/app/phone

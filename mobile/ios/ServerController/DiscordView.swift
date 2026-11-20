@@ -234,7 +234,7 @@ struct DiscordView: View {
                             set: { id in Task { await pages.tie(guild.id, row, id.isEmpty ? nil : id) } }
                         )) {
                             Text(model.t(Community.noChannel(row))).tag("")
-                            ForEach(guild.channels, id: \.id) { channel in Text(verbatim: "#" + channel.name).tag(channel.id) }
+                            ForEach(guild.channels, id: \.id) { channel in Text(hiding: "#" + channel.name).tag(channel.id) }
                         }
                         .disabled(busy)
                     }
@@ -367,7 +367,7 @@ private struct LevelSettings: View {
             Toggle(model.t("discord.level_ups"), isOn: $announce)
             Picker(model.t("discord.leaderboard"), selection: $day) {
                 Text(model.t("discord.leaderboard_off")).tag(Int?.none)
-                ForEach(Array(days.enumerated()), id: \.offset) { i, name in Text(verbatim: name).tag(Optional(i)) }
+                ForEach(Array(days.enumerated()), id: \.offset) { i, name in Text(hiding: name).tag(Optional(i)) }
             }
             Hint(text: model.t("discord.leaderboard_hint"), palette: palette)
             ForEach(rows.indices, id: \.self) { i in
@@ -377,7 +377,7 @@ private struct LevelSettings: View {
                 }
                 Picker(model.t("discord.level_role"), selection: row.roleId) {
                     Text(model.t("value.unknown")).tag(String?.none)
-                    ForEach(roles, id: \.id) { role in Text(verbatim: role.name).tag(Optional(role.id)) }
+                    ForEach(roles, id: \.id) { role in Text(hiding: role.name).tag(Optional(role.id)) }
                 }
                 Button(model.t("discord.level_remove"), role: .destructive) { rows.remove(at: i) }
             }

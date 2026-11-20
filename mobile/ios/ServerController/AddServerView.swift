@@ -163,7 +163,7 @@ struct AddServerView: View {
                 if recommended { Text(model.t("new.recommended")).font(.footnote).foregroundStyle(.green) }
             }
             ForEach(Array(AddServer.rows(model.strings, kind, technical: model.technical).enumerated()), id: \.offset) { _, row in
-                Text(verbatim: "\(row.0): \(row.1)").font(.footnote).foregroundStyle(.secondary)
+                Text(hiding: "\(row.0): \(row.1)").font(.footnote).foregroundStyle(.secondary)
             }
             Button(model.t(chosen ? "new.chosen" : "new.choose")) { Task { await adding.pickType(kind) } }
                 .buttonStyle(.bordered)
@@ -210,7 +210,7 @@ struct AddServerView: View {
             folderRows(adding, label: "new.folder", hint: "new.folder_hint")
             if memory, let mb = adding.memoryMb {
                 Stepper(value: Binding(get: { mb }, set: { adding.nudgeMemory($0 - mb) }), in: 1024...(64 * 1024), step: 512) {
-                    Text(verbatim: model.t("new.memory") + ": " + Memory.gb(mb))
+                    Text(hiding: model.t("new.memory") + ": " + Memory.gb(mb))
                 }
             }
             ServerColorPicker(colors: options.palette, current: adding.color, locked: false, palette: model.serverPalette(adding.color, colorScheme)) { adding.color = $0 }
@@ -291,7 +291,7 @@ struct AddServerView: View {
                 if !pack.clientOnly.isEmpty {
                     Text(model.t("pack.client_only", ["names": pack.clientOnly.joined(separator: ", ")])).font(.footnote)
                 }
-                ForEach(Modpacks.notes(model.strings, pack), id: \.self) { Text(verbatim: $0).font(.footnote).foregroundStyle(.orange) }
+                ForEach(Modpacks.notes(model.strings, pack), id: \.self) { Text(hiding: $0).font(.footnote).foregroundStyle(.orange) }
             }
             if pack.canImport {
                 detailsStep(adding, options, memory: true)

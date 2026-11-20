@@ -70,7 +70,7 @@ struct CopyRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: text)
+                Text(hiding: text)
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(palette.textPrimary)
                     .textSelection(.enabled)
