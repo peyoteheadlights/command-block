@@ -114,7 +114,7 @@ async def new_server_options(
     principal: Principal = Depends(require(SERVERS_MANAGE)), core=Depends(get_core)
 ):
     """What the New server panel needs before anything is chosen."""
-    return await create_module.options(core)
+    return await create_module.options(core, principal.user)
 
 
 @global_router.post("/new-server", response_model=ServerCreated)

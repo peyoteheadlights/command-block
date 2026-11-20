@@ -1529,6 +1529,49 @@ class AuthManager:
         )
         return self.welcome(user)
 
+    def kind_tips(self, user: str) -> list[str]:
+        """The kinds whose tips the New server panel shows. Tips on: every
+        kind. Otherwise, after "No", the kinds not made before, once each
+        (``made_kind``). Kinds hidden with "Don't show again" are left out."""
+        if self.preferences(user)["tips"] == "on":
+            kinds = list(self.WELCOME_KINDS)
+        else:
+            answers = self.welcome(user)
+            made = answers["kinds"] if answers["first_time"] is False else self.WELCOME_KINDS
+            kinds = [k for k in self.WELCOME_KINDS if k not in made]
+        hidden = set(self.hidden(user))
+        return [k for k in kinds if f"tip.kind.{k}" not in hidden]
+
+    def made_kind(self, user: str, kind: str) -> None:
+        """A server of this kind was made, so its tips were seen: after "No"
+        it now counts as a kind made before."""
+        saved = self.db.get_setting(f"user:{user}:welcome", None)
+        if not isinstance(saved, dict) or saved.get("first_time") is not False:
+            return
+        kinds = self.welcome(user)["kinds"]
+        if kind in self.WELCOME_KINDS and kind not in kinds:
+            ordered = [k for k in self.WELCOME_KINDS if k in (*kinds, kind)]
+            self.db.set_setting(f"user:{user}:welcome", {**saved, "kinds": ordered})
+
+    # -- "Don't show again" ----------------------------------------------
+    # The warnings and tips each account hid, by their words' key, so they
+    # stay hidden on every device. "Show all warnings again" clears them.
+    HIDDEN_MAX = 200
+
+    def hidden(self, user: str) -> list[str]:
+        saved = self.db.get_setting(f"user:{user}:hidden", [])
+        return [k for k in saved if isinstance(k, str)] if isinstance(saved, list) else []
+
+    def hide(self, user: str, key: str) -> list[str]:
+        keys = self.hidden(user)
+        if key not in keys:
+            keys = [*keys, key][-self.HIDDEN_MAX :]
+            self.db.set_setting(f"user:{user}:hidden", keys)
+        return keys
+
+    def show_all_again(self, user: str) -> None:
+        self.db.set_setting(f"user:{user}:hidden", [])
+
     # -- alerts read -----------------------------------------------------
     # The newest alert each account has read, like a chat app's read marker:
     # every alert after it is unread, on every device the account uses.

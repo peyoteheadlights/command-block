@@ -39,8 +39,18 @@ from PySide6.QtWidgets import (
 
 from desktop import theme
 from desktop.icons import IMAGES
+from desktop.welcome import KINDS as WELCOME_KINDS
+from desktop.welcome import PLAYED_BY as WELCOME_PLAYED_BY
 
 from .text import players, t
+
+
+def words(key: str) -> str:
+    # The first-run questions' words, the same as the desktop app's Simple mode.
+    from desktop.words import text
+
+    return text(key, technical=False)
+
 
 MIN_PASSWORD = 10
 POLL_MS = 400
@@ -937,7 +947,124 @@ class SetupWindow(QWidget):
             t("kind_title"),
             None,
             list(self.kind_choices(self.kind_screen)),
-            [button(t("back"), back), button(t("next"), self.options_screen, "primary")],
+            [button(t("back"), back), button(t("next"), self.after_kind, "primary")],
+        )
+
+    def after_kind(self) -> None:
+        if self.answers["agent_only"]:
+            self.welcome_screen()
+        else:
+            self.options_screen()
+
+    # ------------------------------------------------------------ first-run questions ("Agent only")
+    # The desktop app asks these after the first sign-in (desktop/welcome.py,
+    # same words); an "Agent only" PC has no app, so setup asks them. The
+    # agent saves them for the owner once it runs (engine.step_finish).
+    def welcome_screen(self) -> None:
+        answers = self.answers.setdefault("welcome", {"kinds": [], "played_by": ""})
+        problem = label(words("welcome.pick_one"), "problem")
+        problem.hide()
+
+        def pick(value: bool) -> None:
+            if answers.get("first_time") is not value:
+                answers["first_time"] = value
+                self.welcome_screen()
+
+        def go_on() -> None:
+            if "first_time" not in answers:
+                problem.show()
+            elif answers["first_time"]:
+                self.who_screen()
+            else:
+                self.kinds_screen()
+
+        self.show_screen(
+            "welcome",
+            words("welcome.first_question"),
+            words("welcome.pc_on"),
+            [
+                Choice(
+                    words("welcome.yes"), "", answers.get("first_time") is True, lambda: pick(True)
+                ),
+                Choice(
+                    words("welcome.no"), "", answers.get("first_time") is False, lambda: pick(False)
+                ),
+                problem,
+            ],
+            self.welcome_buttons(self.kind_screen, go_on),
+        )
+
+    def welcome_buttons(
+        self, back: Callable[[], None], go_on: Callable[[], None]
+    ) -> list[QWidget | None]:
+        """ "I know what I'm doing" in the corner skips both questions:
+        Technical mode, no tips, nothing switched on."""
+
+        def skip() -> None:
+            self.answers["welcome"] = {"first_time": None, "kinds": [], "played_by": ""}
+            self.options_screen()
+
+        return [
+            button(words("welcome.skip"), skip, "plain"),
+            self.spacer(),
+            button(t("back"), back),
+            button(t("next"), go_on, "primary"),
+        ]
+
+    def kinds_screen(self) -> None:
+        answers = self.answers["welcome"]
+        widgets: list[QWidget | None] = []
+        for kind, key in WELCOME_KINDS:
+            box = QCheckBox(words(key))
+            box.setChecked(kind in answers["kinds"])
+            box.toggled.connect(
+                lambda on, k=kind: answers.__setitem__(
+                    "kinds", [x for x in answers["kinds"] if x != k] + ([k] if on else [])
+                )
+            )
+            widgets += [box, label(words(f"{key}_names"), "sub")]
+        self.show_screen(
+            "kinds",
+            words("welcome.kinds_question"),
+            None,
+            widgets,
+            self.welcome_buttons(self.welcome_screen, self.who_screen),
+        )
+
+    def who_screen(self) -> None:
+        answers = self.answers["welcome"]
+        problem = label(words("welcome.pick_one"), "problem")
+        problem.hide()
+
+        def pick(value: str) -> None:
+            if answers["played_by"] != value:
+                answers["played_by"] = value
+                self.who_screen()
+
+        def go_on() -> None:
+            if answers["played_by"]:
+                self.options_screen()
+            else:
+                problem.show()
+
+        back = self.welcome_screen if answers.get("first_time") else self.kinds_screen
+        self.show_screen(
+            "who",
+            words("welcome.who_question"),
+            None,
+            [
+                *(
+                    Choice(
+                        words(key),
+                        words(key + "_hint"),
+                        answers["played_by"] == value,
+                        functools.partial(pick, value),
+                    )
+                    for value, key in WELCOME_PLAYED_BY
+                ),
+                problem,
+            ],
+            self.welcome_buttons(back, go_on),
         )
 
     # ------------------------------------------------------------ options

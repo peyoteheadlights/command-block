@@ -35,6 +35,9 @@ final class AddServerPages {
     /// Technical mode's typed folder, used as it is.
     var typedFolder: String?
     var ruled = false
+    /// "Who's this server for?", from this PC's first-run answer; and friends' names.
+    var playedBy = ""
+    var players = ""
     var jar = ""
     private(set) var pack: ModpackInspected?
     var packQuery = ""
@@ -106,6 +109,7 @@ final class AddServerPages {
             let read = try await client.newServerOptions()
             color = color ?? read.color
             memoryMb = memoryMb ?? read.memoryMb
+            playedBy = read.playedBy
             options = PageRead(value: read)
         } catch let problem as AgentError {
             noted(problem)
@@ -180,7 +184,8 @@ final class AddServerPages {
         let request = NewServerRequest(
             name: name.trimmingCharacters(in: .whitespaces), directory: folder, type: kind.id, minecraft: chosen.minecraft,
             loader: kind.picksLoader ? loader : nil, memoryMb: AddServer.memoryShown(kind) ? memoryMb : nil,
-            color: color, eulaAccepted: ruled
+            color: color, eulaAccepted: ruled,
+            playedBy: playedBy, players: AddServer.players(playedBy, players)
         )
         do {
             let made = try await client.createServer(request)

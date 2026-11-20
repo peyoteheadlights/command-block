@@ -97,6 +97,8 @@ final class AppModel {
     var inviteOverSignIn = false
     /// The signed-in account, from /auth/me.
     private var account: Me? = nil
+    /// Warnings and tips this account hid with "Don't show again", from /auth/me.
+    private(set) var hidden: Set<String> = []
     /// The account on the server whose screen is open: what it may do there.
     var me: Me? { account?.forServer(watching) }
     var agentVersion: String?
@@ -298,11 +300,26 @@ final class AppModel {
         startLive()
     }
 
+    /// "Don't show again": hidden here at once, and on the agent for every device.
+    func hide(_ key: String) {
+        hidden.insert(key)
+        guard let client = client else { return }
+        Task { _ = try? await client.hide(key) }
+    }
+
+    /// "Show all warnings again"; true when the agent took it.
+    func showAllAgain() async -> Bool {
+        guard let client = client, (try? await client.showAllAgain()) != nil else { return false }
+        hidden = []
+        return true
+    }
+
     func loadAccount() async {
         guard let client = client, signedIn else { return }
         do {
             let found = try await client.me()
             account = found
+            hidden = Set(found.hidden)
             alertState = alertState.onlyFor(found)
             store.alertState = alertState
             await keepWake(client, found)

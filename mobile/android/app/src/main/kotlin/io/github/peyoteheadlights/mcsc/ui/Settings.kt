@@ -43,6 +43,7 @@ fun SettingsScreen(vm: AppViewModel, onAbout: () -> Unit, onAccount: () -> Unit,
     }
 
     val owner = vm.me?.isOwner == true
+    var said: String? by rememberSaveable { mutableStateOf(null) }
     LaunchedEffect(owner) { if (owner) vm.pcSettings.loadUpdate() }
     LaunchedEffect(Unit) { vm.loadDeviceAlerts() }
 
@@ -90,6 +91,13 @@ fun SettingsScreen(vm: AppViewModel, onAbout: () -> Unit, onAccount: () -> Unit,
                         info = t("streamer.hint"),
                         trailing = { Switch(checked = StreamerMode.on, onCheckedChange = vm::chooseStreamer) },
                     )
+                }
+            }
+            item {
+                Card {
+                    Item(t("tips.show_all"), info = said ?: t("tips.show_all_hint"), onClick = {
+                        vm.showAllAgain { ok -> said = vm.strings.t(if (ok) "tips.show_all_done" else "tips.show_all_failed") }
+                    })
                 }
             }
             item { SectionTitle(t("mobile.settings.unlock")) }

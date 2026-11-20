@@ -865,6 +865,22 @@ async def test_a_new_server_takes_this_pcs_first_run_answer(core, tmp_path, netw
     assert core.get_server(result["server_id"]).config.server.played_by == "community"
 
 
+async def test_making_a_kind_counts_it_as_made_before(core, tmp_path, network, monkeypatch):
+    # After "No", a kind's tips show once: until a server of that kind is made.
+    monkeypatch.setattr(create_module, "java_problem", lambda *args, **kwargs: None)
+    core.db.set_setting("user:admin:welcome", {"first_time": False, "kinds": ["bedrock"]})
+    await create_module.create_server(
+        core,
+        name="Plain",
+        directory=str(tmp_path / "plain"),
+        type_id="vanilla",
+        minecraft=MC,
+        eula_accepted=True,
+        user="admin",
+    )
+    assert core.auth.welcome("admin")["kinds"] == ["vanilla", "bedrock"]
+
+
 async def test_names_need_the_whitelist_and_must_be_real_names(core, tmp_path, network):
     with pytest.raises(Exception, match="only asked for when the whitelist is on"):
         await create_module.create_server(

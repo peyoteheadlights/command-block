@@ -360,3 +360,13 @@ def test_the_bot_pc_lists_each_pcs_bot_link(qapp, fake, discord_http):  # noqa: 
     assert {"Remove bot link", "Add bot link"} <= set(shown_buttons(page))
     button(page, "Remove bot link").click()
     wait_for_window(qapp, lambda: "Discord can't reach Den PC's servers now." in shown_text(window))
+
+
+def test_discord_says_13_and_up_when_a_server_is_for_kids(qapp, fake, discord_http):  # noqa: F811
+    core = discord_http.agent.app.state.core
+    ctx = next(iter(core.servers.values()))
+    ctx.config.set("server.played_by", "kids")
+    window, page = gear(qapp, discord_http, "discord")
+    wait_for_window(qapp, lambda: "Connected as Command Block." in shown_text(page))
+    window.refresh()
+    wait_for_window(qapp, lambda: "aged 13 and up" in shown_text(page), 20)

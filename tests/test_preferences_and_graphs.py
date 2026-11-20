@@ -122,6 +122,62 @@ def test_unknown_answers_are_refused(client):
     assert client.put("/api/account/preferences", json={"tips": "maybe"}).status_code == 422
 
 
+def test_the_installer_answers_for_the_owner_with_the_api_token(client, monkeypatch):
+    # On an "Agent only" PC the installer asks the questions and sends them
+    # with the API token; they are the owner's answers.
+    monkeypatch.setenv("MCSC_API_TOKEN", "installer-token-123456")
+    client.headers["Authorization"] = "Bearer installer-token-123456"
+    client.put("/api/account/welcome", json={"first_time": False, "kinds": ["mods"]})
+    signed_in(client)
+    assert client.get("/api/account/welcome").json()["kinds"] == ["mods"]
+
+
+# ------------------------------------------------------------------ kind tips
+def _kind_tips(client):
+    return client.get("/api/new-server/options").json()["kind_tips"]
+
+
+def test_kind_tips_follow_the_first_run_answers(client):
+    signed_in(client)
+    client.put("/api/account/welcome", json={"first_time": True})
+    assert _kind_tips(client) == ["vanilla", "mods", "plugins", "bedrock"]  # tips on
+    client.put("/api/account/welcome", json={"first_time": False, "kinds": ["vanilla", "mods"]})
+    assert _kind_tips(client) == ["plugins", "bedrock"]  # only kinds new to them
+    client.put("/api/account/welcome", json={"first_time": None})
+    assert _kind_tips(client) == []  # "I know what I'm doing"
+
+
+def test_a_kinds_tips_show_once_after_no(client):
+    signed_in(client)
+    client.put("/api/account/welcome", json={"first_time": False, "kinds": ["vanilla"]})
+    auth = client.app.state.core.auth
+    auth.made_kind("admin", "plugins")  # a Paper server was made
+    assert _kind_tips(client) == ["mods", "bedrock"]
+    assert client.get("/api/account/welcome").json()["kinds"] == ["vanilla", "plugins"]
+
+
+# ------------------------------------------------------------------ don't show again
+def test_dont_show_again_is_kept_per_account_until_shown_again(client):
+    signed_in(client)
+    assert client.get("/api/auth/me").json()["hidden"] == []
+    client.post("/api/account/hidden", json={"key": "new.farms_warning"})
+    saved = client.post("/api/account/hidden", json={"key": "new.farms_warning"}).json()
+    assert saved == {"hidden": ["new.farms_warning"]}
+    client.put("/api/account/welcome", json={"first_time": True})
+    client.post("/api/account/hidden", json={"key": "tip.kind.bedrock"})
+    assert _kind_tips(client) == ["vanilla", "mods", "plugins"]
+    assert client.delete("/api/account/hidden").json() == {"hidden": []}
+    assert client.get("/api/auth/me").json()["hidden"] == []
+
+
+def test_hidden_keys_must_be_words_keys(client):
+    signed_in(client)
+    assert client.post("/api/account/hidden", json={"key": "Not a key!"}).status_code == 422
+    assert client.post("/api/account/hidden", json={"key": "x" * 81}).status_code == 422
+    del client.headers["Authorization"]
+    assert client.post("/api/account/hidden", json={"key": "a.b"}).status_code == 401
+
+
 # ------------------------------------------------------------------ graph series
 def _metrics(config):
     db = Database(config.database_path)

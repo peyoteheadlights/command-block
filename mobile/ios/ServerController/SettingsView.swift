@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var otherPc: Pairing?
     @State private var rescanProblem: String?
     @State private var streamerOn = StreamerMode.on
+    @State private var shownAgain: String?
 
     var body: some View {
         NavigationStack {
@@ -19,6 +20,7 @@ struct SettingsView: View {
                 people
                 appearance
                 streamer
+                showAll
                 unlock
                 lockScreenAlerts
                 deviceAlerts
@@ -197,6 +199,21 @@ struct SettingsView: View {
             Text(model.t("streamer.title"))
         } footer: {
             Text(model.t("streamer.hint"))
+        }
+    }
+
+    /// "Show all warnings again": every "Don't show again" is undone.
+    private var showAll: some View {
+        Section {
+            Button(model.t("tips.show_all")) {
+                Task {
+                    let ok = await model.showAllAgain()
+                    shownAgain = model.t(ok ? "tips.show_all_done" : "tips.show_all_failed")
+                }
+            }
+            .frame(minHeight: 44)
+        } footer: {
+            Text(shownAgain ?? model.t("tips.show_all_hint"))
         }
     }
 
