@@ -391,8 +391,25 @@ class BedrockJoin(Open):
 
 
 class InternetReach(Open):
-    known: bool = Field(description="Always false: reaching it from the internet isn't tested")
-    reason: str | None = None
+    """ "Let friends join from the internet" (agent/internet.py)."""
+
+    on: bool = False
+    known: bool = Field(description="True only once an outside test answered")
+    works: bool | None = Field(None, description="The outside test's answer, null when not known")
+    tested_by: str | None = Field(None, description="phone or mcsrvstat")
+    reason: str | None = Field(
+        None,
+        description="tested, off, not_running, not_open, no_router, refused, shared (carrier-"
+        "grade NAT), private (another router in front), not_tested, not_checked, no_address",
+    )
+    address: str | None = Field(None, description="The router's internet address, when public")
+    port: int | None = None
+    local_address: str | None = Field(
+        None, description="This PC's home address, for port forwarding"
+    )
+    problem: str | None = None
+    mcsrvstat_ok: bool = False
+    playit: str | None = None
 
 
 class JoinInfo(Open):

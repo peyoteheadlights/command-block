@@ -30,6 +30,7 @@ struct ServerSettingsView: View {
                 await setup.loadMemory()
                 await setup.loadVersion()
                 await setup.loadCrossplay()
+                await setup.loadInternet()
             }
             .alert(askTitle(setup), isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })) {
                 Button(askButton,
@@ -42,6 +43,7 @@ struct ServerSettingsView: View {
                         case .rollBack: await setup.rollBack(strings)
                         case .change: await setup.changeVersion(strings)
                         case .crossplayOn: await setup.setCrossplay(true, strings)
+                        case .mcsrvstat: await setup.testInternet(allow: true, strings)
                         // The server is gone: back to All servers, not to its page.
                         case .remove: if await setup.removeServer(strings) { model.serversPath = [] }
                         case nil: break
@@ -59,6 +61,7 @@ struct ServerSettingsView: View {
             await setup.loadMemory()
             await setup.loadVersion()
             await setup.loadCrossplay()
+            await setup.loadInternet()
             if Duplicate.allowed(model.me) { await setup.loadCopyOptions() }
         }
     }
@@ -68,6 +71,7 @@ struct ServerSettingsView: View {
         case .rollBack: return model.t("version.back_title")
         case .change: return model.t("version.confirm_title", ["name": setup.report?.value.map(VersionChange.target) ?? ""])
         case .crossplayOn: return model.t("cross.on_title")
+        case .mcsrvstat: return model.t("address.test")
         case .remove: return model.t("serverset.remove_title", ["name": model.servers.first(where: { $0.id == serverId })?.name ?? serverId])
         case nil: return ""
         }
@@ -77,6 +81,7 @@ struct ServerSettingsView: View {
         switch asking {
         case .rollBack: return model.t("version.back_button")
         case .crossplayOn: return model.t("cross.on_button")
+        case .mcsrvstat: return model.t("address.test")
         case .remove: return model.t("serverset.remove_confirm")
         default: return model.t("version.confirm_button")
         }
@@ -86,6 +91,7 @@ struct ServerSettingsView: View {
         switch asking {
         case .rollBack: return model.t("version.back_body")
         case .crossplayOn: return Crossplay.confirm(model.strings, setup.crossPort)
+        case .mcsrvstat: return model.t("address.test_ask", ["address": setup.internet.value.flatMap(Internet.address) ?? ""])
         case .remove: return model.t("serverset.remove_body")
         default: return model.t("version.confirm_body")
         }
@@ -105,6 +111,10 @@ struct ServerSettingsView: View {
             ProblemCard(problem: problem, palette: palette) { await setup.loadSettings() }
         }
         if let settings = read.value {
+            SectionTitle(text: model.t("address.title"), palette: palette)
+            CardBox(palette: palette) {
+                AddressCardView(setup: setup, serverId: serverId, palette: palette) { asking = $0 }
+            }
             SectionTitle(text: model.t("serverset.identity"), palette: palette)
             CardBox(palette: palette) {
                 SettingField(

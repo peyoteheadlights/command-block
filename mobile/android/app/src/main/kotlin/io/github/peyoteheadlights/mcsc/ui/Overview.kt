@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.Display
+import io.github.peyoteheadlights.mcsc.core.Internet
 import io.github.peyoteheadlights.mcsc.core.JoinAddress
 import io.github.peyoteheadlights.mcsc.core.JoinInfo
 import io.github.peyoteheadlights.mcsc.core.JoinWay
@@ -52,7 +53,15 @@ private fun JoinCard(vm: AppViewModel, info: JoinInfo) {
             bedrock != null -> BedrockServer(vm, bedrock)
             else -> Item(t("value.unknown"))
         }
-        Note(t("join.internet"), color = colors.text3, modifier = Modifier.padding(bottom = 10.dp))
+        val internet = info.internet
+        val tested = internet?.let(Internet::address)
+        if (internet?.works == true && tested != null) {
+            Group(t("address.internet_label"), t("address.internet_note", "port" to internet.port))
+            Address(tested)
+            Note(Internet.lines(vm.strings, internet, owner = true).last().text, color = colors.success, modifier = Modifier.padding(bottom = 10.dp))
+        } else {
+            Note(t("join.internet"), color = colors.text3, modifier = Modifier.padding(bottom = 10.dp))
+        }
     }
 }
 

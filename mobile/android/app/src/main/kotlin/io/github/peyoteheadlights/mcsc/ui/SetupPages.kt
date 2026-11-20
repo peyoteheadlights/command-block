@@ -9,6 +9,8 @@ import io.github.peyoteheadlights.mcsc.core.CpuCores
 import io.github.peyoteheadlights.mcsc.core.Crossplay
 import io.github.peyoteheadlights.mcsc.core.CrossplayInfo
 import io.github.peyoteheadlights.mcsc.core.Duplicate
+import io.github.peyoteheadlights.mcsc.core.InternetReach
+import io.github.peyoteheadlights.mcsc.core.OutsidePing
 import io.github.peyoteheadlights.mcsc.core.DuplicateOptions
 import io.github.peyoteheadlights.mcsc.core.Job
 import io.github.peyoteheadlights.mcsc.core.Memory
@@ -23,7 +25,9 @@ import io.github.peyoteheadlights.mcsc.core.TypeVersions
 import io.github.peyoteheadlights.mcsc.core.VersionChange
 import io.github.peyoteheadlights.mcsc.core.VersionPreflight
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -468,6 +472,54 @@ class SetupPages(
                 busy = null
             }
         }
+    }
+
+    // ------------------------------------------------------------ server address
+    /** "Let friends join from the internet" (agent/internet.py). */
+    var internet: Read<InternetReach> by mutableStateOf(Read())
+        private set
+
+    fun loadInternet() {
+        val c = client() ?: return
+        internet = internet.copy(loading = true)
+        scope.launch {
+            internet = try {
+                Read(c.internet(serverId))
+            } catch (e: AgentException) {
+                noted(e)
+                Read(problem = Message.of(e))
+            }
+        }
+    }
+
+    private fun internetCall(name: String, strings: Strings, work: suspend (AgentClient) -> InternetReach) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = name
+        said = null
+        scope.launch {
+            try {
+                internet = Read(work(c))
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
+    }
+
+    fun setInternet(on: Boolean, strings: Strings) = internetCall("internet", strings) { it.setInternet(serverId, on) }
+
+    /** mcsrvstat.us; [allow] after the owner said yes to it once. */
+    fun testInternet(allow: Boolean, strings: Strings) = internetCall("internet_test", strings) { it.testInternet(serverId, allow) }
+
+    /** This phone pings the address itself (over mobile data), then tells the agent. */
+    fun phoneTest(address: String, port: Int, bedrock: Boolean, strings: Strings) = internetCall("phone_test", strings) { c ->
+        val works = withContext(Dispatchers.IO) {
+            if (bedrock) OutsidePing.bedrock(address, port) else OutsidePing.java(address, port)
+        }
+        c.phoneTest(serverId, address, port, works)
     }
 
     // ------------------------------------------------------------ duplicate
