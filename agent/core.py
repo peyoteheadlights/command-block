@@ -149,6 +149,13 @@ class ServerContext:
             from .ports import set_udp_ports
 
             try:
+                said = await asyncio.to_thread(self.core.waterdog.before_launch, self)
+            except (OSError, ValueError) as exc:  # never stops a start
+                said = f"[agent] allow-list and online-mode not checked: {exc}"
+            if said:
+                self.server._emit_console(said)
+
+            try:
                 udp = await asyncio.to_thread(set_udp_ports, self.config.server_dir)
             except (OSError, ValueError) as exc:  # never stops a start
                 self.server._emit_console(f"[agent] server-udp-ports not set: {exc}")
@@ -230,9 +237,11 @@ class ServerContext:
             if event.type == "server_started":
                 await watchers.compare(self)
                 await protection.router_open(self)
+                await self.core.waterdog.start(self)
             elif event.type in ("server_stopped", "server_crashed"):
                 watchers.remember(self)
                 await protection.router_close(self)
+                await self.core.waterdog.stop(self)
                 if event.type == "server_stopped" and self.backup_on_stop(event):
                     self._stop_backup = asyncio.create_task(self._backup_after_stop())
             elif event.type == "backup_restored":
@@ -471,6 +480,10 @@ class AgentCore:
         from .playit import Playit
 
         self.playit = Playit(self)
+        # WaterdogPE in front of a plain Bedrock server, for playit (agent/waterdog.py).
+        from .waterdog import Waterdog
+
+        self.waterdog = Waterdog(self)
         self.wake = Wake(self)
         # Join protection and "Start when someone joins" (agent/joinguard.py).
         self.guard = GuardHub(self)
@@ -776,6 +789,7 @@ class AgentCore:
         await self.jobs.stop()
         for ctx in list(self.servers.values()):
             await ctx.stop()
+        await self.waterdog.shutdown()
         await self.guard.stop()
         await self.download_link.stop()
         await self.rented.stop()

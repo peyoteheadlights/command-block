@@ -190,6 +190,13 @@ class PortManager:
             found.append(bedrock_v6_port(ctx.config.server_dir))
             # NetherNet's join page is TCP on the same number.
             found.append(GamePort(found[0].port, "tcp", "NetherNet's join page"))
+            # WaterdogPE in front of it, for playit (agent/waterdog.py).
+            waterdog = self.core.waterdog.of(ctx)
+            if waterdog:
+                found += [
+                    GamePort(waterdog["listen"], "udp", "WaterdogPE"),
+                    GamePort(waterdog["media"], "udp", "WaterdogPE's NetherNet"),
+                ]
         geyser = self.bedrock_port_of(ctx)
         if geyser:
             found.append(geyser)

@@ -12,7 +12,7 @@ data class PlayitTunnel(
     val reason: String? = null,
 )
 
-/** One tunnel this server needs: Java on its port, Bedrock on Geyser's. */
+/** One tunnel this server needs: Java on its port, Bedrock on Geyser's, NetherNet on WaterdogPE's. */
 @Serializable
 data class PlayitWay(
     val kind: String = "java",
@@ -25,6 +25,16 @@ data class PlayitClaim(val url: String = "", val state: String = "", val detail:
 
 @Serializable
 data class PlayitTest(val works: Boolean? = null, val by: String = "", val address: String = "")
+
+/** WaterdogPE in front of a plain Bedrock server (agent/waterdog.py). Never the tunnel's token. */
+@Serializable
+data class WaterdogState(
+    val state: String = "stopped",
+    @SerialName("listen_port") val listenPort: Int = 0,
+    @SerialName("media_port") val mediaPort: Int = 0,
+    @SerialName("server_port") val serverPort: Int = 0,
+    @SerialName("list_on") val listOn: Boolean = false,
+)
 
 /** GET /api/servers/{id}/playit (agent/playit.py). Never holds playit's key. */
 @Serializable
@@ -42,6 +52,9 @@ data class PlayitState(
     val test: PlayitTest? = null,
     @SerialName("mcsrvstat_ok") val mcsrvstatOk: Boolean = false,
     @SerialName("stop_problem") val stopProblem: String? = null,
+    @SerialName("plain_bedrock") val plainBedrock: Boolean = false,
+    val waterdog: WaterdogState? = null,
+    @SerialName("internet_off") val internetOff: Boolean = false,
 )
 
 /**
@@ -49,7 +62,7 @@ data class PlayitState(
  * app's playit part. Phones can't install it: that's on the server's PC.
  */
 object Playit {
-    /** What to say, and the one main button: use, link, reconnect, make or none. */
+    /** What to say, and the one main button: use, link, reconnect, make, waterdog (paste playit's box) or none. */
     data class Step(val lines: List<Internet.Line>, val button: String?, val checkAgain: Boolean)
 
     fun step(strings: Strings, s: PlayitState, owner: Boolean): Step {
@@ -77,6 +90,10 @@ object Playit {
                 out += Internet.Line(strings.t("playit.stopped", "phase" to s.phase, "problem" to s.problem.orEmpty()).trim(), Tone.DANGER)
                 return Step(out, if (owner && s.phase != "not_installed") "reconnect" else null, false)
             }
+            s.plainBedrock && s.waterdog == null -> {
+                say("playit.bedrock_note")
+                return Step(out, if (owner) "waterdog" else null, false)
+            }
             else -> {
                 for (way in s.ways) {
                     val tunnel = way.tunnel
@@ -91,6 +108,10 @@ object Playit {
                 s.test?.works?.let { works ->
                     val by = strings.t("address.by_mcsrvstat")
                     say(if (works) "playit.works" else "playit.fails", if (works) Tone.SUCCESS else Tone.DANGER, "address" to s.test.address, "by" to by)
+                }
+                s.waterdog?.let { w ->
+                    say("playit.waterdog_${w.state}", if (w.state == "stopped") Tone.DANGER else Tone.NEUTRAL, "port" to w.serverPort)
+                    say(if (w.listOn) "playit.waterdog_list_on" else "playit.waterdog_list_off")
                 }
                 val missing = s.ways.any { it.tunnel == null }
                 return Step(out, if (owner && missing) "make" else null, missing)

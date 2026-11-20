@@ -16,7 +16,7 @@ public struct PlayitTunnel: Decodable, Equatable, Sendable {
     }
 }
 
-/// One tunnel this server needs: Java on its port, Bedrock on Geyser's.
+/// One tunnel this server needs: Java on its port, Bedrock on Geyser's, NetherNet on WaterdogPE's.
 public struct PlayitWay: Decodable, Equatable, Sendable {
     public var kind: String
     public var localPort: Int
@@ -46,6 +46,26 @@ public struct PlayitTest: Decodable, Equatable, Sendable {
     public var address: String?
 }
 
+/// WaterdogPE in front of a plain Bedrock server (agent/waterdog.py). Never the tunnel's token.
+public struct WaterdogState: Decodable, Equatable, Sendable {
+    public var state: String
+    public var serverPort: Int
+    public var listOn: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case serverPort = "server_port"
+        case listOn = "list_on"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        state = c.value(.state, "stopped")
+        serverPort = c.value(.serverPort, 0)
+        listOn = c.value(.listOn, false)
+    }
+}
+
 /// GET /api/servers/{id}/playit (agent/playit.py). Never holds playit's key.
 public struct PlayitState: Decodable, Equatable, Sendable {
     public var on: Bool
@@ -59,12 +79,17 @@ public struct PlayitState: Decodable, Equatable, Sendable {
     public var test: PlayitTest?
     public var mcsrvstatOk: Bool
     public var stopProblem: String?
+    public var plainBedrock: Bool
+    public var waterdog: WaterdogState?
+    public var internetOff: Bool
 
     enum CodingKeys: String, CodingKey {
-        case on, phase, problem, claim, ways, supported, proxy, test
+        case on, phase, problem, claim, ways, supported, proxy, test, waterdog
         case newTunnel = "new_tunnel"
         case mcsrvstatOk = "mcsrvstat_ok"
         case stopProblem = "stop_problem"
+        case plainBedrock = "plain_bedrock"
+        case internetOff = "internet_off"
     }
 
     public init(from decoder: Decoder) throws {
@@ -80,13 +105,16 @@ public struct PlayitState: Decodable, Equatable, Sendable {
         test = c.maybe(.test)
         mcsrvstatOk = c.value(.mcsrvstatOk, false)
         stopProblem = c.maybe(.stopProblem)
+        plainBedrock = c.value(.plainBedrock, false)
+        waterdog = c.maybe(.waterdog)
+        internetOff = c.value(.internetOff, false)
     }
 }
 
 /// playit.gg on the phones: the same words and next step as the desktop
 /// app's playit part (mirrors Playit.kt). Installing it is on the server's PC.
 public enum Playit {
-    /// What to say, and the one main button: use, link, reconnect, make or nil.
+    /// What to say, and the one main button: use, link, reconnect, make, waterdog (paste playit's box) or nil.
     public struct Step: Equatable, Sendable {
         public let lines: [Internet.Line]
         public let button: String?
@@ -117,6 +145,9 @@ public enum Playit {
             let words = strings.t("playit.stopped", ["phase": s.phase ?? "", "problem": s.problem ?? ""])
             out.append(Internet.Line(text: words.trimmingCharacters(in: .whitespaces), tone: .danger))
             return Step(lines: out, button: owner && s.phase != "not_installed" ? "reconnect" : nil, checkAgain: false)
+        } else if s.plainBedrock && s.waterdog == nil {
+            say("playit.bedrock_note")
+            return Step(lines: out, button: owner ? "waterdog" : nil, checkAgain: false)
         } else {
             for way in s.ways {
                 if let tunnel = way.tunnel {
@@ -130,6 +161,10 @@ public enum Playit {
             if let works = s.test?.works {
                 let values = ["address": s.test?.address ?? "", "by": strings.t("address.by_mcsrvstat")]
                 say(works ? "playit.works" : "playit.fails", works ? .success : .danger, values)
+            }
+            if let w = s.waterdog {
+                say("playit.waterdog_\(w.state)", w.state == "stopped" ? .danger : .neutral, ["port": String(w.serverPort)])
+                say(w.listOn ? "playit.waterdog_list_on" : "playit.waterdog_list_off")
             }
             let missing = s.ways.contains { $0.tunnel == nil }
             return Step(lines: out, button: owner && missing ? "make" : nil, checkAgain: missing)
