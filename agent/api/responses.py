@@ -801,6 +801,10 @@ class Welcome(Open):
     )
 
 
+class Hidden(Open):
+    hidden: list[str] = Field(description='Warnings and tips hidden with "Don\'t show again"')
+
+
 class Me(Open):
     user: str
     kind: str
@@ -820,6 +824,10 @@ class Me(Open):
         description="What this account may do on each server it can see, by server id"
     )
     preferences: dict[str, Any]
+    hidden: list[str] = Field(
+        default_factory=list,
+        description='Warnings and tips this account hid with "Don\'t show again"',
+    )
 
 
 class Health(Open):
@@ -2755,6 +2763,10 @@ class NewServerOptions(Open):
     eula_url: str
     played_by: str = Field(
         "", description="This PC's first-run answer to \"Who's this server for?\""
+    )
+    kind_tips: list[str] = Field(
+        default_factory=list,
+        description="Kinds whose tips to show (vanilla, mods, plugins, bedrock)",
     )
     bedrock: BedrockNewOptions
 

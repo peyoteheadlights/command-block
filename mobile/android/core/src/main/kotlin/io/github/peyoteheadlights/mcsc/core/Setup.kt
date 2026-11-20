@@ -576,6 +576,27 @@ object AddServer {
 
     fun memoryShown(type: ServerTypeInfo): Boolean = type.takesMemoryLimit && type.edition != "bedrock"
 
+    /** "Who's this server for?" (desktop/welcome.py PLAYED_BY), as value and words key. */
+    val PLAYED_BY = listOf(
+        "friends" to "welcome.for_friends",
+        "kids" to "welcome.for_kids",
+        "community" to "welcome.for_community",
+    )
+
+    /** A few friends or kids: the whitelist goes on, with the names typed. */
+    fun namesAsked(playedBy: String): Boolean = playedBy == "friends" || playedBy == "kids"
+
+    /** The names typed, split by commas or semicolons; only when they're asked for. */
+    fun players(playedBy: String, typed: String): List<String> =
+        if (!namesAsked(playedBy)) emptyList() else typed.split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+
+    /** The first-run kind a type belongs to, for its tips: vanilla, mods, plugins or bedrock. */
+    fun tipKind(type: ServerTypeInfo): String = if (type.edition == "bedrock") "bedrock" else type.content ?: "vanilla"
+
+    /** This type's tip key, when the agent says its kind's tips show and it isn't hidden. */
+    fun tip(options: NewServerOptions, type: ServerTypeInfo, hidden: Collection<String>): String? =
+        "tip.kind.${tipKind(type)}".takeIf { tipKind(type) in options.kindTips && it !in hidden }
+
     /** One kind's column of the table, as label and value; Technical mode adds the loader, files and source. */
     fun rows(strings: Strings, type: ServerTypeInfo, technical: Boolean): List<Pair<String, String>> {
         fun yesNo(value: Boolean) = strings.t(if (value) "value.yes" else "value.no")

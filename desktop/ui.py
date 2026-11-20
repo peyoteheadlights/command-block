@@ -106,6 +106,43 @@ def push(words: str, kind: str = "") -> QPushButton:
     return widget
 
 
+# "Don't show again": the warnings and tips this account hid, by their words'
+# key. The agent keeps them (/account/hidden); the window fills these in after
+# signing in and sends each new one with ``on_hide``.
+hidden: set[str] = set()
+on_hide: Callable[[str], None] | None = None
+
+
+def notice(key: str, words: str = "", kind: str = "notice") -> QWidget:
+    """A warning or tip with "Don't show again" under it. ``key`` is its
+    words' key; a hidden one comes back hidden. Never for questions that
+    protect a world (removing a server, restoring over a world)."""
+    box = QWidget()
+    box.setObjectName("warning")
+    box.setProperty("key", key)
+    column = QVBoxLayout(box)
+    column.setContentsMargins(0, 0, 0, 0)
+    column.setSpacing(2)
+    column.addWidget(label(words or text(key), kind))
+    button = push(text("tips.dont_show"), "plain")
+    button.setObjectName("dontShowAgain")
+
+    def hide() -> None:
+        hidden.add(key)
+        box.hide()
+        if on_hide is not None:
+            on_hide(key)
+
+    button.clicked.connect(lambda _checked=False: hide())
+    row = QHBoxLayout()
+    row.addWidget(button)
+    row.addStretch()
+    column.addLayout(row)
+    if key in hidden:
+        box.hide()
+    return box
+
+
 def field(words: str, widget: QWidget, hint: str = "") -> QWidget:
     """A form field: its name above, a hint under it when there is one."""
     box = QWidget()

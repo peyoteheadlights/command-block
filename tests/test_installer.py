@@ -1242,6 +1242,18 @@ def test_agent_only_installs_the_agent_without_the_desktop_app(places, program_f
     assert record["agent_only"] is True  # a later update keeps it that way
 
 
+def test_agent_only_sends_setups_first_run_answers_to_the_agent(places, program_files):
+    answers = {"first_time": False, "kinds": ["mods"], "played_by": "kids"}
+    _, result, system = run_engine(
+        new_install(places, agent_only=True, welcome=answers), program_files
+    )
+    assert result.ok, result.message + result.details
+    assert ("api", "PUT", "/account/welcome", answers) in system.calls
+    # A full install leaves them to the desktop app's own questions.
+    _, result, system = run_engine(new_install(places, welcome=answers), program_files)
+    assert not [c for c in system.calls if c[:3] == ("api", "PUT", "/account/welcome")]
+
+
 def test_switching_a_full_copy_to_agent_only_removes_the_desktop_app(places, program_files):
     found = make_installer_copy(places, "1.0.0")
     (places["program"] / "CommandBlock.exe").write_bytes(b"old desktop app")

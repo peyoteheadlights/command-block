@@ -574,9 +574,10 @@ class SetupTest {
             assertEquals("fabric", c.newServerOptions().recommended)
             assertEquals("/api/new-server/options", agent.server.takeRequest().path)
             agent.server.enqueue(agent.json("""{"ok": true, "server_id": "fresh", "name": "Fresh", "directory": "D:/Fresh", "job_id": "j", "server": {"id": "fresh", "name": "Fresh", "state": "OFFLINE"}}"""))
-            assertEquals("fresh", c.createServer(NewServerRequest("Fresh", "D:/Fresh", "fabric", "1.21.4", null, 4096, "#F87906", eulaAccepted = true)).serverId)
+            val request = NewServerRequest("Fresh", "D:/Fresh", "fabric", "1.21.4", null, 4096, "#F87906", eulaAccepted = true, playedBy = "kids", players = listOf("Alex"))
+            assertEquals("fresh", c.createServer(request).serverId)
             assertEquals(
-                """{"name":"Fresh","directory":"D:/Fresh","type":"fabric","minecraft_version":"1.21.4","memory_mb":4096,"color":"#F87906","eula_accepted":true}""",
+                """{"name":"Fresh","directory":"D:/Fresh","type":"fabric","minecraft_version":"1.21.4","memory_mb":4096,"color":"#F87906","eula_accepted":true,"played_by":"kids","players":["Alex"]}""",
                 agent.server.takeRequest().body.readUtf8(),
             )
             agent.server.enqueue(agent.json("""{"ok": true, "server": {"id": "sky", "name": "Sky", "state": "OFFLINE"}, "warnings": []}"""))
@@ -596,6 +597,38 @@ class SetupTest {
             agent.server.enqueue(agent.json("""{"jobs": []}"""))
             c.runningJobs()
             assertEquals("/api/jobs?running=true", agent.server.takeRequest().path)
+        }
+    }
+
+    @Test
+    fun `names are asked only for friends or kids, split by commas`() {
+        assertEquals(listOf("Alex", "Sam"), AddServer.players("kids", "Alex, Sam;  "))
+        assertEquals(emptyList<String>(), AddServer.players("community", "Alex"))
+        assertEquals(listOf("friends", "kids", "community"), AddServer.PLAYED_BY.map { it.first })
+    }
+
+    @Test
+    fun `a kind's tip shows when the agent says so and it isn't hidden`() {
+        val options = NewServerOptions(kindTips = listOf("plugins", "bedrock"))
+        val paper = ServerTypeInfo("paper", content = "plugins")
+        assertEquals("tip.kind.plugins", AddServer.tip(options, paper, emptyList()))
+        assertEquals(null, AddServer.tip(options, paper, listOf("tip.kind.plugins")))
+        assertEquals(null, AddServer.tip(options, ServerTypeInfo("vanilla"), emptyList()))
+        assertEquals("tip.kind.bedrock", AddServer.tip(options, ServerTypeInfo("bedrock", edition = "bedrock"), emptyList()))
+    }
+
+    @Test
+    fun `don't show again and show all again go to the agent`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"hidden": ["tip.kind.mods"]}"""))
+            assertEquals(listOf("tip.kind.mods"), c.hide("tip.kind.mods").hidden)
+            val hid = agent.server.takeRequest()
+            assertEquals("/api/account/hidden", hid.path)
+            assertEquals("""{"key":"tip.kind.mods"}""", hid.body.readUtf8())
+            agent.server.enqueue(agent.json("""{"hidden": []}"""))
+            c.showAllAgain()
+            assertEquals("DELETE", agent.server.takeRequest().method)
         }
     }
 }

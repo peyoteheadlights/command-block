@@ -10,7 +10,15 @@ import pytest
 from agent import downloads
 from agent.servertypes import create as create_module
 
-from .test_desktop_app import button, on_all_servers, open_window, owner, sign_in, wait_for
+from .test_desktop_app import (
+    button,
+    on_all_servers,
+    open_window,
+    owner,
+    shown_text,
+    sign_in,
+    wait_for,
+)
 from .test_server_types import MC, fake_sources
 
 QtWidgets = pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is in requirements-dev")
@@ -118,3 +126,64 @@ def test_a_new_server_for_kids_takes_their_names(qapp, agent_http, monkeypatch, 
     assert list(waiting.values()) == [["Alex", "Sam"]]
     who.setCurrentIndex(who.findData("community"))
     assert not names.isVisibleTo(screen)
+
+
+# ------------------------------------------------------------------ tips and "Don't show again"
+def hidden(agent_http):
+    return agent_http.get("/api/auth/me", headers=owner(agent_http)).json()["hidden"]
+
+
+def test_a_kinds_tip_shows_on_new_server_and_dont_show_again_hides_it(
+    qapp, agent_http, monkeypatch
+):
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(fake_sources()))
+    agent_http.agent.app.state.core.db.set_setting(
+        "user:admin:welcome", {"first_time": False, "kinds": ["mods"]}
+    )
+    from .test_desktop_new_server import plus_tab
+
+    _window, screen = plus_tab(qapp, agent_http)
+    screen.choose_buttons["vanilla"].click()  # new to them: its tip shows
+    wait_for(qapp, lambda: "Tip: Plain Minecraft" in shown_text(screen))
+    tip = next(
+        w
+        for w in screen.findChildren(QtWidgets.QWidget, "warning")
+        if w.property("key") == "tip.kind.vanilla"
+    )
+    tip.findChild(QtWidgets.QPushButton, "dontShowAgain").click()
+    assert not tip.isVisibleTo(screen)
+    wait_for(qapp, lambda: hidden(agent_http) == ["tip.kind.vanilla"])
+    screen.choose_buttons["fabric"].click()  # made with mods before: no tip
+    wait_for(qapp, lambda: screen.choice["minecraft"] is not None, 20)
+    assert "Tip:" not in shown_text(screen)
+
+
+def test_show_all_warnings_again_brings_them_back(qapp, agent_http):
+    agent_http.post(
+        "/api/account/hidden", json={"key": "new.farms_warning"}, headers=owner(agent_http)
+    )
+    from desktop import ui
+
+    from .test_desktop_gear import gear
+
+    window, page = gear(qapp, agent_http, "pc")
+    wait_for(qapp, lambda: "new.farms_warning" in ui.hidden)
+    wait_for(qapp, lambda: page.findChild(QtWidgets.QPushButton, "showAllWarnings") is not None)
+    page.findChild(QtWidgets.QPushButton, "showAllWarnings").click()
+    wait_for(qapp, lambda: not ui.hidden and hidden(agent_http) == [])
+    assert window.isVisible()
+
+
+def test_a_hidden_warning_stays_hidden_until_shown_again(qapp):
+    from desktop import ui
+
+    ui.hidden.clear()
+    ui.hidden.add("custom.warning")
+    from PySide6.QtCore import Qt
+
+    hid = Qt.WidgetAttribute.WA_WState_ExplicitShowHide  # hidden on purpose
+    try:
+        assert ui.notice("custom.warning").testAttribute(hid)
+        assert not ui.notice("memory.raw_warning").testAttribute(hid)
+    finally:
+        ui.hidden.clear()

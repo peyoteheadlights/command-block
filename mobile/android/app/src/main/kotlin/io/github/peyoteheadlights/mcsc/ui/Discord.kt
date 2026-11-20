@@ -167,6 +167,8 @@ fun DiscordScreen(vm: AppViewModel, onBack: () -> Unit) {
                 if (pages.status.problem == null) item { Note(t("mobile.common.loading")) }
             } else {
                 item { SectionTitle(t("discord.bot")) }
+                // Discord is 13+: said when a server is for "My kids and their friends".
+                if (vm.servers.list.any { it.playedBy == "kids" }) item { HideableNote(vm, "discord.kids_age") }
                 item {
                     Card {
                         val connected = status.state == "connected"

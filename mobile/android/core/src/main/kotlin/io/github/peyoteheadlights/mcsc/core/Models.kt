@@ -43,6 +43,8 @@ data class Me(
     /** What this account may do on each server it can see, by server id. */
     @SerialName("server_permissions") val serverPermissions: Map<String, List<String>>? = null,
     val preferences: Map<String, String> = emptyMap(),
+    /** Warnings and tips hidden with "Don't show again", by their words' key. */
+    val hidden: List<String> = emptyList(),
 ) {
     val isOwner: Boolean get() = role == "owner"
 

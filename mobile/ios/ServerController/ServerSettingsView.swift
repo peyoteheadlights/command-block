@@ -179,9 +179,7 @@ struct ServerSettingsView: View {
                         let strings = model.strings
                         Task { await setup.saveJavaOptions(RawText.args(typed), strings) }
                     }
-                    Text(model.t("memory.raw_warning"))
-                        .font(.footnote)
-                        .foregroundStyle(palette.tone(.warning))
+                    HideableNote(key: "memory.raw_warning", palette: palette)
                     if let before = setup.argsBefore {
                         let strings = model.strings
                         Presses(presses: [

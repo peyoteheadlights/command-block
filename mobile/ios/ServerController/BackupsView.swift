@@ -28,6 +28,28 @@ struct Hint: View {
     }
 }
 
+/// A warning or tip with "Don't show again" (kept per account on the agent).
+/// [key] is its words' key; a hidden one shows nothing. Never for questions
+/// that protect a world.
+struct HideableNote: View {
+    @Environment(AppModel.self) private var model
+    let key: String
+    var text: String? = nil
+    let palette: Palette
+
+    var body: some View {
+        if !model.hidden.contains(key) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(text ?? model.t(key))
+                    .font(.footnote)
+                    .foregroundStyle(palette.tone(.warning))
+                Button(model.t("tips.dont_show")) { model.hide(key) }
+                    .font(.footnote)
+            }
+        }
+    }
+}
+
 /// What the last button did, in green or in the warning color.
 struct SaidRow: View {
     let said: Said?

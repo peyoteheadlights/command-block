@@ -58,6 +58,9 @@ class AddServerPages(
     /** Technical mode's typed folder, used as it is. */
     var typedFolder: String? by mutableStateOf(null)
     var ruled: Boolean by mutableStateOf(false)
+    /** "Who's this server for?", from this PC's first-run answer; and friends' names. */
+    var playedBy: String by mutableStateOf("")
+    var players: String by mutableStateOf("")
     var jar: String by mutableStateOf("")
     var pack: ModpackInspected? by mutableStateOf(null)
         private set
@@ -130,6 +133,7 @@ class AddServerPages(
                 val read = c.newServerOptions()
                 color = color ?: read.color
                 memoryMb = memoryMb ?: read.memoryMb
+                playedBy = read.playedBy
                 Read(read)
             } catch (e: AgentException) {
                 noted(e)
@@ -214,6 +218,7 @@ class AddServerPages(
         val request = NewServerRequest(
             name.trim(), folder, kind.id, chosen.minecraft, loader.takeIf { kind.picksLoader },
             memoryMb.takeIf { AddServer.memoryShown(kind) }, color, eulaAccepted = ruled,
+            playedBy = playedBy, players = AddServer.players(playedBy, players),
         )
         scope.launch {
             try {
