@@ -56,7 +56,7 @@ from .discord.client import DiscordError
 from .modpack import INDEX, MAX_PACK_BYTES, SERVER_NOTE, ModpackError
 from .mods import jarinfo, sides
 from .mods.curseforge import Blocked, file_prints
-from .mods.sources import LABELS, SourceError
+from .mods.sources import LABELS, NotFound, SourceError
 from .security.paths import EXECUTABLE_EXTENSIONS, is_inside, safe_filename
 
 if TYPE_CHECKING:
@@ -343,6 +343,8 @@ async def _players_companion(ctx: ServerContext, items: list[Item]) -> dict[str,
                 return need
             picked.append(found)
         downloaded = [await modrinth.download(v) for v in picked]
+    except NotFound:
+        return need  # gone or hidden on Modrinth: trying again won't help
     except SourceError as exc:
         raise ModpackError(MODRINTH_DOWN) from exc
     await asyncio.to_thread(
@@ -366,6 +368,11 @@ def _add_downloaded(folder: Path, items: list[Item], picked: list, downloaded: l
         info = jarinfo.read_mod_jar(source, compute_hash=False)
         if info.mod_id in have:
             continue  # the owner already put it in Players only
+        if any(i.path.lower() == f"mods/{filename}".lower() for i in items):
+            raise ModpackError(
+                f"Two files are named {filename} (one in Players only, one the Companion needs). "
+                "Rename or remove the one in Players only, then make the modpack again."
+            )
         item = Item(
             source=source,
             path=f"mods/{filename}",

@@ -289,6 +289,34 @@ def test_a_players_companion_put_in_by_hand_isnt_added_twice(paper_companion, re
     assert paths == {"mods/mine.jar", "mods/fapi-0.140.jar"}
 
 
+def test_a_players_only_file_named_like_the_download_is_refused(paper_companion, relay):
+    # Launchers copy the owner's file over the download, so Fabric API would be gone.
+    client, headers = paper_companion
+    from .test_dependency_resolution import jar_bytes
+
+    base = server_dir(client)
+    (base / sides.FOLDER).mkdir()
+    (base / sides.FOLDER / "fapi-0.140.jar").write_bytes(jar_bytes("other_mod", "1.0"))
+    refused = make(client, headers)
+    assert refused.status_code == 400
+    assert "Two files are named fapi-0.140.jar" in refused.json()["detail"]
+
+
+def test_a_dependency_gone_from_modrinth_says_get_it_yourself(paper_companion, monkeypatch):
+    client, headers = paper_companion
+    from agent.mods.modrinth import ModrinthNotFound
+
+    async def gone(*args):
+        raise ModrinthNotFound("404")
+
+    monkeypatch.setattr(client.app.state.core.mods.modrinth, "latest_for", gone)
+    made = make(client, headers).json()
+    assert made["ok"], made
+    assert made["get_yourself"] == [
+        {"name": "Command Block Companion for Fabric", "page": "https://modrinth.com/mod/cbc"}
+    ]
+
+
 def test_a_plugin_not_from_modrinth_says_get_the_players_companion(paper_companion):
     client, headers = paper_companion
     client.app.state.core.mods.modrinth = ExportModrinth({})
