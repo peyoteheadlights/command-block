@@ -196,6 +196,8 @@ def options(ctx: ServerContext) -> dict[str, Any]:
         "required_to_join": {
             "available": companion.on_server(ctx.mods),
             "on": bool(last.get("required")),
+            # Vanilla runs no mods, so the Companion can't go on: switch to Fabric.
+            "needs_fabric": server_type.content is None,
         },
         "chat_line": last.get("chat_line") or {"on": True, "text": companion.CHAT_LINE_DEFAULT},
         "title_screen": titlescreen.options(ctx, last, _folder(ctx)),
@@ -506,6 +508,11 @@ async def make(
             "use {name}, {version}, {link} and {get_it}, and no other { }."
         )
     if required and not await asyncio.to_thread(companion.on_server, ctx.mods):
+        if ctx.mods.server_type.content is None:
+            raise ModpackError(
+                "Required to join needs a Fabric server with the Command Block Companion mod. "
+                "Change the server type to Fabric in Settings, then add the Companion."
+            )
         raise ModpackError(
             "Required to join needs the Command Block Companion mod on this server. Add it "
             "on the Mods page, then make the modpack again."

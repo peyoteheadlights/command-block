@@ -115,7 +115,8 @@ fun Main(vm: AppViewModel) {
                 SchedulesScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
             }
             composable("server/{id}/content") { back ->
-                ContentScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                val id = back.serverId()
+                ContentScreen(vm, id, onBack = { nav.popBackStack() }, onChangeType = { nav.navigate("server/${Uri.encode(id)}/settings") })
             }
             composable("server/{id}/game") { back ->
                 GameSettingsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })

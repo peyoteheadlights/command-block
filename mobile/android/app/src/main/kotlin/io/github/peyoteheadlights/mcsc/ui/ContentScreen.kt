@@ -100,7 +100,7 @@ private fun stateFor(vm: AppViewModel, serverId: String, failed: Boolean): Strin
  * offer Restart now.
  */
 @Composable
-fun ContentScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
+fun ContentScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onChangeType: () -> Unit) {
     val content = vm.pages(serverId).content
     val kind = Content.kind(vm.servers.list.firstOrNull { it.id == serverId })
     var asking by remember { mutableStateOf<ContentAsk?>(null) }
@@ -132,7 +132,7 @@ fun ContentScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
                     ask.run()
                 }, onDismiss = { asking = null })
             }
-            ContentDialogs(vm, content) { asking = it }
+            ContentDialogs(vm, content, onChangeType) { asking = it }
         },
     ) {
         when (kind) {
@@ -615,7 +615,7 @@ private fun AddPack(vm: AppViewModel, content: ContentPages) {
 
 /** Remove, Update, Versions, Update all, install, the missing ones and a modpack: each asks first. */
 @Composable
-private fun ContentDialogs(vm: AppViewModel, content: ContentPages, ask: (ContentAsk) -> Unit) {
+private fun ContentDialogs(vm: AppViewModel, content: ContentPages, onChangeType: () -> Unit, ask: (ContentAsk) -> Unit) {
     val strings = vm.strings
     content.removing?.let { r ->
         val needed = r.impact.dependents.map { d -> strings.t("mods.needed_by", "name" to d.name, "requires" to (d.requires ?: strings.t("value.unknown"))) }
@@ -634,7 +634,7 @@ private fun ContentDialogs(vm: AppViewModel, content: ContentPages, ask: (Conten
     content.missingPlan?.let { MissingDialog(vm, content) }
     content.modpack?.let { ModpackDialog(vm, content) }
     content.packUpdate?.let { PackUpdateDialog(vm, content) }
-    content.makeOptions?.let { options -> MakeModpackDialog(vm, content, options) }
+    content.makeOptions?.let { options -> MakeModpackDialog(vm, content, options, onChangeType) }
     if (content.askingPackLink) PackLinkDialog(vm, content)
     content.askingModrinth?.let { ask -> ModrinthProjectDialog(vm, content, ask) }
     if (content.askingServerLink) ServerProjectDialog(vm, content)
@@ -1079,7 +1079,7 @@ private fun PackLinkDialog(vm: AppViewModel, content: ContentPages) {
 }
 
 @Composable
-private fun MakeModpackDialog(vm: AppViewModel, content: ContentPages, options: ModpackMakeOptions) {
+private fun MakeModpackDialog(vm: AppViewModel, content: ContentPages, options: ModpackMakeOptions, onChangeType: () -> Unit) {
     val strings = vm.strings
     var name by remember(options) { mutableStateOf(options.name) }
     var version by remember(options) { mutableStateOf(options.version) }
@@ -1138,7 +1138,13 @@ private fun MakeModpackDialog(vm: AppViewModel, content: ContentPages, options: 
             Checkbox(checked = required, onCheckedChange = { required = it }, enabled = companion)
             Text(t("make.required"))
         }
-        Text(t(if (companion) "make.required_hint" else "make.required_later"))
+        if (options.requiredToJoin.needsFabric) {
+            // Vanilla can't run the Companion: Fabric with no other mods plays the same.
+            Text(t("make.required_vanilla"))
+            TextButton(onClick = { content.cancelMakeModpack(); onChangeType() }) { Text(t("make.change_type")) }
+        } else {
+            Text(t(if (companion) "make.required_hint" else "make.required_later"))
+        }
         if (companion) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = chatOn, onCheckedChange = { chatOn = it }, enabled = !required)
