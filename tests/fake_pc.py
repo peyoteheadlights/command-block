@@ -54,6 +54,9 @@ class FakePC(WindowsPC):
     def open_link(self, url: str) -> None:
         self.opened.append(url)
 
+    def open_folder(self, path: str) -> None:
+        self.opened.append(path)
+
     def save_file(self, name: str, data: bytes) -> str | None:
         if self.save_answer is None:
             return None

@@ -150,6 +150,15 @@ class WindowsPC:
         if url.startswith("https://") or _tailscale_http(url):
             webbrowser.open(url)
 
+    def open_folder(self, path: str) -> None:
+        """Explorer on the server's folder (only offered on the server's own
+        PC). A folder only: a file path here could run a program."""
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        if Path(path).is_dir():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
     def save_path(self, name: str) -> str | None:
         """Windows' own save box, starting in Downloads with ``name``. The
         place chosen, or None when they cancelled."""

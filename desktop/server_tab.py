@@ -150,6 +150,8 @@ class Header(QFrame):
         self.menu = QMenu(self)
         self.redo = self.menu.addAction("")
         self.redo.triggered.connect(lambda: window.move_change("redo"))
+        self.folder = self.menu.addAction(text("server.open_folder"))
+        self.folder.triggered.connect(lambda: window.pc.open_folder(self.row["directory"]))
         self.more.setMenu(self.menu)
         for widget in (self.undo, self.diagnose, self.restart, self.main, self.more):
             top.addWidget(widget)
@@ -218,6 +220,9 @@ class Header(QFrame):
         self.restart.setVisible(state == "ONLINE" and control)
         self.diagnose.setVisible(self.window_.may(row["id"], "server.diagnose"))
         self.more.setAccessibleName(text("desktop.more"))
+        # Only on the server's own PC: elsewhere the path is another PC's.
+        here = self.window_.agent.place == "this PC" and self.window_.role in (None, "owner")
+        self.folder.setVisible(here and bool(row.get("directory")))
         self.status.say(state_mark(row), state_words(row))
         self.facts.setText(" · ".join(facts(row)))
 

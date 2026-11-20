@@ -99,7 +99,11 @@ fun Main(vm: AppViewModel) {
                     ServerScreen(vm, id, onBack = { nav.popBackStack() }, onOpen = { page -> nav.navigate("server/${Uri.encode(id)}/$page") })
                 }
                 composable("server/{id}/console") { back ->
-                    ConsoleScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
+                    val id = back.serverId()
+                    ConsoleScreen(vm, id, onBack = { nav.popBackStack() }, onOlderLogs = { nav.navigate("server/${Uri.encode(id)}/logs") })
+                }
+                composable("server/{id}/logs") { back ->
+                    OlderLogsScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
                 }
                 composable("server/{id}/chat") { back ->
                     ChatScreen(vm, back.serverId(), onBack = { nav.popBackStack() })

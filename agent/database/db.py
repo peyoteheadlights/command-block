@@ -756,6 +756,15 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE backups ADD COLUMN excludes TEXT;
         """,
     ),
+    (
+        26,
+        # Where a server sits on All servers (dragged there) and the group
+        # heading it's under. Empty: after the placed ones, no group.
+        """
+        ALTER TABLE servers ADD COLUMN position INTEGER;
+        ALTER TABLE servers ADD COLUMN group_name TEXT;
+        """,
+    ),
 ]
 
 
@@ -860,6 +869,17 @@ class Database:
 
     def set_server_color(self, server_id: str, color: str) -> None:
         self.execute("UPDATE servers SET color = ? WHERE id = ?", (color, server_id))
+
+    def set_server_order(self, server_ids: list[str]) -> None:
+        """The list order on All servers, first to last."""
+        with self._lock, self._conn:
+            for position, server_id in enumerate(server_ids):
+                self._conn.execute(
+                    "UPDATE servers SET position = ? WHERE id = ?", (position, server_id)
+                )
+
+    def set_server_group(self, server_id: str, group: str | None) -> None:
+        self.execute("UPDATE servers SET group_name = ? WHERE id = ?", (group or None, server_id))
 
     def add_event(
         self,

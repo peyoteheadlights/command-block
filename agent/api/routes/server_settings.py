@@ -12,8 +12,15 @@ from ...minecraft import cpu, java
 from ...security.auth import Principal
 from ...security.permissions import SETTINGS_SERVER, SETTINGS_VIEW, require
 from ..deps import audit, get_server
-from ..responses import ColorSaved, MemoryOverview, MemorySaved, ServerSettings, ServerSettingsSaved
-from .models import MemoryRequest, ServerColorRequest, ServerSettingsRequest
+from ..responses import (
+    ColorSaved,
+    MemoryOverview,
+    MemorySaved,
+    ServerGroupSaved,
+    ServerSettings,
+    ServerSettingsSaved,
+)
+from .models import MemoryRequest, ServerColorRequest, ServerGroupRequest, ServerSettingsRequest
 
 router = APIRouter()
 
@@ -222,6 +229,23 @@ async def set_color(
     audit(ctx, request, "server_color", detail=color)
     await _announce_change(ctx, f"Changed {ctx.name}'s color")
     return {"ok": True, "color": color}
+
+
+@router.put("/group", response_model=ServerGroupSaved)
+async def set_group(
+    payload: ServerGroupRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    """The heading this server is under on All servers. Empty: no group."""
+    group = " ".join(payload.group.split())  # one line, single spaces
+    ctx.core.db.set_server_group(ctx.server_id, group)
+    audit(ctx, request, "server_group", detail=group or "none")
+    await _announce_change(
+        ctx, f"Moved {ctx.name} to a group" if group else f"Took {ctx.name} out of its group"
+    )
+    return {"ok": True, "group": group}
 
 
 async def _announce_change(ctx, message: str) -> None:

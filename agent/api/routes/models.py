@@ -181,6 +181,25 @@ class ServerSettingsRequest(BaseModel):
     updates: dict[str, Any]
 
 
+class ServerOrderRequest(BaseModel):
+    ids: list[str] = Field(max_length=500, description="Server ids, first to last")
+
+
+class ServerIdsRequest(BaseModel):
+    ids: list[str] | None = Field(
+        default=None, max_length=500, description="Only these servers; null: all of them"
+    )
+
+
+class ServerGroupRequest(BaseModel):
+    group: str = Field(max_length=40, description="The heading it goes under; empty: none")
+
+
+class GameRulesRequest(BaseModel):
+    rules: dict[str, bool | int] = Field(default_factory=dict, max_length=200)
+    preset: str | None = Field(default=None, max_length=40)
+
+
 class ServerColorRequest(BaseModel):
     color: str = Field(max_length=16, description='A palette id such as "teal", or "#RRGGBB"')
 
