@@ -8,7 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -23,10 +25,13 @@ class ServerSideTest {
     final List<byte[]> sent = new ArrayList<>();
     long now = 0;
 
+    /** Bedrock players, as Floodgate would say. */
+    final Set<UUID> bedrock = new HashSet<>();
+
     ServerSide side(boolean required) throws Exception {
         Path file = dir.resolve("commandblock-companion.json");
         Files.writeString(file, SettingsTest.changed(r -> r.addProperty("required", required)));
-        return ServerSide.load(file, dir, log::add, log::add, () -> now);
+        return ServerSide.load(file, dir, log::add, log::add, () -> now, bedrock::contains);
     }
 
     ServerSide.Online online(UUID id, List<ServerSide.Online> world) {
@@ -64,12 +69,12 @@ class ServerSideTest {
     void theJoinLimitNeverCountsThisPc() throws Exception {
         ServerSide side = side(true); // 6 a minute
         for (int i = 0; i < 20; i++) {
-            assertTrue(side.mayCheck("127.0.0.1", kicks::add), "the join guard passes every player on from 127.0.0.1");
+            assertTrue(side.mayCheck(UUID.randomUUID(), "Bob", "127.0.0.1", kicks::add), "the join guard passes every player on from 127.0.0.1");
         }
         for (int i = 0; i < 6; i++) {
-            assertTrue(side.mayCheck("1.2.3.4", kicks::add));
+            assertTrue(side.mayCheck(UUID.randomUUID(), "Bob", "1.2.3.4", kicks::add));
         }
-        assertFalse(side.mayCheck("1.2.3.4", kicks::add));
+        assertFalse(side.mayCheck(UUID.randomUUID(), "Bob", "1.2.3.4", kicks::add));
         assertEquals(List.of("Too many joins from your address. Wait a minute and try again."), kicks);
     }
 
@@ -109,5 +114,33 @@ class ServerSideTest {
         side.tick(world);
         side.answered(bob, new byte[] {1});
         assertEquals(1, kicks.size(), "asked, and the answer is nonsense");
+    }
+
+    @Test
+    void bedrockPlayersAreNeverChecked() throws Exception {
+        ServerSide side = side(true);
+        UUID id = UUID.randomUUID();
+        bedrock.add(id);
+        List<ServerSide.Online> world = new ArrayList<>();
+        world.add(online(id, world));
+
+        assertFalse(side.mayCheck(id, ".Bob", "1.2.3.4", kicks::add), "not checked, and not kicked");
+        assertEquals("Companion check: .Bob skipped, Bedrock player", log.get(log.size() - 1));
+        assertNull(side.joined(id), "no chat line");
+        now += 31 * 60_000L;
+        side.tick(world);
+        assertEquals(0, sent.size(), "no rechecks either");
+        assertEquals(List.of(), kicks);
+    }
+
+    @Test
+    void bedrockPlayersDontUseUpTheJoinLimit() throws Exception {
+        ServerSide side = side(true); // 6 a minute
+        UUID id = UUID.randomUUID();
+        bedrock.add(id);
+        for (int i = 0; i < 10; i++) {
+            side.mayCheck(id, ".Bob", "1.2.3.4", kicks::add);
+        }
+        assertTrue(side.mayCheck(UUID.randomUUID(), "Ann", "1.2.3.4", kicks::add));
     }
 }

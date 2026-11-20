@@ -43,13 +43,13 @@ public final class CompanionServer implements ModInitializer {
                 return; // no settings: the app hasn't made a modpack here
             }
             Consumer<String> kick = message -> handler.disconnect(Component.literal(message));
-            if (!side.mayCheck(address(handler.connection.getRemoteAddress()), kick)) {
+            GameProfile profile = handler.getOwner();
+            if (!side.mayCheck(profile.id(), profile.name(), address(handler.connection.getRemoteAddress()), kick)) {
                 return;
             }
             if (ServerConfigurationNetworking.canSend(handler, CheckPayload.TYPE)) {
                 ((FabricServerConfigurationPacketListenerImpl) handler).addTask(new JoinCheck(handler, side));
             } else {
-                GameProfile profile = handler.getOwner();
                 side.judged(profile.id(), profile.name(), null, null, kick); // no Companion at all
             }
         });

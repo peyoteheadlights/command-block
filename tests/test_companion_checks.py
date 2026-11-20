@@ -49,6 +49,8 @@ def test_a_failed_check_without_a_version():
         "[12:00:00] [Server thread/INFO] (Minecraft) [Not Secure] <Bob> Companion check: Steve failed, modpack -",
         "[12:00:00] [Server thread/INFO] (Companion) Companion check: Steve maybe, modpack 1",
         "[12:00:00] [Server thread/INFO] (Companion) Companion check: Steve passed, modpack a b",
+        # Bedrock players (Floodgate) aren't checked, so they never count as failed.
+        "[12:00:00] [Server thread/INFO] (Companion) Companion check: .Steve skipped, Bedrock player",
     ],
 )
 def test_lines_that_only_look_like_a_check_are_ignored(raw):
