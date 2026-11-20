@@ -522,7 +522,7 @@ def check_java(java: str) -> None:
         )
 
 
-async def download(folder: Path, repo: str, tag: str, filename: str, name: str) -> Path:
+async def download(folder: Path, repo: str, tag: str | None, filename: str, name: str) -> Path:
     """One file of a GitHub release (WaterdogPE's newest build, or the
     Companion's plugin), checked against the checksum GitHub lists for it.
     Refused when GitHub lists none (nothing unchecked is run)."""

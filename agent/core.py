@@ -19,7 +19,17 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from . import __version__, colors, downtime, linkedpack, memory, protection, supportask, watchers
+from . import (
+    __version__,
+    colors,
+    consolefriends,
+    downtime,
+    linkedpack,
+    memory,
+    protection,
+    supportask,
+    watchers,
+)
 from .autosleep import AutoSleep
 from .backups.manager import BackupManager
 from .config import ConfigError
@@ -176,6 +186,7 @@ class ServerContext:
         await self.player_actions.handle(sig, line)
         await self.core.whitelist.heard(self, line)
         await watchers.heard(self, line)
+        consolefriends.heard(self, line)
         said = parse_chat(line)
         if said and said[0] == "player" and self.core.links.hear(self, said[1] or "", said[2]):
             return  # a link code: kept out of the chat log, so never bridged to Discord

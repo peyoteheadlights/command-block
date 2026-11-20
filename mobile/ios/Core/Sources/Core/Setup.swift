@@ -384,6 +384,17 @@ public enum Crossplay {
     }
 }
 
+/// "Let console friends join": what to say about its sign-in, read from the agent.
+public enum ConsoleFriendsText {
+    public static func state(_ strings: Strings, _ info: ConsoleFriends) -> String? {
+        if !info.available { return strings.t("console.needs_crossplay") }
+        if !info.on { return nil }
+        if let tag = info.gamertag { return strings.t("console.signed_in", ["gamertag": tag]) }
+        if let code = info.signIn { return strings.t("console.sign_in", ["url": code.url, "code": code.code]) }
+        return strings.t("console.waiting")
+    }
+}
+
 /// Duplicate: a copy of the server with its own port and color, owner only.
 public enum Duplicate {
     public static let COPY = "copy"

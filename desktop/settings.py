@@ -443,6 +443,7 @@ class SettingsPage(Page):
         tunnel = QVBoxLayout()
         layout.addLayout(tunnel)
         self.playit_part(tunnel, owner)
+        layout.addWidget(label(text("address.consoles"), "sub"))
         return frame
 
     # ------------------------------------------------------------ playit.gg
