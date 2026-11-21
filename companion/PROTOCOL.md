@@ -27,7 +27,12 @@ and `unframe`, at most 3 length bytes).
 
 ## The join check, step by step
 
-1. A player starts joining. While Minecraft is still "configuring" them
+1. A player starts joining. Bedrock players who come in through Geyser
+   and Floodgate (crossplay) are never checked: their game can't run
+   Java mods. Floodgate's API says who they are; without Floodgate,
+   nobody is skipped. They get no chat line and no rechecks, and the log
+   says `Companion check: <name> skipped, Bedrock player`.
+   For everyone else, while Minecraft is still "configuring" them
    (before they are in the world), the server asks the per-address limit
    (`Gate`: `handshakes_per_ip_per_minute` checks a minute from one
    address; IPv6 counts per /64). Joins from the server's own PC
