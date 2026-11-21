@@ -59,7 +59,9 @@ This is a student project I've been working on as a hobby for my personal use, a
 
 Your servers run on your own PC, so friends can only play while that PC is on. **Keep this PC awake** in PC settings stops Windows from sleeping while a server is running.
 
-Friends outside your home can join with **Let friends join from the internet** in Server settings: the app asks your router to open the server's port while it runs (UPnP) and tests it from outside. If your router or internet provider doesn't allow that, the app shows the port forwarding steps or points you to playit.gg.
+Friends outside your home can join with **Let friends join from the internet** in Server settings: the app asks your router to open the server's port while it runs (UPnP) and tests it from outside. If your router or internet provider doesn't allow that, the app shows the port forwarding steps.
+
+Or use **playit.gg** in the same card: no port is opened and friends don't see your home address. The desktop app installs playit's own program after you click, you sign in on playit.gg and make a tunnel there, and the app shows the tunnel's address and puts it in invites and Discord. Stop using it any time; the app offers to remove the program too.
 
 To give your internet address a name friends can remember (like `myserver.duckdns.org`), save a free DuckDNS or No-IP name in the same card. The app keeps it pointed at your PC. It's only a name, so the port still has to be open.
 
@@ -87,7 +89,6 @@ This app is in no way done and will be supported for a good long while. Here's e
 - Start a sleeping server when someone tries to join, a "new version is out" alert, a player activity graph and your own command buttons.
 - Rented servers on Nitrado, and files, mods and safe changes on rented servers.
 - Rented servers in the phone apps.
-- playit.gg support.
 
 **After 1.0**
 

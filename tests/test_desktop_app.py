@@ -1293,7 +1293,7 @@ def a_windows_pc(monkeypatch, signer, code=0):
 
     pc = WindowsPC()
     ran: list[str] = []
-    monkeypatch.setattr(pc, "download_tailscale", lambda folder: folder / "tailscale-setup.msi")
+    monkeypatch.setattr(pc, "download_msi", lambda url, folder, words: folder / "setup.msi")
     monkeypatch.setattr(pc, "msi_signer", lambda path: signer)
     monkeypatch.setattr(pc, "install_msi", lambda path: ran.append(path.name) or code)
     return pc, ran
@@ -1309,7 +1309,19 @@ def test_a_setup_not_signed_by_tailscale_is_refused_and_nothing_runs(monkeypatch
         assert ran == []
     pc, ran = a_windows_pc(monkeypatch, "Tailscale Inc.")
     pc.install_tailscale()
-    assert ran == ["tailscale-setup.msi"]
+    assert ran == ["setup.msi"]
+
+
+def test_playits_setup_must_be_signed_by_its_maker(monkeypatch):
+    from desktop.pc import PCError
+
+    pc, ran = a_windows_pc(monkeypatch, "Tailscale Inc.")
+    with pytest.raises(PCError, match="Developed Methods LLC"):
+        pc.install_playit()
+    assert ran == []
+    pc, ran = a_windows_pc(monkeypatch, "Developed Methods LLC")
+    pc.install_playit()
+    assert ran == ["setup.msi"]
 
 
 def test_saying_no_to_windows_is_its_own_message(monkeypatch):

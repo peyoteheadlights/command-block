@@ -113,6 +113,21 @@ extension AgentClient {
         try await call("POST", server(serverId) + "/internet/test", body: try AgentClient.encode(["allow_mcsrvstat": allow]), slow: true, as: InternetReach.self)
     }
 
+    /// playit.gg on the server's PC, for this server's tunnels (agent/playit.py).
+    public func playit(serverId: String) async throws -> PlayitState {
+        try await call("GET", server(serverId) + "/playit", as: PlayitState.self)
+    }
+
+    /// `action` is use, reconnect or stop. Installing it is the desktop app's job.
+    public func playitAction(serverId: String, action: String) async throws -> PlayitState {
+        try await call("POST", server(serverId) + "/playit/\(action)", body: try AgentClient.encode([String: String]()), slow: true, as: PlayitState.self)
+    }
+
+    /// mcsrvstat.us pings the tunnel's address; `allow` as for testInternet.
+    public func testPlayit(serverId: String, allow: Bool) async throws -> PlayitState {
+        try await call("POST", server(serverId) + "/playit-test", body: try AgentClient.encode(["allow_mcsrvstat": allow]), slow: true, as: PlayitState.self)
+    }
+
     /// This PC's DuckDNS and No-IP names (agent/ddns.py). Saved only after the site said yes.
     public func ddns() async throws -> DdnsState {
         try await call("GET", "/api/ddns", as: DdnsState.self)

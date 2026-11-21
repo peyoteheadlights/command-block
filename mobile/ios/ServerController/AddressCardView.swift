@@ -40,9 +40,6 @@ struct AddressCardView: View {
         ForEach(Internet.lines(model.strings, info, owner: owner), id: \.text) { line in
             Text(line.text).foregroundStyle(palette.tone(line.tone))
         }
-        if let link = info.playit, let url = URL(string: link) {
-            Button(model.t("address.playit")) { openURL(url) }
-        }
         if Internet.testable(info), let address = info.address, let port = info.port {
             if owner {
                 Button(model.t("address.test")) {
@@ -69,6 +66,9 @@ struct AddressCardView: View {
         }
         if let state = setup.ddns.value {
             NamesView(setup: setup, state: state, owner: owner, palette: palette, ask: ask)
+        }
+        if let state = setup.playit.value, state.supported {
+            PlayitView(setup: setup, serverId: serverId, state: state, owner: owner, palette: palette, ask: ask)
         }
     }
 }
@@ -294,5 +294,63 @@ private final class Once: @unchecked Sendable {
         continuation = nil
         lock.unlock()
         waiting?.resume(returning: value)
+    }
+}
+
+/// playit.gg (agent/playit.py), mirroring PlayitPart in ServerSettings.kt:
+/// link the program on the server's PC, the tunnel to make, its address and
+/// test. Installing it is done from the desktop app on that PC.
+private struct PlayitView: View {
+    let setup: SetupPages
+    let serverId: String
+    let state: PlayitState
+    let owner: Bool
+    let palette: Palette
+    let ask: (SetupAsk) -> Void
+
+    @Environment(AppModel.self) private var model
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        let step = Playit.step(model.strings, state, owner: owner)
+        Text(model.t("playit.title")).foregroundStyle(palette.textPrimary)
+        ForEach(step.lines, id: \.text) { line in
+            Text(line.text).foregroundStyle(palette.tone(line.tone))
+        }
+        switch step.button {
+        case "use": Button(model.t("playit.use")) { act("use") }.disabled(setup.busy != nil)
+        case "link": link(model.t("playit.link_open"), state.claim?.url)
+        case "reconnect": Button(model.t("playit.reconnect")) { act("reconnect") }.disabled(setup.busy != nil)
+        case "make": link(model.t("playit.make_open"), state.newTunnel)
+        default: EmptyView()
+        }
+        if step.checkAgain {
+            Button(model.t("playit.check")) { Task { await setup.loadPlayit() } }
+        }
+        if owner && state.on && state.phase == "running" && Playit.javaAddress(state) != nil {
+            Button(model.t("address.test")) {
+                if state.mcsrvstatOk {
+                    Task { await setup.playitCall(model.strings) { try await $0.testPlayit(serverId: serverId, allow: false) } }
+                } else {
+                    ask(.playitMcsrvstat)
+                }
+            }
+            .disabled(setup.busy != nil)
+        }
+        if setup.busy == "playit" { Hint(text: model.t("address.busy"), palette: palette) }
+        if owner && state.on {
+            Button(model.t("playit.stop"), role: .destructive) { ask(.playitStop) }.disabled(setup.busy != nil)
+        }
+    }
+
+    @ViewBuilder
+    private func link(_ words: String, _ address: String?) -> some View {
+        if let address, let url = URL(string: address) {
+            Button(words) { openURL(url) }
+        }
+    }
+
+    private func act(_ action: String) {
+        Task { await setup.playitCall(model.strings) { try await $0.playitAction(serverId: serverId, action: action) } }
     }
 }

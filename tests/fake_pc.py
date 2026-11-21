@@ -35,6 +35,8 @@ class FakePC(WindowsPC):
         self.server_user_code = 0
         # The Tailscale step: what it ran, and what each step says went wrong.
         self.tailscale_installs = 0
+        self.playit_installs = 0
+        self.playit_uninstalls = 0
         self.tailscale_ups = 0
         self.tailscale_logouts = 0
         self.install_problem: str | None = None
@@ -148,6 +150,14 @@ class FakePC(WindowsPC):
         self.tailscale_installs += 1
         if self.install_problem:
             raise PCError(self.install_problem)
+
+    def install_playit(self) -> None:
+        self.playit_installs += 1
+        if self.install_problem:
+            raise PCError(self.install_problem)
+
+    def uninstall_playit(self) -> None:
+        self.playit_uninstalls += 1
 
     def tailscale_up(self) -> str | None:
         self.tailscale_ups += 1
