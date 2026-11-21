@@ -100,7 +100,9 @@ def _needed_by(mod: ModInfo, enabled: list[ModInfo], rivals: list[ModInfo]) -> s
 
 def _has_build(mod: ModInfo, minecraft: str | None) -> bool:
     """The jar itself says it is built for this Minecraft version."""
-    return bool(minecraft) and any(
+    if not minecraft:
+        return False
+    return any(
         d.mod_id == "minecraft" and range_satisfies(minecraft, d.version_range, d.syntax) is True
         for d in mod.dependencies
     )
