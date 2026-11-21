@@ -1,0 +1,15 @@
+// The check itself: no Minecraft classes, so plain JUnit tests can run it.
+dependencies {
+    // Minecraft, Fabric, NeoForge and Paper all ship Gson already,
+    // so we only compile against it and never put it in our jar.
+    compileOnly 'com.google.code.gson:gson:2.11.0'
+    testImplementation 'com.google.code.gson:gson:2.11.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.11.4'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging { events 'failed'; exceptionFormat 'full' }
+}

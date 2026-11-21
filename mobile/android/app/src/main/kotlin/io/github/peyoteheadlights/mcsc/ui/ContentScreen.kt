@@ -44,6 +44,10 @@ import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.Addon
 import io.github.peyoteheadlights.mcsc.core.Changes
 import io.github.peyoteheadlights.mcsc.core.ChatLine
+import io.github.peyoteheadlights.mcsc.core.FlavorText
+import io.github.peyoteheadlights.mcsc.core.OnOff
+import io.github.peyoteheadlights.mcsc.core.TitleButton
+import io.github.peyoteheadlights.mcsc.core.TitleScreen
 import io.github.peyoteheadlights.mcsc.core.Content
 import io.github.peyoteheadlights.mcsc.core.ContentKind
 import io.github.peyoteheadlights.mcsc.core.Display
@@ -1027,6 +1031,17 @@ private fun MakeModpackDialog(vm: AppViewModel, content: ContentPages, options: 
     var required by remember(options) { mutableStateOf(companion && options.requiredToJoin.on) }
     var chatOn by remember(options) { mutableStateOf(options.chatLine.on) }
     var chatText by remember(options) { mutableStateOf(options.chatLine.text) }
+    val title = options.titleScreen
+    var buttonOn by remember(options) { mutableStateOf(title.button.on) }
+    var address by remember(options) { mutableStateOf(title.button.address) }
+    var flavorOn by remember(options) { mutableStateOf(title.flavorText.on) }
+    var flavor by remember(options) { mutableStateOf(title.flavorText.text) }
+    var backgroundOn by remember(options) { mutableStateOf(title.background.on) }
+    val hasBackground = title.backgroundSet || content.backgroundSet
+    val pickBackground = rememberFilePicker { file ->
+        if (file.name.lowercase().endsWith(".png")) content.uploadTitleBackground(file, strings)
+        else content.tell(Said(strings.t("mobile.content.wrong_file", "kind" to ".png"), good = false))
+    }
     Question(
         strings.t("make.title"),
         confirm = strings.t("make.title"),
@@ -1034,7 +1049,12 @@ private fun MakeModpackDialog(vm: AppViewModel, content: ContentPages, options: 
         onConfirm = {
             // Left empty: the agent's own wording.
             val chat = chatText.trim().takeIf { companion && it.isNotEmpty() }?.let { ChatLine(chatOn, it) }
-            content.makeModpack(MakeModpack(name.trim(), version.trim(), leaveOut, configs.toList(), loader, required, chat), strings)
+            val screen = TitleScreen(
+                TitleButton(buttonOn, address.trim()),
+                FlavorText(flavorOn, flavor.trim()),
+                OnOff(backgroundOn && hasBackground),
+            )
+            content.makeModpack(MakeModpack(name.trim(), version.trim(), leaveOut, configs.toList(), loader, required, chat, screen), strings)
         },
         onDismiss = content::cancelMakeModpack,
     ) {
@@ -1067,6 +1087,25 @@ private fun MakeModpackDialog(vm: AppViewModel, content: ContentPages, options: 
             }
             OutlinedTextField(value = chatText, onValueChange = { chatText = it.replace("\n", " ").take(300) }, enabled = !required, singleLine = true)
             Text(t("make.chat_line_hint"))
+            // What friends with the Companion see when Minecraft starts.
+            Text(t("make.title_screen"), modifier = Modifier.padding(top = 6.dp))
+            Text(t("make.title_screen_hint"))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = buttonOn, onCheckedChange = { buttonOn = it })
+                Text(t("make.title_button"))
+            }
+            OutlinedTextField(value = address, onValueChange = { address = it.trim().take(260) }, enabled = buttonOn,
+                label = { Text(t("make.title_address")) }, singleLine = true)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = flavorOn, onCheckedChange = { flavorOn = it })
+                Text(t("make.flavor_text"))
+            }
+            OutlinedTextField(value = flavor, onValueChange = { flavor = it.replace("\n", " ").take(60) }, enabled = flavorOn, singleLine = true)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = backgroundOn && hasBackground, onCheckedChange = { backgroundOn = it }, enabled = hasBackground)
+                Text(t("make.background"))
+            }
+            Presses(listOf(Press(t("make.background_pick"), { pickBackground() }, enabled = content.busy == null)))
         }
         Text(t(if (options.configs.isEmpty()) "make.no_configs" else "make.configs"), modifier = Modifier.padding(top = 6.dp))
         for (config in options.configs) {

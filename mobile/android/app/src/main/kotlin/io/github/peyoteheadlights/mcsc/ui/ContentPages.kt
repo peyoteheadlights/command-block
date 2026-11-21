@@ -476,10 +476,21 @@ class ContentPages(
 
     fun cancelMakeModpack() {
         makeOptions = null
+        backgroundSet = false
+    }
+
+    /** A title-screen picture was uploaded while the question shows (its answers stay). */
+    var backgroundSet by mutableStateOf(false)
+        private set
+
+    fun uploadTitleBackground(file: PickedFile, strings: Strings) = work("background", strings) {
+        backgroundSet = it.uploadTitleBackground(serverId, file).titleScreen.backgroundSet
+        null
     }
 
     fun makeModpack(answers: MakeModpack, strings: Strings) {
         makeOptions = null
+        backgroundSet = false
         work("make", strings) {
             made = it.makeModpack(serverId, answers)
             loadLink() // the modpack's download link, if it's on

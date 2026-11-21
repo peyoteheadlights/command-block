@@ -549,6 +549,7 @@ def test_a_slept_server_says_so_and_a_login_wakes_it(game):
 
     guard, status, got = run(go())
     assert status["description"]["text"] == "Asleep, join to start it"
+    assert status["commandblock"] == {"asleep": True}, "the Companion's join button reads it"
     assert status["players"]["online"] == 0 and status["version"]["protocol"] == 767
     assert got == ("out", joinguard.WORDS["join.starting"])
     assert guard.hub.woken == ["s"] and game.seen == []

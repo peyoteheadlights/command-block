@@ -1,0 +1,45 @@
+{
+ "format": 1,
+ "required": false,
+ "modpack": {
+  "name": "Skyblock with friends",
+  "version": "1.4"
+ },
+ "files": [
+  {
+   "path": "mods/sodium.jar",
+   "name": "Sodium",
+   "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "size": 1200,
+   "on_server": "mods/sodium.jar"
+  },
+  {
+   "path": "mods/minimap.jar",
+   "name": "Minimap",
+   "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "size": 800,
+   "on_server": "player-only/minimap.jar"
+  },
+  {
+   "path": "mods/secret.jar",
+   "name": "Secret Mod",
+   "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+   "size": 10,
+   "on_server": null
+  }
+ ],
+ "download_link": "http://100.64.1.2:25590/abc/modpack.mrpack",
+ "chat_line": {
+  "on": true,
+  "text": "This server uses the modpack Skyblock with friends 1.4. Get it here: http://100.64.1.2:25590/abc/modpack.mrpack"
+ },
+ "check": {
+  "timeout_seconds": 10,
+  "recheck_minutes": [
+   10,
+   30
+  ],
+  "spot_checks": 3,
+  "handshakes_per_ip_per_minute": 6
+ }
+}
