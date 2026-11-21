@@ -33,9 +33,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -91,7 +91,8 @@ class NoVersion(FarViewError):
 def saved(ctx: ServerContext) -> dict[str, Any]:
     found = ctx.db.get_setting(SETTING)
     found = found if isinstance(found, dict) else {}
-    load = found.get("load_ahead") if isinstance(found.get("load_ahead"), dict) else {}
+    load = found.get("load_ahead")
+    load = load if isinstance(load, dict) else {}
     return {
         "choice": found.get("choice") if found.get("choice") in CHOICES else "off",
         "added": found.get("added") if isinstance(found.get("added"), dict) else {},
@@ -527,7 +528,7 @@ def _priority(ctx: ServerContext, low: bool) -> None:
     try:
         import psutil
 
-        if os.name == "nt":
+        if sys.platform == "win32":
             value = psutil.BELOW_NORMAL_PRIORITY_CLASS if low else psutil.NORMAL_PRIORITY_CLASS
         else:
             value = 10 if low else 0
