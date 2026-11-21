@@ -199,6 +199,18 @@ def test_only_offered_config_files_can_go_in(server, config):
     assert "config files" in refused.json()["detail"]
 
 
+def test_floodgates_key_is_never_offered_or_let_in(server):
+    # Anyone with Floodgate's key can join as any Bedrock player, so it never goes in a modpack.
+    client, headers = server
+    key = server_dir(client) / "config" / "floodgate" / "key.pem"
+    key.parent.mkdir()
+    key.write_bytes(b"secret")
+    options = client.get(api(client, "modpack/make"), headers=headers).json()
+    assert "config/floodgate/key.pem" not in [c["path"] for c in options["configs"]]
+    refused = make(client, headers, configs=["config/floodgate/key.pem"])
+    assert refused.status_code == 400
+
+
 @pytest.mark.parametrize("name", ["", "a/b", "x" * 65, " spaced"])
 def test_a_name_that_cant_be_a_file_name_is_refused(server, name):
     client, headers = server

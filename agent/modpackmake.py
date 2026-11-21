@@ -19,7 +19,8 @@ Launcher and our own "New server from a modpack" read):
   * a plugin server's modpack also carries ``server-overrides/
     command-block.json`` (agent/modpack.py reads it), since a .mrpack can
     only name Fabric, Quilt, Forge or NeoForge. The players' loader is
-    picked (Fabric by default)
+    picked (Fabric by default). With the Companion plugin on the server,
+    its Fabric jar goes in for players (they answer the join check with it)
 
 It also writes the Companion's settings from it (agent/companion.py).
 
@@ -53,9 +54,9 @@ from urllib.parse import urlparse
 from . import companion, titlescreen
 from .discord.client import DiscordError
 from .modpack import INDEX, MAX_PACK_BYTES, SERVER_NOTE, ModpackError
-from .mods import sides
+from .mods import jarinfo, sides
 from .mods.curseforge import Blocked, file_prints
-from .mods.sources import LABELS, SourceError
+from .mods.sources import LABELS, NotFound, SourceError
 from .security.paths import EXECUTABLE_EXTENSIONS, is_inside, safe_filename
 
 if TYPE_CHECKING:
@@ -74,6 +75,8 @@ VERSION_RE = re.compile(r"[A-Za-z0-9_.+-]{1,32}")
 CONFIG_FOLDERS = ("config", "defaultconfigs")
 MAX_CONFIGS = 2000
 MAX_CONFIG_BYTES = 5 * 1024 * 1024
+# Private keys, like Floodgate's config/floodgate/key.pem: anyone with it can join as any Bedrock player.
+KEY_EXTENSIONS = {".pem", ".key"}
 DISCORD_LIMIT = 10 * 1024 * 1024  # what a bot may post where nobody boosted
 PLAYERS_LOADERS = {"fabric": "Fabric", "quilt": "Quilt"}
 ENV = {
@@ -111,6 +114,8 @@ class Item:
     size: int = 0
     url: str | None = None  # a site's own download link
     need: dict[str, Any] | None = None  # CurseForge: its author says no
+    mod_id: str = ""
+    modrinth: dict[str, Any] | None = None  # its version on Modrinth, when the hashes match
 
 
 # ---------------------------------------------------------------- what can go in
@@ -122,7 +127,7 @@ def _server_dir(ctx: ServerContext) -> Path:
 
 def config_files(ctx: ServerContext) -> list[dict[str, Any]]:
     """The config files that can be ticked: config/ and defaultconfigs/,
-    no links, no programs or jars, none bigger than 5 MB."""
+    no links, no programs, jars or private keys, none bigger than 5 MB."""
     base = _server_dir(ctx)
     found: list[dict[str, Any]] = []
     for top in CONFIG_FOLDERS:
@@ -136,6 +141,8 @@ def config_files(ctx: ServerContext) -> list[dict[str, Any]]:
                 suffix = path.suffix.lower()
                 if path.is_symlink() or suffix in EXECUTABLE_EXTENSIONS or suffix == ".jar":
                     continue
+                if suffix in KEY_EXTENSIONS:
+                    continue  # never handed to players
                 if path.relative_to(base).as_posix() == companion.MODS_FILE:
                     continue  # the server's own check settings, not for players
                 size = path.stat().st_size
@@ -219,6 +226,7 @@ def _items(ctx: ServerContext) -> list[Item]:
                     name=mod.name or mod.mod_id or path.stem,
                     plugin=plugin,
                     site=LABELS.get(source or "", "a file") if plugin else None,
+                    mod_id=mod.mod_id,
                 )
             )
     where = _server_dir(ctx) / sides.FOLDER
@@ -277,6 +285,7 @@ async def _look_up(ctx: ServerContext, items: list[Item]) -> None:
         file = (found.get(item.sha1) or {}).get("file") or {}
         if file.get("sha1") == item.sha1 and str(file.get("sha512") or "").lower() == item.sha512:
             item.url = _site_link(file.get("url"))
+            item.modrinth = found[item.sha1]
     # Plugins not on Modrinth are listed by name, never looked up further.
     rest = [i for i in items if not i.url and not i.plugin]
     if not rest:
@@ -300,6 +309,86 @@ async def _look_up(ctx: ServerContext, items: list[Item]) -> None:
             item.need = {"name": item.name, "filename": item.source.name, "page": None}
             continue
         item.url = _site_link(spec.url)
+
+
+async def _players_companion(ctx: ServerContext, items: list[Item]) -> dict[str, Any] | None:
+    """On a plugin server, players answer the Companion's check with its
+    Fabric jar: put it in the modpack (and what it needs, like Fabric API),
+    taken from the same Modrinth project and version as the server's plugin,
+    so the check can't lock everyone out. Returns a "get it yourself" entry
+    when it can't be found. Run after _look_up."""
+    plugin = next((i for i in items if i.plugin and i.mod_id == companion.PLUGIN_NAME), None)
+    if plugin is None:
+        return None
+    # Only a plugin from Modrinth tells us where its Fabric jar is: never a guessed project.
+    info = plugin.modrinth or {}
+    project = info.get("project_id")
+    need = {
+        "name": "Command Block Companion for Fabric",
+        "page": f"https://modrinth.com/mod/{project}" if project else None,
+    }
+    if not project:
+        return need
+    modrinth, minecraft = ctx.mods.modrinth, ctx.server.mc_version
+    if not minecraft:
+        raise ModpackError(f"Start {ctx.name} once so the app knows its Minecraft version.")
+    # Release versions are named like 0.1.0+paper and 0.1.0+fabric.
+    wanted = str(info.get("version_number") or "").split("+")[0] + "+fabric"
+    try:
+        versions = await modrinth.versions(project, minecraft, ("fabric",))
+        jar = next((v for v in versions if v.get("version_number") == wanted), None)
+        if jar is None:
+            return need
+        picked = [jar]
+        for dep in jar["dependencies"]:
+            if dep["type"] != "required" or not dep["project_id"]:
+                continue
+            found = await modrinth.latest_for(dep["project_id"], minecraft, ("fabric",))
+            if found is None:
+                return need
+            picked.append(found)
+        downloaded = [await modrinth.download(v) for v in picked]
+    except NotFound:
+        return need  # gone or hidden on Modrinth: trying again won't help
+    except SourceError as exc:
+        raise ModpackError(MODRINTH_DOWN) from exc
+    await asyncio.to_thread(
+        _add_downloaded, _folder(ctx) / "players-companion", items, picked, downloaded
+    )
+    return None
+
+
+def _add_downloaded(folder: Path, items: list[Item], picked: list, downloaded: list) -> None:
+    folder.mkdir(exist_ok=True)
+    for old in folder.iterdir():
+        old.unlink()  # only the newest modpack's copies are kept
+    have = {
+        jarinfo.read_mod_jar(i.source, compute_hash=False).mod_id
+        for i in items
+        if i.path.startswith("mods/") and not i.plugin
+    }
+    for version, (data, filename, _) in zip(picked, downloaded, strict=True):
+        source = folder / filename
+        source.write_bytes(data)
+        info = jarinfo.read_mod_jar(source, compute_hash=False)
+        if info.mod_id in have:
+            continue  # the owner already put it in Players only
+        if any(i.path.lower() == f"mods/{filename}".lower() for i in items):
+            raise ModpackError(
+                f"Two files are named {filename} (one in Players only, one the Companion needs). "
+                "Rename or remove the one in Players only, then make the modpack again."
+            )
+        item = Item(
+            source=source,
+            path=f"mods/{filename}",
+            side="players",
+            name=info.name or filename,
+            mod_id=info.mod_id,
+            modrinth=version,
+        )
+        _hash(item)
+        item.url = _site_link(version["file"]["url"])
+        items.append(item)
 
 
 async def _players_loader(ctx: ServerContext, loader: str, minecraft: str) -> dict[str, str]:
@@ -447,12 +536,14 @@ async def make(
         await asyncio.to_thread(hash_all)
         job.step("Asking Modrinth and CurseForge which files they have")
         await _look_up(ctx, items)
+        missing = await _players_companion(ctx, items)
         for_companion = companion.player_files(_server_dir(ctx), items)
         left_out = [i for i in items if leave_out_server_only and i.side == "server"]
         items = [i for i in items if i not in left_out]
         dependencies = await _dependencies(ctx, items, players_loader)
 
-        files, members, own, get_yourself, plugins, own_jars = [], [], [], [], [], []
+        files, members, own, plugins, own_jars = [], [], [], [], []
+        get_yourself = [missing] if missing else []
         for item in items:
             if item.plugin:
                 plugins.append({"name": item.name, "site": "Modrinth" if item.url else item.site})

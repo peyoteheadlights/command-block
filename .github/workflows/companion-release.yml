@@ -137,6 +137,6 @@ jobs:
               -F "data=${data}" -F "jar=@${jar}"
             echo
           }
-          upload fabric '["fabric"]' "$fabric_api"
+          upload fabric '["fabric", "quilt"]' "$fabric_api" # Quilt loads Fabric mods
           upload neoforge '["neoforge"]' '[]'
           upload paper '["paper", "purpur"]' '[]'
