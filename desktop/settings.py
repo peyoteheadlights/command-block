@@ -41,6 +41,7 @@ from .editor import edit_file
 from .gamerules import RulesCard
 from .overview import card
 from .parts import BigNumber, Box, InfoDot, Segmented, SnapSlider, Switch
+from .server_files import FilesCard
 from .ui import Page, duration, field, label, push, refill, swatches
 from .version import crossplay_card, type_card, version_card
 from .words import mode, text
@@ -218,7 +219,7 @@ class SettingsPage(Page):
                     sliders.addLayout(self.slots[slot], 1)
                 column.addLayout(sliders)
             for slot in [key] + {
-                "server": ["manage"],
+                "server": ["manage", "serverfiles"],
                 "game": ["list", "rules", "raw", "files"],
             }.get(key, []):
                 self.slots[slot] = QVBoxLayout()
@@ -229,6 +230,8 @@ class SettingsPage(Page):
         self.column.addStretch()
         self.rules = RulesCard(self)
         self.slots["rules"].addWidget(self.rules)
+        self.server_files = FilesCard(self)
+        self.slots["serverfiles"].addWidget(self.server_files)
 
     def jump(self, key: str) -> None:
         """Shows one of the four sections."""
@@ -266,6 +269,9 @@ class SettingsPage(Page):
             refill(self.slots["manage"], [])
         if self.sections.key() == "game":
             self.rules.load()
+        self.server_files.setVisible(self.may("files.browse"))
+        if self.may("files.browse"):
+            self.server_files.load()
         refill(self.slots["files"], [])
         if self.may("mods.manage"):
             self.ask("GET", "/config-files", self.show_files, lambda e: self.problem("files", e))
@@ -464,12 +470,32 @@ class SettingsPage(Page):
             )
         )
 
+        # Technical: exit codes that mean "stopped", not "crashed".
+        codes = QLineEdit(m.get("ignored_exit_codes") or "")
+        codes.setMaxLength(100)
+        codes.setPlaceholderText("1, 130")
+        codes.setAccessibleName(text("serverset.ignored_codes"))
+        if mode["technical"]:
+            layout.addLayout(
+                grid(
+                    [
+                        field(
+                            text("serverset.ignored_codes"),
+                            codes,
+                            text("serverset.ignored_codes_hint"),
+                        )
+                    ]
+                )
+            )
+
         def collect() -> dict:
             out: dict = {}
             if abs(delay.value() - m["restart_delay"]) > 0.05:
                 out["monitor.restart_delay"] = delay.value()
             if most.value() != m["max_crashes"]:
                 out["monitor.max_crashes"] = most.value()
+            if codes.text().strip() != (m.get("ignored_exit_codes") or ""):
+                out["monitor.ignored_exit_codes"] = codes.text().strip()
             return out
 
         self.save_button(layout, collect)
@@ -912,6 +938,14 @@ class SettingsPage(Page):
             )
         )
         if mode["technical"]:
+            row, low = switch_row(
+                label(text("serverset.low_priority")),
+                text("serverset.low_priority"),
+                text("serverset.low_priority_hint"),
+            )
+            low.setChecked(bool(s.get("low_priority")))
+            layout.addLayout(row)
+            self.applies(low, "server.low_priority", layout)
             folder = label(text("serverset.folder", folder=s.get("directory") or "-"), "address")
             folder.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             layout.addWidget(folder)

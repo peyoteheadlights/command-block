@@ -115,7 +115,7 @@ struct ServerSettingsView: View {
                     colors: settings.palette, current: setup.color ?? settings.color, locked: !canEdit, palette: palette
                 ) { setup.pickColor($0) }
             }
-            ForEach(ServerForm.GROUPS, id: \.titleKey) { group in
+            ForEach(ServerForm.GROUPS.filter { !$0.technical || model.technical }, id: \.titleKey) { group in
                 SectionTitle(text: model.t(group.titleKey), palette: palette)
                 CardBox(palette: palette) {
                     ForEach(group.fields, id: \.key) { field in
@@ -146,6 +146,13 @@ struct ServerSettingsView: View {
                 .disabled(setup.busy != nil)
             }
             SaidRow(said: setup.said, palette: palette)
+            if FolderPicker.allowed(model.me) {
+                SectionTitle(text: model.t("files.title"), palette: palette)
+                CardBox(palette: palette) {
+                    NavigationLink(model.t("files.open")) { FilesView(serverId: serverId) }
+                    Hint(text: model.t("files.hint"), palette: palette)
+                }
+            }
             SectionTitle(text: model.t("serverset.cpu"), palette: palette)
             CardBox(palette: palette) { coresCard(setup, settings.cpu, canEdit, palette) }
             SectionTitle(text: model.t("version.title"), palette: palette)
