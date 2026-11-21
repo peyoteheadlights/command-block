@@ -482,7 +482,8 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(body(3), #"{"required":true}"#)
 
         StubAgent.json(#"{"on": true, "listening": true, "speed_cap_bytes": 1, "max_pack_bytes": 1}"#)
-        XCTAssertNil(try await c.removeResourcePack(serverId: "s").resourcePack)
+        let removed = try await c.removeResourcePack(serverId: "s")
+        XCTAssertNil(removed.resourcePack)
         XCTAssertEqual(method(4), "DELETE")
 
         StubAgent.json(on)
