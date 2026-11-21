@@ -360,3 +360,20 @@ def test_quilt_runs_the_fabric_companion(tmp_path, monkeypatch, sites):
         with_companion(client)
         got = options(client, auth(token_for(client)))
     assert got["required_to_join"]["available"] is True
+
+
+def test_forge_finds_the_forge_companion(tmp_path, monkeypatch, sites):
+    """The Forge jar's own mods.toml (companion/forge/) is read as the Companion."""
+    from pathlib import Path
+
+    from .test_api import auth, token_for
+    from .test_hangar_and_links import app_for
+
+    toml = Path(__file__).parent.parent / "companion/forge/src/main/resources/META-INF/mods.toml"
+    jar = zip_of(
+        {"META-INF/mods.toml": toml.read_text(encoding="utf-8").replace("${version}", "0.1.0")}
+    )
+    with app_for(tmp_path, monkeypatch, "forge") as client:
+        (server_dir(client) / "mods" / "companion.jar").write_bytes(jar)
+        got = options(client, auth(token_for(client)))
+    assert got["required_to_join"]["available"] is True

@@ -34,7 +34,7 @@ from .security.paths import is_inside
 log = logging.getLogger("msc.companion")
 
 FORMAT = 1
-MOD_ID = "commandblock_companion"  # the mod's id in fabric.mod.json / neoforge.mods.toml
+MOD_ID = "commandblock_companion"  # the mod's id in fabric.mod.json / (neoforge.)mods.toml
 PLUGIN_NAME = "CommandBlockCompanion"  # the Paper plugin's name in paper-plugin.yml
 MODS_FILE = "config/commandblock-companion.json"
 PLUGIN_FILE = "plugins/CommandBlockCompanion/config.json"
