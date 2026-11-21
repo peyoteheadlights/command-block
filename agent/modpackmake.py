@@ -504,7 +504,7 @@ async def make(
         target = _folder(ctx) / f"{token}.mrpack"
         job.step("Writing the modpack", total=len(members) or None, unit="files")
         await asyncio.to_thread(_write, target, index, members, job)
-        extra = {
+        extra: dict[str, str | bytes] = {
             f"client-overrides/{companion.PLAYERS_FILE}": companion.players_file(
                 name,
                 version,
