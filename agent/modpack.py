@@ -555,7 +555,7 @@ async def _download_all(
         except DownloadError as exc:
             raise ModpackError(f"{item.name}: {exc}") from exc
         # A CurseForge pack lists no SHA-512, so the known bad list is asked now.
-        bad = item.sha1 and notes.known_bad(await asyncio.to_thread(got.path.read_bytes))
+        bad = notes.known_bad(await asyncio.to_thread(got.path.read_bytes)) if item.sha1 else None
         if bad:
             got.path.unlink(missing_ok=True)
             raise ModpackError(f"{item.name} is on the list of known bad files ({bad['why']}).")
