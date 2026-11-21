@@ -825,6 +825,8 @@ class AgentClient(
             put("leave_out_server_only", make.leaveOutServerOnly)
             put("configs", JsonArray(make.configs.map { JsonPrimitive(it) }))
             put("players_loader", make.playersLoader)
+            put("required", make.required)
+            make.chatLine?.let { put("chat_line", buildJsonObject { put("on", it.on); put("text", it.text) }) }
         }
         return call(post("${server(serverId)}/modpack/make", body), ModpackMade.serializer(), slow = true)
     }

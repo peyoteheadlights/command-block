@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ from .security.paths import is_inside
 log = logging.getLogger("msc.companion")
 
 FORMAT = 1
+MOD_ID = "commandblock-companion"  # the mod's id in fabric.mod.json / neoforge.mods.toml
 MODS_FILE = "config/commandblock-companion.json"
 PLUGIN_FILE = "plugins/CommandBlockCompanion/config.json"
 PLAYERS_FILE = "config/commandblock-companion-client.json"
@@ -42,8 +44,41 @@ CHECK = {
     "spot_checks": 3,  # random byte ranges of random files, fresh each time
     "handshakes_per_ip_per_minute": 6,
 }
-CHAT_LINE = "This server uses the modpack {name} {version}. Get it from the server's owner."
-CHAT_LINE_LINK = "This server uses the modpack {name} {version}. Get it here: {link}"
+# The owner may reword it; {name}, {version} and {link} are filled in.
+CHAT_LINE_DEFAULT = "This server uses the modpack {name} {version}. {get_it}"
+GET_IT = "Get it here: {link}"
+GET_IT_NO_LINK = "Get it from the server's owner."
+CHAT_LINE_MAX = 300
+CHAT_LINE_RE = re.compile(rf"[^\x00-\x1f\x7f]{{1,{CHAT_LINE_MAX}}}")
+PLACEHOLDER_RE = re.compile(r"\{(\w*)\}")
+PLACEHOLDERS = {"name", "version", "link", "get_it"}
+
+
+def chat_line_ok(text: str) -> bool:
+    """One line, not too long, and only our own {placeholders} (never
+    Python's format fields, so nothing else can be read through it)."""
+    if not CHAT_LINE_RE.fullmatch(text or ""):
+        return False
+    rest = PLACEHOLDER_RE.sub(lambda m: "" if m.group(1) in PLACEHOLDERS else "{", text)
+    return "{" not in rest and "}" not in rest
+
+
+def chat_text(template: str, name: str, version: str, link: str | None) -> str:
+    """Fills in the placeholders. Plain replace, never str.format."""
+    words = {
+        "get_it": GET_IT.replace("{link}", link) if link else GET_IT_NO_LINK,
+        "name": name,
+        "version": version,
+        "link": link or "",
+    }
+    # The Java side refuses more than 1024, which a link put in twice could pass.
+    return PLACEHOLDER_RE.sub(lambda m: words[m.group(1)], template)[:1000]
+
+
+def on_server(mods: Any) -> bool:
+    """The Companion is an enabled mod on this server: then the modpack can
+    be "Required to join"."""
+    return any(m.enabled and m.mod_id == MOD_ID for m in mods.scan())
 
 
 def players_file(name: str, version: str) -> str:
@@ -58,6 +93,8 @@ def write(
     version: str,
     files: list[dict[str, Any]],
     link: str | None,
+    required: bool = False,
+    chat_line: dict[str, Any] | None = None,
 ) -> Path | None:
     """Write (or replace) the server's settings. Returns where, or None
     when this server can't run the Companion or the list is too long."""
@@ -73,14 +110,15 @@ def write(
         log.warning("Not writing %s: %d mod files, more than %d", relative, len(files), MAX_FILES)
         target.unlink(missing_ok=True)
         return None
-    text = (CHAT_LINE_LINK if link else CHAT_LINE).format(name=name, version=version, link=link)
+    chat_line = chat_line or {"on": True, "text": CHAT_LINE_DEFAULT}
+    text = chat_text(chat_line["text"], name, version, link)
     data = {
         "format": FORMAT,
-        "required": False,  # the "Required to join" box turns on with the join check
+        "required": required,
         "modpack": {"name": name, "version": version},
         "files": files,
         "download_link": link,
-        "chat_line": {"on": True, "text": text},
+        "chat_line": {"on": bool(chat_line["on"]), "text": text},
         "check": CHECK,
     }
     target.parent.mkdir(parents=True, exist_ok=True)

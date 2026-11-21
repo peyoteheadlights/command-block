@@ -1541,16 +1541,20 @@ public struct ModpackMakeOptions: Decodable, Equatable, Sendable {
     public var configs: [ModpackConfigFile]
     public var playersLoaders: [PlayersLoader]
     public var discord: Bool
-    /// False until the join check (the Companion mod) exists: the box is greyed.
+    /// The Companion mod is on the server: "Required to join" can be ticked.
     public var requiredToJoin: Bool
+    /// It was ticked last time.
+    public var requiredOn: Bool
+    public var chatLine: ChatLine
 
     enum CodingKeys: String, CodingKey {
         case name, version, configs, discord
         case playersLoaders = "players_loaders"
         case requiredToJoin = "required_to_join"
+        case chatLine = "chat_line"
     }
 
-    private struct Required: Decodable { var available: Bool? }
+    private struct Required: Decodable { var available: Bool?; var on: Bool? }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1559,7 +1563,21 @@ public struct ModpackMakeOptions: Decodable, Equatable, Sendable {
         configs = c.each(.configs)
         playersLoaders = c.each(.playersLoaders)
         discord = c.value(.discord, false)
-        requiredToJoin = (c.maybe(.requiredToJoin) as Required?)?.available ?? false
+        let required: Required? = c.maybe(.requiredToJoin)
+        requiredToJoin = required?.available ?? false
+        requiredOn = required?.on ?? false
+        chatLine = c.maybe(.chatLine) ?? ChatLine()
+    }
+}
+
+/// The line players without the modpack see; {name}, {version}, {link} and {get_it} are filled in.
+public struct ChatLine: Codable, Equatable, Sendable {
+    public var on: Bool
+    public var text: String
+
+    public init(on: Bool = true, text: String = "") {
+        self.on = on
+        self.text = text
     }
 }
 
@@ -1570,19 +1588,28 @@ public struct MakeModpack: Encodable, Equatable, Sendable {
     public var leaveOutServerOnly: Bool
     public var configs: [String]
     public var playersLoader: String
+    public var required: Bool
+    /// nil: the agent's own wording.
+    public var chatLine: ChatLine?
 
     enum CodingKeys: String, CodingKey {
-        case name, version, configs
+        case name, version, configs, required
         case leaveOutServerOnly = "leave_out_server_only"
         case playersLoader = "players_loader"
+        case chatLine = "chat_line"
     }
 
-    public init(name: String, version: String, leaveOutServerOnly: Bool = true, configs: [String] = [], playersLoader: String = "fabric") {
+    public init(
+        name: String, version: String, leaveOutServerOnly: Bool = true, configs: [String] = [],
+        playersLoader: String = "fabric", required: Bool = false, chatLine: ChatLine? = nil
+    ) {
         self.name = name
         self.version = version
         self.leaveOutServerOnly = leaveOutServerOnly
         self.configs = configs
         self.playersLoader = playersLoader
+        self.required = required
+        self.chatLine = chatLine
     }
 }
 

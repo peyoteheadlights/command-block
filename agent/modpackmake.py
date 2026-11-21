@@ -183,8 +183,12 @@ def options(ctx: ServerContext) -> dict[str, Any]:
         else [{"id": k, "name": v} for k, v in PLAYERS_LOADERS.items()],
         "discord": bool(_chat_channels(ctx)),
         "discord_limit_bytes": DISCORD_LIMIT,
-        # Stored and served once the join check (the Companion) exists.
-        "required_to_join": {"available": False},
+        # Needs the Companion mod on the server, which does the join check.
+        "required_to_join": {
+            "available": companion.on_server(ctx.mods),
+            "on": bool(last.get("required")),
+        },
+        "chat_line": last.get("chat_line") or {"on": True, "text": companion.CHAT_LINE_DEFAULT},
         "made": made(ctx),
     }
 
@@ -201,6 +205,8 @@ def _items(ctx: ServerContext) -> list[Item]:
                 continue
             plugin = mods.server_type.content == "plugins" or mod.loader in sides.PLUGIN_LOADERS
             side = "server" if plugin else sides.mark(mods, mod, from_pack, marks)[0]
+            if mod.mod_id == companion.MOD_ID:
+                side = "both"  # players need it too, or the join check can't ask them
             source = mods.source_of(mod)
             items.append(
                 Item(
@@ -381,6 +387,8 @@ async def make(
     configs: list[str] | None = None,
     players_loader: str = "fabric",
     user: str = "system",
+    required: bool = False,
+    chat_line: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Make the modpack, as a job. On the server it only writes the
     Companion's settings (agent/companion.py)."""
@@ -392,6 +400,17 @@ async def make(
         )
     if not VERSION_RE.match(version or ""):
         raise ModpackError("A version is up to 32 letters, numbers, dots or dashes, like 1.2.")
+    chat_line = chat_line or {"on": True, "text": companion.CHAT_LINE_DEFAULT}
+    if not companion.chat_line_ok(chat_line.get("text") or ""):
+        raise ModpackError(
+            f"The chat line is one line of up to {companion.CHAT_LINE_MAX} characters. It can "
+            "use {name}, {version}, {link} and {get_it}, and no other { }."
+        )
+    if required and not await asyncio.to_thread(companion.on_server, ctx.mods):
+        raise ModpackError(
+            "Required to join needs the Command Block Companion mod on this server. Add it "
+            "on the Mods page, then make the modpack again."
+        )
     offered = {c["path"] for c in config_files(ctx)}
     picked = list(dict.fromkeys(configs or []))
     unknown = [c for c in picked if c not in offered]
@@ -478,7 +497,15 @@ async def make(
         await asyncio.to_thread(_add_files, target, extra)
         link = _link_on(ctx)
         await asyncio.to_thread(
-            companion.write, base, server_type.content, name, version, for_companion, link
+            companion.write,
+            base,
+            server_type.content,
+            name,
+            version,
+            for_companion,
+            link,
+            required,
+            chat_line,
         )
         return {
             "token": token,
@@ -505,6 +532,8 @@ async def make(
         "trust_note": bool(result["own_files"]),
         "get_yourself": [n["name"] for n in result["get_yourself"]],
         "own_jars": result["own_jars"],
+        "required": required,
+        "chat_line": {"on": bool(chat_line["on"]), "text": chat_line["text"]},
     }
     ctx.db.set_setting(MADE, saved)
     for old in _folder(ctx).glob("*.mrpack"):  # only the newest is kept

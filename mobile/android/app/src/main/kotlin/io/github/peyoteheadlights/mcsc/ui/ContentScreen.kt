@@ -43,6 +43,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.Addon
 import io.github.peyoteheadlights.mcsc.core.Changes
+import io.github.peyoteheadlights.mcsc.core.ChatLine
 import io.github.peyoteheadlights.mcsc.core.Content
 import io.github.peyoteheadlights.mcsc.core.ContentKind
 import io.github.peyoteheadlights.mcsc.core.Display
@@ -1022,11 +1023,19 @@ private fun MakeModpackDialog(vm: AppViewModel, content: ContentPages, options: 
     var leaveOut by remember(options) { mutableStateOf(true) }
     var loader by remember(options) { mutableStateOf(options.playersLoaders.firstOrNull()?.id ?: "fabric") }
     var configs by remember(options) { mutableStateOf(setOf<String>()) }
+    val companion = options.requiredToJoin.available
+    var required by remember(options) { mutableStateOf(companion && options.requiredToJoin.on) }
+    var chatOn by remember(options) { mutableStateOf(options.chatLine.on) }
+    var chatText by remember(options) { mutableStateOf(options.chatLine.text) }
     Question(
         strings.t("make.title"),
         confirm = strings.t("make.title"),
         enabled = name.isNotBlank() && version.isNotBlank(),
-        onConfirm = { content.makeModpack(MakeModpack(name.trim(), version.trim(), leaveOut, configs.toList(), loader), strings) },
+        onConfirm = {
+            // Left empty: the agent's own wording.
+            val chat = chatText.trim().takeIf { companion && it.isNotEmpty() }?.let { ChatLine(chatOn, it) }
+            content.makeModpack(MakeModpack(name.trim(), version.trim(), leaveOut, configs.toList(), loader, required, chat), strings)
+        },
         onDismiss = content::cancelMakeModpack,
     ) {
         OutlinedTextField(value = name, onValueChange = { name = it.take(64) }, label = { Text(t("make.name")) }, singleLine = true)
@@ -1046,11 +1055,19 @@ private fun MakeModpackDialog(vm: AppViewModel, content: ContentPages, options: 
         }
         Text(t("make.leave_out_hint"))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // Greyed until the join check (the Companion mod) exists.
-            Checkbox(checked = false, onCheckedChange = null, enabled = options.requiredToJoin.available)
+            // Needs the Companion mod on the server, which does the join check.
+            Checkbox(checked = required, onCheckedChange = { required = it }, enabled = companion)
             Text(t("make.required"))
         }
-        if (!options.requiredToJoin.available) Text(t("make.required_later"))
+        Text(t(if (companion) "make.required_hint" else "make.required_later"))
+        if (companion) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = chatOn, onCheckedChange = { chatOn = it }, enabled = !required)
+                Text(t("make.chat_line"))
+            }
+            OutlinedTextField(value = chatText, onValueChange = { chatText = it.replace("\n", " ").take(300) }, enabled = !required, singleLine = true)
+            Text(t("make.chat_line_hint"))
+        }
         Text(t(if (options.configs.isEmpty()) "make.no_configs" else "make.configs"), modifier = Modifier.padding(top = 6.dp))
         for (config in options.configs) {
             Row(verticalAlignment = Alignment.CenterVertically) {
