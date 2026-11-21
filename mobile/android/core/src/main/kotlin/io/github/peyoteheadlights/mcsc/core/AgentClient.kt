@@ -465,14 +465,15 @@ class AgentClient(
         ServerAdded.serializer(),
     )
 
-    /** Makes a new server from a pack already read by [inspectModpack]. */
-    suspend fun modpackServer(token: String, name: String, directory: String, memoryMb: Int?, color: String?, eulaAccepted: Boolean): ServerCreated = call(
+    /** Makes a new server from a pack already read by [inspectModpack]. [ownJars]: its own jars were shown and said yes to. */
+    suspend fun modpackServer(token: String, name: String, directory: String, memoryMb: Int?, color: String?, eulaAccepted: Boolean, ownJars: Boolean = false): ServerCreated = call(
         post("/api/modpacks/${path(token)}/new-server", buildJsonObject {
             put("name", name)
             put("directory", directory)
             memoryMb?.let { put("memory_mb", it) }
             color?.let { put("color", it) }
             put("eula_accepted", eulaAccepted)
+            put("own_jars", ownJars)
         }),
         ServerCreated.serializer(),
         slow = true,
@@ -781,10 +782,12 @@ class AgentClient(
     suspend fun forgetModpack(token: String): Ok =
         call(request("/api/modpacks/${path(token)}").delete().build(), Ok.serializer())
 
-    suspend fun importModpack(serverId: String, token: String): ModpackImported {
+    /** [ownJars]: the pack's own jars were shown and said yes to. */
+    suspend fun importModpack(serverId: String, token: String, ownJars: Boolean = false): ModpackImported {
         val body = buildJsonObject {
             put("token", token)
             put("confirm", true)
+            put("own_jars", ownJars)
         }
         return call(post("${server(serverId)}/modpack", body), ModpackImported.serializer(), slow = true)
     }
@@ -796,11 +799,12 @@ class AgentClient(
     }
 
     /** Modpack update: one backup, all or nothing, one Undo. */
-    suspend fun updateModpack(serverId: String, token: String, usePackConfigs: Boolean): ModpackUpdated {
+    suspend fun updateModpack(serverId: String, token: String, usePackConfigs: Boolean, ownJars: Boolean = false): ModpackUpdated {
         val body = buildJsonObject {
             put("token", token)
             put("use_pack_configs", usePackConfigs)
             put("confirm", true)
+            put("own_jars", ownJars)
         }
         return call(post("${server(serverId)}/modpack/update", body), ModpackUpdated.serializer(), slow = true)
     }

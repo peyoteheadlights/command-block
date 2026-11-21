@@ -586,7 +586,7 @@ class SetupTest {
             c.modpackServer("abc", "Pack", "D:/Pack", null, null, eulaAccepted = true)
             val made = agent.server.takeRequest()
             assertEquals("/api/modpacks/abc/new-server", made.path)
-            assertEquals("""{"name":"Pack","directory":"D:/Pack","eula_accepted":true}""", made.body.readUtf8())
+            assertEquals("""{"name":"Pack","directory":"D:/Pack","eula_accepted":true,"own_jars":false}""", made.body.readUtf8())
             // Leaving without making the server: the pack read is thrown away.
             agent.server.enqueue(agent.json("""{"ok": true}"""))
             c.forgetModpack("abc")

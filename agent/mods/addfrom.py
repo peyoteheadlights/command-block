@@ -8,8 +8,9 @@ Modrinth and Hangar first, and on CurseForge by its fingerprint (a jar
 dropped for a mod under "Needs you" is matched that way, never by its
 name); one a site lists is treated as theirs, its updates included. Anything else stays "file" (or "github" with its repo and
 tag): shown as "Not checked by Modrinth", and only a GitHub one gets updates.
-A jar no site lists is only added after the person confirms a warning: the
-app can't tell what it is, and it never says a file was scanned.
+A jar no site lists (an own jar) needs the "Add own .jar" permission, and is
+only added after the person confirms a warning: the app can't tell what it
+is, and it never says a file was scanned.
 
 Links are read only for GitHub releases. Every other link (Planet Minecraft,
 SpigotMC, a creator's own page) gets "Download it in your browser and drop
@@ -26,9 +27,10 @@ import hashlib
 from typing import TYPE_CHECKING, Any
 
 from ..safechange import SafeChange, run_safe_change
+from ..security.auth import AuthError
 from . import github
 from .curseforge import MALWARE, fingerprint
-from .manager import ModError, is_datapack
+from .manager import OWN_JAR_NEEDED, ModError, is_datapack
 from .sources import SourceError
 from .updateall import folder_in_server
 
@@ -78,9 +80,12 @@ async def add_file(
     source: str = "file",
     version: dict[str, Any] | None = None,
     confirm: bool = False,
+    *,
+    own_jar: bool,
 ) -> dict[str, Any]:
     """Add one file as a change of its own (backup first, one Undo). A jar
-    no site lists needs ``confirm`` (the warning was shown)."""
+    no site lists needs ``own_jar`` (the account holds "Add own .jar") and
+    ``confirm`` (the warning was shown)."""
     mods = ctx.mods
     ctx.require_free()
     mods.require_server_offline(f"add a {mods.word}")
@@ -89,6 +94,8 @@ async def add_file(
         found = await known_source(mods, data)
         if found:
             source, version = found
+        elif not own_jar:
+            raise AuthError(OWN_JAR_NEEDED, status=403)
         elif not confirm:
             # Read and checked like any add (wrong kind, known bad, already
             # there), then stopped before anything is written: it asks first.
@@ -147,11 +154,11 @@ async def read_link(mods: ModManager, url: str) -> dict[str, Any]:
 
 
 async def add_from_link(
-    ctx: ServerContext, version_id: str, user: str, confirm: bool = False
+    ctx: ServerContext, version_id: str, user: str, confirm: bool = False, *, own_jar: bool
 ) -> dict[str, Any]:
     """Download the GitHub release file the owner picked, then add it."""
     ctx.require_free()
     ctx.mods.require_server_offline(f"add a {ctx.mods.word}")
     version = await ctx.mods.github.version(version_id)
     data, filename, _ = await ctx.mods.github.download(version)
-    return await add_file(ctx, filename, data, user, "github", version, confirm)
+    return await add_file(ctx, filename, data, user, "github", version, confirm, own_jar=own_jar)

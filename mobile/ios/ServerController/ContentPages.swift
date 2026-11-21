@@ -381,7 +381,8 @@ final class ContentPages {
         modpack = nil
         task = nil
         await work("modpack", strings, reload: loadMods) { client, id in
-            let done = try await client.importModpack(serverId: id, token: read.token)
+            // Its own jars were listed in the question just answered.
+            let done = try await client.importModpack(serverId: id, token: read.token, ownJars: !read.pack.ownJars.isEmpty)
             return Said(text: strings.t("mobile.content.modpack_done", ["name": done.name.isEmpty ? read.pack.name : done.name]), good: true)
         }
     }
@@ -449,7 +450,9 @@ final class ContentPages {
         sheet = nil
         packUpdate = nil
         await work("modpack", strings, reload: loadMods) { client, id in
-            try await client.updateModpack(serverId: id, token: read.token, usePackConfigs: usePackConfigs)
+            try await client.updateModpack(
+                serverId: id, token: read.token, usePackConfigs: usePackConfigs, ownJars: !read.changes.newOwnJars.isEmpty
+            )
             return Said(text: strings.t("linked.updated", ["name": read.pack.name, "version": read.changes.toVersion]), good: true)
         }
     }

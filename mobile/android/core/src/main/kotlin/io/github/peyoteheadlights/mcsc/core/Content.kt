@@ -312,6 +312,7 @@ object LinkedPacks {
         "linked.removed" to changes.removed,
         "linked.kept" to changes.addedByYou,
         "linked.configs" to changes.configsChangedByYou,
+        "pack.own_jars" to changes.newOwnJars,
     ).filter { it.second.isNotEmpty() }.map { (key, names) -> strings.t(key, "names" to names.joinToString(", ")) }
 
     fun steps(strings: Strings, preview: ModpackUpdatePreview): List<String> = listOfNotNull(
@@ -345,6 +346,13 @@ object Modpacks {
             strings.t("pack.step_files", "count" to pack.downloadCount),
         )
     }
+
+    /** What another owner's pack asks of you: plugins to get by hand, and its own
+     *  jars no site checked. Shown in the question; saying yes to it sends own_jars. */
+    fun notes(strings: Strings, pack: Modpack): List<String> = listOf(
+        "pack.plugins_to_get" to pack.pluginsToGet,
+        "pack.own_jars" to pack.ownJars,
+    ).filter { it.second.isNotEmpty() }.map { (key, names) -> strings.t(key, "names" to names.joinToString(", ")) }
 
     /** Where a found modpack is read from. */
     fun site(hit: ModrinthHit): String = if (hit.source == "curseforge") "curseforge" else "modrinth"

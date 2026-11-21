@@ -313,7 +313,7 @@ class AddServerPages(
         said = null
         scope.launch {
             try {
-                val made = c.modpackServer(read.token, name.trim(), folder, memoryMb, color, eulaAccepted = ruled)
+                val made = c.modpackServer(read.token, name.trim(), folder, memoryMb, color, eulaAccepted = ruled, ownJars = read.pack.ownJars.isNotEmpty())
                 pack = null
                 done(strings, made.serverId, made.name)
             } catch (e: AgentException) {

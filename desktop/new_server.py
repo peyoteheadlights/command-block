@@ -955,6 +955,8 @@ class NewServerScreen(QScrollArea):
                 "name": name.text().strip(),
                 "directory": folder_box.text().strip(),
                 "eula_accepted": True,
+                # Its own jars are listed above the Create button.
+                "own_jars": bool(pack.get("own_jars")),
             }
             window.run(
                 lambda: window.agent.call("POST", f"/modpacks/{token}/new-server", body, slow=True),

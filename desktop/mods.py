@@ -116,6 +116,10 @@ def pack_lines(pack: dict) -> list[str]:
         lines.append(text("desktop.pack.needs_you", names=names(pack["needs_you"], "name")))
     if pack.get("skipped_overrides"):
         lines.append(text("pack.skipped_extras", names=", ".join(pack["skipped_overrides"])))
+    if pack.get("plugins_to_get"):
+        lines.append(text("pack.plugins_to_get", names=", ".join(pack["plugins_to_get"])))
+    if pack.get("own_jars"):
+        lines.append(text("pack.own_jars", names=", ".join(pack["own_jars"])))
     if not pack.get("can_import"):
         return [text("pack.cant_import"), *pack.get("problems", []), *refused]
     return lines + refused
@@ -1080,6 +1084,7 @@ class ModsPage(Page):
             ("linked.removed", changes.get("removed")),
             ("linked.kept", changes.get("added_by_you")),
             ("linked.configs", changes.get("configs_changed_by_you")),
+            ("pack.own_jars", changes.get("new_own_jars")),
         ):
             if items:
                 lines.append(text(key, names=", ".join(items)))
@@ -1128,7 +1133,13 @@ class ModsPage(Page):
             "/modpack/update",
             done,
             failed,
-            body={"token": token, "use_pack_configs": use_pack_configs, "confirm": True},
+            body={
+                "token": token,
+                "use_pack_configs": use_pack_configs,
+                "confirm": True,
+                # The list was in the question just answered.
+                "own_jars": bool(changes.get("new_own_jars")),
+            },
             always=self.after_change,
             slow=True,
         )
@@ -1831,9 +1842,9 @@ class ModsPage(Page):
             self.said(exc)
             forget()
 
-        self.ask(
-            "POST", "/modpack", done, failed, body={"token": token, "confirm": True}, slow=True
-        )
+        # The own jars were listed in the question just answered.
+        payload = {"token": token, "confirm": True, "own_jars": bool(pack.get("own_jars"))}
+        self.ask("POST", "/modpack", done, failed, body=payload, slow=True)
 
 
 class AddonsPage(Page):
