@@ -18,8 +18,8 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
-import java.util.WeakHashMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.chat.Component;
@@ -55,8 +55,12 @@ public final class Companion {
 
     /** null: no settings, so the Companion does nothing on this server. */
     static ServerSide side;
-    /** Players being checked while they join. Weak: a player who leaves mid-check is dropped. */
-    static final Map<ServerConfigurationPacketListenerImpl, JoinCheck> joining = new WeakHashMap<>();
+    /**
+     * Players being checked while they join. Not a WeakHashMap: each JoinCheck holds its
+     * handler, so a weak key would never be freed. Players who leave mid-check are dropped
+     * once a second instead.
+     */
+    static final Map<ServerConfigurationPacketListenerImpl, JoinCheck> joining = new ConcurrentHashMap<>();
     private static Map<String, Path> loadedJars;
 
     public Companion(IEventBus modBus) {
@@ -85,6 +89,7 @@ public final class Companion {
             MinecraftServer server = event.getServer();
             if (side != null && server.getTickCount() % 20 == 0) { // once a second is enough
                 side.tick(server.getPlayerList().getPlayers().stream().map(Companion::online).toList());
+                joining.keySet().removeIf(handler -> !handler.getConnection().isConnected()); // left mid-check
             }
         });
     }
