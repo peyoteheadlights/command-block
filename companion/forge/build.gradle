@@ -1,0 +1,53 @@
+// The Forge mod: one jar for players and servers, like the NeoForge one.
+// Forge and NeoForge split in 2023 and their networking is different now,
+// so this is its own small module.
+plugins {
+    id 'net.minecraftforge.gradle' version "${forgegradle_version}"
+}
+
+base { archivesName = 'commandblock-companion-forge' }
+
+minecraft {
+    accessTransformer = true // reads src/main/resources/META-INF/accesstransformer.cfg
+    // A real join (no download): gradlew :forge:runServer in one window,
+    // then gradlew :forge:runClient in another. The game joins by itself.
+    runs {
+        register('server') {
+            workingDir = layout.projectDirectory.dir('run/server')
+            args '--nogui'
+        }
+        register('client') {
+            workingDir = layout.projectDirectory.dir('run/client')
+            args '--quickPlayMultiplayer', 'localhost:25599'
+        }
+    }
+}
+
+repositories {
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+}
+
+// The check and the update screen are compiled straight into this jar, so
+// Forge's dev runs never have to load them as a separate library.
+sourceSets.main.java.srcDir '../common/src/main/java'
+sourceSets.main.java.srcDir '../client-screens/src/main/java'
+
+dependencies {
+    implementation minecraft.dependency("net.minecraftforge:forge:${project.minecraft_version}-${project.forge_version}")
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25 // Minecraft 26.x needs Java 25
+}
+
+processResources {
+    def version = project.version
+    inputs.property 'version', version
+    filesMatching('META-INF/mods.toml') { expand 'version': version }
+}
+
+jar {
+    from(rootProject.file('../LICENSE')) { rename { "LICENSE_command-block-companion" } }
+}

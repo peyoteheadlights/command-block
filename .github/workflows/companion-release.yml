@@ -1,7 +1,7 @@
 name: Companion release
 
-# Pushing a tag like companion-v0.1.0 builds the Companion's four jars
-# (Fabric, NeoForge, Paper, and the WaterdogPE plugin the agent downloads for
+# Pushing a tag like companion-v0.1.0 builds the Companion's five jars
+# (Fabric, Forge, NeoForge, Paper, and the WaterdogPE plugin the agent downloads for
 # plain Bedrock servers behind playit.gg) once, writes a SHA-256 for each, records where
 # they were built (GitHub artifact attestations, SLSA build provenance), and
 # publishes those same files on GitHub and on Modrinth. docs/releases.md
@@ -50,13 +50,13 @@ jobs:
         run: |
           mkdir -p ../dist
           grep '^minecraft_version=' gradle.properties | cut -d= -f2 > ../dist/game-version.txt
-          for loader in fabric neoforge paper waterdog; do
+          for loader in fabric forge neoforge paper waterdog; do
             cp "${loader}/build/libs/commandblock-companion-${loader}-${VERSION}.jar" ../dist/
           done
           cd ../dist
           for jar in *.jar; do sha256sum "$jar" > "$jar.sha256"; done
           {
-            echo "Command Block Companion ${VERSION}: one jar for Fabric, one for NeoForge, one plugin for Paper, one plugin for WaterdogPE (Bedrock's allow list behind playit.gg)."
+            echo "Command Block Companion ${VERSION}: one jar for Fabric, one for Forge, one for NeoForge, one plugin for Paper, one plugin for WaterdogPE (Bedrock's allow list behind playit.gg)."
             echo
             echo "SHA-256:"
             echo '```'
@@ -138,5 +138,6 @@ jobs:
             echo
           }
           upload fabric '["fabric", "quilt"]' "$fabric_api" # Quilt loads Fabric mods
+          upload forge '["forge"]' '[]'
           upload neoforge '["neoforge"]' '[]'
           upload paper '["paper", "purpur"]' '[]'
