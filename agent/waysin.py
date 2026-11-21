@@ -30,6 +30,7 @@ from urllib.parse import quote
 
 from . import downloads, joininfo, tailscale
 from .monitoring import answering
+from .ports import udp_ports
 
 if TYPE_CHECKING:
     from .core import ServerContext
@@ -134,9 +135,15 @@ async def check(out: Run, job: JobHandle) -> None:
     group = PLAYIT if is_playit(typed) else INTERNET
     first = game[0]
     worked = await _mcsrvstat(out, job, group, typed, first)
-    if worked is False and group == INTERNET and home_ok and first.protocol == "tcp":
+    if worked is False and group == INTERNET and home_ok:
+        if first.protocol == "tcp":
+            what = f"TCP port {first.port}"
+        else:
+            # A Bedrock server: TCP for NetherNet's join page, UDP for playing.
+            udp = udp_ports(out.ctx.config.server_dir) or str(first.port)
+            what = f"TCP port {first.port} and UDP port {udp}"
         out.result["steps"].append(
-            f"On your router, forward TCP port {first.port} to {home}. Command Block "
+            f"On your router, forward {what} to {home}. Command Block "
             "can't open router ports yet. Your router's page or manual says how."
         )
 
