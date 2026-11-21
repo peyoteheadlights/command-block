@@ -14,6 +14,7 @@ the agent; nothing here stops it without a click."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -632,7 +633,7 @@ class ModsPage(Page):
                 # Players moves the jar out of the mods folder: the server must be
                 # stopped. Offered even when it's marked Players: it's still in mods.
                 if side == "players" and self.can_change or side not in (mod["side"], "players"):
-                    actions.append((f"sides.mark_{side}", lambda s=side: self.mark(mod, s)))
+                    actions.append((f"sides.mark_{side}", partial(self.mark, mod, side)))
         for key, do in actions:
             menu.addAction(text(key)).triggered.connect(lambda _=False, d=do: d())
         more.setMenu(menu)
