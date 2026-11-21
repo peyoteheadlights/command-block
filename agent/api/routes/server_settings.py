@@ -39,6 +39,7 @@ SERVER_SETTABLE = (
     "backups.include",
     "backups.stop_server_for_backup",
     "backups.on_stop",
+    "backups.exclude",
     "mods.backup_before_install",
     "mods.update_check_hours",
 )
@@ -127,6 +128,16 @@ async def update_server_settings(
             try:
                 value = check_build_folder(ctx, str(value or ""))
             except PathSafetyError as exc:
+                rejected[key] = str(exc)
+                continue
+        if key == "backups.exclude":
+            from ...backups.manager import BackupError, check_excludes
+            from ...minecraft.properties import world_folders
+
+            base = ctx.config.server_dir
+            try:
+                value = check_excludes(value, base, world_folders(base, ctx.config.server_type))
+            except BackupError as exc:
                 rejected[key] = str(exc)
                 continue
         if key == "server.cpu_cores":

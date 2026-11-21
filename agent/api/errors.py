@@ -22,6 +22,7 @@ from ..backups.hold import HoldError
 from ..backups.manager import BackupError
 from ..bringin import BringInError
 from ..changes import ChangeError
+from ..cleanup import CleanupError
 from ..config import ConfigError
 from ..configfiles import ConfigFileError, FileChanged
 from ..core import UnknownServer
@@ -87,6 +88,7 @@ ERROR_STATUS: dict[type[Exception], int] = {
     ChangeError: 409,  # nothing to undo or redo now
     WorldImportError: 400,
     SeasonError: 400,
+    CleanupError: 400,
     MemoryLimitError: 400,
     TransferError: 400,
     AddonError: 400,

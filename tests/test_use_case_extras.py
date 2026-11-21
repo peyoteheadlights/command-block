@@ -150,7 +150,7 @@ async def test_an_old_season_opens_again_through_duplicate(core, tmp_path):
         name="Season one",
         directory=str(tmp_path / "s1"),
         world="fresh",
-        season_backup=result["safety_backup"]["id"],
+        from_backup=result["safety_backup"]["id"],
     )
     done = await finish(core, job)
     assert done.state == SUCCEEDED, done.message

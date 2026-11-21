@@ -38,6 +38,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .backups.manager import single_files
 from .config import PROJECT_ROOT
 from .events import Event
 from .jobs import Job
@@ -175,8 +176,9 @@ def _prepare_properties(target: Path, port: int, name: str, world: str) -> None:
 
 
 def _put_season(path: Path, target: Path) -> None:
-    """An old season's backup over the fresh copy: each folder or file the
-    backup holds (world, settings, add-ons) replaces the copy's own."""
+    """A backup (an old season's, or any one restored as a new server) over
+    the fresh copy: each folder or file the backup holds (world, settings,
+    add-ons) replaces the copy's own."""
     with zipfile.ZipFile(path) as zf:
         infos = zf.infolist()
         for info in infos:
@@ -250,19 +252,23 @@ async def start_duplicate(
     world: str,
     user: str = "system",
     test: bool = False,
-    season_backup: int | None = None,
+    from_backup: int | None = None,
 ) -> Job:
     """Check the request, then copy in the background as a job. With
-    ``season_backup`` the copy opens that old season: the backup's world,
-    settings and add-ons replace the copy's."""
+    ``from_backup`` the copy is that backup as a new server ("Restore as a
+    new server", or an old season opening again): the backup's world,
+    settings and add-ons replace the copy's, and the live server is left
+    as it is."""
     name, folder = check_request(core, ctx, name, directory, world)
     season: Path | None = None
-    if season_backup is not None:
-        row = ctx.backups.get(season_backup)
-        if row["kind"] != "season" or row["status"] != "ok":
-            raise DuplicateError("That backup isn't a season backup this app can open.")
-        if not ctx.backups.verify(season_backup)["ok"]:
-            raise DuplicateError("That season's backup didn't pass its check, so it wasn't used.")
+    if from_backup is not None:
+        row = ctx.backups.get(from_backup)
+        if row["status"] != "ok":
+            raise DuplicateError("Only a checked backup can become a new server.")
+        if single_files(row) is not None:
+            raise DuplicateError("That backup holds single files, not a whole server.")
+        if not ctx.backups.verify(from_backup)["ok"]:
+            raise DuplicateError("That backup didn't pass its check, so it wasn't used.")
         season, world = Path(row["path"]), "fresh"
     port = core.ports.suggest()
     if port is None:

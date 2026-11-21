@@ -357,6 +357,53 @@ class WorldTest {
     }
 
     @Test
+    fun `backups and disk - keep, restore as a new server and the clean-up`() = runBlocking {
+        val scheduled = Backup(id = 3, kind = "scheduled", status = "ok", includes = "world,config", createdAt = 1_763_510_400.0)
+        assertTrue(Backups.canKeep(scheduled, canDelete = true))
+        assertFalse(Backups.canKeep(scheduled.copy(kind = "manual"), canDelete = true))
+        assertFalse(Backups.canKeep(scheduled, canDelete = false))
+        assertTrue(Backups.canOpenAsServer(scheduled, canManage = true))
+        assertFalse(Backups.canOpenAsServer(scheduled.copy(includes = "config/a.yml"), canManage = true))
+        assertFalse(Backups.canOpenAsServer(scheduled.copy(status = "unverified"), canManage = true))
+        assertEquals("Survival from 2025-11-19", Backups.copyName(strings, "Survival", scheduled, utc))
+        assertEquals("C:\\Servers\\Survival from 2025-11-19", Backups.besideFolder("C:\\Servers\\Survival copy", "Survival from 2025-11-19"))
+        assertEquals("/srv/b", Backups.besideFolder("/srv/a", "b"))
+
+        val log = CleanupItem("logs/a.log.gz", "old_log", 2048)
+        assertEquals("Old log · 2.0 KB", Backups.cleanupLine(strings, log, technical = false))
+        assertEquals("Old log · logs/a.log.gz · 2.0 KB", Backups.cleanupLine(strings, log, technical = true))
+        assertTrue(Backups.ticked(log))
+        assertFalse(Backups.ticked(CleanupItem("world/dimensions/x", "unused_dimension")))
+        val size = BackupSize(excluded = listOf(SizedFolder("a/b")))
+        assertEquals(listOf("a/b", "c/d"), Backups.excludes(size, add = " c/d "))
+        assertEquals(emptyList<String>(), Backups.excludes(size, remove = "a/b"))
+
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"ok": true, "id": 3, "name": "s.zip", "kept": true}"""))
+            assertTrue(c.keepBackup("survival", 3, keep = true).kept)
+            val kept = agent.server.takeRequest()
+            assertEquals("/api/servers/survival/backups/3/keep", kept.path)
+            assertEquals("""{"keep":true}""", kept.body.readUtf8())
+
+            agent.server.enqueue(agent.json("""{"items": [{"path": "logs/a.log.gz", "kind": "old_log", "size_bytes": 5}], "total_bytes": 5, "dimensions_checked": false, "free_bytes": 9, "bin": []}"""))
+            val found = c.cleanup("survival")
+            assertEquals("old_log", found.items.single().kind)
+            assertFalse(found.dimensionsChecked)
+            agent.server.takeRequest()
+
+            agent.server.enqueue(agent.json("""{"ok": true, "batch": "20261119-120000", "moved": ["logs/a.log.gz"], "skipped": [], "size_bytes": 5, "bin_days": 7}"""))
+            assertEquals("20261119-120000", c.cleanUp("survival", listOf("logs/a.log.gz")).batch)
+            assertEquals("""{"paths":["logs/a.log.gz"]}""", agent.server.takeRequest().body.readUtf8())
+
+            agent.server.enqueue(agent.json("""{"job": {"id": "j1", "kind": "duplicate", "state": "running"}}"""))
+            c.duplicate("survival", "Survival from 2025-11-19", "C:/s2", "fresh", fromBackup = 3)
+            val sent = agent.server.takeRequest().body.readUtf8()
+            assertTrue(sent, sent.contains("\"from_backup\":3"))
+        }
+    }
+
+    @Test
     fun `the change lists are read and Undo and Redo sent to the server's own routes`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)

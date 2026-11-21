@@ -5,7 +5,7 @@ made and checked, the world folders go, and server.properties gets the new
 seed ("" lets Minecraft pick one). The backup is then marked ``season``,
 which the clean-up never deletes, and it is this change's Undo. An old
 season opens again as its own server through Duplicate (agent/duplicate.py,
-``season_backup``).
+``from_backup``).
 """
 
 from __future__ import annotations
