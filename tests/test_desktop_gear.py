@@ -487,7 +487,8 @@ def test_all_servers_groups_other_pcs_servers_by_pc(qapp, agent_http):
     window._elsewhere_at = 10**12  # the agent's own list (this PC alone) isn't asked for again
     screen = window.screens["All servers"]
     screen.show_all()
-    qapp.processEvents()
+    # The cards show on the next turn of the event loop, later on a slow PC.
+    wait_for(qapp, lambda: "Kids world" in shown_text(screen))
     shown = shown_text(screen)
     assert "Living room" in shown and "Bedroom" in shown and "Kids world" in shown
     window.elsewhere["b"] = "Can't reach x:1."

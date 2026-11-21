@@ -13,6 +13,7 @@ import io
 import json
 import stat
 import zipfile
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -371,7 +372,7 @@ async def test_a_packs_jars_are_shared_and_not_downloaded_twice(core, tmp_path, 
         directory=str(tmp_path / "First"),
         eula_accepted=True,
     )
-    downloads_before = sum("cdn.modrinth.com" in url for url in requests_made)
+    downloads_before = sum(urlsplit(url).hostname == "cdn.modrinth.com" for url in requests_made)
     await modpack.import_new(
         core,
         upload(core, make_pack(tmp_path / "p.mrpack")),
@@ -379,7 +380,10 @@ async def test_a_packs_jars_are_shared_and_not_downloaded_twice(core, tmp_path, 
         directory=str(tmp_path / "Second"),
         eula_accepted=True,
     )
-    assert sum("cdn.modrinth.com" in url for url in requests_made) == downloads_before
+    assert (
+        sum(urlsplit(url).hostname == "cdn.modrinth.com" for url in requests_made)
+        == downloads_before
+    )
     one, two = (
         tmp_path / "First" / "mods" / "lithium.jar",
         tmp_path / "Second" / "mods" / "lithium.jar",
