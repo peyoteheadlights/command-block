@@ -903,7 +903,9 @@ def test_a_linked_modpack_card_updates_and_unlinks(qapp, agent_http, monkeypatch
     monkeypatch.setattr(linkedpack, "preview", preview)
     monkeypatch.setattr(linkedpack, "update", update)
     window, page = mods_page(qapp, agent_http)
+    # The card and the list's rows come from two answers: wait for both.
     wait_for(qapp, lambda: "Version 1.3.0 is out." in shown_text(page))
+    wait_for(qapp, lambda: "Added by you" in shown_text(page))
     shown = shown_text(page)
     assert "Made from Test Pack 1.2.0 on Modrinth." in shown
     assert "2 mods were added by you. Modpack update keeps them." in shown
@@ -1168,3 +1170,13 @@ def test_sign_in_with_modrinth_and_upload_the_modpack(qapp, agent_http, monkeypa
 
     button(page, "Sign out of Modrinth").click()
     wait_for(qapp, lambda: "Not signed in to Modrinth." in shown_text(page), 20)
+
+
+# ---------------------------------------------------------------- the anti-cheat picker
+def test_the_anti_cheat_picker_offers_grim_with_the_fabric_warning(qapp, agent_http):
+    with_mods(agent_http)  # Alpha and Gamma say "*": mods players need too
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: "No anti-cheat is in." in shown_text(page), 20)
+    words = shown_text(page)
+    assert "Try it with a friend first." in words
+    assert button(page, "Add Grim")

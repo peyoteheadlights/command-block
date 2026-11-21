@@ -183,6 +183,10 @@ class ProtectionCard(QWidget):
                     add.setToolTip(text("desktop.protect.small", name=addon["name"]))
                 add.clicked.connect(lambda _=False, a=addon: self.add(a))
                 h.addWidget(add)
+            if line["id"].startswith("anticheat_"):
+                pick = push(text("desktop.protect.pick_anticheat"))
+                pick.clicked.connect(lambda: self.window_.open_page("Mods"))
+                h.addWidget(pick)
             if line.get("link"):
                 go = push(text("desktop.protect.open_link"), "plain")
                 go.clicked.connect(lambda _=False, u=line["link"]: self.window_.pc.open_link(u))
