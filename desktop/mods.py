@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .agent import AgentError
+from .download_link import LinkCard
 from .editor import GuideWindow, pick_file
 from .fixes import install
 from .make_modpack import MakeCard
@@ -226,6 +227,9 @@ class ModsPage(Page):
         # Make a modpack from this server and share it.
         self.make_card = MakeCard(self)
         self.column.addWidget(self.make_card.frame)
+        # The download link and the server resource pack.
+        self.link_card = LinkCard(self)
+        self.column.addWidget(self.link_card.frame)
 
         # Still fit?: after a mod or version change, the mods that need a
         # different version (ticked, run as one Update all), the ones with
@@ -550,6 +554,7 @@ class ModsPage(Page):
         self.update_all_ready()
         self.show_linked(data.get("modpack"))
         self.make_card.show(self.row)
+        self.link_card.show(self.row)
         self.show_sides(data)
         self.show_fit(data.get("fit"))
         self.show_same(data.get("overlaps") or [])

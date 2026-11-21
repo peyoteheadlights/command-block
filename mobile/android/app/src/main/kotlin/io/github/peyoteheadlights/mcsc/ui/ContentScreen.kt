@@ -36,7 +36,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.Addon
@@ -44,6 +46,7 @@ import io.github.peyoteheadlights.mcsc.core.Changes
 import io.github.peyoteheadlights.mcsc.core.Content
 import io.github.peyoteheadlights.mcsc.core.ContentKind
 import io.github.peyoteheadlights.mcsc.core.Display
+import io.github.peyoteheadlights.mcsc.core.DownloadLinks
 import io.github.peyoteheadlights.mcsc.core.IconCache
 import io.github.peyoteheadlights.mcsc.core.Install
 import io.github.peyoteheadlights.mcsc.core.Mod
@@ -157,6 +160,7 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
     if (list.storedSeparately) item { Note(t("mods.stored_separately"), color = LocalColors.current.text2) }
     list.modpack?.let { pack -> item { LinkedPackCard(vm, content, pack, changes == Changes.READY && idle) } }
     if (vm.canDo(Permissions.MODS_MANAGE)) item { MakeModpackCard(vm, content, idle) }
+    if (vm.canDo(Permissions.MODS_MANAGE)) item { DownloadLinkCard(vm, content, idle) }
     list.fit?.let { fit -> item { StillFitCard(vm, content, list, fit, kind, changes == Changes.READY && idle) } }
     if (list.overlaps.isNotEmpty()) item { SameJobCard(vm, content, list, changes == Changes.READY && idle) }
 
@@ -619,6 +623,7 @@ private fun ContentDialogs(vm: AppViewModel, content: ContentPages, ask: (Conten
     content.modpack?.let { ModpackDialog(vm, content) }
     content.packUpdate?.let { PackUpdateDialog(vm, content) }
     content.makeOptions?.let { options -> MakeModpackDialog(vm, content, options) }
+    if (content.askingPackLink) PackLinkDialog(vm, content)
 }
 
 /** A sheet-like question: a title, scrolling words, and one button plus Cancel. */
@@ -795,6 +800,73 @@ private fun MakeModpackCard(vm: AppViewModel, content: ContentPages, idle: Boole
             Note(t("make.guide_title"), color = LocalColors.current.text)
             Note(t("make.guide"))
         }
+    }
+}
+
+/** The download link (on, off, New link, Copy) and the server resource pack. */
+@Composable
+private fun DownloadLinkCard(vm: AppViewModel, content: ContentPages, idle: Boolean) {
+    val strings = vm.strings
+    val clipboard = LocalClipboardManager.current
+    LaunchedEffect(content.serverId) { content.loadLink() }
+    val link = content.link ?: return
+    val owner = vm.canDo(Permissions.PC_SETTINGS)
+    val game = vm.canDo(Permissions.SETTINGS_GAME)
+    val pick = rememberFilePicker { file ->
+        if (file.name.lowercase().endsWith(".zip")) content.uploadPack(file, strings)
+        else content.tell(Said(strings.t("mobile.content.wrong_file", "kind" to ".zip"), good = false))
+    }
+    SectionTitle(t("link.title"))
+    Card {
+        Note(t("link.intro"))
+        for (line in DownloadLinks.lines(strings, link, owner)) Note(line, color = LocalColors.current.text)
+        Presses(
+            listOfNotNull(
+                Press(t(if (link.on) "link.turn_off" else "link.turn_on"), { content.switchLink(!link.on, strings) },
+                    enabled = idle && owner && (link.on || link.whyNot == null)),
+                Press(t("link.new"), { content.newLink(strings) }, enabled = idle).takeIf { link.on && owner },
+                link.modpackUrl?.let { url ->
+                    Press(t("link.copy"), {
+                        clipboard.setText(AnnotatedString(url))
+                        content.tell(Said(strings.t("link.copied"), good = true))
+                    })
+                },
+            ),
+        )
+        Note(t("pack.title"), color = LocalColors.current.text)
+        Note(t("pack.intro"))
+        for (line in DownloadLinks.packLines(strings, link)) Note(line, color = LocalColors.current.text)
+        link.resourcePack?.let { pack ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = pack.required, onCheckedChange = { content.setPackRequired(it, strings) }, enabled = idle && game)
+                Text(t("pack.required"))
+            }
+        }
+        Presses(
+            listOfNotNull(
+                Press(t("pack.pick"), pick, enabled = idle && game),
+                Press(t("pack.use_link"), { content.askingPackLink = true }, enabled = idle && game),
+                Press(t("pack.remove"), { content.removePack(strings) }, enabled = idle && game).takeIf { link.resourcePack != null },
+            ),
+        )
+        Note(t("pack.tailscale_only"))
+    }
+}
+
+@Composable
+private fun PackLinkDialog(vm: AppViewModel, content: ContentPages) {
+    val strings = vm.strings
+    var url by remember { mutableStateOf("") }
+    var sha1 by remember { mutableStateOf("") }
+    Question(
+        strings.t("pack.title"),
+        confirm = strings.t("pack.use_link"),
+        enabled = url.isNotBlank(),
+        onConfirm = { content.setPackLink(url.trim(), sha1.trim(), strings) },
+        onDismiss = { content.askingPackLink = false },
+    ) {
+        OutlinedTextField(value = url, onValueChange = { url = it.take(1000) }, label = { Text(t("pack.link_prompt")) }, singleLine = true)
+        OutlinedTextField(value = sha1, onValueChange = { sha1 = it.take(40) }, label = { Text(t("pack.sha1_prompt")) }, singleLine = true)
     }
 }
 

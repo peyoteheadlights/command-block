@@ -1075,3 +1075,41 @@ def test_make_a_modpack_then_save_it_and_post_it_in_discord(
     button(page, "Post in Discord").click()
     wait_for(qapp, lambda: "Posted in 1 Discord" in page.note.text(), 20)
     assert posted == [page.make_card.result["token"]]
+
+
+# ---------------------------------------------------------------- Download link
+def test_turn_on_the_download_link_and_add_a_resource_pack(qapp, agent_http, monkeypatch, tmp_path):
+    import hashlib
+
+    from agent import downloadlink
+
+    from .test_modpack_make import PACK
+
+    with_mods(agent_http)
+    ctx = core_of(agent_http).servers["survival"]
+    monkeypatch.setattr(downloadlink.LinkServer, "address", lambda self: "127.0.0.1")
+    props = ctx.config.server_dir / "server.properties"
+    if not props.is_file():
+        props.write_text("motd=hi\n")
+    pack = tmp_path / "Textures.zip"
+    pack.write_bytes(PACK)
+    pc = FakePC()
+    pc.picked = str(pack)
+    window, page = mods_page(qapp, agent_http, pc)
+    wait_for(qapp, lambda: page.link_card.frame.isVisibleTo(page) and page.link_card.data, 20)
+    assert "No resource pack." in shown_text(page)
+    button(page, "Turn on the download link").click()
+    wait_for(qapp, lambda: page.link_card.data.get("on"), 20)
+    assert "Make a modpack and its link shows here." in shown_text(page)
+
+    button(page, "Choose a pack…").click()
+    wait_for(qapp, lambda: page.link_card.data.get("resource_pack"), 20)
+    assert "Textures.zip" in shown_text(page) and "served by the download link" in shown_text(page)
+    assert f"resource-pack-sha1={hashlib.sha1(PACK).hexdigest()}" in props.read_text()
+
+    page.link_card.required.click()
+    wait_for(qapp, lambda: "require-resource-pack=true" in props.read_text(), 20)
+    button(page, "Turn off").click()
+    wait_for(qapp, lambda: not page.link_card.data.get("on"), 20)
+    assert "Turn on the download link so players' games can get it." in shown_text(page)
+    assert "resource-pack=\n" in props.read_text()
