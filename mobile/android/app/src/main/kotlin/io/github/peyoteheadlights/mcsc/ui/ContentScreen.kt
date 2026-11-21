@@ -51,6 +51,8 @@ import io.github.peyoteheadlights.mcsc.core.ModList
 import io.github.peyoteheadlights.mcsc.core.ModVersion
 import io.github.peyoteheadlights.mcsc.core.SameJob
 import io.github.peyoteheadlights.mcsc.core.Modpacks
+import io.github.peyoteheadlights.mcsc.core.LinkedModpack
+import io.github.peyoteheadlights.mcsc.core.LinkedPacks
 import io.github.peyoteheadlights.mcsc.core.Permissions
 import io.github.peyoteheadlights.mcsc.core.States
 import io.github.peyoteheadlights.mcsc.core.StillFit
@@ -146,6 +148,7 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
         return
     }
     if (list.storedSeparately) item { Note(t("mods.stored_separately"), color = LocalColors.current.text2) }
+    list.modpack?.let { pack -> item { LinkedPackCard(vm, content, pack, changes == Changes.READY && idle) } }
     list.fit?.let { fit -> item { StillFitCard(vm, content, list, fit, kind, changes == Changes.READY && idle) } }
     if (list.overlaps.isNotEmpty()) item { SameJobCard(vm, content, list, changes == Changes.READY && idle) }
 
@@ -276,6 +279,7 @@ private fun ModCard(vm: AppViewModel, content: ContentPages, mod: Mod, changes: 
         )
         for (problem in Content.problems(mod)) Note(problem, color = if (mod.status == "error") colors.danger else colors.warning)
         Content.newer(strings, mod)?.let { Note(it, color = colors.accentInk) }
+        if (mod.addedByYou == true) Note(t("linked.added_by_you"), color = colors.text3)
         if (vm.technical) Note(Content.technical(strings, mod), color = colors.text3)
         if (changes != Changes.NOT_ALLOWED) {
             val ready = changes == Changes.READY && idle
@@ -511,6 +515,7 @@ private fun ContentDialogs(vm: AppViewModel, content: ContentPages, ask: (Conten
     content.project?.let { InstallDialog(vm, content) }
     content.missingPlan?.let { MissingDialog(vm, content) }
     content.modpack?.let { ModpackDialog(vm, content) }
+    content.packUpdate?.let { PackUpdateDialog(vm, content) }
 }
 
 /** A sheet-like question: a title, scrolling words, and one button plus Cancel. */
@@ -609,6 +614,58 @@ private fun StillFitCard(vm: AppViewModel, content: ContentPages, list: ModList,
 
 /** The same mod twice, or mods that do the same job: which one to turn off
  * when the facts say. Turn off has Undo like the mod's own row. */
+/** The modpack this server came from: Modpack update and Unlink. */
+@Composable
+private fun LinkedPackCard(vm: AppViewModel, content: ContentPages, pack: LinkedModpack, ready: Boolean) {
+    val strings = vm.strings
+    var unlinking by remember { mutableStateOf(false) }
+    SectionTitle(t("linked.title"))
+    Card {
+        for (line in LinkedPacks.lines(strings, pack)) Note(line)
+        if (vm.canDo(Permissions.MODS_MANAGE)) {
+            Presses(
+                listOfNotNull(
+                    Press(t("linked.update"), { content.previewPackUpdate(pack.update?.versionId, strings) }, enabled = ready)
+                        .takeIf { pack.update != null && vm.canDo(Permissions.SETTINGS_SERVER) },
+                    Press(t("linked.unlink"), { unlinking = true }, enabled = ready),
+                ),
+            )
+        }
+    }
+    if (unlinking) {
+        Confirm(strings.t("linked.unlink_title", "name" to pack.name), strings.t("linked.unlink_body"), strings.t("linked.unlink"), danger = true,
+            onConfirm = { unlinking = false; content.unlinkPack(strings) }, onDismiss = { unlinking = false })
+    }
+}
+
+@Composable
+private fun PackUpdateDialog(vm: AppViewModel, content: ContentPages) {
+    val read = content.packUpdate ?: return
+    val strings = vm.strings
+    var usePackConfigs by remember(read.token) { mutableStateOf(false) }
+    val problems = read.changes.problems
+    Question(
+        strings.t("linked.update_title", "name" to read.pack.name, "version" to read.changes.toVersion),
+        confirm = strings.t("linked.update").takeIf { problems.isEmpty() },
+        onConfirm = { content.updatePack(usePackConfigs, strings) },
+        onDismiss = content::cancelPackUpdate,
+    ) {
+        if (problems.isNotEmpty()) {
+            Text(t("pack.cant_import"), color = LocalColors.current.danger)
+            for (p in problems) Text("• $p", color = LocalColors.current.danger)
+            return@Question
+        }
+        for (line in LinkedPacks.changes(strings, read.changes)) Text(line, modifier = Modifier.padding(top = 4.dp))
+        if (read.changes.configsChangedByYou.isNotEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                Checkbox(checked = usePackConfigs, onCheckedChange = { usePackConfigs = it })
+                Text(t("linked.use_pack_configs"))
+            }
+        }
+        for (step in LinkedPacks.steps(strings, read)) Text("• $step", modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
 @Composable
 private fun SameJobCard(vm: AppViewModel, content: ContentPages, list: ModList, ready: Boolean) {
     val strings = vm.strings

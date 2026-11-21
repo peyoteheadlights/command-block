@@ -268,6 +268,38 @@ object SameJob {
         overlap.mods.filter { it.neededBy.isEmpty() && (overlap.keep.isEmpty() || it.turnOff) }
 }
 
+/** The linked modpack card and Modpack update's question. */
+object LinkedPacks {
+    fun lines(strings: Strings, pack: LinkedModpack): List<String> = listOfNotNull(
+        strings.t("linked.from", "name" to pack.name, "version" to pack.version, "site" to pack.site),
+        pack.update?.let {
+            if (it.version.isNotBlank()) strings.t("linked.update_ready", "version" to it.version)
+            else strings.t("linked.update_ready_unnamed")
+        },
+        if (pack.addedByYou > 0) strings.tn("linked.yours", pack.addedByYou) else null,
+    )
+
+    fun changes(strings: Strings, changes: ModpackChanges): List<String> = listOf(
+        "linked.newer" to changes.newer.map { "${it.from} → ${it.to}" },
+        "linked.added" to changes.added,
+        "linked.removed" to changes.removed,
+        "linked.kept" to changes.addedByYou,
+        "linked.configs" to changes.configsChangedByYou,
+    ).filter { it.second.isNotEmpty() }.map { (key, names) -> strings.t(key, "names" to names.joinToString(", ")) }
+
+    fun steps(strings: Strings, preview: ModpackUpdatePreview): List<String> = listOfNotNull(
+        strings.t("pack.step_stop"),
+        strings.t("linked.step_one_backup"),
+        if (preview.changes.versionChange) {
+            strings.t(
+                "pack.step_version",
+                "type" to (preview.pack.typeName ?: strings.t("value.unknown")),
+                "version" to preview.changes.minecraftVersion,
+            )
+        } else null,
+    )
+}
+
 /** A modpack import's steps, as the confirmation lists them. */
 object Modpacks {
     fun steps(strings: Strings, inspected: ModpackInspected): List<String> {

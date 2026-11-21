@@ -761,6 +761,26 @@ class AgentClient(
         return call(post("${server(serverId)}/modpack", body), ModpackImported.serializer(), slow = true)
     }
 
+    /** Downloads the linked modpack's new version and says what Modpack update changes. */
+    suspend fun previewModpackUpdate(serverId: String, versionId: String?): ModpackUpdatePreview {
+        val body = buildJsonObject { put("version_id", versionId) }
+        return call(post("${server(serverId)}/modpack/update/preview", body), ModpackUpdatePreview.serializer(), slow = true)
+    }
+
+    /** Modpack update: one backup, all or nothing, one Undo. */
+    suspend fun updateModpack(serverId: String, token: String, usePackConfigs: Boolean): ModpackUpdated {
+        val body = buildJsonObject {
+            put("token", token)
+            put("use_pack_configs", usePackConfigs)
+            put("confirm", true)
+        }
+        return call(post("${server(serverId)}/modpack/update", body), ModpackUpdated.serializer(), slow = true)
+    }
+
+    /** Unlink: the server keeps its mods and stops following the modpack. */
+    suspend fun unlinkModpack(serverId: String): Ok =
+        call(request("${server(serverId)}/modpack/link").delete().build(), Ok.serializer())
+
     /** A Bedrock server's behavior and resource packs. */
     suspend fun addons(serverId: String): AddonList = get("${server(serverId)}/addons", AddonList.serializer())
 

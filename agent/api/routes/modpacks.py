@@ -9,17 +9,27 @@ from functools import partial
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
-from ... import modpack
+from ... import linkedpack, modpack
 from ...mods.curseforge import MODPACKS, CurseForgeClient
 from ...mods.modrinth import ModrinthClient
 from ...security.auth import Principal
 from ...security.permissions import MODS_MANAGE, SERVERS_MANAGE, SETTINGS_SERVER, require
 from ..deps import audit, get_core, get_server
-from ..responses import ModpackImported, ModpackInspected, ModSearch, Ok, ServerCreated
+from ..responses import (
+    ModpackImported,
+    ModpackInspected,
+    ModpackUpdated,
+    ModpackUpdatePreview,
+    ModSearch,
+    Ok,
+    ServerCreated,
+)
 from .models import (
     CurseForgeModpackRequest,
     ModpackIntoRequest,
     ModpackNewRequest,
+    ModpackPreviewRequest,
+    ModpackUpdateRequest,
     ModrinthModpackRequest,
 )
 from .mods import side_by_side
@@ -174,3 +184,49 @@ async def modpack_into_server(
     result = await modpack.import_into(ctx, payload.token, user=principal.user)
     audit(ctx, request, "modpack_import", detail=result["modpack"]["name"])
     return {"ok": True, **result}
+
+
+@router.post("/modpack/update/preview", response_model=ModpackUpdatePreview)
+async def preview_modpack_update(
+    payload: ModpackPreviewRequest,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Download the linked modpack's newest version (or ``version_id``) and
+    say what Modpack update would change. Nothing changes yet."""
+    return await linkedpack.preview(ctx, payload.version_id)
+
+
+@router.post("/modpack/update", response_model=ModpackUpdated)
+async def update_modpack(
+    payload: ModpackUpdateRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    """Modpack update: stopped, one backup, all or nothing, one Undo. Mods
+    added by you are kept, and config files you changed unless
+    ``use_pack_configs``."""
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="This needs to be confirmed, because the server is stopped for it.",
+        )
+    result = await linkedpack.update(
+        ctx, payload.token, use_pack_configs=payload.use_pack_configs, user=principal.user
+    )
+    audit(ctx, request, "modpack_update", detail=result["changes"]["to_version"])
+    return {"ok": True, **result}
+
+
+@router.delete("/modpack/link", response_model=Ok)
+async def unlink_modpack(
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Unlink: the server keeps its mods and stops following the modpack."""
+    if not linkedpack.unlink(ctx):
+        raise HTTPException(status_code=404, detail="This server isn't linked to a modpack.")
+    audit(ctx, request, "modpack_unlink")
+    return {"ok": True}

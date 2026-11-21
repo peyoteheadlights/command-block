@@ -45,7 +45,8 @@ log = logging.getLogger("msc.mods.fit")
 SETTING = "mod_fit"
 # The events that start a check, and how long after the last one it runs.
 MOD_EVENTS = ("mod_installed", "mod_updated", "mod_rolled_back", "mod_removed")
-VERSION_EVENTS = ("version_changed", "version_rolled_back")
+# A Modpack update counts as a version change: every mod is looked at.
+VERSION_EVENTS = ("version_changed", "version_rolled_back", "modpack_updated")
 WAIT = 3.0
 
 
@@ -74,7 +75,9 @@ class Later:
         data = event.data or {}
         if event.type in VERSION_EVENTS:
             self.everything = True
-            if data.get("minecraft_version"):
+            if data.get("about"):
+                self.names.append(str(data["about"]))
+            elif data.get("minecraft_version"):
                 self.names.append(f"Minecraft {data['minecraft_version']}")
         elif event.type in MOD_EVENTS and data.get("mod"):
             mod = data["mod"]
