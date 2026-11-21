@@ -248,13 +248,20 @@ final class WorldTests: XCTestCase {
         var cron = nightly
         cron.kind = "cron"
         cron.expr = "0 4 * * *"
-        XCTAssertEqual(Schedules.whenText(s, cron), "cron 0 4 * * *")
+        XCTAssertEqual(Schedules.whenText(s, cron), "Cron 0 4 * * *")
+        var yearly = nightly
+        yearly.kind = "yearly"
+        yearly.expr = "01-01"
+        XCTAssertEqual(Schedules.whenText(s, yearly), "yearly 01-01")
         XCTAssertEqual(Schedules.taskName(s, "backup", tasks: tasks), "Back up")
         XCTAssertEqual(Schedules.taskName(s, "mystery", tasks: tasks), "mystery")
         var off = nightly
         off.enabled = false
         XCTAssertEqual(Schedules.next(s, off), "Off")
         XCTAssertEqual(Schedules.next(s, nightly), "Never")
+        var event = nightly
+        event.kind = "event"
+        XCTAssertEqual(Schedules.next(s, event), "When it happens")
 
         let toggled = Schedules.toggled(nightly)
         XCTAssertFalse(toggled.enabled)
@@ -263,10 +270,45 @@ final class WorldTests: XCTestCase {
         let sent = try JSONSerialization.jsonObject(with: AgentClient.encode(toggled)) as? [String: Any]
         XCTAssertEqual((sent?["payload"] as? [String: Any])?["note"] as? String, "keep")
 
-        let added = Schedules.newBody(s, name: "  ", task: "backup", kind: "interval", expr: " 6h ", tasks: tasks)
+        let added = Schedules.newBody(s, name: "  ", steps: [Schedules.Step(task: "backup")], kind: "interval", expr: " 6h ", tasks: tasks)
         XCTAssertEqual(added.name, "Back up")
         XCTAssertEqual(added.expr, "6h")
         XCTAssertTrue(added.enabled)
+    }
+
+    func testSeveralStepsAreSentAsStepsInARowAndOneStepAsItsOwnTask() {
+        let tasks = ["backup", "message", "command", "steps"]
+        XCTAssertEqual(Schedules.stepTasks(tasks, technical: false), ["backup", "message"])
+        XCTAssertEqual(Schedules.stepTasks(tasks, technical: true), ["backup", "message", "command"])
+        XCTAssertFalse(Schedules.kinds(technical: false).contains("cron"))
+
+        let one = Schedules.newBody(
+            s, name: "Hi", steps: [Schedules.Step(task: "message", words: " Hello ")], kind: "daily", expr: "04:00",
+            tasks: tasks, onlyIfRunning: true
+        )
+        XCTAssertEqual(one.task, "message")
+        XCTAssertEqual(one.payload["text"], .string("Hello"))
+        XCTAssertEqual(one.payload["only_if_running"], .bool(true))
+
+        let steps = [
+            Schedules.Step(task: "message", words: "Backing up"),
+            Schedules.Step(task: "command", words: "kill @a"),
+            Schedules.Step(task: "backup", after: "Done"),
+        ]
+        let many = Schedules.newBody(s, name: "", steps: steps, kind: "daily", expr: "04:00", tasks: tasks, keepGoing: true, confirm: true)
+        XCTAssertEqual(many.task, "steps")
+        XCTAssertEqual(many.payload["keep_going"], .bool(true))
+        guard case .array(let list) = many.payload["steps"], case .object(let command) = list[1], case .object(let backup) = list[2] else {
+            return XCTFail("steps not sent as a list")
+        }
+        XCTAssertEqual(list.count, 3)
+        XCTAssertEqual(command["confirm"], .bool(true))
+        XCTAssertEqual(backup["after"], .string("Done"))
+        XCTAssertEqual(Schedules.summary(s, Schedule(id: 1, task: "steps", payload: many.payload), tasks: tasks), "3 steps")
+        XCTAssertEqual(
+            Schedules.summary(s, Schedule(id: 2, task: "message", payload: one.payload), tasks: tasks),
+            "Send a message to players: Hello"
+        )
     }
 
     // MARK: - Restore world
