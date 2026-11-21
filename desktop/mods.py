@@ -129,6 +129,9 @@ class ModsPage(Page):
         self.column.addWidget(self.stop_row)
         self.problems = label(kind="problem")
         self.column.addWidget(self.problems)
+        # Its jars are copies: the server folder's drive can't link to the store.
+        self.separate = label(text("mods.stored_separately"), "sub")
+        self.column.addWidget(self.separate)
 
         # CurseForge mods whose authors keep them from other apps: their
         # page, and the window takes the file when it's dropped.
@@ -383,6 +386,7 @@ class ModsPage(Page):
             )
         )
         self.problems.setVisible(bool(others))
+        self.separate.setVisible(data.get("stored_separately") is True)
         # The search results' Install buttons too: the server may have stopped since.
         for button in [
             self.add_file,

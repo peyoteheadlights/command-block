@@ -419,6 +419,10 @@ fun PcSettingsScreen(vm: AppViewModel, onBack: () -> Unit, onDevices: () -> Unit
                         }
                     }
                 }
+                PcSettings.modFiles(strings, view)?.let { words ->
+                    item { SectionTitle(t("modfiles.title")) }
+                    item { Card { Note(words, color = colors.text2) } }
+                }
                 item { SectionTitle(t("appset.maintenance")) }
                 item {
                     Card {

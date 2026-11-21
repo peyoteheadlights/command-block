@@ -728,6 +728,25 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        24,
+        # One copy of each mod and plugin file, hard-linked into every
+        # server that uses it (agent/mods/store.py). sha1 and sha512 are
+        # kept so the sites can be asked by hash without reading the file.
+        """
+        CREATE TABLE stored_files (
+            sha256 TEXT PRIMARY KEY,
+            sha1 TEXT NOT NULL,
+            sha512 TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            first_seen REAL NOT NULL,
+            locked INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX stored_files_sha1 ON stored_files(sha1);
+        CREATE INDEX stored_files_sha512 ON stored_files(sha512);
+        """,
+    ),
 ]
 
 
