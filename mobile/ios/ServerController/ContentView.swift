@@ -60,7 +60,7 @@ struct ContentView: View {
                         case nil:
                             ProgressView().frame(maxWidth: .infinity)
                         case .some(ContentKind.none):
-                            EmptyCard(title: model.t("mobile.content.none_for_type"), palette: palette)
+                            vanilla(content, palette)
                         case .some(.packs):
                             packs(content, palette)
                         case .some(let kind):
@@ -244,6 +244,24 @@ struct ContentView: View {
     /// Make a modpack from this server, then share it through the share
     /// sheet or have the Discord bot post it.
     @ViewBuilder
+    /// Vanilla runs no mods: Make a modpack, and why Required to join needs Fabric.
+    @ViewBuilder
+    private func vanilla(_ content: ContentPages, _ palette: Palette) -> some View {
+        let idle = content.busy == nil
+        SaidRow(said: content.said, palette: palette)
+        CardBox(palette: palette) {
+            Text(verbatim: model.t("make.required_vanilla")).foregroundStyle(palette.textSecondary)
+            if model.can(Permissions.SETTINGS_SERVER) {
+                Button(model.t("make.change_type")) { model.serversPath.append(.settings(serverId)) }
+            }
+        }
+        if model.can(Permissions.MODS_MANAGE) {
+            makeModpackCard(content, ready: idle, palette)
+            downloadLinkCard(content, ready: idle, palette)
+            modrinthCard(content, ready: idle, palette)
+        }
+    }
+
     private func makeModpackCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
         let strings = model.strings
         SectionTitle(text: model.t("make.title"), palette: palette)

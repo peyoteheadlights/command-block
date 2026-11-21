@@ -38,6 +38,15 @@ class ContentTest {
     }
 
     @Test
+    fun `vanilla still gets the screen to make a modpack, a packless Bedrock server doesn't`() {
+        val row = ServerRow(id = "s", name = "S")
+        assertTrue(Content.shown(row))
+        assertTrue(Content.shown(row.copy(content = "mods")))
+        assertFalse(Content.shown(row.copy(edition = "bedrock")))
+        assertFalse(Content.shown(null))
+    }
+
+    @Test
     fun `each mod says whether it works and why not`() {
         val missing = ModIssue("missing_dependency", "error", "Alpha needs Fabric API, which isn't installed.")
         val version = ModIssue("version_mismatch", "warn", "Alpha is made for Minecraft 1.20.")

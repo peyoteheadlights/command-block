@@ -115,7 +115,7 @@ def drop(qapp, window, paths) -> bool:
 
 
 # ---------------------------------------------------------------- the page
-def test_the_tab_is_named_by_type_and_hidden_for_vanilla(qapp, agent_http):
+def test_the_tab_is_named_by_type_and_vanilla_only_makes_a_modpack(qapp, agent_http):
     window = signed_in_on(qapp, agent_http)
     assert "Mods" in page_tabs(window)
     config = core_of(agent_http).servers["survival"].config
@@ -124,7 +124,14 @@ def test_the_tab_is_named_by_type_and_hidden_for_vanilla(qapp, agent_http):
     wait_for(qapp, lambda: "Plugins" in page_tabs(window) and "Mods" not in page_tabs(window))
     config.set("server.type", "vanilla")
     window.refresh()
-    wait_for(qapp, lambda: "Plugins" not in page_tabs(window) and "Mods" not in page_tabs(window))
+    wait_for(qapp, lambda: "Plugins" not in page_tabs(window) and "Mods" in page_tabs(window))
+    window.server_screen.show_page("Mods")
+    page = window.server_screen.page
+    assert page is window.server_screen.page_widgets["Vanilla mods"]
+    assert "Fabric" in page.fabric.text()
+    assert page.make_card.frame.isVisibleTo(window)
+    page.change.click()
+    wait_for(qapp, lambda: window.server_screen.current_page == "Settings")
     window.load_server_parts()
     overview = window.server_screen.simple_overview
     assert not overview.mods_card.isVisibleTo(window)
