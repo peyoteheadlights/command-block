@@ -2014,11 +2014,15 @@ class AddonsPage(Page):
         self.load()
 
     def set_required(self, on: bool) -> None:
+        def failed(exc: Exception) -> None:
+            self.say(str(exc))
+            self.load()
+
         self.ask(
             "PUT",
             "/addons/required",
             lambda r: self.done(text("addons.required_on" if on else "addons.required_off"), r),
-            lambda exc: (self.say(str(exc)), self.load()),
+            failed,
             body={"required": on},
         )
 
