@@ -375,7 +375,7 @@ struct ServerColorPicker: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
                     .foregroundStyle(Color.fromHex(ServerColors.hex(fill.text)) ?? palette.textPrimary)
-                    .background(Capsule().fill(Color.fromHex(ServerColors.hex(fill.fill)) ?? .gray))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.fromHex(ServerColors.hex(fill.fill)) ?? .gray))
             }
         }
         .onAppear { typed = current ?? "" }
