@@ -267,6 +267,23 @@ public enum Sides {
         return all.filter { $0 == "players" || $0 != side }
     }
 
+    /// The Server / Players / Both filter; "all" keeps every mod.
+    public static let filters = ["all"] + all
+
+    public static func shown(_ mods: [Mod], _ filter: String) -> [Mod] {
+        mods.filter { filter == "all" || $0.side == filter }
+    }
+
+    public static func shown(_ found: ModSides, _ filter: String) -> [ModSideRow] {
+        found.mods.filter { filter == "all" || $0.side == filter }
+    }
+
+    /// "On: Survival, Creative (not sure)", the servers a mod is on with this mark.
+    public static func servers(_ strings: Strings, _ row: ModSideRow) -> String {
+        let names = row.servers.map { $0.sideFrom == "unknown" ? $0.name + " " + strings.t("sides.not_sure") : $0.name }
+        return strings.t("sides.on_servers", ["servers": names.joined(separator: ", ")])
+    }
+
     /// A file the Players only list takes: a mod (.jar) or a pack (.zip).
     public static func accepts(_ name: String) -> Bool {
         let lower = name.lowercased()

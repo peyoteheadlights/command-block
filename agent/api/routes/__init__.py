@@ -121,6 +121,8 @@ for module in GLOBAL:
 router.include_router(servertypes.global_router)
 # Reading a modpack and making a new server from it are agent-wide too.
 router.include_router(modpacks.global_router)
+# So is "On all servers" on the Mods page.
+router.include_router(mods.global_router)
 # A helper limited to some servers is refused the others' routes here, once,
 # rather than in each route.
 for module in PER_SERVER:
@@ -138,7 +140,11 @@ def api_routes() -> list[tuple[str, APIRoute, str]]:
     the routers themselves, so a new route is never missed by the tests that
     walk them (permissions declared, helpers refused)."""
     found: list[tuple[str, APIRoute, str]] = []
-    globals_ = [m.router for m in GLOBAL] + [servertypes.global_router, modpacks.global_router]
+    globals_ = [m.router for m in GLOBAL] + [
+        servertypes.global_router,
+        modpacks.global_router,
+        mods.global_router,
+    ]
     for global_router in globals_:
         for route in global_router.routes:
             if isinstance(route, APIRoute):

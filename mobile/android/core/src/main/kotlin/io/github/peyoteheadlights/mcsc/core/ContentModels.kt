@@ -97,6 +97,37 @@ data class PlayerOnlyOptions(
 @Serializable
 data class OddSetup(val filename: String = "", val text: String = "")
 
+/** "On all servers": one mod with one mark, and the servers it's on. */
+@Serializable
+data class ModSideRow(
+    val name: String,
+    @SerialName("mod_id") val modId: String? = null,
+    /** server, players or both. */
+    val side: String,
+    val servers: List<ModSideServer> = emptyList(),
+)
+
+@Serializable
+data class ModSideServer(
+    val id: String,
+    val name: String,
+    val filename: String = "",
+    val version: String? = null,
+    /** Like [Mod.sideFrom]; unknown: not sure. Null for the player-only folder. */
+    @SerialName("side_from") val sideFrom: String? = null,
+    val enabled: Boolean = true,
+)
+
+@Serializable
+data class ModSideNotRead(val id: String, val name: String, val detail: String = "")
+
+@Serializable
+data class ModSides(
+    val mods: List<ModSideRow> = emptyList(),
+    /** A server whose mods couldn't be read: named, never left out quietly. */
+    @SerialName("not_read") val notRead: List<ModSideNotRead> = emptyList(),
+)
+
 @Serializable
 data class ModSideChanged(val side: String = "", val moved: Boolean = false)
 
