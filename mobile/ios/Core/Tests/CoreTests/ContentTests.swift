@@ -418,6 +418,40 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(body(1), #"{"project":"curseforge:9","server_id":""}"#)
     }
 
+    func testMakeAModpackSendsTheAnswersThenDownloadsItAndPostsItInDiscord() async throws {
+        let c = client()
+        StubAgent.json(#"{"name": "Friends", "version": "2", "configs": [{"path": "config/a.toml", "size_bytes": 9}], "players_loaders": [{"id": "fabric", "name": "Fabric"}], "discord": true, "discord_limit_bytes": 10485760, "required_to_join": {"available": false}}"#)
+        let options = try await c.makeModpackOptions(serverId: "s")
+        XCTAssertEqual(options.configs.first?.path, "config/a.toml")
+        XCTAssertFalse(options.requiredToJoin)
+        XCTAssertEqual(path(0), "/api/servers/s/modpack/make")
+
+        StubAgent.json(#"{"ok": true, "token": "t1", "filename": "Friends 2.mrpack", "files": 3, "size_bytes": 2048, "own_files": ["overrides/mods/x.jar"], "trust_note": "Only share it with people you trust.", "get_yourself": [{"name": "Secret Mod", "page": null}], "plugins_to_get": [], "left_out": ["Ledger"], "discord": true}"#)
+        let made = try await c.makeModpack(serverId: "s", MakeModpack(name: "Friends", version: "2", configs: ["config/a.toml"]))
+        XCTAssertEqual(method(1), "POST")
+        XCTAssertEqual(
+            body(1),
+            #"{"configs":["config/a.toml"],"leave_out_server_only":true,"name":"Friends","players_loader":"fabric","version":"2"}"#
+        )
+        let lines = MadeModpacks.lines(s, made)
+        XCTAssertTrue(lines[0].hasPrefix("Friends 2.mrpack is ready"), lines[0])
+        XCTAssertTrue(lines[1].contains("people you trust"))
+        XCTAssertTrue(lines.contains { $0.hasSuffix("Secret Mod") })
+        XCTAssertTrue(lines.contains { $0.hasSuffix("Ledger") })
+
+        let zip = Data([80, 75, 3, 4])
+        StubAgent.enqueue(StubAgent.Answer(status: 200, headers: ["Content-Type": "application/zip"], body: zip))
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mrpack")
+        defer { try? FileManager.default.removeItem(at: out) }
+        XCTAssertEqual(try await c.downloadModpack(serverId: "s", made: made, to: out), 4)
+        XCTAssertEqual(StubAgent.requests[2].request.url?.path, "/api/servers/s/modpack/made/t1")
+
+        StubAgent.json(#"{"ok": true, "posted": 1}"#)
+        XCTAssertEqual(try await c.postModpack(serverId: "s", token: "t1").posted, 1)
+        XCTAssertEqual(path(3), "/api/servers/s/modpack/made/discord")
+        XCTAssertEqual(body(3), #"{"token":"t1"}"#)
+    }
+
     func testTheInstalledListUpdateAllAndHistoryAreRead() async throws {
         let c = client()
         StubAgent.json(#"{"mods": [{"filename": "a.jar", "path": "C:\\s\\mods\\a.jar", "mod_id": "a", "name": "Alpha", "version": "1.0", "enabled": true, "status": "warn", "issues": [{"kind": "version_mismatch", "severity": "warn", "detail": "Made for 1.20"}], "has_history": true, "update_available": {"mod_id": "a", "latest_version": "2.0", "version_id": "va"}}], "problems": [], "minecraft_version": null, "server_state": "OFFLINE", "updates_checked_at": null}"#)

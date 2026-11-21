@@ -8,7 +8,7 @@ import java.io.File
 
 /**
  * Where a file waits for the share menu (res/xml/shared_files.xml): one
- * folder per [kind] ("world", "help"), so clearing out the last world never
+ * folder per [kind] ("world", "modpack", "help"), so clearing out the last world never
  * deletes a help file another app is still reading, or the other way round.
  */
 fun sharedFolder(context: Context, kind: String): File = File(File(context.cacheDir, "shared"), kind)

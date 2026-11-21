@@ -29,7 +29,7 @@ struct Found {
 
 /// A sheet the add-ons screen shows: one at a time.
 enum ContentSheet: String, Identifiable {
-    case updateAll, project, missing, modpack, packUpdate
+    case updateAll, project, missing, modpack, packUpdate, make
 
     var id: String { rawValue }
 }
@@ -228,6 +228,7 @@ final class ContentPages {
         missingPlan = nil
         cancelModpack()
         cancelPackUpdate()
+        makeOptions = nil
     }
 
     // MARK: - Modrinth
@@ -461,6 +462,67 @@ final class ContentPages {
         await work("unlink", strings, reload: loadMods) { client, id in
             try await client.unlinkModpack(serverId: id)
             return nil
+        }
+    }
+
+    // MARK: - Make a modpack
+
+    /// Set while the Make a modpack question shows.
+    private(set) var makeOptions: ModpackMakeOptions? = nil
+    /// The modpack made last, with Share and Post in Discord.
+    private(set) var made: ModpackMade? = nil
+    /// The downloaded modpack while the share sheet shows.
+    var sharing: Downloaded? = nil
+
+    func askMakeModpack(_ strings: Strings) async {
+        await work("make", strings) { [weak self] client, id in
+            self?.makeOptions = try await client.makeModpackOptions(serverId: id)
+            self?.sheet = .make
+            return nil
+        }
+    }
+
+    func makeModpack(_ answers: MakeModpack, _ strings: Strings) async {
+        sheet = nil
+        makeOptions = nil
+        await work("make", strings) { [weak self] client, id in
+            self?.made = try await client.makeModpack(serverId: id, answers)
+            return nil
+        }
+    }
+
+    /// Downloads the modpack into the app's temporary folder and hands it to
+    /// the share sheet (`sharing`); it never stays here.
+    func shareModpack(_ strings: Strings) async {
+        guard let made = made else { return }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let name = (made.filename as NSString).lastPathComponent
+        let file = folder.appendingPathComponent(name.isEmpty ? "modpack.mrpack" : name)
+        await work("share", strings) { [weak self] client, id in
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                _ = try await client.downloadModpack(serverId: id, made: made, to: file)
+            } catch {
+                try? FileManager.default.removeItem(at: folder)
+                throw error
+            }
+            self?.sharing = Downloaded(name: file.lastPathComponent, file: file)
+            return nil
+        }
+    }
+
+    /// The share sheet closed: the copy in the app's own folder goes.
+    func finishSharing() {
+        guard let done = sharing else { return }
+        sharing = nil
+        try? FileManager.default.removeItem(at: done.file.deletingLastPathComponent())
+    }
+
+    func postModpack(_ strings: Strings) async {
+        guard let made = made else { return }
+        await work("discord", strings) { client, id in
+            let posted = try await client.postModpack(serverId: id, token: made.token)
+            return Said(text: strings.t("make.posted", ["count": posted.posted]), good: true)
         }
     }
 

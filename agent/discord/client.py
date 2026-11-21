@@ -114,7 +114,11 @@ class Rest:
     async def close(self) -> None:
         await self._http.aclose()
 
-    async def request(self, method: str, path: str, body: Any = None) -> Any:
+    async def request(
+        self, method: str, path: str, body: Any = None, files: dict | None = None
+    ) -> Any:
+        """``files``: attachments, {"files[0]": (name, bytes, type)}; the body
+        then goes beside them as ``payload_json``, as Discord wants."""
         if self.rejected:
             raise TokenRejected()
         channel = _CHANNEL.match(path)
@@ -127,9 +131,14 @@ class Rest:
             if wait > 0:
                 await asyncio.sleep(wait)
             try:
-                answer = await self._http.request(
-                    method, path, json=body if body is not None else None
-                )
+                if files:
+                    answer = await self._http.request(
+                        method, path, data={"payload_json": json.dumps(body)}, files=files
+                    )
+                else:
+                    answer = await self._http.request(
+                        method, path, json=body if body is not None else None
+                    )
             except httpx.HTTPError as exc:
                 # The message names the address, never the headers (the token).
                 raise DiscordError(f"Couldn't reach Discord ({type(exc).__name__}).") from None
