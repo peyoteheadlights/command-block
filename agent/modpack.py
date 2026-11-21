@@ -905,6 +905,7 @@ async def from_curseforge(
     from .mods.curseforge import MODPACKS
 
     client = CurseForgeClient(core.config)
+    version: dict[str, Any] | None
     try:
         if version_id:
             version = await client.version(version_id)
@@ -940,6 +941,7 @@ async def from_modrinth(
     from .mods.modrinth import ModrinthClient
 
     client = ModrinthClient(core.config)
+    version: dict[str, Any] | None
     try:
         if version_id:
             version = await client.version(version_id)
@@ -951,7 +953,8 @@ async def from_modrinth(
         raise ModpackError(str(exc)) from exc
     finally:
         await client.close()
-    file = (version or {}).get("file") or {}
+    version = version or {}
+    file = version.get("file") or {}
     if not file.get("url") or not str(file.get("filename") or "").endswith(".mrpack"):
         raise ModpackError("Modrinth has no modpack file of that project to download.")
     if urlparse(file["url"]).hostname not in DOWNLOAD_HOSTS or not file.get("sha512"):
