@@ -129,6 +129,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The signed-in account, from /auth/me. */
     private var account: Me? by mutableStateOf(null)
 
+    /** Warnings and tips this account hid with "Don't show again", from /auth/me. */
+    var hidden: Set<String> by mutableStateOf(emptySet())
+        private set
+
     /** The account on the server whose screen is open: what it may do there. */
     val me: Me? get() = account?.forServer(watching)
     var servers: ServersUi by mutableStateOf(ServersUi())
@@ -635,6 +639,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             runCatching { client.me() }.onSuccess {
                 account = it
+                hidden = it.hidden.toSet()
                 prefs.user = it.user
                 alerts = graph.alerts.update { state -> state.onlyFor(it) }
                 keepWake(client, it)
@@ -806,6 +811,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         prefs.technical = on
         graph.strings.technical = on
         technical = on
+    }
+
+    /** "Don't show again": hidden here at once, and on the agent for every device. */
+    fun hide(key: String) {
+        hidden = hidden + key
+        val client = client() ?: return
+        viewModelScope.launch { runCatching { client.hide(key) } }
+    }
+
+    /** "Show all warnings again"; [done] says whether the agent took it. */
+    fun showAllAgain(done: (Boolean) -> Unit) {
+        val client = client() ?: return
+        viewModelScope.launch {
+            val ok = runCatching { client.showAllAgain() }.isSuccess
+            if (ok) hidden = emptySet()
+            done(ok)
+        }
     }
 
     fun chooseStreamer(on: Boolean) {

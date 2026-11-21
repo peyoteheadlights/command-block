@@ -195,7 +195,15 @@ def java_problem(minecraft: str, java_executable: str = "java") -> dict[str, Any
     return None
 
 
-async def options(core: AgentCore) -> dict[str, Any]:
+def welcome_kind(server_type: Any) -> str:
+    """The first-run question's kind for a server type: vanilla, mods,
+    plugins or bedrock."""
+    if server_type.edition == "bedrock":
+        return "bedrock"
+    return server_type.content or "vanilla"
+
+
+async def options(core: AgentCore, user: str = "") -> dict[str, Any]:
     """What the New server panel needs: the types, the default memory, the
     next free port and color, and Minecraft's rules link."""
     from ..memory import total_ram_mb
@@ -214,6 +222,7 @@ async def options(core: AgentCore) -> dict[str, Any]:
         "palette": colors.palette(),
         "eula_url": EULA_URL,
         "played_by": core.db.get_setting(PLAYED_BY_DEFAULT, "") or "",
+        "kind_tips": core.auth.kind_tips(user) if user else [],
         "bedrock": {
             "port": bedrock_ports[0] if bedrock_ports else None,
             "port_v6": bedrock_ports[1] if bedrock_ports else None,
@@ -386,6 +395,7 @@ async def create_server(
             ctx.config.save()
             if names:  # sent once the server is online (it needs Minecraft running)
                 core.whitelist.add_later(ctx, names, user)
+            core.auth.made_kind(user, welcome_kind(server_type))
             if vanilla_spawns and server_type.changes_farms:
                 from ..gamesettings import write_vanilla_spawns
 

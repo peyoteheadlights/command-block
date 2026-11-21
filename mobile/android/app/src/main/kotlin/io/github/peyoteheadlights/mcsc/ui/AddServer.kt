@@ -150,6 +150,8 @@ private fun LazyListScope.newServer(vm: AppViewModel, adding: AddServerPages, op
         item { Note(t("new.bedrock_versions"), color = LocalColors.current.text3) }
     }
     val kind = adding.type ?: return
+    // This kind's tips: always with tips on, else once when it's new to them.
+    AddServer.tip(options, kind, vm.hidden)?.let { key -> item { HideableNote(vm, key) } }
     versionStep(vm, adding)
     detailsStep(vm, adding, options, memory = AddServer.memoryShown(kind), onPickFolder = onPickFolder)
     rulesStep(vm, adding, options, kind.edition)
@@ -213,6 +215,22 @@ private fun LazyListScope.detailsStep(vm: AppViewModel, adding: AddServerPages, 
                     modifier = Modifier.fillMaxWidth(),
                 )
                 folderField(vm, adding, t("new.folder"), t("new.folder_hint"), onPickFolder)
+                Picker(
+                    t("welcome.who_question"),
+                    t(AddServer.PLAYED_BY.firstOrNull { it.first == adding.playedBy }?.second ?: "welcome.for_unset"),
+                    listOf("" to vm.strings.t("welcome.for_unset")) + AddServer.PLAYED_BY.map { (value, key) -> value to vm.strings.t(key) },
+                ) { adding.playedBy = it }
+                if (AddServer.namesAsked(adding.playedBy)) {
+                    OutlinedTextField(
+                        value = adding.players,
+                        onValueChange = { adding.players = it },
+                        label = { Text(t("new.players")) },
+                        placeholder = { Text(t("new.players_placeholder")) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(t("new.players_hint"), color = LocalColors.current.text2)
+                }
                 if (memory) adding.memoryMb?.let { mb ->
                     Text(t("new.memory"), color = LocalColors.current.text)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

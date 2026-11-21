@@ -228,10 +228,40 @@ def agent_only_to_tailscale(qapp, monkeypatch):
     assert TEXT["full_app"] in shown_text(window) and TEXT["agent_only_sub"] in shown_text(window)
     pick(window, qapp, TEXT["agent_only"])
     press(window, TEXT["next"])
+    assert window.screen_name == "welcome"  # no app here to ask the first-run questions
+    press(window, "I know what I'm doing")
     assert window.screen_name == "options"
     press(window, TEXT["next"])
     assert window.screen_name == "tailscale"
     return window
+
+
+def test_agent_only_asks_the_two_first_run_questions(qapp, monkeypatch):
+    window = make(qapp, monkeypatch)
+    window.path = "none"
+    window.answers.update(servers=[], agent_only=True)
+    window.kind_screen()
+    press(window, TEXT["next"])
+    assert "only while this PC is on" in shown_text(window)
+    press(window, TEXT["next"])
+    assert "Pick one" in shown_text(window)  # nothing is guessed
+    pick(window, qapp, "No")
+    press(window, TEXT["next"])
+    assert window.screen_name == "kinds"
+    [plugins] = [b for b in window.findChildren(QtWidgets.QCheckBox) if b.text() == "With plugins"]
+    plugins.click()
+    press(window, TEXT["next"])
+    assert window.screen_name == "who"
+    press(window, TEXT["next"])
+    assert window.screen_name == "who" and "Pick one" in shown_text(window)
+    pick(window, qapp, "My kids and their friends")
+    press(window, TEXT["next"])
+    assert window.screen_name == "options"
+    assert window.choices()["welcome"] == {
+        "first_time": False,
+        "kinds": ["plugins"],
+        "played_by": "kids",
+    }
 
 
 def test_agent_only_connects_tailscale_then_ends_on_pairing(qapp, monkeypatch):

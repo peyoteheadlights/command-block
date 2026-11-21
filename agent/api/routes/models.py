@@ -221,6 +221,11 @@ class WelcomeRequest(BaseModel):
     set_defaults: bool = True
 
 
+class HideRequest(BaseModel):
+    # A warning's or tip's words key, like "new.farms_warning".
+    key: str = Field(pattern=r"^[a-z0-9_.]{1,80}$")
+
+
 class RecommendationActionRequest(BaseModel):
     action: Literal["dismiss", "snooze", "restore"]
 

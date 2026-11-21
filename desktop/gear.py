@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import motion, streamer
+from . import motion, streamer, ui
 from .agent import AgentError
 from .fixes import get_help
 from .overview import card
@@ -358,6 +358,16 @@ class PCSettings(Section):
         hide.toggled.connect(window.set_streamer)
         layout.addWidget(hide)
         layout.addWidget(label(text("streamer.hint"), "sub"))
+        show_all = push(text("tips.show_all"))
+        show_all.setObjectName("showAllWarnings")
+
+        def shown_again(_answer: dict) -> None:
+            ui.hidden.clear()
+            self.say(text("tips.show_all_done"))
+
+        show_all.clicked.connect(lambda: self.call("DELETE", "/account/hidden", shown_again))
+        layout.addLayout(buttons(show_all))
+        layout.addWidget(label(text("tips.show_all_hint"), "sub"))
         return frame
 
     def set_mode(self, technical: bool) -> None:

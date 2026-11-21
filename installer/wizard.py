@@ -298,6 +298,7 @@ class Wizard:
             from_app=bool(self.args.from_app),
             connect_only=connect_only,
             agent_only=bool(agent_only) and not connect_only,
+            welcome=body.get("welcome") if agent_only and not connect_only else None,
             desktop_shortcut=bool(body.get("desktop_shortcut")),
             open_at_sign_in=body.get("open_at_sign_in"),
         )

@@ -208,7 +208,7 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
                             busy = setup.busy != null,
                             onSave = { setup.saveJavaOptions(RawText.args(typed), strings) },
                         )
-                        Note(t("memory.raw_warning"), color = LocalColors.current.warning)
+                        HideableNote(vm, "memory.raw_warning")
                         setup.argsBefore?.let { before ->
                             Presses(listOf(Press(t("changes.undo"), { setup.saveJavaOptions(before, strings, undoing = true) }, enabled = setup.busy == null)))
                         }

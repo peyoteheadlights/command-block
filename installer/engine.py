@@ -99,6 +99,9 @@ class Choices:
     # "Agent only": the agent, Java and the servers, no desktop app, for a
     # weak PC run from a phone or another PC. Kept in the install record.
     agent_only: bool = False
+    # "Agent only": the first-run answers asked by setup, sent to the agent
+    # for the owner ({"first_time", "kinds", "played_by"}).
+    welcome: dict[str, Any] | None = None
 
     def to_log(self) -> dict[str, Any]:
         return {
@@ -121,6 +124,7 @@ class Choices:
             "from_app": self.from_app,
             "connect_only": self.connect_only,
             "agent_only": self.agent_only,
+            "welcome": self.welcome,
             "desktop_shortcut": self.desktop_shortcut,
             "open_at_sign_in": self.open_at_sign_in,
         }
@@ -1057,6 +1061,15 @@ class Engine:
                         {"color": pick["color"]},
                     )
                     done.append(f"color for {server_id}")
+        if self.c.welcome and self.c.agent_only and self.c.action == INSTALL and token:
+            # No desktop app here to ask the first-run questions: setup did.
+            # Not saved is no reason to undo the install: the owner's desktop
+            # app on another PC asks them at its first sign-in instead.
+            try:
+                self.system.api(port, tls, token, "PUT", "/account/welcome", self.c.welcome)
+                done.append("saved the first-run answers")
+            except SystemError_ as exc:
+                done.append(f"first-run answers not saved ({exc}); the app asks them")
         for server_id in self.stopped_servers:
             self.system.api(port, tls, token, "POST", f"/servers/{server_id}/server/start")
             done.append(f"started {server_id}")
