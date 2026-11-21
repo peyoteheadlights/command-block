@@ -323,6 +323,10 @@ class AddonToggleRequest(BaseModel):
     enabled: bool
 
 
+class AddonRequiredRequest(BaseModel):
+    required: bool
+
+
 class BedrockTermsRequest(BaseModel):
     # True only when the person ticked the box themselves.
     accepted: bool

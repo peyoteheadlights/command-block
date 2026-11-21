@@ -1097,6 +1097,11 @@ class AgentClient(
     suspend fun uploadAddon(serverId: String, file: PickedFile): AddonResult =
         call(upload("${server(serverId)}/addons/upload", file), AddonResult.serializer(), slow = true)
 
+    suspend fun setAddonsRequired(serverId: String, required: Boolean): AddonResult = call(
+        request("${server(serverId)}/addons/required").put(buildJsonObject { put("required", required) }.toBody()).build(),
+        AddonResult.serializer(),
+    )
+
     suspend fun setAddonEnabled(serverId: String, uuid: String, enabled: Boolean): AddonResult = call(
         request("${server(serverId)}/addons/${path(uuid)}").put(buildJsonObject { put("enabled", enabled) }.toBody()).build(),
         AddonResult.serializer(),

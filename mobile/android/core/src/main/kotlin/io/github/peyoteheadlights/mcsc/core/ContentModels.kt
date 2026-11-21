@@ -726,6 +726,8 @@ data class AddonList(
     val addons: List<Addon> = emptyList(),
     /** The world the packs are on; null before the server made one. */
     val world: String? = null,
+    /** Bedrock's "Required to join" (texturepack-required). */
+    val required: Boolean = false,
     val running: Boolean = false,
     @SerialName("restart_needed") val restartNeeded: Boolean? = null,
 )

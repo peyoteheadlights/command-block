@@ -787,9 +787,10 @@ class ContentTest {
     fun `bedrock packs and game settings are read and saved`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)
-            agent.server.enqueue(agent.json("""{"addons": [{"uuid": "u1", "version": "1.0.0", "name": "Skins", "description": null, "kind": "resource", "folder": "resource_packs/skins", "enabled": true}], "world": "Bedrock level", "running": true, "restart_needed": true}"""))
+            agent.server.enqueue(agent.json("""{"addons": [{"uuid": "u1", "version": "1.0.0", "name": "Skins", "description": null, "kind": "resource", "folder": "resource_packs/skins", "enabled": true}], "world": "Bedrock level", "required": true, "running": true, "restart_needed": true}"""))
             val packs = c.addons("s")
             assertEquals("Bedrock level", packs.world)
+            assertEquals(true, packs.required)
             assertEquals("addons.kind_resource", Content.packKind(packs.addons.single()))
             agent.server.takeRequest()
             agent.server.enqueue(agent.json("""{"ok": true, "installed": [], "restart_needed": true}"""))
@@ -797,6 +798,11 @@ class ContentTest {
             val toggled = agent.server.takeRequest()
             assertEquals("PUT", toggled.method)
             assertEquals("""{"enabled":false}""", toggled.body.readUtf8())
+            agent.server.enqueue(agent.json("""{"ok": true, "required": false, "undo": null, "running": true, "restart_needed": true}"""))
+            assertEquals(true, c.setAddonsRequired("s", required = false).restartNeeded)
+            val required = agent.server.takeRequest()
+            assertEquals("/api/servers/s/addons/required", required.path)
+            assertEquals("""{"required":false}""", required.body.readUtf8())
 
             agent.server.enqueue(agent.json("""{"file": "C:\\s\\server.properties", "exists": true, "modified_at": 1.0, "world_exists": true, "world_folder": "world", "fields": [{"key": "max-players", "kind": "int", "value": 20, "raw": "20", "set": true, "problem": null, "minecraft_default": "20", "choices": [], "min": 1, "max": 10000, "max_length": 200, "read_only": null}], "text": "", "running": false, "restart_needed": false}"""))
             assertEquals("20", GameForm.initial(c.gameSettings("s").fields.single()))

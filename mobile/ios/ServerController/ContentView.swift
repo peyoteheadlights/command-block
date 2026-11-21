@@ -1189,6 +1189,14 @@ struct ContentView: View {
             if list.running && changes == .ready {
                 Hint(text: model.t("addons.running"), palette: palette)
             }
+            CardBox(palette: palette) {
+                Toggle(model.t("make.required"), isOn: Binding(
+                    get: { list.required },
+                    set: { on in Task { await content.setAddonsRequired(on, strings) } }
+                ))
+                .disabled(!idle || changes != .ready)
+                Hint(text: model.t("addons.required_hint"), palette: palette)
+            }
             SectionTitle(text: strings.tn("addons.installed", count: list.addons.count), palette: palette)
             if list.addons.isEmpty {
                 EmptyCard(title: model.t("addons.none"), hint: model.t("addons.none_hint"), palette: palette)
