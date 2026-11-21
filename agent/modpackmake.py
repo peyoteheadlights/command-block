@@ -321,7 +321,8 @@ async def _players_companion(ctx: ServerContext, items: list[Item]) -> dict[str,
     if plugin is None:
         return None
     # Only a plugin from Modrinth tells us where its Fabric jar is: never a guessed project.
-    project = (plugin.modrinth or {}).get("project_id")
+    info = plugin.modrinth or {}
+    project = info.get("project_id")
     need = {
         "name": "Command Block Companion for Fabric",
         "page": f"https://modrinth.com/mod/{project}" if project else None,
@@ -332,7 +333,7 @@ async def _players_companion(ctx: ServerContext, items: list[Item]) -> dict[str,
     if not minecraft:
         raise ModpackError(f"Start {ctx.name} once so the app knows its Minecraft version.")
     # Release versions are named like 0.1.0+paper and 0.1.0+fabric.
-    wanted = str(plugin.modrinth.get("version_number") or "").split("+")[0] + "+fabric"
+    wanted = str(info.get("version_number") or "").split("+")[0] + "+fabric"
     try:
         versions = await modrinth.versions(project, minecraft, ("fabric",))
         jar = next((v for v in versions if v.get("version_number") == wanted), None)
