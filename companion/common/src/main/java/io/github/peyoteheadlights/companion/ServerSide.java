@@ -16,8 +16,8 @@ import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 
 /**
- * The server's half of the check, shared by the Fabric mod, the NeoForge
- * mod and the Paper plugin. They only connect it to their own events:
+ * The server's half of the check, shared by the Fabric, Forge and NeoForge
+ * mods and the Paper plugin. They only connect it to their own events:
  * a player starts joining, joins, answers, leaves, and a timer about once
  * a second. Paper calls the joining part from its own joining threads, so
  * the maps are thread-safe.

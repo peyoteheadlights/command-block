@@ -104,14 +104,14 @@ change the SHA and the comment together.
 
 The Companion mod and plugin (`companion/`) have their own tags,
 `companion-v0.1.0`, and their own workflow,
-`.github/workflows/companion-release.yml`. It builds the three jars
-(Fabric, NeoForge, Paper) once on GitHub, writes a `.sha256` for each,
+`.github/workflows/companion-release.yml`. It builds the jars
+(Fabric, Forge, NeoForge, Paper, WaterdogPE) once on GitHub, writes a `.sha256` for each,
 attests them, and publishes the same files on GitHub and on Modrinth.
 
 **Once, before the first one:**
 
 1. On Modrinth, make the project under your own account (type Mod, with
-   the Fabric, Quilt, NeoForge, Paper and Purpur loaders) and say in its
+   the Fabric, Quilt, Forge, NeoForge, Paper and Purpur loaders) and say in its
    description that it was written with AI help, as Modrinth's rules ask.
    Copy its project ID (the project's page, the three dots, Copy ID).
 2. On Modrinth, Settings, Personal access tokens: make one with only

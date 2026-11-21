@@ -13,7 +13,7 @@ that. So the Companion proves "this player has the right modpack" for
 honest players. It is never called protection or anti-cheat. The real
 gates stay the whitelist, Join protection and a server-side anti-cheat
 (Grim, suggested in the app). Mods that add blocks, items or entities
-enforce themselves: NeoForge and Fabric API refuse a player whose
+enforce themselves: Forge, NeoForge and Fabric API refuse a player whose
 registries don't match the server's.
 
 ## What we protect
