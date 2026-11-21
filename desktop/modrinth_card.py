@@ -24,7 +24,7 @@ from .ui import label, push
 from .words import text
 
 if TYPE_CHECKING:
-    from .mods import ModsPage
+    from .mods import ModsPage, VanillaModsPage
 
 WAIT_MS = 10 * 60 * 1000  # the sign-in service's own limit
 PAGE = (
@@ -78,7 +78,7 @@ class ModrinthCard:
     """Shown on Java servers to accounts that may manage mods. Signing in
     and out is the owner's (PC settings)."""
 
-    def __init__(self, page: ModsPage) -> None:
+    def __init__(self, page: ModsPage | VanillaModsPage) -> None:
         self.page = page
         self.data: dict = {}
         self.catcher: CodeCatcher | None = None

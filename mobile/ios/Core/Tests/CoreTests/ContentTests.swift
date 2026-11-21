@@ -63,6 +63,15 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(s.t(ContentKind.packs.titleKey), "Packs")
     }
 
+    func testVanillaStillGetsTheScreenToMakeAModpack() {
+        let row = ServerRow(id: "s", name: "S")
+        XCTAssertTrue(Content.shown(row))
+        var bedrock = row
+        bedrock.edition = "bedrock"
+        XCTAssertFalse(Content.shown(bedrock))
+        XCTAssertFalse(Content.shown(nil))
+    }
+
     func testEachModSaysWhetherItWorksAndWhyNot() {
         let missing = ModIssue(kind: "missing_dependency", severity: "error", detail: "Alpha needs Fabric API, which isn't installed.")
         let version = ModIssue(kind: "version_mismatch", severity: "warn", detail: "Alpha is made for Minecraft 1.20.")
@@ -448,10 +457,11 @@ final class ContentTests: XCTestCase {
 
     func testMakeAModpackSendsTheAnswersThenDownloadsItAndPostsItInDiscord() async throws {
         let c = client()
-        StubAgent.json(#"{"name": "Friends", "version": "2", "configs": [{"path": "config/a.toml", "size_bytes": 9}], "players_loaders": [{"id": "fabric", "name": "Fabric"}], "discord": true, "discord_limit_bytes": 10485760, "required_to_join": {"available": false}}"#)
+        StubAgent.json(#"{"name": "Friends", "version": "2", "configs": [{"path": "config/a.toml", "size_bytes": 9}], "players_loaders": [{"id": "fabric", "name": "Fabric"}], "discord": true, "discord_limit_bytes": 10485760, "required_to_join": {"available": false, "needs_fabric": true}}"#)
         let options = try await c.makeModpackOptions(serverId: "s")
         XCTAssertEqual(options.configs.first?.path, "config/a.toml")
         XCTAssertFalse(options.requiredToJoin)
+        XCTAssertTrue(options.needsFabric)
         XCTAssertEqual(options.chatLine, ChatLine())
         XCTAssertEqual(path(0), "/api/servers/s/modpack/make")
 

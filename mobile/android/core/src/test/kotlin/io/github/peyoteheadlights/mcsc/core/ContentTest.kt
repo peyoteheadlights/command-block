@@ -38,6 +38,15 @@ class ContentTest {
     }
 
     @Test
+    fun `vanilla still gets the screen to make a modpack, a packless Bedrock server doesn't`() {
+        val row = ServerRow(id = "s", name = "S")
+        assertTrue(Content.shown(row))
+        assertTrue(Content.shown(row.copy(content = "mods")))
+        assertFalse(Content.shown(row.copy(edition = "bedrock")))
+        assertFalse(Content.shown(null))
+    }
+
+    @Test
     fun `each mod says whether it works and why not`() {
         val missing = ModIssue("missing_dependency", "error", "Alpha needs Fabric API, which isn't installed.")
         val version = ModIssue("version_mismatch", "warn", "Alpha is made for Minecraft 1.20.")
@@ -557,10 +566,11 @@ class ContentTest {
     fun `make a modpack sends the answers, then downloads it and posts it in discord`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)
-            agent.server.enqueue(agent.json("""{"name": "Friends", "version": "2", "configs": [{"path": "config/a.toml", "size_bytes": 9}], "players_loaders": [{"id": "fabric", "name": "Fabric"}], "discord": true, "discord_limit_bytes": 10485760, "required_to_join": {"available": false}}"""))
+            agent.server.enqueue(agent.json("""{"name": "Friends", "version": "2", "configs": [{"path": "config/a.toml", "size_bytes": 9}], "players_loaders": [{"id": "fabric", "name": "Fabric"}], "discord": true, "discord_limit_bytes": 10485760, "required_to_join": {"available": false, "needs_fabric": true}}"""))
             val options = c.makeModpackOptions("s")
             assertEquals("config/a.toml", options.configs.single().path)
             assertEquals(false, options.requiredToJoin.available)
+            assertEquals(true, options.requiredToJoin.needsFabric)
             assertEquals(true, options.chatLine.on)
             assertEquals("/api/servers/s/modpack/make", agent.server.takeRequest().path)
 
