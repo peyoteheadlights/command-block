@@ -1843,8 +1843,8 @@ class ModsPage(Page):
             forget()
 
         # The own jars were listed in the question just answered.
-        body = {"token": token, "confirm": True, "own_jars": bool(pack.get("own_jars"))}
-        self.ask("POST", "/modpack", done, failed, body=body, slow=True)
+        payload = {"token": token, "confirm": True, "own_jars": bool(pack.get("own_jars"))}
+        self.ask("POST", "/modpack", done, failed, body=payload, slow=True)
 
 
 class AddonsPage(Page):
