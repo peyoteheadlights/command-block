@@ -75,6 +75,8 @@ VERSION_RE = re.compile(r"[A-Za-z0-9_.+-]{1,32}")
 CONFIG_FOLDERS = ("config", "defaultconfigs")
 MAX_CONFIGS = 2000
 MAX_CONFIG_BYTES = 5 * 1024 * 1024
+# Private keys, like Floodgate's config/floodgate/key.pem: anyone with it can join as any Bedrock player.
+KEY_EXTENSIONS = {".pem", ".key"}
 DISCORD_LIMIT = 10 * 1024 * 1024  # what a bot may post where nobody boosted
 PLAYERS_LOADERS = {"fabric": "Fabric", "quilt": "Quilt"}
 ENV = {
@@ -125,7 +127,7 @@ def _server_dir(ctx: ServerContext) -> Path:
 
 def config_files(ctx: ServerContext) -> list[dict[str, Any]]:
     """The config files that can be ticked: config/ and defaultconfigs/,
-    no links, no programs or jars, none bigger than 5 MB."""
+    no links, no programs, jars or private keys, none bigger than 5 MB."""
     base = _server_dir(ctx)
     found: list[dict[str, Any]] = []
     for top in CONFIG_FOLDERS:
@@ -139,6 +141,8 @@ def config_files(ctx: ServerContext) -> list[dict[str, Any]]:
                 suffix = path.suffix.lower()
                 if path.is_symlink() or suffix in EXECUTABLE_EXTENSIONS or suffix == ".jar":
                     continue
+                if suffix in KEY_EXTENSIONS:
+                    continue  # never handed to players
                 if path.relative_to(base).as_posix() == companion.MODS_FILE:
                     continue  # the server's own check settings, not for players
                 size = path.stat().st_size
