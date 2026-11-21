@@ -146,7 +146,7 @@ extension AgentClient {
 
     /// Modpack update: one backup, all or nothing, one Undo.
     public func updateModpack(serverId: String, token: String, usePackConfigs: Bool) async throws {
-        let body = try AgentClient.encode(UpdateBody(token: token, usePackConfigs: usePackConfigs, confirm: true))
+        let body = try AgentClient.encode(ModpackUpdateBody(token: token, usePackConfigs: usePackConfigs, confirm: true))
         _ = try await call("POST", content(serverId) + "/modpack/update", body: body, slow: true, as: Ok.self)
     }
 
@@ -286,7 +286,7 @@ extension AgentClient {
         enum CodingKeys: String, CodingKey { case versionId = "version_id" }
     }
 
-    private struct UpdateBody: Encodable {
+    private struct ModpackUpdateBody: Encodable {
         let token: String
         let usePackConfigs: Bool
         let confirm: Bool
