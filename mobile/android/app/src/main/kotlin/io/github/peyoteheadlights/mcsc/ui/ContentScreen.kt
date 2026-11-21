@@ -137,10 +137,29 @@ fun ContentScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onChan
     ) {
         when (kind) {
             null -> item { Note(t("mobile.common.loading")) }
-            ContentKind.NONE -> item { Card(Modifier.padding(top = 8.dp)) { Item(t("mobile.content.none_for_type")) } }
+            ContentKind.NONE -> vanillaList(vm, content, onChangeType)
             ContentKind.PACKS -> packsList(vm, serverId, content) { asking = it }
             else -> modsList(vm, serverId, content, kind) { asking = it }
         }
+    }
+}
+
+// ---------------------------------------------------------------- vanilla
+
+/** Vanilla runs no mods: Make a modpack, and why Required to join needs Fabric. */
+private fun LazyListScope.vanillaList(vm: AppViewModel, content: ContentPages, onChangeType: () -> Unit) {
+    val idle = content.busy == null
+    item { SaidNote(content.said) }
+    item {
+        Card(Modifier.padding(top = 8.dp)) {
+            Note(t("make.required_vanilla"))
+            if (vm.canDo(Permissions.SETTINGS_SERVER)) Presses(listOf(Press(t("make.change_type"), onChangeType)))
+        }
+    }
+    if (vm.canDo(Permissions.MODS_MANAGE)) {
+        item { MakeModpackCard(vm, content, idle) }
+        item { DownloadLinkCard(vm, content, idle) }
+        item { ModrinthCard(vm, content, idle) }
     }
 }
 

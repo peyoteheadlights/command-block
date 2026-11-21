@@ -1952,7 +1952,6 @@
 "mobile.widget.checked": ["Checked {when}", "Checked {when}"],
 "mobile.shortcut.confirm": ["{action} {server}?", "{action} {server}?"],
 "mobile.content.packs": ["Packs", "Packs"],
-"mobile.content.none_for_type": ["This server's type takes no add-ons. Change the server type in Settings to add some.", "This server type has no add-ons folder."],
 "mobile.content.stop_first": ["Stop the server first. Changes here happen only while it's stopped.", "Stop the server first: changes here need it stopped."],
 "mobile.content.stop_confirm_title": ["Stop the server?", "Stop the server?"],
 "mobile.content.stop_confirm_body": ["Players are disconnected and the world is saved first.", "Sends stop; the world is saved first."],

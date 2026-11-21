@@ -31,7 +31,7 @@ from .ui import label, push, size
 from .words import text
 
 if TYPE_CHECKING:
-    from .mods import ModsPage
+    from .mods import ModsPage, VanillaModsPage
 
 
 class MakeDialog(QDialog):
@@ -193,7 +193,7 @@ class MakeDialog(QDialog):
 class MakeCard:
     """The Make a modpack card. Shown to accounts that may manage mods."""
 
-    def __init__(self, page: ModsPage) -> None:
+    def __init__(self, page: ModsPage | VanillaModsPage) -> None:
         self.page = page
         self.result: dict | None = None
         self.frame, layout = card(text("make.title"))
