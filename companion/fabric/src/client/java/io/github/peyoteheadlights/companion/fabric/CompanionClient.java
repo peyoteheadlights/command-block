@@ -21,6 +21,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.DisconnectedScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -34,16 +35,18 @@ public final class CompanionClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        String playersFile = playersFile();
-        String version = Prover.packVersion(playersFile);
+        String players = playersFile();
         ClientConfigurationNetworking.registerGlobalReceiver(
-                CheckPayload.TYPE, (payload, context) -> answer(payload, context.responseSender(), version));
+                CheckPayload.TYPE, (payload, context) -> answer(payload, context.responseSender(), players));
         ClientPlayNetworking.registerGlobalReceiver(
-                CheckPayload.TYPE, (payload, context) -> answer(payload, context.responseSender(), version));
+                CheckPayload.TYPE, (payload, context) -> answer(payload, context.responseSender(), players));
         ClientConfigurationNetworking.registerGlobalReceiver(OfferPayload.TYPE, (payload, context) -> Updates.offered(payload.data()));
         ClientPlayNetworking.registerGlobalReceiver(OfferPayload.TYPE, (payload, context) -> Updates.offered(payload.data()));
         // "Update modpack" on the screen after a refused join, and on the pause menu.
         ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
+            if (screen instanceof ConnectScreen) {
+                Updates.joining(screen); // a new join: the last server's offer no longer counts
+            }
             if (screen instanceof DisconnectedScreen || screen instanceof PauseScreen) {
                 Button button = Updates.button(screen, width / 2 - 100, 8);
                 if (button != null) {
@@ -67,13 +70,13 @@ public final class CompanionClient implements ClientModInitializer {
     }
 
     /** Hashing jars takes a moment, so it runs off the game's threads. */
-    private static void answer(CheckPayload payload, PacketSender sender, String version) {
+    private static void answer(CheckPayload payload, PacketSender sender, String players) {
         CompletableFuture.runAsync(() -> {
             try {
                 Challenge challenge = Challenge.decode(payload.data());
-                Answer answer = Prover.answer(challenge, LoadedJars.get(), version);
+                Answer answer = Prover.answer(challenge, LoadedJars.get(), Prover.packVersion(players));
                 sender.sendPacket(new CheckPayload(answer.encode()));
-                Updates.checked(challenge, answer, version);
+                Updates.checked(challenge, answer, players);
             } catch (BadInput e) {
                 LOG.warn("The server's check didn't make sense ({}), so it wasn't answered", e.getMessage());
             }

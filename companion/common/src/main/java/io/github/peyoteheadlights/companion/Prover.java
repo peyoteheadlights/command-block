@@ -1,6 +1,5 @@
 package io.github.peyoteheadlights.companion;
 
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.IOException;
@@ -71,9 +70,8 @@ public final class Prover {
             if (root.get("format").getAsInt() != 1) {
                 return "";
             }
-            JsonElement v = root.getAsJsonObject("modpack").get("version");
-            String version = v.getAsString();
-            return version.matches("[\\w.+-]{1,32}") ? version : "";
+            String version = root.getAsJsonObject("modpack").get("version").getAsString();
+            return Settings.versionOk(version) ? version : "";
         } catch (RuntimeException e) {
             return "";
         }

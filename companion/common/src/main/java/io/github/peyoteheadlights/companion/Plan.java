@@ -1,5 +1,6 @@
 package io.github.peyoteheadlights.companion;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -18,6 +19,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -46,9 +48,12 @@ import java.util.zip.ZipFile;
  * @param version the modpack's version, from its players file
  * @param items what would change
  * @param skipped files that can't be put in, with why (shown to the player)
- * @param playersFile the new players file's text (written by Swap)
+ * @param players the new players file's text without its "files" list ({@link #playersFile} adds it)
+ * @param kept the modpack's own files already in place ("mods/x.jar"), which stay its own
+ * @param serverList SHA-256 (lowercase hex) of every jar the server's last check named
  */
-public record Plan(String name, String version, List<Item> items, List<String> skipped, String playersFile) {
+public record Plan(String name, String version, List<Item> items, List<String> skipped, String players,
+        List<String> kept, Set<String> serverList) {
 
     public static final String PLAYERS_FILE = "client-overrides/config/commandblock-companion-client.json";
     static final int MAX_ENTRIES = 20_000;
@@ -65,11 +70,11 @@ public record Plan(String name, String version, List<Item> items, List<String> s
      *
      * @param file its name in the mods folder ("sodium.jar")
      * @param url where a Modrinth or CurseForge file is downloaded from; null otherwise
-     * @param sha512 what a downloaded file must hash to; null otherwise
+     * @param hash what the file must hash to: SHA-512 for a download, SHA-256 for an own jar; null for a removal
      * @param zipEntry where an own jar is inside the modpack; null otherwise
      * @param ticked the list's starting tick: own jars start unticked
      */
-    public record Item(String file, Change change, Source source, String url, byte[] sha512, String zipEntry, boolean ticked) {}
+    public record Item(String file, Change change, Source source, String url, byte[] hash, String zipEntry, boolean ticked) {}
 
     /**
      * Reads the modpack and compares it with the mods folder.
@@ -95,11 +100,34 @@ public record Plan(String name, String version, List<Item> items, List<String> s
             if (name.isEmpty() || version.isEmpty()) {
                 throw new BadInput("the modpack has no Companion players file");
             }
-            List<String> newPackFiles = packFiles(players);
 
             List<Item> items = new ArrayList<>();
             List<String> skipped = new ArrayList<>();
+            // Each file name once: a launcher lets client-overrides win over overrides, and
+            // both over the download list, so they are read in that order and the first counts.
             Map<String, Boolean> wanted = new LinkedHashMap<>(); // file -> already in place
+            for (String folder : List.of("client-overrides/mods/", "overrides/mods/")) {
+                for (ZipEntry entry : zip.stream().filter(z -> z.getName().startsWith(folder)).toList()) {
+                    String path = "mods/" + entry.getName().substring(folder.length());
+                    if (entry.isDirectory() || !Settings.MOD_PATH.matcher(path).matches()) {
+                        continue;
+                    }
+                    String file = path.substring("mods/".length());
+                    if (wanted.containsKey(file)) {
+                        continue;
+                    }
+                    byte[] sha256 = entryHash(zip, entry);
+                    if (!onServerList.contains(hex.formatHex(sha256))) {
+                        skipped.add(file + ": not on the server's own list, so it may have been changed on the way");
+                        continue;
+                    }
+                    boolean there = matches(mods.resolve(file), "SHA-256", sha256);
+                    wanted.put(file, there);
+                    if (!there) {
+                        items.add(new Item(file, Change.ADD, Source.OWN, null, sha256, entry.getName(), false));
+                    }
+                }
+            }
             JsonObject index = object(text(zip, "modrinth.index.json", MAX_INDEX_BYTES));
             for (JsonElement e : array(index, "files")) {
                 JsonObject f = e.getAsJsonObject();
@@ -111,6 +139,9 @@ public record Plan(String name, String version, List<Item> items, List<String> s
                     continue; // server only
                 }
                 String file = path.substring("mods/".length());
+                if (wanted.containsKey(file)) {
+                    continue;
+                }
                 byte[] sha512 = hex.parseHex(f.getAsJsonObject("hashes").get("sha512").getAsString().toLowerCase());
                 if (sha512.length != 64) {
                     throw new BadInput("bad sha512");
@@ -134,32 +165,14 @@ public record Plan(String name, String version, List<Item> items, List<String> s
                     items.add(new Item(file, Change.ADD, source, url, sha512, null, true));
                 }
             }
-            for (String folder : List.of("overrides/mods/", "client-overrides/mods/")) {
-                for (ZipEntry entry : zip.stream().filter(z -> z.getName().startsWith(folder)).toList()) {
-                    String path = "mods/" + entry.getName().substring(folder.length());
-                    if (entry.isDirectory() || !Settings.MOD_PATH.matcher(path).matches()) {
-                        continue;
-                    }
-                    String file = path.substring("mods/".length());
-                    byte[] sha256 = entryHash(zip, entry);
-                    if (!onServerList.contains(hex.formatHex(sha256))) {
-                        skipped.add(file + ": not on the server's own list, so it may have been changed on the way");
-                        continue;
-                    }
-                    boolean there = matches(mods.resolve(file), "SHA-256", sha256);
-                    wanted.put(file, there);
-                    if (!there) {
-                        items.add(new Item(file, Change.ADD, Source.OWN, null, null, entry.getName(), false));
-                    }
-                }
-            }
-            // A player's own mod with the same name as a modpack file is never replaced.
+            // A player's own mod with the same name as a modpack file is never replaced. Only
+            // the modpack in place says which files are its own: a new one could claim anything.
             Set<String> ours = new HashSet<>(oldPackFiles);
-            ours.addAll(newPackFiles);
             items.removeIf(i -> {
                 boolean theirs = Files.exists(mods.resolve(i.file())) && !ours.contains("mods/" + i.file());
                 if (theirs) {
                     skipped.add(i.file() + ": you have your own file with that name, so it was left alone");
+                    wanted.remove(i.file());
                 }
                 return theirs;
             });
@@ -169,10 +182,40 @@ public record Plan(String name, String version, List<Item> items, List<String> s
                     items.add(new Item(file, Change.REMOVE, null, null, null, null, true));
                 }
             }
-            return new Plan(name, version, List.copyOf(items), List.copyOf(skipped), playersText);
+            // A file in place stays the modpack's only when the modpack in place said so (a
+            // player's own identical copy isn't claimed), even if the player doesn't tick its update.
+            List<String> kept = new ArrayList<>();
+            wanted.keySet().forEach(file -> {
+                if (ours.contains("mods/" + file) && Files.isRegularFile(mods.resolve(file))) {
+                    kept.add("mods/" + file);
+                }
+            });
+            players.remove("files");
+            return new Plan(name, version, List.copyOf(items), List.copyOf(skipped), new Gson().toJson(players),
+                    List.copyOf(kept), Set.copyOf(onServerList));
         } catch (IllegalArgumentException | IllegalStateException | NullPointerException | UnsupportedOperationException e) {
             throw new BadInput("the modpack file doesn't make sense"); // Gson and HexFormat throw these
         }
+    }
+
+    /**
+     * The new players file. Its "files" are only the modpack's files kept in
+     * place and the ticked ones added, so a later update can never remove a
+     * file this one merely claimed, or one the player chose not to add.
+     */
+    public String playersFile(List<Item> ticked) {
+        JsonObject players = JsonParser.parseString(this.players).getAsJsonObject();
+        Set<String> files = new LinkedHashSet<>(kept);
+        ticked.stream().filter(i -> i.change() == Change.ADD).forEach(i -> files.add("mods/" + i.file()));
+        JsonArray list = new JsonArray();
+        files.forEach(list::add);
+        players.add("files", list);
+        return new Gson().toJson(players);
+    }
+
+    /** True when the server's last check named a jar with this SHA-256. */
+    boolean onServerList(byte[] sha256) {
+        return serverList.contains(HexFormat.of().formatHex(sha256));
     }
 
     /** Which site a download link is from, by its host; null for anything else (or not https). */
@@ -250,16 +293,9 @@ public record Plan(String name, String version, List<Item> items, List<String> s
 
     private static byte[] entryHash(ZipFile zip, ZipEntry entry) throws IOException, BadInput {
         MessageDigest d = Hashes.sha256();
-        long total = 0;
         try (InputStream in = zip.getInputStream(entry)) {
-            byte[] buf = new byte[64 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                total += n;
-                if (total > Settings.MAX_FILE_BYTES) {
-                    throw new BadInput("a file in the modpack is too big");
-                }
-                d.update(buf, 0, n);
+            if (Hashes.feed(in, d, Settings.MAX_FILE_BYTES) > Settings.MAX_FILE_BYTES) {
+                throw new BadInput("a file in the modpack is too big");
             }
         }
         return d.digest();
@@ -272,11 +308,7 @@ public record Plan(String name, String version, List<Item> items, List<String> s
         }
         try (InputStream in = Files.newInputStream(file)) {
             MessageDigest d = MessageDigest.getInstance(algorithm);
-            byte[] buf = new byte[64 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                d.update(buf, 0, n);
-            }
+            Hashes.feed(in, d, Long.MAX_VALUE);
             return MessageDigest.isEqual(d.digest(), want);
         } catch (IOException | NoSuchAlgorithmException e) {
             return false;
