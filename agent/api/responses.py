@@ -821,6 +821,9 @@ class Health(Open):
 class VersionInfo(Open):
     version: str = Field(description="The app's version, like 1.2.0")
     api_version: int = Field(description="Goes up only for a change a client must know about")
+    agent_only: bool = Field(
+        False, description="Installed as Agent only: the PC has no desktop app of its own"
+    )
 
 
 class PairingCode(Open):
