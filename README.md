@@ -65,6 +65,8 @@ Or use **playit.gg** in the same card: no port is opened and friends don't see y
 
 A plain Bedrock server needs one more step for playit.gg: make a "Minecraft Bedrock (NetherNet)" tunnel, copy the WaterdogPE settings box from the tunnel's Configuration help and paste it in. After you click, the app downloads [WaterdogPE](https://github.com/WaterdogPE/WaterdogPE) (GPL-2.0), a free program that sits in front of the server, plus the Companion's small plugin for it that keeps your allow list, and runs WaterdogPE whenever the server runs. The server moves to the port in playit's settings.
 
+Xbox, PlayStation and Switch can't join a home server on their own. On a Java server with "Let Bedrock players join" on, "Let console friends join" adds [MCXboxBroadcast](https://github.com/MCXboxBroadcast/Broadcaster) (GPL-3.0), a free Geyser add-on. You sign it in to a Microsoft account, console friends add that account as a friend and join from the Friends tab. It's unofficial and may break Microsoft's rules, so use a spare Microsoft account, never your main one. The app shows these risks before it downloads anything.
+
 To give your internet address a name friends can remember (like `myserver.duckdns.org`), save a free DuckDNS or No-IP name in the same card. The app keeps it pointed at your PC. It's only a name, so the port still has to be open.
 
 ## Planned features

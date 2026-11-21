@@ -334,6 +334,12 @@ class CrossplayRequest(BaseModel):
     port: int | None = Field(default=None, ge=1, le=65535)
 
 
+class ConsoleFriendsRequest(BaseModel):
+    enabled: bool
+    # True only after the person read the risks and said yes.
+    accept_risks: bool = False
+
+
 class GameSettingsRequest(BaseModel):
     values: dict[str, Any] = Field(max_length=40)
 
