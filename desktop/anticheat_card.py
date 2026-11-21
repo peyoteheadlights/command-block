@@ -100,10 +100,10 @@ class AntiCheatCard:
         button = push(text("anticheat.from_file")) if own else None
         if button:
             button.clicked.connect(page.pick_jar)
-        words = text("anticheat.custom_about")
+        about = text("anticheat.custom_about")
         if not own:
-            words += "\n" + text("anticheat.no_own_jar")
-        rows.append(_row(words, button))
+            about += "\n" + text("anticheat.no_own_jar")
+        rows.append(_row(about, button))
         refill(self.rows, rows)
         self.frame.setVisible(True)
 
