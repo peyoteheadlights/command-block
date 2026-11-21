@@ -8,7 +8,7 @@ from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ... import ddns, internet, joininfo, playit, protection
+from ... import ddns, internet, joininfo, playit, protection, waterdog
 from ...config import ConfigError
 from ...security.auth import Principal
 from ...security.permissions import PC_SETTINGS, SERVER_VIEW, SETTINGS_SERVER, require
@@ -20,6 +20,7 @@ from .models import (
     InternetTestRequest,
     NoIpRequest,
     PhoneTestRequest,
+    WaterdogRequest,
 )
 
 router = APIRouter()
@@ -58,6 +59,12 @@ async def internet_switch(
     """On: the router opens the game ports now if the server runs, and on
     every start. Off: closed at once."""
     _owner(principal)
+    if payload.on and ctx.core.waterdog.of(ctx):
+        raise HTTPException(
+            status_code=409,
+            detail="This server is behind WaterdogPE for playit.gg. Its own port lets players "
+            "in without the Xbox sign-in check, so the router won't open it.",
+        )
     previous = ctx.config.server.internet
     ctx.config.set("server.internet", payload.on)
     try:
@@ -173,6 +180,14 @@ async def playit_test(
         ctx.core.db.set_setting(internet.MCSRVSTAT_OK, True)
     if not ctx.core.db.get_setting(internet.MCSRVSTAT_OK, False):
         raise HTTPException(status_code=409, detail="Say yes to asking mcsrvstat.us first.")
+    if ctx.config.server_type.edition == "bedrock":
+        # mcsrvstat.us asks the old Bedrock way (RakNet), which a NetherNet
+        # tunnel doesn't answer: its "no" would be a guess.
+        raise HTTPException(
+            status_code=409,
+            detail="mcsrvstat.us can't test Bedrock's new connection (NetherNet). Join from a "
+            "phone on mobile data instead.",
+        )
     await _playit(ctx, principal)
     address = ctx.core.playit.tunnel_address(ctx)
     if not address:
@@ -180,6 +195,43 @@ async def playit_test(
     await playit.test_tunnel(ctx, address)
     audit(ctx, request, "playit_test")
     return ctx.core.playit.summary(ctx)
+
+
+@router.post("/playit-bedrock", response_model=PlayitState)
+async def playit_bedrock(
+    payload: WaterdogRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    """A plain Bedrock server goes behind WaterdogPE for playit's NetherNet
+    tunnel: downloads WaterdogPE and the Companion's allow list plugin (the
+    owner's click, house rule 2) and moves the server to the box's port."""
+    _owner(principal)
+    ctx.require_free()
+    try:
+        done = await ctx.core.waterdog.use(ctx, payload.box, principal.user)
+    except waterdog.WaterdogError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit(ctx, request, "waterdog_on")
+    return {**await _playit(ctx, principal), "internet_off": done["internet_off"]}
+
+
+@router.delete("/playit-bedrock", response_model=PlayitState)
+async def playit_bedrock_off(
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    """Back to the server's own port and allow list; WaterdogPE's folder goes."""
+    _owner(principal)
+    ctx.require_free()
+    try:
+        await ctx.core.waterdog.stop_using(ctx, principal.user)
+    except waterdog.WaterdogError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit(ctx, request, "waterdog_off")
+    return await _playit(ctx, principal)
 
 
 # ---------------------------------------------------------------- DuckDNS and No-IP

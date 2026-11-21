@@ -115,6 +115,14 @@ async def apply_live(ctx: ServerContext, changed: dict[str, str]) -> None:
 def view(ctx: ServerContext) -> dict[str, Any]:
     directory = ctx.config.server_dir
     data = properties.form_view(directory, ctx.config.server_type)
+    behind = ctx.core.waterdog.of(ctx)
+    if behind:
+        # Behind WaterdogPE the file's allow-list stays false; the
+        # Companion's plugin keeps the real one (agent/waterdog.py).
+        on = bool(behind.get("list_on"))
+        for f in data["fields"]:
+            if f["key"] == "allow-list":
+                f.update(value=on, raw="true" if on else "false", set=True, problem=None)
     return {
         **data,
         "running": ctx.server.running,
@@ -220,6 +228,39 @@ async def save(
     path = directory / properties.FILENAME
     server_type = ctx.config.server_type
     known = properties.fields_for(server_type.dialect)
+    behind = ctx.core.waterdog.of(ctx)
+    list_said: dict[str, str] = {}
+    if behind and raw_text is not None:
+        from .waterdog import SERVER_KEYS
+
+        before = properties.PropertiesFile.read(path).values() if path.is_file() else {}
+        after = properties.check_raw_text(raw_text, server_type.dialect).values()
+        kept = {
+            k: "WaterdogPE needs this as it is. Stop using WaterdogPE to change it."
+            for k in SERVER_KEYS
+            if before.get(k) != after.get(k)
+        }
+        if kept:
+            raise properties.FormError(kept)
+    elif behind:
+        updates = dict(updates or {})
+        port = updates.get("server-port")
+        if port is not None and str(port).strip() != str(behind["server_port"]):
+            raise properties.FormError(
+                {
+                    "server-port": "WaterdogPE sends players to this port. "
+                    "Stop using WaterdogPE to change it."
+                }
+            )
+        wanted = updates.pop("allow-list", None)
+        if wanted is not None:
+            try:
+                on = properties.check_value(known["allow-list"], wanted) == "true"
+            except properties.PropertiesError as exc:
+                raise properties.FormError({"allow-list": str(exc)}) from exc
+            if on != bool(behind.get("list_on")):
+                await ctx.core.waterdog.set_list(ctx, on)
+                list_said = {"allow-list": "true" if on else "false"}
     if raw_text is not None:
         edited = properties.check_raw_text(raw_text, server_type.dialect)
         before = properties.PropertiesFile.read(path).values() if path.is_file() else {}
@@ -263,9 +304,18 @@ async def save(
             changed["server-udp-ports"] = str(new_port)
         others = sorted(changed)
         if not changed:
-            return {"changed": {}, "keys": [], "nothing_changed": True, **_after(ctx)}
+            return {
+                "changed": list_said,
+                "keys": sorted(list_said),
+                "nothing_changed": not list_said,
+                **_after(ctx),
+            }
 
-    return await write_properties(ctx, edited, changed, others, user)
+    result = await write_properties(ctx, edited, changed, others, user)
+    if list_said:
+        result["changed"] = {**result["changed"], **list_said}
+        result["keys"] = sorted({*result["keys"], *list_said})
+    return result
 
 
 async def set_values(

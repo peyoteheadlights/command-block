@@ -449,9 +449,21 @@ class PlayitTunnel(Open):
 
 
 class PlayitWay(Open):
-    kind: str = Field(description="java, or bedrock for Geyser's port")
+    kind: str = Field(
+        description="java, bedrock for Geyser's port, nethernet for WaterdogPE's (plain Bedrock)"
+    )
     local_port: int = Field(description="The port the tunnel must send to")
     tunnel: PlayitTunnel | None = Field(None, description="null until made on playit.gg")
+
+
+class WaterdogState(Open):
+    """WaterdogPE in front of a plain Bedrock server (agent/waterdog.py). Never the token."""
+
+    state: str = Field(description="server_off, starting, registered (playit sees it), stopped")
+    listen_port: int = Field(description="WaterdogPE's port")
+    media_port: int = Field(description="NetherNet's UDP port: the tunnel's local port")
+    server_port: int = Field(description="The Bedrock server's own port now")
+    list_on: bool = Field(description="The Companion plugin keeps the allow list")
 
 
 class PlayitState(Open):
@@ -469,7 +481,14 @@ class PlayitState(Open):
         None, description="The link step: url, state (waiting, rejected, expired, failed), detail"
     )
     ways: list[PlayitWay] = Field(default_factory=list)
-    supported: bool = Field(True, description="false for a plain Bedrock server (later)")
+    supported: bool = Field(True, description="Always true now (kept for older apps)")
+    plain_bedrock: bool = Field(False, description="A Bedrock server: needs WaterdogPE first")
+    waterdog: WaterdogState | None = Field(
+        None, description="A plain Bedrock server behind WaterdogPE; null when not set up"
+    )
+    internet_off: bool = Field(
+        False, description="Only after setting up WaterdogPE: the router switch was turned off"
+    )
     proxy: str = Field(description="What Proxy Protocol the tunnel needs: v2 or none")
     new_tunnel: str = Field(description="The page that makes a tunnel")
     site: str

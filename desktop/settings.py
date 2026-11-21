@@ -452,9 +452,6 @@ class SettingsPage(Page):
         here = self.window_.agent.place == "this PC"
 
         def show(now: dict) -> None:
-            if not now.get("supported", True):
-                refill(box, [])  # a plain Bedrock server: through WaterdogPE, later
-                return
             refill(box, self.playit_lines(now, owner, here, show, failed, again))
 
         def failed(exc: Exception) -> None:
@@ -519,10 +516,14 @@ class SettingsPage(Page):
             shown.append(label(words.strip(), "problem"))
             if owner and phase != "not_installed":
                 shown.append(button("playit.reconnect", act("reconnect"), "tonal"))
+        elif now.get("plain_bedrock") and not now.get("waterdog"):
+            shown += self.waterdog_setup(now, owner, show, failed)
         else:
             shown += self.playit_ways(now, owner, show)
             if owner and any(not w.get("tunnel") for w in now.get("ways") or []):
                 shown.append(button("playit.check", again))
+            if now.get("waterdog"):
+                shown += self.waterdog_lines(now["waterdog"], owner, show, failed)
         if owner:
             shown.append(button("playit.stop", lambda: self.playit_stop(show, failed, here)))
         return shown
@@ -579,6 +580,75 @@ class SettingsPage(Page):
 
             run.clicked.connect(run_test)
             shown.append(run)
+        return shown
+
+    def waterdog_setup(self, now: dict, owner: bool, show, failed) -> list[QWidget]:
+        """A plain Bedrock server needs WaterdogPE in front (agent/waterdog.py):
+        the owner pastes playit's config.yml box, which holds the tunnel's token."""
+        shown: list[QWidget] = [label(text("playit.bedrock_note"), "sub")]
+        if not owner:
+            return shown
+        make = push(text("playit.make_open"), "tonal")
+        make.clicked.connect(lambda: self.window_.pc.open_link(now.get("new_tunnel") or ""))
+        paste = QPlainTextEdit()
+        paste.setPlaceholderText(text("playit.bedrock_paste"))
+        paste.setFixedHeight(120)
+        set_up = push(text("playit.bedrock_set_up"), "tonal")
+
+        def go() -> None:
+            if not self.window_.confirm(
+                text("playit.bedrock_confirm_title"),
+                text("playit.bedrock_confirm_body"),
+                text("playit.bedrock_set_up"),
+            ):
+                return
+            set_up.setEnabled(False)
+
+            def done(after: dict) -> None:
+                show(after)
+                if after.get("internet_off"):
+                    self.window_.page_problem(AgentError(text("playit.waterdog_internet_off")))
+
+            def refused(exc: Exception) -> None:
+                set_up.setEnabled(True)
+                self.window_.page_problem(exc)
+
+            body = {"box": paste.toPlainText()}
+            self.ask("POST", "/playit-bedrock", done, refused, body=body, slow=True)
+
+        set_up.clicked.connect(go)
+        return [*shown, make, paste, set_up]
+
+    def waterdog_lines(self, found: dict, owner: bool, show, failed) -> list[QWidget]:
+        """WaterdogPE's state, the allow list and the way back."""
+        state = found.get("state") or "stopped"
+        shown: list[QWidget] = [
+            label(
+                text(f"playit.waterdog_{state}", port=found.get("server_port")),
+                "problem" if state == "stopped" else "sub",
+            ),
+            label(
+                text(
+                    "playit.waterdog_list_on"
+                    if found.get("list_on")
+                    else "playit.waterdog_list_off"
+                ),
+                "sub",
+            ),
+        ]
+        if owner:
+            stop = push(text("playit.waterdog_stop"))
+
+            def off() -> None:
+                if self.window_.confirm(
+                    text("playit.waterdog_stop"),
+                    text("playit.waterdog_stop_body"),
+                    text("playit.waterdog_stop"),
+                ):
+                    self.ask("DELETE", "/playit-bedrock", show, failed, slow=True)
+
+            stop.clicked.connect(off)
+            shown.append(stop)
         return shown
 
     def playit_stop(self, show, failed, here: bool) -> None:

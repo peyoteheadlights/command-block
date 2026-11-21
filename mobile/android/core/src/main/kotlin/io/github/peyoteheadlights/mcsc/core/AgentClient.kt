@@ -345,6 +345,15 @@ class AgentClient(
     )
 
     /** mcsrvstat.us pings the tunnel's address; [allow] as for testInternet. */
+    /** A plain Bedrock server behind WaterdogPE: playit's config.yml box (holds the tunnel's token). */
+    suspend fun setUpWaterdog(serverId: String, box: String): PlayitState = call(
+        post("${server(serverId)}/playit-bedrock", buildJsonObject { put("box", box) }),
+        PlayitState.serializer(),
+    )
+
+    suspend fun stopWaterdog(serverId: String): PlayitState =
+        call(request("${server(serverId)}/playit-bedrock").delete().build(), PlayitState.serializer())
+
     suspend fun testPlayit(serverId: String, allow: Boolean): PlayitState = call(
         post("${server(serverId)}/playit-test", buildJsonObject { put("allow_mcsrvstat", allow) }),
         PlayitState.serializer(),
