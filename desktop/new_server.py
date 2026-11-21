@@ -460,6 +460,7 @@ class NewServerScreen(QScrollArea):
                 field(text("new.memory"), self.memory, self.options.get("memory_reason") or "")
             )
             layout.addWidget(label(text("new.port_hint", port=self.options.get("port")), "muted"))
+        layout.addWidget(self.who_box())
         # Technical: a throwaway server for trying builds (agent/testserver.py).
         self.test = QCheckBox(text("test.make"))
         self.test.setVisible(mode["technical"])
@@ -467,6 +468,39 @@ class NewServerScreen(QScrollArea):
         if mode["technical"]:
             layout.addWidget(label(text("test.make_hint"), "sub"))
         return frame
+
+    def who_box(self) -> QWidget:
+        """ "Who's this server for?", from this PC's first-run answer. A few
+        friends or kids: the whitelist goes on, with their names."""
+        from .welcome import PLAYED_BY
+
+        box = QWidget()
+        column = QVBoxLayout(box)
+        column.setContentsMargins(0, 0, 0, 0)
+        self.who = QComboBox()
+        self.who.setObjectName("newPlayedBy")
+        self.who.addItem(text("welcome.for_unset"), "")
+        for value, words in PLAYED_BY:
+            self.who.addItem(text(words), value)
+        self.who.setCurrentIndex(max(0, self.who.findData(self.options.get("played_by") or "")))
+        column.addWidget(field(text("welcome.who_question"), self.who))
+        self.names = QLineEdit()
+        self.names.setObjectName("newPlayers")
+        self.names.setPlaceholderText(text("new.players_placeholder"))
+        names = field(text("new.players"), self.names, text("new.players_hint"))
+        column.addWidget(names)
+
+        def shown() -> None:
+            names.setVisible(self.who.currentData() in ("friends", "kids"))
+
+        self.who.currentIndexChanged.connect(lambda _i: shown())
+        shown()
+        return box
+
+    def players(self) -> list[str]:
+        if self.who.currentData() not in ("friends", "kids"):
+            return []
+        return [n.strip() for n in self.names.text().replace(";", ",").split(",") if n.strip()]
 
     def rules_card(self, kind: dict) -> QFrame:
         """Minecraft's rules (and for Bedrock, Mojang's Privacy Policy too)."""
@@ -524,6 +558,8 @@ class NewServerScreen(QScrollArea):
                     "vanilla_spawns": bool(self.spawns and self.spawns.isChecked()),
                     "eula_accepted": True,
                     "test": self.test.isChecked(),
+                    "played_by": self.who.currentData(),
+                    "players": self.players(),
                 }
                 window = self.window_
                 window.run(

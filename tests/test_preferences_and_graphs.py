@@ -20,14 +20,18 @@ def signed_in(client):
 # ------------------------------------------------------------------ preferences
 def test_preferences_default_to_simple_and_follow_the_system(client):
     signed_in(client)
-    assert client.get("/api/account/preferences").json() == {"mode": "simple", "theme": "system"}
+    assert client.get("/api/account/preferences").json() == {
+        "mode": "simple",
+        "theme": "system",
+        "tips": "on",
+    }
     assert client.get("/api/auth/me").json()["preferences"]["mode"] == "simple"
 
 
 def test_preferences_are_saved_on_the_server(client):
     signed_in(client)
     saved = client.put("/api/account/preferences", json={"mode": "technical"})
-    assert saved.json() == {"mode": "technical", "theme": "system"}
+    assert saved.json() == {"mode": "technical", "theme": "system", "tips": "on"}
     client.put("/api/account/preferences", json={"theme": "graphite"})
     # A second sign-in (another device) sees the same choices.
     del client.headers["Authorization"]
@@ -35,6 +39,7 @@ def test_preferences_are_saved_on_the_server(client):
     assert client.get("/api/account/preferences").json() == {
         "mode": "technical",
         "theme": "graphite",
+        "tips": "on",
     }
 
 
@@ -47,6 +52,74 @@ def test_unknown_preference_values_are_refused(client):
 
 def test_preferences_need_a_sign_in(client):
     assert client.get("/api/account/preferences").status_code == 401
+
+
+# ------------------------------------------------------------------ first-run questions
+def test_first_run_is_unanswered_until_the_owner_answers(client):
+    signed_in(client)
+    assert client.get("/api/account/welcome").json() == {
+        "answered": False,
+        "first_time": None,
+        "kinds": [],
+        "played_by": "",
+    }
+
+
+def test_a_first_timer_gets_simple_mode_and_tips(client):
+    signed_in(client)
+    saved = client.put(
+        "/api/account/welcome", json={"first_time": True, "kinds": ["mods"], "played_by": "kids"}
+    ).json()
+    # Kinds are only asked after "No".
+    assert saved == {"answered": True, "first_time": True, "kinds": [], "played_by": "kids"}
+    prefs = client.get("/api/account/preferences").json()
+    assert prefs["mode"] == "simple" and prefs["tips"] == "on"
+
+
+def test_no_keeps_the_kinds_and_picks_technical_without_tips(client):
+    signed_in(client)
+    saved = client.put(
+        "/api/account/welcome",
+        json={"first_time": False, "kinds": ["bedrock", "vanilla"], "played_by": "community"},
+    ).json()
+    assert saved["kinds"] == ["vanilla", "bedrock"]
+    prefs = client.get("/api/account/preferences").json()
+    assert prefs["mode"] == "technical" and prefs["tips"] == "off"
+
+
+def test_i_know_what_im_doing_is_technical_no_tips_nothing_set(client):
+    signed_in(client)
+    saved = client.put("/api/account/welcome", json={"first_time": None}).json()
+    assert saved == {"answered": True, "first_time": None, "kinds": [], "played_by": ""}
+    assert client.get("/api/account/preferences").json()["tips"] == "off"
+
+
+def test_pc_settings_change_the_answers_but_not_the_mode(client):
+    signed_in(client)
+    client.put("/api/account/welcome", json={"first_time": True, "played_by": "kids"})
+    saved = client.put(
+        "/api/account/welcome",
+        json={
+            "first_time": None,
+            "kinds": ["plugins"],
+            "played_by": "friends",
+            "set_defaults": False,
+        },
+    ).json()
+    assert saved == {
+        "answered": True,
+        "first_time": True,
+        "kinds": ["plugins"],
+        "played_by": "friends",
+    }
+    assert client.get("/api/account/preferences").json()["mode"] == "simple"
+
+
+def test_unknown_answers_are_refused(client):
+    signed_in(client)
+    assert client.put("/api/account/welcome", json={"kinds": ["spigot"]}).status_code == 422
+    assert client.put("/api/account/welcome", json={"played_by": "everyone"}).status_code == 422
+    assert client.put("/api/account/preferences", json={"tips": "maybe"}).status_code == 422
 
 
 # ------------------------------------------------------------------ graph series

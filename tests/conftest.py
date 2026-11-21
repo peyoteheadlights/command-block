@@ -431,6 +431,10 @@ def agent_http(tmp_path, monkeypatch):
     )
     agent = LiveAgent(config)
     agent.start()
+    # A PC that's been set up: the first-run questions were answered (skipped)
+    # already, so they don't pop up over every test. tests/test_desktop_welcome.py
+    # takes this away to ask them.
+    agent.app.state.core.db.set_setting("user:admin:welcome", {"first_time": None, "kinds": []})
     with httpx.Client(base_url=f"http://127.0.0.1:{agent.port}", timeout=15) as client:
         client.agent = agent  # type: ignore[attr-defined]
         yield client

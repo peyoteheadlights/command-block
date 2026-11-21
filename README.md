@@ -57,6 +57,8 @@ Windows may say "Unknown publisher" because the setup file isn't signed yet (I'm
 
 This is a student project I've been working on as a hobby for my personal use, and my friends suggested I release it. The app is a work in progress and may have a few bugs. If you run into any, please let me know by [reporting a bug](https://github.com/peyoteheadlights/command-block/issues/new?template=bug_report.yml).
 
+Your servers run on your own PC, so friends can only play while that PC is on. **Keep this PC awake** in PC settings stops Windows from sleeping while a server is running.
+
 ## Planned features
 
 This app is in no way done and will be supported for a good long while. Here's everything that's been planned so far:
