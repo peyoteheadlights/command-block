@@ -530,10 +530,39 @@ def after(ctx: ServerContext) -> dict[str, Any]:
     return {"running": running, "restart_needed": running}
 
 
+REQUIRED_KEY = "texturepack-required"
+
+
+def required(ctx: ServerContext) -> bool:
+    """Bedrock's own "Required to join": with texturepack-required=true in
+    server.properties, players must take the server's packs or can't join."""
+    path = ctx.config.server_dir / FILENAME
+    value = PropertiesFile.read(path).get(REQUIRED_KEY) if path.is_file() else None
+    return (value or "").strip().lower() == "true"
+
+
+async def set_required(ctx: ServerContext, on: bool, user: str) -> dict[str, Any]:
+    """Turn Required to join on or off, with one backup and one Undo like the
+    Game settings page. The server reads it when it starts."""
+    from . import gamesettings
+
+    title = f"Turning Required to join {'on' if on else 'off'}"
+    written = await gamesettings.set_values(
+        ctx, {REQUIRED_KEY: "true" if on else "false"}, title, user
+    )
+    return {
+        "required": on,
+        "undo": written.get("undo"),
+        "running": bool(ctx.server.running),
+        "restart_needed": bool(written.get("changed")) and bool(ctx.server.running),
+    }
+
+
 def view(ctx: ServerContext) -> dict[str, Any]:
     world = world_path(ctx)
     return {
         "addons": [p.to_dict() for p in list_packs(ctx)],
+        "required": required(ctx),
         "world": world.name if world.is_dir() else None,
         "running": bool(ctx.server.running),
         "restart_needed": None,

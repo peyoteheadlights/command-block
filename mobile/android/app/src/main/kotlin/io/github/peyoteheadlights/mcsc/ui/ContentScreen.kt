@@ -583,6 +583,13 @@ private fun LazyListScope.packsList(vm: AppViewModel, serverId: String, content:
         else -> item { Note(t("mobile.content.pack_world", "world" to list.world)) }
     }
     if (list.running && changes == Changes.READY) item { Note(t("addons.running"), color = LocalColors.current.text3) }
+    item {
+        Card {
+            Tick(t("make.required"), list.required, subtitle = t("addons.required_hint"), enabled = idle && changes == Changes.READY) {
+                content.setAddonsRequired(it, strings)
+            }
+        }
+    }
     item { SectionTitle(vm.strings.tn("addons.installed", list.addons.size)) }
     if (list.addons.isEmpty()) item { Card { Item(t("addons.none"), subtitle = t("addons.none_hint")) } }
     items(list.addons, key = { it.uuid }) { addon ->

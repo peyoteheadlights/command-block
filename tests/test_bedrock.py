@@ -798,6 +798,21 @@ def test_crossplay_says_why_it_doesnt_apply(bedrock_client):
     )
 
 
+def test_required_to_join_sets_bedrocks_own_key(bedrock_client, tmp_path):
+    props = tmp_path / "bedrock" / "server.properties"
+    assert bedrock_client.get("/api/servers/bedrock/addons").json()["required"] is False
+    body = bedrock_client.put(
+        "/api/servers/bedrock/addons/required", json={"required": True}
+    ).json()
+    assert body["ok"] is True and body["required"] is True and body["undo"]
+    assert "texturepack-required=true" in props.read_text()
+    assert bedrock_client.get("/api/servers/bedrock/addons").json()["required"] is True
+    bedrock_client.put("/api/servers/bedrock/addons/required", json={"required": False})
+    assert "texturepack-required=false" in props.read_text()
+    java = bedrock_client.put("/api/servers/java/addons/required", json={"required": True})
+    assert java.status_code == 400
+
+
 def test_how_friends_join_shows_only_the_bedrock_address(bedrock_client):
     body = bedrock_client.get("/api/servers/bedrock/join").json()
     assert body["java"] is None

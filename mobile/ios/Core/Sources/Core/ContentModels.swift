@@ -1361,14 +1361,17 @@ public struct AddonList: Decodable, Equatable, Sendable {
     public var addons: [Addon]
     /// The world the packs are on; nil before the server made one.
     public var world: String?
+    /// Bedrock's "Required to join" (texturepack-required).
+    public var required: Bool
     public var running: Bool
 
-    enum CodingKeys: String, CodingKey { case addons, world, running }
+    enum CodingKeys: String, CodingKey { case addons, world, required, running }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         addons = c.each(.addons)
         world = c.maybe(.world)
+        required = c.value(.required, false)
         running = c.value(.running, false)
     }
 }
