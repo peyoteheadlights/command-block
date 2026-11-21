@@ -197,6 +197,31 @@ class WindowsPC:
             return 1.0
         return min(2.25, max(1.0, int(value) / 100))
 
+    def remote_desktop(self) -> bool:
+        """The app is shown over Remote Desktop, where a see-through window
+        and animations draw slowly."""
+        try:
+            import ctypes
+
+            return bool(ctypes.windll.user32.GetSystemMetrics(0x1000))  # SM_REMOTESESSION
+        except (AttributeError, OSError):
+            return False
+
+    def animations(self) -> bool:
+        """Windows' "Show animations" setting ("Animation effects" on
+        Windows 11). Never over Remote Desktop."""
+        if self.remote_desktop():
+            return False
+        try:
+            import ctypes
+
+            on = ctypes.c_int(1)
+            # SPI_GETCLIENTAREAANIMATION
+            ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(on), 0)
+            return bool(on.value)
+        except (AttributeError, OSError):
+            return True
+
     # "Keep me signed in" goes in Windows Credential Manager, never in a file.
     def saved_sign_in(self, place: str) -> str | None:
         from win32ctypes.pywin32 import pywintypes, win32cred

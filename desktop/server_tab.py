@@ -1,6 +1,7 @@
-"""A server's tab: the header card, the server's pages as tabs, and the
-right panel (Online now, Coming up, Recent activity, and the Simple or
-Technical switch). On a narrow window the panel moves under the Overview.
+"""A server's tab: the header, the open page, and the side notes (Online
+now, Coming up, Recent activity, and the Simple or Technical switch), all on
+the sheet. The list of its pages sits in the sheet's left margin. On a
+narrow window the side notes move under the Overview.
 """
 
 from __future__ import annotations
@@ -17,14 +18,12 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from . import icons
 from .activity import INTERNAL, ActivityPage, sentence
 from .backups import BackupsPage
 from .console import ConsolePage
@@ -35,6 +34,7 @@ from .players import PlayersPage
 from .quests import QuestsPage
 from .schedules import SchedulesPage
 from .settings import SettingsPage
+from .shell import PageList
 from .store import StorePage, store_tab
 from .ui import Page, clock, content_page, has_packs, label, push, refill
 from .words import mode, text
@@ -104,19 +104,15 @@ def chips(row: dict) -> list[str]:
 
 
 class Header(QFrame):
-    """Icon, name, chips, named Undo, Restart, the big Start/Stop and ⋯."""
+    """Name, chips, named Undo, Restart, the big Start/Stop and ⋯."""
 
     def __init__(self, window: MainWindow) -> None:
         super().__init__()
         self.window_ = window
         self.row: dict = {}
         self.changes: dict = {}
-        self.setProperty("kind", "card")
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(16, 14, 16, 14)
-        outer.setSpacing(14)
-        self.badge = icons.Badge(56)
-        outer.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignTop)
+        outer.setContentsMargins(0, 0, 0, 0)
         column = QVBoxLayout()
         top = QHBoxLayout()
         self.name = label(name="h1")
@@ -189,7 +185,6 @@ class Header(QFrame):
             self.show_notice()
         self.row = row
         self.name.setText(row["name"])
-        self.badge.show_server(row.get("color") or "#8E8E93", row["name"][:1].upper())
         state = row.get("state")
         action = "stop" if state in ("ONLINE", *BUSY) else "start"
         self.main.setText(text(f"action.{action}"))
@@ -361,32 +356,16 @@ class ServerScreen(QWidget):
         super().__init__()
         self.window_ = window
         self.row: dict = {}
-        band = QFrame()
-        band.setObjectName("band")
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(band)
-        body = self.body = QHBoxLayout(band)
-        body.setContentsMargins(14, 14, 14, 14)
-        body.setSpacing(14)
+        body = self.body = QHBoxLayout(self)
+        body.setContentsMargins(20, 18, 20, 16)
+        body.setSpacing(16)
         center = QVBoxLayout()
-        center.setSpacing(10)
+        center.setSpacing(12)
         self.header = Header(window)
         center.addWidget(self.header)
-        # The page tabs scroll sideways when they don't fit (big text sizes).
-        row = QWidget()
-        self.tab_row = QHBoxLayout(row)
-        self.tab_row.setContentsMargins(0, 0, 0, 0)
-        self.tab_row.setSpacing(4)
-        tab_scroll = QScrollArea()
-        tab_scroll.setWidget(row)
-        tab_scroll.setWidgetResizable(True)
-        tab_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        tab_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        tab_scroll.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.tab_scroll = tab_scroll
-        center.addWidget(tab_scroll)
-        self.tabs = QButtonGroup(self)
+        # The window puts the page list in the sheet's left margin.
+        self.page_list = PageList(window.pc.animations)
+        self.tabs = self.page_list.group
         self.pages = QStackedWidget()
         center.addWidget(self.pages, 1)
         body.addLayout(center, 1)
@@ -425,11 +404,6 @@ class ServerScreen(QWidget):
     def build_tabs(self) -> None:
         """The page tabs for the mode: 7 in Simple, 9 in Technical (one fewer
         without Quests and events, one more with the owner's Store)."""
-        for button in self.tabs.buttons():
-            self.tabs.removeButton(button)
-            button.setParent(None)
-        while self.tab_row.count():
-            self.tab_row.takeAt(0)
         self.simple_overview.setVisible(not mode["technical"])
         self.technical_overview.setVisible(mode["technical"])
         content = content_page(self.row)
@@ -445,29 +419,12 @@ class ServerScreen(QWidget):
         ]
         if self.current_page not in [self.real(p[0]) for p in shown] + ["Activity"]:
             self.current_page = "Overview"
-        for page, words, icon, _technical in shown:
-            if page == "Mods":
-                words = content or words
-            page = self.real(page)
-            button = QToolButton()
-            button.setObjectName("pageTab")
-            button.setText(" " + text(words))
-            button.setAccessibleName(text(words))
-            button.setIcon(icons.icon(icon, self.window_.look["text-primary"]))
-            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-            button.setCheckable(True)
-            button.setProperty("page", page)
-            button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-            button.clicked.connect(lambda _=False, p=page: self.show_page(p))
-            self.tabs.addButton(button)
-            self.tab_row.addWidget(button)
-        self.tab_row.addStretch()
-        buttons = self.tabs.buttons()
-        for button in buttons:
-            button.ensurePolished()  # so its size counts the style sheet's padding
-        tall = max(b.sizeHint().height() for b in buttons)
-        self.tab_scroll.setFixedHeight(
-            tall + self.tab_scroll.horizontalScrollBar().sizeHint().height()
+        self.page_list.fill(
+            [
+                (self.real(page), text(content if page == "Mods" and content else words), icon)
+                for page, words, icon, _technical in shown
+            ],
+            self.show_page,
         )
         self.show_page(self.current_page)
 
@@ -479,10 +436,7 @@ class ServerScreen(QWidget):
         page = self.real(page)
         self.current_page = page
         self.pages.setCurrentWidget(self.page_widgets[page])
-        self.tabs.setExclusive(False)  # so Activity, not a tab, leaves none checked
-        for button in self.tabs.buttons():
-            button.setChecked(button.property("page") == page)
-        self.tabs.setExclusive(True)
+        self.page_list.mark(page)
         self.header.say("")
         if isinstance(self.page, Page) and self.row:
             self.page.load()
@@ -517,7 +471,10 @@ class ServerScreen(QWidget):
         target = self.side if wide else self.under
         if self.panel.parent() is None or target.indexOf(self.panel) < 0:
             target.addWidget(self.panel)
-        self.panel.setFixedWidth(260) if wide else self.panel.setMaximumWidth(16777215)
+        self.panel.setFixedWidth(236) if wide else self.panel.setMaximumWidth(16777215)
+        if self.panel.property("under") != (not wide):  # the line is on its left, or above it
+            self.panel.setProperty("under", not wide)
+            self.panel.setStyle(self.panel.style())
         if not wide:
             self.panel.setMinimumWidth(0)
 
