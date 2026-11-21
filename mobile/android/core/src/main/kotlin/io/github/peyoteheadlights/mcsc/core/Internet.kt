@@ -58,6 +58,24 @@ object Internet {
             strings.t("address.forward_help")
     }
 
+    /** "Friends can also type myserver.duckdns.org:25565", once an outside test passed. */
+    fun nameLines(strings: Strings, info: InternetReach): List<String> =
+        if (info.reason == "tested" && info.works == true && info.port != null) {
+            info.names.map { strings.t("ddns.join", "name" to it.name, "port" to info.port) }
+        } else {
+            emptyList()
+        }
+
+    /** A saved name's lines: the name, why it stopped, and No-IP's confirm date. */
+    fun savedLines(strings: Strings, kind: String, name: DdnsName, date: (Double) -> String): List<Line> {
+        val out = mutableListOf(Line(strings.t("ddns.${kind}_saved", "name" to name.name), Tone.NEUTRAL))
+        name.problem?.let { out += Line(strings.t("ddns.stopped", "problem" to it), Tone.DANGER) }
+        name.confirmBy?.let {
+            out += Line(strings.t("ddns.noip_confirm_by", "date" to date(it)), if (name.confirmSoon) Tone.DANGER else Tone.NEUTRAL)
+        }
+        return out
+    }
+
     /** The outside tests make sense once the router gave a public address. */
     fun testable(info: InternetReach): Boolean =
         address(info) != null && info.reason in setOf("not_tested", "not_checked", "tested")

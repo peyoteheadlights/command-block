@@ -61,10 +61,99 @@ struct AddressCardView: View {
             .disabled(!mobileOnly || setup.busy != nil)
             if !mobileOnly { Hint(text: model.t("address.wifi_off"), palette: palette) }
         }
+        ForEach(Internet.nameLines(model.strings, info), id: \.self) { Hint(text: $0, palette: palette) }
         let steps = Internet.forwardSteps(model.strings, info, technical: model.technical)
         if !steps.isEmpty {
             Text(model.t("address.forward_title")).foregroundStyle(palette.textPrimary)
             ForEach(steps, id: \.self) { Hint(text: $0, palette: palette) }
+        }
+        if let state = setup.ddns.value {
+            NamesView(setup: setup, state: state, owner: owner, palette: palette, ask: ask)
+        }
+    }
+}
+
+/// A name for the internet address (agent/ddns.py): DuckDNS, with No-IP next
+/// to it (mirrors NamesPart in ServerSettings.kt). The names are this PC's.
+private struct NamesView: View {
+    let setup: SetupPages
+    let state: DdnsState
+    let owner: Bool
+    let palette: Palette
+    let ask: (SetupAsk) -> Void
+
+    @Environment(AppModel.self) private var model
+    @Environment(\.openURL) private var openURL
+    @State private var open: String?
+    @State private var name = ""
+    @State private var user = ""
+    @State private var secret = ""
+
+    var body: some View {
+        Text(model.t("ddns.title")).foregroundStyle(palette.textPrimary)
+        Hint(text: model.t("ddns.note"), palette: palette)
+        ForEach(["duckdns", "noip"], id: \.self) { kind in
+            part(kind)
+        }
+    }
+
+    @ViewBuilder
+    private func part(_ kind: String) -> some View {
+        if let saved = kind == "duckdns" ? state.duckdns : state.noip {
+            let date = { (at: Double) in Date(timeIntervalSince1970: at).formatted(date: .abbreviated, time: .omitted) }
+            ForEach(Internet.savedLines(model.strings, kind: kind, saved, date: date), id: \.text) { line in
+                Text(line.text).foregroundStyle(palette.tone(line.tone))
+            }
+            if owner {
+                HStack {
+                    if kind == "noip" {
+                        // One tap to No-IP's hostname page (its Confirm button is there), then "I confirmed it".
+                        if let url = URL(string: state.noipSite) {
+                            Button(model.t("ddns.noip_open")) { openURL(url) }
+                        }
+                        Button(model.t("ddns.noip_confirmed")) {
+                            Task { await setup.ddnsCall(model.strings) { try await $0.noIpConfirmed() } }
+                        }
+                    }
+                    Button(model.t("ddns.remove")) { ask(kind == "duckdns" ? .removeDuckDns : .removeNoIp) }
+                }
+                .disabled(setup.busy != nil)
+            }
+        } else if owner && open != kind {
+            Button(model.t("ddns.\(kind)_use")) {
+                open = kind
+                name = ""
+                user = ""
+                secret = ""
+            }
+        } else if owner {
+            Hint(text: model.t("ddns.\(kind)_steps"), palette: palette)
+            if let url = URL(string: kind == "duckdns" ? state.duckdnsSite : state.noipSite) {
+                Button(model.t("ddns.\(kind)_open")) { openURL(url) }
+            }
+            TextField(model.t("ddns.\(kind)_name"), text: $name)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            if kind == "noip" {
+                TextField(model.t("ddns.noip_username"), text: $user)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
+            SecureField(model.t(kind == "duckdns" ? "ddns.duckdns_token" : "ddns.noip_password"), text: $secret)
+            if setup.busy == "ddns" { Hint(text: model.t("ddns.checking"), palette: palette) }
+            if let said = setup.said, !said.good { Text(said.text).foregroundStyle(palette.danger) }
+            Button(model.t("ddns.save")) {
+                let (n, u, s) = (name.trimmingCharacters(in: .whitespaces), user.trimmingCharacters(in: .whitespaces), secret)
+                Task {
+                    let saved = await setup.ddnsCall(model.strings) { client in
+                        kind == "duckdns"
+                            ? try await client.saveDuckDns(name: n, token: s.trimmingCharacters(in: .whitespaces))
+                            : try await client.saveNoIp(name: n, username: u, password: s)
+                    }
+                    if saved { open = nil }
+                }
+            }
+            .disabled(setup.busy != nil || name.isEmpty || secret.isEmpty || (kind == "noip" && user.isEmpty))
         }
     }
 }

@@ -29,6 +29,30 @@ class InternetTest {
     }
 
     @Test
+    fun aNameIsOfferedOnlyOnceTheOutsideTestPassed() {
+        val names = """"names": [{"provider": "duckdns", "name": "myserver.duckdns.org"}]"""
+        val untested = reach("""{"on": true, "reason": "not_tested", "address": "1.2.3.4", "port": 25565, $names}""")
+        assertEquals(emptyList<String>(), Internet.nameLines(strings, untested))
+        val works = reach("""{"on": true, "reason": "tested", "works": true, "address": "1.2.3.4", "port": 25565, $names}""")
+        assertEquals(
+            listOf(strings.t("ddns.join", "name" to "myserver.duckdns.org", "port" to 25565)),
+            Internet.nameLines(strings, works),
+        )
+    }
+
+    @Test
+    fun aNoIpNameShowsItsConfirmDateAndTurnsRedAWeekBefore() {
+        val state = json.decodeFromString(
+            DdnsState.serializer(),
+            """{"noip": {"name": "mine.ddns.net", "confirm_by": 1000.0, "confirm_soon": true}, "duckdns_site": "a", "noip_site": "b"}""",
+        )
+        val lines = Internet.savedLines(strings, "noip", state.noip!!) { "1 Jan" }
+        assertEquals(strings.t("ddns.noip_saved", "name" to "mine.ddns.net"), lines[0].text)
+        assertEquals(Tone.DANGER, lines.last().tone)
+        assertTrue(lines.last().text.contains("1 Jan"))
+    }
+
+    @Test
     fun noRouterGivesTheForwardingStepsWithThisPcsAddress() {
         val info = reach("""{"on": true, "reason": "no_router", "port": 25565,
             "ports": [{"protocol": "TCP", "port": 25565}], "local_address": "192.168.1.20"}""")

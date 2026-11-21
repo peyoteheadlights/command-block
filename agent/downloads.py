@@ -115,6 +115,9 @@ ALLOWED_HOSTS = frozenset(
         # mcsrvstat.us pings the address the owner typed, from the internet,
         # for Diagnose server (agent/waysin.py). Read only.
         "api.mcsrvstat.us",
+        # The DuckDNS and No-IP names' update addresses (agent/ddns.py).
+        "www.duckdns.org",
+        "dynupdate.no-ip.com",
     }
 )
 

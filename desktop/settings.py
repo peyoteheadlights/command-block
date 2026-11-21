@@ -437,7 +437,121 @@ class SettingsPage(Page):
         on.toggled.connect(flip)
         self.ask("GET", "/join", lambda join: refill(ways, address_ways(join)), lambda _e: None)
         self.ask("GET", "/internet", show, lambda exc: refill(status, [label(str(exc), "problem")]))
+        names = QVBoxLayout()
+        layout.addLayout(names)
+        self.names_part(names, owner)
         return frame
+
+    # ------------------------------------------------------------ DuckDNS and No-IP
+    def ask_pc(self, method: str, path: str, done, failed, body: dict | None = None) -> None:
+        """An agent-wide route (the names are the PC's, not this server's)."""
+        agent, here = self.window_.agent, self.window_.still_on(self.row["id"])
+        self.window_.run(lambda: agent.call(method, path, body, True), here(done), here(failed))
+
+    def names_part(self, names: QVBoxLayout, owner: bool) -> None:
+        """A name for the internet address (agent/ddns.py): DuckDNS, with
+        No-IP next to it. Only names: the port must still be open."""
+
+        def show(now: dict) -> None:
+            shown: list[QWidget] = [
+                label(text("ddns.title"), name="h3"),
+                label(text("ddns.note"), "sub"),
+            ]
+            for kind in ("duckdns", "noip"):
+                shown += self.name_lines(kind, now, owner, show)
+            refill(names, shown)
+
+        def failed(exc: Exception) -> None:
+            refill(names, [label(str(exc), "problem")])
+
+        self.ask_pc("GET", "/ddns", show, failed)
+
+    def name_lines(self, kind: str, now: dict, owner: bool, show) -> list[QWidget]:
+        saved, site = now.get(kind), now.get(f"{kind}_site") or ""
+        lines: list[QWidget] = []
+        if saved:
+            lines.append(label(text(f"ddns.{kind}_saved", name=saved["name"]), "sub"))
+            if saved.get("problem"):
+                lines.append(label(text("ddns.stopped", problem=saved["problem"]), "problem"))
+            if kind == "noip":
+                when = time.strftime("%d %b %Y", time.localtime(saved["confirm_by"]))
+                lines.append(
+                    label(
+                        text("ddns.noip_confirm_by", date=when),
+                        "problem" if saved.get("confirm_soon") else "sub",
+                    )
+                )
+            if not owner:
+                return lines
+            row = QHBoxLayout()
+            if kind == "noip":
+                # One click to No-IP's hostname page (its Confirm button is there), then this.
+                confirm = push(text("ddns.noip_open"), "tonal")
+                confirm.clicked.connect(lambda: self.window_.pc.open_link(site))
+                row.addWidget(confirm)
+                done = push(text("ddns.noip_confirmed"))
+                done.clicked.connect(
+                    lambda: self.ask_pc("POST", "/ddns/noip/confirmed", show, None, {})
+                )
+                row.addWidget(done)
+            remove = push(text("ddns.remove"))
+
+            def forget() -> None:
+                if self.window_.confirm(
+                    text("ddns.remove"),
+                    text("ddns.remove_body", name=saved["name"]),
+                    text("ddns.remove"),
+                ):
+                    self.ask_pc("DELETE", f"/ddns/{kind}", show, None)
+
+            remove.clicked.connect(forget)
+            row.addWidget(remove)
+            row.addStretch(1)
+            box = QWidget()
+            box.setLayout(row)
+            return [*lines, box]
+        if not owner:
+            return lines
+        start = push(text(f"ddns.{kind}_use"), "tonal" if kind == "duckdns" else "")
+        form = QWidget()
+        column = QVBoxLayout(form)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.addWidget(label(text(f"ddns.{kind}_steps"), "sub"))
+        open_site = push(text(f"ddns.{kind}_open"))
+        open_site.clicked.connect(lambda: self.window_.pc.open_link(site))
+        column.addWidget(open_site)
+        boxes: dict[str, QLineEdit] = {}
+        fields = ("name", "token") if kind == "duckdns" else ("name", "username", "password")
+        for name in fields:
+            box = QLineEdit()
+            box.setMaxLength(253)
+            if name in ("token", "password"):
+                box.setEchoMode(QLineEdit.EchoMode.Password)
+            boxes[name] = box
+            column.addWidget(field(text(f"ddns.{kind}_{name}"), box))
+        said = label(kind="problem")
+        said.hide()
+        save = push(text("ddns.save"), "primary")
+
+        def send() -> None:
+            save.setEnabled(False)
+            said.setText(text("ddns.checking"))
+            said.show()
+
+            def failed(exc: Exception) -> None:
+                said.setText(str(exc))
+                save.setEnabled(True)
+
+            body = {name: box.text().strip() for name, box in boxes.items()}
+            self.ask_pc("PUT", f"/ddns/{kind}", show, failed, body)
+
+        save.clicked.connect(send)
+        column.addWidget(save)
+        column.addWidget(said)
+        form.hide()
+        start.clicked.connect(form.show)
+        start.clicked.connect(start.hide)
+        return [*lines, start, form]
 
     def address_lines(self, now: dict, owner: bool, show: Callable[[dict], None]) -> list[QWidget]:
         """What "Let friends join from the internet" is doing now, with the
@@ -461,6 +575,11 @@ class SettingsPage(Page):
             shown.append(
                 label(text(key, address=full, by=by), "sub" if now.get("works") else "problem")
             )
+            if now.get("works"):
+                for name in now.get("names") or []:
+                    shown.append(
+                        label(text("ddns.join", name=name["name"], port=now.get("port")), "sub")
+                    )
         elif reason in ("shared", "private"):
             shown.append(label(text(f"address.{reason}"), "problem"))
             playit = push(text("address.playit"))

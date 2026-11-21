@@ -21,9 +21,10 @@ public struct InternetReach: Decodable, Equatable, Sendable {
     public var detail: String?
     public var mcsrvstatOk: Bool
     public var playit: String?
+    public var names: [DdnsNameShort]
 
     enum CodingKeys: String, CodingKey {
-        case on, busy, known, works, reason, address, port, ports, detail, playit
+        case on, busy, known, works, reason, address, port, ports, detail, playit, names
         case testedBy = "tested_by"
         case localAddress = "local_address"
         case mcsrvstatOk = "mcsrvstat_ok"
@@ -44,6 +45,59 @@ public struct InternetReach: Decodable, Equatable, Sendable {
         detail = c.maybe(.detail)
         mcsrvstatOk = c.value(.mcsrvstatOk, false)
         playit = c.maybe(.playit)
+        names = c.value(.names, [])
+    }
+}
+
+/// A DuckDNS or No-IP name that works right now.
+public struct DdnsNameShort: Decodable, Equatable, Sendable {
+    public var provider: String
+    public var name: String
+}
+
+/// One saved name (agent/ddns.py). The token or password never comes back.
+public struct DdnsName: Decodable, Equatable, Sendable {
+    public var name: String
+    public var ip: String?
+    public var problem: String?
+    public var confirmBy: Double?
+    public var confirmSoon: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case name, ip, problem
+        case confirmBy = "confirm_by"
+        case confirmSoon = "confirm_soon"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = c.value(.name, "")
+        ip = c.maybe(.ip)
+        problem = c.maybe(.problem)
+        confirmBy = c.maybe(.confirmBy)
+        confirmSoon = c.value(.confirmSoon, false)
+    }
+}
+
+/// GET /api/ddns: this PC's DuckDNS and No-IP names.
+public struct DdnsState: Decodable, Equatable, Sendable {
+    public var duckdns: DdnsName?
+    public var noip: DdnsName?
+    public var duckdnsSite: String
+    public var noipSite: String
+
+    enum CodingKeys: String, CodingKey {
+        case duckdns, noip
+        case duckdnsSite = "duckdns_site"
+        case noipSite = "noip_site"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        duckdns = c.maybe(.duckdns)
+        noip = c.maybe(.noip)
+        duckdnsSite = c.value(.duckdnsSite, "")
+        noipSite = c.value(.noipSite, "")
     }
 }
 
@@ -97,6 +151,24 @@ public enum Internet {
         return info.ports.map {
             strings.t("address.forward_step", ["protocol": $0.protocol, "port": String($0.port), "local": local])
         } + [strings.t("address.forward_help")]
+    }
+
+    /// "Friends can also type myserver.duckdns.org:25565", once an outside test passed.
+    public static func nameLines(_ strings: Strings, _ info: InternetReach) -> [String] {
+        guard info.reason == "tested", info.works == true, let port = info.port else { return [] }
+        return info.names.map { strings.t("ddns.join", ["name": $0.name, "port": String(port)]) }
+    }
+
+    /// A saved name's lines: the name, why it stopped, and No-IP's confirm date.
+    public static func savedLines(_ strings: Strings, kind: String, _ name: DdnsName, date: (Double) -> String) -> [Line] {
+        var out = [Line(text: strings.t("ddns.\(kind)_saved", ["name": name.name]), tone: .neutral)]
+        if let problem = name.problem {
+            out.append(Line(text: strings.t("ddns.stopped", ["problem": problem]), tone: .danger))
+        }
+        if let by = name.confirmBy {
+            out.append(Line(text: strings.t("ddns.noip_confirm_by", ["date": date(by)]), tone: name.confirmSoon ? .danger : .neutral))
+        }
+        return out
     }
 
     /// The outside tests make sense once the router gave a public address.
