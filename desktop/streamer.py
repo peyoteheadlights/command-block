@@ -113,12 +113,13 @@ def turn(on: bool) -> None:
     if on:
         app.installEventFilter(_watcher)
         for widget in QApplication.allWidgets():
-            if widget.isVisible():
+            # A widget Qt already deleted can come back as some other type.
+            if isinstance(widget, QWidget) and widget.isVisible():
                 cover(widget)
         return
     app.removeEventFilter(_watcher)
     for widget in QApplication.allWidgets():
-        if widget.property(MARK):
+        if isinstance(widget, QWidget) and widget.property(MARK):
             widget.setProperty(MARK, False)
             if isinstance(widget, QLineEdit):
                 widget.setEchoMode(QLineEdit.EchoMode.Normal)
