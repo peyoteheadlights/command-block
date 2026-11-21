@@ -652,7 +652,7 @@ class ModManager:
         kept = name and self.store.find(
             sha256=file.get("sha256"), sha1=file.get("sha1"), sha512=file.get("sha512")
         )
-        if not kept:
+        if not name or not kept:
             return await site.download(version)
         safe_filename(name, JAR_EXT)
         data = await asyncio.to_thread(kept.read_bytes)
