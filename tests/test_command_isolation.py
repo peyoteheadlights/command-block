@@ -312,6 +312,7 @@ def test_only_the_documented_places_start_a_program():
         "tailscale.py",  # asking Tailscale for this PC's address, Diagnose's Tailscale back on
         "firewall.py",  # Diagnose server's firewall rule, after a click (documented exception)
         "headlessmc.py",  # Diagnose server's join with all mods, after a click (documented exception)
+        "playit.py",  # playit.gg's Reconnect: `playit start`, after a click (documented exception)
         "certs.py",  # making this app's own HTTPS certificate
         "autostart.py",  # the Windows entry that starts this app at sign-in
         # The installer runs as Administrator from setup.exe, never
