@@ -342,6 +342,17 @@ class ModrinthClient:
             return None
         return str(found.get("project_id") or "") or None
 
+    async def file_url(self, sha512: str) -> str | None:
+        """Where Modrinth serves the file with this SHA-512, or None."""
+        try:
+            found = await self._get(f"/version_file/{sha512}", {"algorithm": "sha512"})
+        except ModrinthNotFound:
+            return None
+        for file in found.get("files") or []:
+            if str((file.get("hashes") or {}).get("sha512", "")).lower() == sha512.lower():
+                return str(file.get("url") or "") or None
+        return None
+
     # ------------------------------------------------------------------
     async def download(self, version: dict[str, Any]) -> tuple[bytes, str, str]:
         """Download and check a mod file. Returns (bytes, filename, sha256)."""

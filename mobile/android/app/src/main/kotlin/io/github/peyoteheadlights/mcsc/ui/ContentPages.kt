@@ -26,6 +26,7 @@ import io.github.peyoteheadlights.mcsc.core.ModpackUpdatePreview
 import io.github.peyoteheadlights.mcsc.core.ModSearch
 import io.github.peyoteheadlights.mcsc.core.ModrinthHit
 import io.github.peyoteheadlights.mcsc.core.PickedFile
+import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
 import io.github.peyoteheadlights.mcsc.core.Strings
 import io.github.peyoteheadlights.mcsc.core.ModFit
 import io.github.peyoteheadlights.mcsc.core.StillFit
@@ -383,6 +384,32 @@ class ContentPages(
             val done = it.importModpack(serverId, read.token)
             Said(strings.t("mobile.content.modpack_done", "name" to done.modpack.name.ifBlank { read.pack.name }), good = true)
         }
+    }
+
+    // ------------------------------------------------------------ Server / Players / Both
+    fun setSide(filename: String, name: String, side: String, strings: Strings) = work("side:$filename", strings, reload = ::loadMods) {
+        it.setModSide(serverId, filename, side)
+        Said(strings.t("sides.marked_$side", "name" to name), good = true)
+    }
+
+    fun uploadForPlayers(file: PickedFile, strings: Strings) = work("players", strings, reload = ::loadMods) {
+        it.uploadForPlayers(serverId, file)
+        Said(strings.t("sides.players_added", "name" to file.name), good = true)
+    }
+
+    fun fetchForPlayers(filename: String, strings: Strings) = work("fetch:$filename", strings, reload = ::loadMods) {
+        it.fetchForPlayers(serverId, filename)
+        Said(strings.t("sides.players_added", "name" to filename), good = true)
+    }
+
+    fun setPlayerOnlyOptions(options: PlayerOnlyOptions, strings: Strings) = work("options", strings, reload = ::loadMods) {
+        it.setPlayerOnlyOptions(serverId, options)
+        Said(strings.t("sides.options_saved"), good = true)
+    }
+
+    fun removeForPlayers(filename: String, strings: Strings) = work("remove:$filename", strings, reload = ::loadMods) {
+        it.removeForPlayers(serverId, filename)
+        null
     }
 
     // ------------------------------------------------------------ linked modpack

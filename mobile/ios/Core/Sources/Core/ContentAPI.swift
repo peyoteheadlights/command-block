@@ -29,6 +29,30 @@ extension AgentClient {
         try await call("POST", content(serverId) + "/mods/" + (enabled ? "enable" : "disable"), body: try fileBody(filename), as: ModChanged.self)
     }
 
+    /// Server, Players or Both. Players moves the jar out of the mods folder.
+    public func setModSide(serverId: String, filename: String, side: String) async throws {
+        let body = try AgentClient.encode(["filename": filename, "side": side])
+        _ = try await call("POST", content(serverId) + "/mods/side", body: body, as: Ok.self)
+    }
+
+    /// A mod, resource pack or shader pack for players only.
+    public func uploadForPlayers(serverId: String, file: PickedFile) async throws {
+        _ = try await upload(content(serverId) + "/mods/player-only/upload?confirm=true", file, as: Ok.self)
+    }
+
+    /// A missing player-only file, downloaded again from Modrinth and checked by its hash.
+    public func fetchForPlayers(serverId: String, filename: String) async throws {
+        _ = try await call("POST", content(serverId) + "/mods/player-only/fetch", body: try fileBody(filename), as: Ok.self)
+    }
+
+    public func setPlayerOnlyOptions(serverId: String, options: PlayerOnlyOptions) async throws {
+        _ = try await call("POST", content(serverId) + "/mods/player-only/options", body: try AgentClient.encode(options), as: PlayerOnlyOptions.self)
+    }
+
+    public func removeForPlayers(serverId: String, filename: String) async throws {
+        _ = try await call("POST", content(serverId) + "/mods/player-only/remove", body: try fileBody(filename), as: Ok.self)
+    }
+
     /// What else needs a mod, asked before removing it.
     public func modImpact(serverId: String, filename: String) async throws -> ModImpact {
         try await call("GET", content(serverId) + "/mods/impact?filename=" + AgentClient.pathSegment(filename), as: ModImpact.self)

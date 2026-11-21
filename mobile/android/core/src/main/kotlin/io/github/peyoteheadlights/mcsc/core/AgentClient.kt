@@ -655,6 +655,34 @@ class AgentClient(
     suspend fun setModEnabled(serverId: String, filename: String, enabled: Boolean): ModChanged =
         call(post("${server(serverId)}/mods/${if (enabled) "enable" else "disable"}", fileBody(filename)), ModChanged.serializer())
 
+    /** Server, Players or Both. Players moves the jar out of the mods folder. */
+    suspend fun setModSide(serverId: String, filename: String, side: String): ModSideChanged {
+        val body = buildJsonObject {
+            put("filename", filename)
+            put("side", side)
+        }
+        return call(post("${server(serverId)}/mods/side", body), ModSideChanged.serializer())
+    }
+
+    /** A mod, resource pack or shader pack for players only. */
+    suspend fun uploadForPlayers(serverId: String, file: PickedFile): PlayerFileAdded =
+        call(upload("${server(serverId)}/mods/player-only/upload?confirm=true", file), PlayerFileAdded.serializer(), slow = true)
+
+    /** A missing player-only file, downloaded again from Modrinth and checked by its hash. */
+    suspend fun fetchForPlayers(serverId: String, filename: String): PlayerFileAdded =
+        call(post("${server(serverId)}/mods/player-only/fetch", fileBody(filename)), PlayerFileAdded.serializer(), slow = true)
+
+    suspend fun setPlayerOnlyOptions(serverId: String, options: PlayerOnlyOptions): PlayerOnlyOptions {
+        val body = buildJsonObject {
+            put("backup", options.backup)
+            put("skip_listed", options.skipListed)
+        }
+        return call(post("${server(serverId)}/mods/player-only/options", body), PlayerOnlyOptions.serializer())
+    }
+
+    suspend fun removeForPlayers(serverId: String, filename: String): Ok =
+        call(post("${server(serverId)}/mods/player-only/remove", fileBody(filename)), Ok.serializer())
+
     /** What else needs a mod, asked before removing it. */
     suspend fun modImpact(serverId: String, filename: String): ModImpact =
         get("${server(serverId)}/mods/impact?filename=${path(filename)}", ModImpact.serializer())

@@ -67,6 +67,11 @@ POST /api/servers/{server_id}/mods/enable
 POST /api/servers/{server_id}/mods/disable
 GET /api/servers/{server_id}/mods/impact
 POST /api/servers/{server_id}/mods/remove
+POST /api/servers/{server_id}/mods/side
+POST /api/servers/{server_id}/mods/player-only/upload
+POST /api/servers/{server_id}/mods/player-only/remove
+POST /api/servers/{server_id}/mods/player-only/fetch
+POST /api/servers/{server_id}/mods/player-only/options
 POST /api/servers/{server_id}/mods/update
 GET /api/servers/{server_id}/mods/versions/{mod_id}
 POST /api/servers/{server_id}/mods/rollback

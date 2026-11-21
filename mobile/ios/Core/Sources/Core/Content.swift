@@ -107,7 +107,9 @@ public enum Content {
         return "\(from) → \(to)"
     }
 
-    private static let actions: Set<String> = ["install", "upload", "remove", "update", "rollback", "enable", "disable"]
+    private static let actions: Set<String> = [
+        "install", "upload", "remove", "update", "rollback", "enable", "disable", "side", "players_add", "players_remove",
+    ]
 
     /// What a history row did, in words; the agent's own name for an action the app doesn't know.
     public static func action(_ strings: Strings, _ row: ModHistoryRow) -> String {
@@ -240,6 +242,38 @@ public enum SameJob {
 }
 
 /// Update all's list and what is sent.
+/// Server / Players / Both: the words under a mod and the picks offered.
+public enum Sides {
+    public static let all = ["server", "players", "both"]
+    private static let plugins: Set<String> = ["paper", "bukkit"]
+    private static let from: Set<String> = ["you", "unknown", "modpack", "file"]
+    private static let sites = ["modrinth": "Modrinth", "curseforge": "CurseForge"]
+
+    /// "For: Both (not sure, the mod doesn't say)"; nil for plugins, which only run on the server.
+    public static func words(_ strings: Strings, _ mod: Mod) -> String? {
+        guard let side = mod.side, !plugins.contains(mod.loader ?? "") else { return nil }
+        let words = strings.t("sides.for", ["side": strings.t("sides." + side)])
+        guard let source = mod.sideFrom else { return words }
+        let said = from.contains(source)
+            ? strings.t("sides.from_" + source)
+            : strings.t("sides.from_site", ["site": sites[source] ?? source])
+        return words + " " + said
+    }
+
+    /// The marks a mod can be changed to. Players stays offered while the jar
+    /// is still in the mods folder, since picking it moves the jar out.
+    public static func picks(_ mod: Mod) -> [String] {
+        guard let side = mod.side, !plugins.contains(mod.loader ?? "") else { return [] }
+        return all.filter { $0 == "players" || $0 != side }
+    }
+
+    /// A file the Players only list takes: a mod (.jar) or a pack (.zip).
+    public static func accepts(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return lower.hasSuffix(".jar") || lower.hasSuffix(".zip")
+    }
+}
+
 /// The linked modpack card and Modpack update's question.
 public enum LinkedPacks {
     public static func lines(_ strings: Strings, _ pack: LinkedModpack) -> [String] {
