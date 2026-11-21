@@ -212,13 +212,13 @@ def _items(ctx: ServerContext) -> list[Item]:
         if entry.is_symlink() or not entry.is_file() or suffix not in sides.FILE_EXT:
             continue
         if suffix == ".jar":
-            path = f"mods/{entry.name}"
+            inside = f"mods/{entry.name}"
         else:
             kind = sides._kind(entry)
             if kind not in PACK_FOLDER:
                 continue
-            path = f"{PACK_FOLDER[kind]}/{entry.name}"
-        items.append(Item(source=entry, path=path, side="players", name=entry.stem))
+            inside = f"{PACK_FOLDER[kind]}/{entry.name}"
+        items.append(Item(source=entry, path=inside, side="players", name=entry.stem))
     seen: dict[str, Item] = {}
     for item in items:
         if item.path.lower() in seen:
@@ -394,7 +394,12 @@ async def make(
     async def run(job: JobHandle) -> dict[str, Any]:
         job.step("Reading the server's files")
         items = _items(ctx)
-        await asyncio.to_thread(lambda: [_hash(i) for i in items])
+
+        def hash_all() -> None:
+            for item in items:
+                _hash(item)
+
+        await asyncio.to_thread(hash_all)
         job.step("Asking Modrinth and CurseForge which files they have")
         await _look_up(ctx, items)
         left_out = [i for i in items if leave_out_server_only and i.side == "server"]
