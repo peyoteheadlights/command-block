@@ -31,6 +31,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
     "ruff>=0.16",
+    "import-linter>=2.17",  # folder rules (lint-imports), see [tool.importlinter]
     "mypy>=2.4",
     "types-PyYAML",
     "types-psutil",
@@ -67,6 +68,7 @@ select = [
     "UP",      # pyupgrade
     "ASYNC",   # blocking calls in async code
     "RUF100",  # unused noqa
+    "TID251",  # banned calls, see banned-api below
 ]
 ignore = [
     "E501",     # the formatter handles line length; long strings are left alone
@@ -85,8 +87,34 @@ extend-immutable-calls = [
     "agent.security.permissions.require",
 ]
 
+# House rule: Command Block never runs programs on the user's PC on its own.
+# Only the actions listed in per-file-ignores below may, and each one starts
+# from something the user clicked (or is the server itself).
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"subprocess".msg = "Starts a program on the user's PC. House rule: only clicked actions (and the server itself) may, and they live only in the files listed under per-file-ignores in pyproject.toml. Fix the root cause: call one of those files. Don't add a noqa or a new entry there without asking Mark."
+"asyncio.create_subprocess_exec".msg = "Starts a program on the user's PC. House rule: only clicked actions (and the server itself) may, and they live only in the files listed under per-file-ignores in pyproject.toml. Fix the root cause: call one of those files. Don't add a noqa or a new entry there without asking Mark."
+"asyncio.create_subprocess_shell".msg = "Never run a shell (house rule). Fix the root cause: pass an argument list to one of the files listed under per-file-ignores in pyproject.toml. Don't add a noqa."
+"os.system".msg = "Never run a shell (house rule). Fix the root cause: pass an argument list to one of the files listed under per-file-ignores in pyproject.toml. Don't add a noqa."
+"os.popen".msg = "Never run a shell (house rule). Fix the root cause: pass an argument list to one of the files listed under per-file-ignores in pyproject.toml. Don't add a noqa."
+"os.startfile".msg = "Opens a program on the user's PC (house rule: only clicked actions may). Fix the root cause: in the desktop app use QDesktopServices.openUrl from a button. Don't add a noqa."
+
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["B011"]
+"tests/**" = ["B011", "TID251"]  # tests start fake servers; tests/ruff.toml has their own bans
+"scripts/**" = ["TID251"]  # build and CI scripts, never shipped to the user's PC
+# The only shipped files allowed to start programs (TID251): the server
+# itself, checks the agent needs, and actions the user clicks.
+"agent/minecraft/process.py" = ["TID251"]  # the Minecraft server
+"agent/minecraft/java.py" = ["TID251"]  # java -version, to pick the right Java
+"agent/winproc.py" = ["TID251"]  # only reads the no-window flags, starts nothing
+"agent/firewall.py" = ["TID251"]  # clicked: firewall rule
+"agent/headlessmc.py" = ["TID251"]  # clicked: Diagnose server
+"agent/joinbot.py" = ["TID251"]  # clicked: Diagnose server
+"agent/security/certs.py" = ["TID251"]  # icacls on the data folder, tailscale cert
+"agent/serveruser.py" = ["TID251"]  # starts the server as its own Windows user
+"agent/tailscale.py" = ["TID251"]  # clicked: Tailscale install and connect
+"agent/updates.py" = ["TID251"]  # clicked: in-app updater
+"desktop/pc.py" = ["TID251"]  # clicked: run the updater and installer scripts
+"installer/*.py" = ["TID251"]  # the installer and updater
 
 [tool.ruff.format]
 quote-style = "double"
@@ -108,3 +136,39 @@ module = [
     "agent.starter", "agent.serveruser",
 ]
 disable_error_code = ["attr-defined"]
+
+# ---------------------------------------------------------------- import-linter
+# Folder rules, checked in CI with `lint-imports`.
+[tool.importlinter]
+root_packages = ["agent", "desktop", "installer"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "The agent never loads Qt or desktop app code (it must stay light on the server PC). Fix the root cause: keep that code in desktop/."
+type = "forbidden"
+source_modules = ["agent"]
+forbidden_modules = ["PySide6", "desktop"]
+
+[[tool.importlinter.contracts]]
+name = "The desktop app talks to the agent only through its API client (desktop/agent.py). Fix the root cause: add or use an API route."
+type = "forbidden"
+source_modules = ["desktop"]
+forbidden_modules = ["agent"]
+allow_indirect_imports = true  # only direct imports; installer/ is shared by both
+ignore_imports = [
+    # Allowed: the API client itself, and small shared facts.
+    "desktop.agent -> agent.**",
+    "desktop.* -> agent",  # the version number
+    "desktop.* -> agent.appinfo",  # app name and folders
+    "desktop.* -> agent.colors",  # shared colors
+    # Known exceptions from before this rule. Move them behind the API client
+    # when that code is next changed, then delete the line. Never add one.
+    "desktop.overview -> agent.ports",
+    "desktop.pc -> agent.downloads",
+    "desktop.pc -> agent.tailscale",
+    "desktop.pc -> agent.winproc",
+    "desktop.self_update -> agent.downloads",
+    "desktop.self_update -> agent.signing",
+    "desktop.self_update -> agent.updates",
+    "desktop.wake -> agent.wake",
+]
