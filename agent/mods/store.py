@@ -32,6 +32,7 @@ import hashlib
 import logging
 import os
 import shutil
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -47,6 +48,10 @@ CHUNK = 1024 * 1024
 FIRST_RUN_DELAY = 30 * 60
 RUN_EVERY = 24 * 3600
 PAUSE = 0.2
+# Held while a file goes into the store and gets linked, and while tidy
+# looks at one stored file, so tidy never removes a file about to be linked
+# and two placements of one new file never write the same .part file.
+_busy = threading.Lock()
 
 
 def hashes_of(path: Path) -> dict[str, Any]:
@@ -80,8 +85,9 @@ class Store:
         had to be a normal copy. ``target`` is swapped in with one rename,
         never written in place."""
         hashes = hashes_of(source)
-        stored = self._keep(source, hashes, Path(target).name)
-        return self._link(stored, Path(target))
+        with _busy:
+            stored = self._keep(source, hashes, Path(target).name)
+            return self._link(stored, Path(target))
 
     def _keep(self, source: Path, hashes: dict[str, Any], name: str) -> Path:
         stored = self.path_of(hashes["sha256"])
@@ -179,14 +185,15 @@ class Store:
         for row in self.db.query("SELECT sha256 FROM stored_files"):
             sha256 = row["sha256"]
             stored = self.path_of(sha256)
-            if stored.is_file() and (stored.stat().st_nlink > 1 or sha256 in needed):
-                continue
-            try:
-                stored.unlink(missing_ok=True)
-            except OSError as exc:
-                log.info("couldn't remove stored file %s: %s", stored, exc)
-                continue
-            self.db.execute("DELETE FROM stored_files WHERE sha256 = ?", (sha256,))
+            with _busy:
+                if stored.is_file() and (stored.stat().st_nlink > 1 or sha256 in needed):
+                    continue
+                try:
+                    stored.unlink(missing_ok=True)
+                except OSError as exc:
+                    log.info("couldn't remove stored file %s: %s", stored, exc)
+                    continue
+                self.db.execute("DELETE FROM stored_files WHERE sha256 = ?", (sha256,))
             removed += 1
         return removed
 
