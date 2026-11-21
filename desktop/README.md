@@ -34,6 +34,13 @@ the phone apps use.
   and `saves_when_let_go()` in `settings.py`); the other fields keep their
   card's Save. A server's box on All servers takes its own color
   (`ServerRow` in `window.py`, `row_sheet()` in `theme.py`).
+- On the other pages each thing in a list (a mod, a backup, a schedule, a
+  player, a quest, a crash) is a `Row` (`parts.py`), a raised box of its
+  own, and the list's heading has no box (`card(..., box=False)`). On or
+  off is a `Switch` on the row; if the agent refuses, the list is read
+  again so the switch shows what is true. Update, Remove and Delete are
+  icon buttons with their name on hover. Diagnose server shows its tests
+  as round marks joined by a line (`Steps` in `parts.py`).
 - Each server page is a `Page` (`ui.py`) that asks the agent only while it
   is open: `players.py` (Players and chat), `console.py`, `performance.py`,
   `schedules.py`, `activity.py` (every event, and the crashes with what

@@ -21,16 +21,17 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QWidget
 
 from .agent import AgentError
+from .parts import Box, Steps
 from .ui import label, push
-from .words import text
+from .words import mode, text
 
 if TYPE_CHECKING:
     from .window import MainWindow
 
-MARKS = {True: "✓", False: "✗", None: "?"}
+MARKS = {True: "ok", False: "bad", None: "skip"}  # a test's ``ok`` as a round mark
 
 
 class DiagnoseWindow(QDialog):
@@ -39,8 +40,8 @@ class DiagnoseWindow(QDialog):
         self.window_ = window
         self.server_id = server_id
         self.setWindowTitle(text("diagnose.title", name=name))
-        self.setMinimumWidth(520)
-        column = QVBoxLayout(self)
+        self.setMinimumWidth(640)  # the three Apply buttons fit in Technical words too
+        column = self.column = QVBoxLayout(self)
         self.microsoft = AccountRow(self, "/microsoft", "microsoft", self.signed_in)
         column.addLayout(self.microsoft.row)
         # HeadlessMC's own sign-in, shown once the join with all mods is on.
@@ -57,7 +58,8 @@ class DiagnoseWindow(QDialog):
         row.addStretch()
         self.picks = {}
         for pick in ("all", "safe", "none"):
-            button = push(text(f"diagnose.apply_{pick}"), "" if pick == "all" else "plain")
+            kind = {"all": "primary", "safe": "", "none": "plain"}[pick]
+            button = push(text(f"diagnose.apply_{pick}"), kind)
             button.clicked.connect(lambda _=False, pick=pick: self.apply(pick))
             button.hide()
             row.addWidget(button)
@@ -145,16 +147,15 @@ class DiagnoseWindow(QDialog):
             old = self.list.takeAt(0).widget()
             if old is not None:
                 old.setParent(None)
-        group = None
+        group, steps = None, Steps()
         for line in result.get("lines") or []:
             if line["group"] != group:
-                group = line["group"]
+                group, steps = line["group"], Steps()
                 self.add(label(group, name="h2"))
-            words = f"{MARKS[line['ok']]}  {line['what']}"
-            if line.get("detail"):
-                words += f"\n     {line['detail']}"
-            kind = "problem" if line["ok"] is False else ("muted" if line["ok"] is None else "")
-            self.add(label(words, kind))
+                self.add(steps)
+            # A test that passed is one line in Simple; the rest say why.
+            said = line.get("detail") if mode["technical"] or line["ok"] is not True else ""
+            steps.add(MARKS[line["ok"]], line["what"], said or "")
         if result.get("known"):
             self.add(label(text("diagnose.known"), name="h2"))
         for problem in result.get("known") or []:
@@ -166,20 +167,34 @@ class DiagnoseWindow(QDialog):
             self.add(label(words))
         if result.get("done"):
             self.add(label(text("diagnose.made"), name="h2"))
-        for done in result.get("done") or []:
-            mark = "✓" if done["outcome"] == "kept" else "–"
-            self.add(label(f"{mark}  {done['title']}\n     {done['detail']}", "muted"))
+            made = Steps()
+            self.add(made)
+            for done in result["done"]:
+                made.add(
+                    "ok" if done["outcome"] == "kept" else "skip", done["title"], done["detail"]
+                )
         if result.get("steps"):
             self.add(label(text("diagnose.yourself"), name="h2"))
         for step in result.get("steps") or []:
             self.add(label(f"•  {step}"))
         changes = [] if result.get("running") else result.get("changes") or []
-        for safe in (True, False):
-            group = [c for c in changes if c["safe"] is safe]
-            if group:
-                self.add(label(text("diagnose.safe" if safe else "diagnose.risky"), name="h2"))
-            for change in group:
-                self.add(label(f"•  {change['title']}\n     {change['why']}"))
+        if changes:  # one raised box: they are applied or denied together
+            offered = Box()
+            for safe in (True, False):
+                some = [c for c in changes if c["safe"] is safe]
+                if some:
+                    offered.column.addWidget(
+                        label(text("diagnose.safe" if safe else "diagnose.risky"), "group")
+                    )
+                for change in some:
+                    offered.column.addWidget(label(change["title"], "step"))
+                    offered.column.addWidget(label(change["why"], "sub"))
+            self.add(offered)
+        # A window only grows by itself for lines that don't wrap: make room
+        # for the ones that do.
+        tall = self.column.totalHeightForWidth(self.width())
+        if tall > self.height():
+            self.resize(self.width(), tall)
         if result.get("running"):
             self.status.setText(text("diagnose.running"))
             return
@@ -190,7 +205,7 @@ class DiagnoseWindow(QDialog):
         self.picks["safe"].setEnabled(any(c["safe"] for c in changes))
         self.again.setVisible(not changes)
 
-    def add(self, widget: QLabel) -> None:
+    def add(self, widget: QWidget) -> None:
         self.list.addWidget(widget)
         widget.show()  # added after the window opened: Qt keeps it hidden otherwise
 

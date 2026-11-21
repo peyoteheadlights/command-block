@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable, Sequence
+from itertools import pairwise
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -235,14 +236,18 @@ def hover_name(part: QWidget, words: str, wait_ms: int = 350) -> None:
 class Box(QFrame):
     """A raised box: paper with an edge in the server's color and a soft
     shadow under it. Only for a thing you act on as one piece (a server, a
-    mod, a setting with its control). What goes in it goes in ``column``."""
+    mod, a setting with its control). What goes in it goes in ``column``.
+    ``raised=False`` is only the column: a heading over rows that are
+    boxes themselves."""
 
     SHADOW = 10  # room under the box for its shadow
     ROUND = 12
 
-    def __init__(self) -> None:
+    def __init__(self, raised: bool = True) -> None:
         super().__init__()
-        self.setContentsMargins(3 + 16, 1 + 12, 3 + 16, self.SHADOW + 14)
+        self.raised = raised
+        if raised:
+            self.setContentsMargins(3 + 16, 1 + 12, 3 + 16, self.SHADOW + 14)
         self.column = QVBoxLayout(self)
         self.column.setContentsMargins(0, 0, 0, 0)
         self.column.setSpacing(8)
@@ -251,6 +256,8 @@ class Box(QFrame):
         return QRectF(self.rect()).adjusted(3, 1, -3, -self.SHADOW)
 
     def paintEvent(self, event) -> None:
+        if not self.raised:
+            return
         look = look_of(self)
         painter = _painter(self)
         paper = self.paper()
@@ -263,6 +270,18 @@ class Box(QFrame):
         painter.setBrush(ink(look["paper"]))
         painter.setPen(QPen(ink(look["border-strong"]), EDGE))
         painter.drawRoundedRect(paper, self.ROUND, self.ROUND)
+
+
+class Row(Box):
+    """A raised box for one thing in a list (a mod, a backup, a schedule):
+    its words on the left and its buttons on the right go in ``line``. What
+    belongs under them goes in ``column``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setContentsMargins(3 + 14, 1 + 8, 3 + 10, self.SHADOW + 8)
+        self.line = QHBoxLayout()
+        self.column.addLayout(self.line)
 
 
 # -------------------------------------------------------------- icon button
@@ -308,13 +327,17 @@ class InfoDot(QAbstractButton):
     def __init__(self, words: str) -> None:
         super().__init__()
         self.setAccessibleName(text("help.what_is_this"))
-        self.setAccessibleDescription(words)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.WhatsThisCursor)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)  # repaint when the mouse comes and goes
+        self.clicked.connect(lambda: Bubble.over(self, self.accessibleDescription(), 0))
+        self.say(words)
+
+    def say(self, words: str) -> None:
+        """Changes the sentence (Simple and Technical word some differently)."""
+        self.setAccessibleDescription(words)
         hover_name(self, words, 80)
-        self.clicked.connect(lambda: Bubble.over(self, words, 0))
 
     def sizeHint(self) -> QSize:
         side = max(16, round(self.fontMetrics().height() * 0.95)) + 2 * RING
@@ -746,3 +769,93 @@ class Face(QWidget):
         painter.setBrush(ink(look["paper"]))
         for column in (1.5, 5):
             painter.drawRect(QRectF(column * cell, 4 * cell, 1.5 * cell, cell))
+
+
+# ----------------------------------------------------------------- test mark
+class Mark(QWidget):
+    """How one test went, as a round mark: "ok" a white tick on green, "bad"
+    a cross on red, "skip" a dash in an empty circle. A list of them is
+    joined by a line (``Steps``)."""
+
+    SIDE = 24
+
+    def __init__(self, state: str) -> None:
+        super().__init__()
+        self.state = state
+        self.setFixedSize(self.SIDE, self.SIDE)
+
+    def paintEvent(self, event) -> None:
+        look = look_of(self)
+        painter = _painter(self)
+        circle = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        if self.state == "skip":
+            painter.setBrush(ink(look["paper"]))
+            painter.setPen(QPen(ink(look["border-strong"]), EDGE))
+        else:
+            painter.setBrush(ink(look["success" if self.state == "ok" else "danger"]))
+        painter.drawEllipse(circle)
+        color = {"ok": "#FFFFFF", "bad": look["on-danger"], "skip": look["text-secondary"]}
+        pen = QPen(ink(color[self.state]), 2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        x, y, u = circle.center().x(), circle.center().y(), self.SIDE / 24
+        if self.state == "ok":
+            painter.drawPolyline(
+                [
+                    QPointF(x - 5 * u, y + 0.5 * u),
+                    QPointF(x - 1.5 * u, y + 4 * u),
+                    QPointF(x + 5 * u, y - 3.5 * u),
+                ]
+            )
+        elif self.state == "bad":
+            painter.drawLine(QPointF(x - 4 * u, y - 4 * u), QPointF(x + 4 * u, y + 4 * u))
+            painter.drawLine(QPointF(x + 4 * u, y - 4 * u), QPointF(x - 4 * u, y + 4 * u))
+        else:
+            painter.drawLine(QPointF(x - 4 * u, y), QPointF(x + 4 * u, y))
+
+
+class Steps(QWidget):
+    """Tests under each other, each with its mark, and a line from one mark
+    down to the next. ``add`` takes a test's state, what it was, and a
+    second line for what went wrong."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows = QVBoxLayout(self)
+        self.rows.setContentsMargins(0, 0, 0, 0)
+        self.rows.setSpacing(12)
+        self.marks: list[Mark] = []
+
+    def add(self, state: str, what: str, detail: str = "") -> None:
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        # Qt shows a part added to a list that is already on screen only a
+        # moment later; with the list as its parent it can be shown at once.
+        mark = Mark(state)
+        mark.setParent(self)
+        mark.show()
+        self.marks.append(mark)
+        row.addWidget(mark, 0, Qt.AlignmentFlag.AlignTop)
+        words = QVBoxLayout()
+        words.setSpacing(2)
+        for line, kind in ((what, "step"), (detail, "problem" if state == "bad" else "sub")):
+            if line:
+                label = QLabel(line, self)
+                label.show()
+                label.setWordWrap(True)
+                label.setProperty("kind", kind)
+                label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                words.addWidget(label)
+        row.addLayout(words, 1)
+        self.rows.addLayout(row)
+
+    def paintEvent(self, event) -> None:
+        painter = _painter(self)
+        painter.setPen(QPen(ink(look_of(self)["border-strong"]), 2))
+        for above, under in pairwise(self.marks):
+            x = above.geometry().center().x() + 0.5
+            painter.drawLine(
+                QPointF(x, above.geometry().bottom() + 3), QPointF(x, under.geometry().top() - 2)
+            )
