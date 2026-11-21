@@ -15,12 +15,15 @@ extension View {
     /// Puts a screen in the binder. `current` is the server the screen is
     /// of, or nil for the list of all servers.
     func binder(current: String?) -> some View {
-        modifier(Binder(current: current))
+        Binder(current: current, content: self)
     }
 }
 
-private struct Binder: ViewModifier {
+// A View and not a ViewModifier: Core has its own `Content` type, which
+// hides the one a ViewModifier's body needs.
+private struct Binder<Page: View>: View {
     let current: String?
+    let content: Page
 
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -37,7 +40,7 @@ private struct Binder: ViewModifier {
         step * CGFloat(min(strip.count, most)) + 8
     }
 
-    func body(content: Content) -> some View {
+    var body: some View {
         let palette = model.serverPalette(model.servers.first(where: { $0.id == current })?.color, colorScheme)
         ZStack(alignment: .top) {
             palette.desk.ignoresSafeArea(edges: .bottom)
