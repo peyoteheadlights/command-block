@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -124,7 +125,10 @@ def test_a_made_modpack_reads_back_as_the_same_server(server, tmp_path):
     assert by_path["mods/sodium.jar"].sha512 == hashlib.sha512(SODIUM).hexdigest()
     assert by_path["mods/sodium.jar"].url.startswith("https://cdn.modrinth.com/")
     lithium = by_path["mods/lithium.jar"]
-    assert lithium.status == "download" and "forgecdn.net" in lithium.url, "CurseForge allows it"
+    assert lithium.status == "download" and urlsplit(lithium.url).hostname in {
+        "edge.forgecdn.net",
+        "mediafilez.forgecdn.net",
+    }, "CurseForge allows it"
     assert (by_path["mods/sodium.jar"].server, by_path["mods/sodium.jar"].client) == (
         "required",
         "required",
