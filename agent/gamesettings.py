@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from . import downtime
 from .events import Event
 from .minecraft import properties
 from .ports import is_free
@@ -65,23 +66,50 @@ def port_problem(ctx: ServerContext, port: int) -> str | None:
     return None
 
 
-def waiting_for_restart(ctx: ServerContext, modified_at: float | None) -> bool:
-    """True when the file was changed after the running server finished
-    starting, so what it is using now is not what the file says. Measured
-    from the file's own time and the moment the console said "Done".
+# Keys a running server takes at once, by a console command (with the
+# command). Minecraft also writes these back to the file itself.
+LIVE = {
+    "difficulty": lambda value, java: f"difficulty {value}",
+    "white-list": lambda value, java: (
+        f"whitelist {'on' if value == 'true' else 'off'}" if java else None
+    ),
+}
+DIFFICULTIES = ("peaceful", "easy", "normal", "hard")
 
-    Not from the moment the process started: Minecraft rewrites
-    server.properties itself early in every start, so that would make every
-    running server look as if it were waiting for a restart. While it is
-    still starting nothing is claimed."""
-    online = ctx.server.online_at
-    return bool(
-        ctx.server.running
-        and ctx.server.state.value == "ONLINE"
-        and online
-        and modified_at
-        and modified_at > online
-    )
+
+def waiting_for_restart(ctx: ServerContext) -> bool:
+    """True when server.properties now says something different from what
+    the running server read when it started (taken when the console said
+    "Done"), apart from the keys it takes at once (LIVE).
+
+    By the values, not the file's time: Minecraft rewrites the file early
+    in every start and again after /difficulty, and neither is a change
+    waiting for a restart. While it is still starting nothing is claimed."""
+    server = ctx.server
+    started = server.properties_at_start
+    if not (server.running and server.state.value == "ONLINE" and started is not None):
+        return False
+    path = ctx.config.server_dir / properties.FILENAME
+    try:
+        now = properties.PropertiesFile.read(path).values() if path.is_file() else {}
+    except OSError:
+        return False
+    keys = (set(now) | set(started)) - set(LIVE)
+    return any(now.get(key) != started.get(key) for key in keys)
+
+
+async def apply_live(ctx: ServerContext, changed: dict[str, str]) -> None:
+    """Send the console commands for the changed keys a running server
+    takes at once (difficulty, whitelist on or off)."""
+    if not ctx.server.running:
+        return
+    java = ctx.config.server_type.edition != "bedrock"
+    for key, value in changed.items():
+        if key not in LIVE or (key == "difficulty" and value not in DIFFICULTIES):
+            continue
+        command = LIVE[key](value, java)
+        if command:
+            await ctx.server.send_command(command, internal=True)
 
 
 def view(ctx: ServerContext) -> dict[str, Any]:
@@ -90,7 +118,7 @@ def view(ctx: ServerContext) -> dict[str, Any]:
     return {
         **data,
         "running": ctx.server.running,
-        "restart_needed": waiting_for_restart(ctx, data["modified_at"]),
+        "restart_needed": waiting_for_restart(ctx),
         "icon": None if _bedrock(ctx) else (directory / ICON).is_file(),
     }
 
@@ -171,6 +199,7 @@ async def save_icon(ctx: ServerContext, data: bytes | None, user: str = "system"
     _, outcome = await ctx.core.jobs.run(
         "server_icon", f"{title} on {ctx.name}", run, server_id=ctx.server_id, risky=True, user=user
     )
+    downtime.mark(ctx, "icon")
     return {
         "ok": True,
         "icon": data is not None,
@@ -301,6 +330,7 @@ async def write_properties(
         user=user,
     )
     _follow(ctx, edited.values())
+    await apply_live(ctx, changed)
     ctx.core.db.audit(
         "game_settings",
         user=user,
@@ -314,7 +344,7 @@ async def write_properties(
             level="info",
             message=(
                 f"Game settings changed on {ctx.name}"
-                + (". They take effect after a restart." if ctx.server.running else ".")
+                + (". They take effect after a restart." if waiting_for_restart(ctx) else ".")
             ),
             data={"changed": changed, "keys": others[:20], "running": ctx.server.running},
         )
@@ -329,11 +359,9 @@ async def write_properties(
 
 
 def _after(ctx: ServerContext) -> dict[str, Any]:
-    path = ctx.config.server_dir / properties.FILENAME
-    modified = path.stat().st_mtime if path.is_file() else None
     return {
         "running": ctx.server.running,
-        "restart_needed": waiting_for_restart(ctx, modified),
+        "restart_needed": waiting_for_restart(ctx),
     }
 
 

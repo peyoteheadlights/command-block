@@ -82,6 +82,11 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                     }
                 }
                 if (state == States.RESTART_PENDING) Note(t("mobile.server.restart_pending"))
+                // Changes that wait for a restart, and "Restart when nobody's on".
+                Display.restartWaiting(vm.strings, status, vm.canControl())?.let { (words, action) ->
+                    Note(words)
+                    action?.let { Actions(listOf(it), busy = ui.busyAction, onAction = { a -> vm.act(serverId, a.action) }) }
+                }
                 listOfNotNull(status?.serverTypeName ?: row?.typeName, status?.minecraftVersion ?: row?.minecraftVersion)
                     .joinToString(" ").takeIf { it.isNotBlank() }
                     ?.let { Note(it, color = colors.text2) }

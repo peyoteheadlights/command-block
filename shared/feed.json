@@ -19,5 +19,7 @@
  "low_disk_ended": "feed.low_disk_ended",
  "auth_failure": "feed.auth_failure",
  "agent_started": "feed.agent_started",
- "agent_stopping": "feed.agent_stopping"
+ "agent_stopping": "feed.agent_stopping",
+ "start_slow": "feed.start_slow",
+ "restart_when_empty": "feed.restart_when_empty"
 }

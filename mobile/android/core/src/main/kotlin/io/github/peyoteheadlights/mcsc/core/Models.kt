@@ -195,6 +195,9 @@ data class ServerStatus(
     val players: List<OnlinePlayer> = emptyList(),
     @SerialName("max_players") val maxPlayers: Int? = null,
     val answering: Answering? = null,
+    /** What changed since it started that it only reads at start ("mods", "settings"...). */
+    @SerialName("restart_waiting") val restartWaiting: List<String> = emptyList(),
+    @SerialName("restart_when_empty") val restartWhenEmpty: Boolean = false,
 )
 
 @Serializable
