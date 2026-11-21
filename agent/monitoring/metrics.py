@@ -236,10 +236,10 @@ class MetricsMonitor:
             port = int(args[args.index("--port") + 1])
         port = port or int(self.server.detected_port or self.config.server.port)
         if self.config.server_type.ping == "raknet":
-            # Bedrock listens on UDP: asked with RakNet's unconnected ping.
-            from ..minecraft import raknet
+            # Bedrock: NetherNet's join page (1.26.50+), else RakNet's ping.
+            from ..minecraft import nethernet, raknet
 
-            return raknet.ping(host, port) is not None
+            return nethernet.ping(host, port) is not None or raknet.ping(host, port) is not None
         try:
             with socket.create_connection((host, port), timeout=1.5):
                 return True
