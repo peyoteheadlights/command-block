@@ -204,6 +204,15 @@ final class ContentTests: XCTestCase {
         XCTAssertFalse(UpdateAll.offered(nil))
     }
 
+    func testTheSameJobCardOffersTurnOffOnThePicksOthersOrOnEachOneWithNoPick() throws {
+        let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [], "server_state": "OFFLINE", "overlaps": [{"kind": "same_mod", "why": "Sodium is here 2 times.", "keep": "new.jar", "say": "Keep 0.5.2, turn off 0.5.1", "mods": [{"filename": "old.jar", "name": "Sodium", "version": "0.5.1", "turn_off": true, "needed_by": ""}, {"filename": "new.jar", "name": "Sodium", "version": "0.5.2", "turn_off": false, "needed_by": ""}]}, {"kind": "same_job", "why": "They all draw a web map of the world.", "keep": "", "say": "These do the same job. Keep the one you use.", "mods": [{"filename": "dynmap.jar", "name": "Dynmap", "version": "3.7", "turn_off": false, "needed_by": "Dynmap Addon"}, {"filename": "squaremap.jar", "name": "squaremap", "version": "1.2", "turn_off": false, "needed_by": ""}]}]}"#.utf8))
+        XCTAssertEqual(list.overlaps.count, 2)
+        XCTAssertEqual(list.overlaps[0].say, "Keep 0.5.2, turn off 0.5.1")
+        XCTAssertEqual(SameJob.turnOff(list.overlaps[0]).map(\.filename), ["old.jar"])
+        XCTAssertEqual(SameJob.turnOff(list.overlaps[1]).map(\.filename), ["squaremap.jar"])
+        XCTAssertEqual(ModList().overlaps, [])
+    }
+
     func testTheStillFitCardReadsTheAgentsAnswerAndChangesTheseAsOneUpdateAll() throws {
         let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [], "server_state": "OFFLINE", "fit": {"about": "Create 6.0", "needs_change": [{"mod_id": "r", "name": "Rails", "filename": "r.jar", "why": "Rails needs Create below 6", "from": "1.0", "to": "2.0", "version_id": "R2"}], "no_fit": [{"mod_id": "g", "name": "Gamma", "filename": "g.jar", "why": "No version for Minecraft 1.21.4 yet"}], "cant_tell": []}}"#.utf8))
         let fit = try XCTUnwrap(list.fit)

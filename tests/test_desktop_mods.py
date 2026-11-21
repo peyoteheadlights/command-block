@@ -780,3 +780,17 @@ def test_still_fit_card_changes_the_ticked_ones_as_one_update_all(qapp, agent_ht
 
     button(page, "Hide").click()
     wait_for(qapp, lambda: not page.fit_card.isVisible())
+
+
+def test_the_same_mod_twice_offers_turn_off_on_the_older_copy(qapp, agent_http):
+    folder = with_mods(agent_http)
+    make_jar(folder / "alpha-new.jar", "alpha", version="1.1", name="Alpha")
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: "Keep 1.1, turn off 1.0" in shown_text(page))
+    assert page.same_card.isVisible()
+    assert "Alpha is here 2 times." in shown_text(page)
+    wait_for(qapp, lambda: can(page, "Turn off", "Alpha 1.0"))
+    assert not row_buttons(page, "Turn off", "Alpha 1.1")
+    row_button(page, "Turn off", "Alpha 1.0").click()
+    wait_for(qapp, lambda: (folder / "alpha.jar.disabled").exists())
+    wait_for(qapp, lambda: not page.same_card.isVisible())
