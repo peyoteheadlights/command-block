@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QFrame,
     QHBoxLayout,
     QMenu,
@@ -29,6 +28,7 @@ from .backups import BackupsPage
 from .console import ConsolePage
 from .mods import AddonsPage, ModsPage
 from .overview import SimpleOverview, TechnicalOverview
+from .parts import Face, IconButton, Segmented, Status
 from .performance import PerformancePage
 from .players import PlayersPage
 from .quests import QuestsPage
@@ -87,24 +87,40 @@ def state_words(row: dict) -> str:
     return text(STATE_WORDS.get(row.get("state", ""), "state.unknown"))
 
 
-def chips(row: dict) -> list[str]:
-    """What the header says about the server, known values only."""
-    out = [state_words(row)]
+def state_mark(row: dict) -> str:
+    """Which of the status mark's four colors a server's state gets."""
+    state = row.get("state")
+    if state == "ONLINE":
+        return "bad" if (row.get("answering") or {}).get("ok") is False else "on"
+    if state in BUSY:
+        return "wait"
+    return "bad" if state in ("CRASHED", "RESTART_PENDING") else "off"
+
+
+def facts(row: dict, port: bool = True, players: bool = True) -> list[str]:
+    """What is said about a server after its status mark, known values only."""
+    out = []
     if row.get("test"):
         out.append(text("test.badge"))
     version = " ".join(x for x in (row.get("type_name"), row.get("minecraft_version")) if x)
     if version:
         out.append(version)
-    if mode["technical"] and (row.get("game_port") or {}).get("port"):
+    if port and mode["technical"] and (row.get("game_port") or {}).get("port"):
         out.append(text("desktop.chip.port", port=row["game_port"]["port"]))
     count = row.get("players_online")
-    if row.get("state") == "ONLINE" and count is not None and row.get("players_verified"):
+    if (
+        players
+        and row.get("state") == "ONLINE"
+        and count is not None
+        and row.get("players_verified")
+    ):
         out.append(text("head.players.one" if count == 1 else "head.players.other", count=count))
     return out
 
 
 class Header(QFrame):
-    """Name, chips, named Undo, Restart, the big Start/Stop and ⋯."""
+    """Name, the status mark and a line of facts, named Undo, Diagnose
+    server and Restart as icon buttons, the big Start/Stop and ⋯."""
 
     def __init__(self, window: MainWindow) -> None:
         super().__init__()
@@ -120,12 +136,11 @@ class Header(QFrame):
         self.undo = QPushButton()
         self.undo.hide()  # until there is a change to undo
         self.undo.clicked.connect(lambda: window.move_change("undo"))
-        self.restart = QPushButton(text("action.restart"))
+        self.restart = IconButton("restart", text("action.restart"))
         self.restart.clicked.connect(lambda: window.server_action(self.row["id"], "restart"))
-        self.diagnose = QPushButton(text("action.diagnose"))
+        self.diagnose = IconButton("performance", text("action.diagnose"))
         self.diagnose.clicked.connect(self.open_diagnose)
         self.main = QPushButton()
-        self.main.setProperty("kind", "primary")
         self.main.setProperty("big", True)
         self.main.clicked.connect(self.start_or_stop)
         self.more = QToolButton()
@@ -138,9 +153,13 @@ class Header(QFrame):
         for widget in (self.undo, self.diagnose, self.restart, self.main, self.more):
             top.addWidget(widget)
         column.addLayout(top)
-        self.chips = QHBoxLayout()
-        self.chips.setSpacing(6)
-        column.addLayout(self.chips)
+        under = QHBoxLayout()
+        under.setSpacing(10)
+        self.status = Status()
+        self.facts = label(kind="sub")
+        under.addWidget(self.status)
+        under.addWidget(self.facts, 1)
+        column.addLayout(under)
         self.problem = label(kind="problem")
         self.problem.hide()
         column.addWidget(self.problem)
@@ -190,21 +209,16 @@ class Header(QFrame):
         self.main.setText(text(f"action.{action}"))
         self.main.setAccessibleName(f"{text(f'action.{action}')} {row['name']}")
         self.main.setEnabled(state not in BUSY)
+        # Only Start is filled: one filled button on a screen.
+        self.main.setProperty("kind", "primary" if action == "start" else "")
+        self.main.setStyle(self.main.style())
         control = self.window_.may(row["id"], "server.control")
         self.main.setVisible(control)
         self.restart.setVisible(state == "ONLINE" and control)
         self.diagnose.setVisible(self.window_.may(row["id"], "server.diagnose"))
         self.more.setAccessibleName(text("desktop.more"))
-        while self.chips.count():
-            old = self.chips.takeAt(0).widget()
-            if old is not None:
-                old.setParent(None)
-        for i, words in enumerate(chips(row)):
-            chip = label(words, "chip")
-            chip.setWordWrap(False)
-            chip.setProperty("strong", i == 0 and state == "ONLINE")
-            self.chips.addWidget(chip)
-        self.chips.addStretch()
+        self.status.say(state_mark(row), state_words(row))
+        self.facts.setText(" · ".join(facts(row)))
 
     def show_changes(self, changes: dict) -> None:
         self.changes = changes
@@ -261,7 +275,7 @@ class Header(QFrame):
 
 
 class Panel(QFrame):
-    """Online now, Coming up, Recent activity, and the View switch."""
+    """Online now, Coming up, Recent activity, and Simple or Technical."""
 
     def __init__(self, window: MainWindow) -> None:
         super().__init__()
@@ -286,28 +300,21 @@ class Panel(QFrame):
         self.see_all.clicked.connect(lambda: window.open_activity())
         layout.addWidget(self.see_all, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addStretch()
-        self.view = label(kind="muted")
-        layout.addWidget(self.view)
-        switch = QHBoxLayout()
-        switch.setSpacing(0)
-        self.group = QButtonGroup(self)
-        self.simple, self.technical = QPushButton(), QPushButton()
-        for button, technical in ((self.simple, False), (self.technical, True)):
-            button.setCheckable(True)
-            button.setProperty("kind", "segment")
-            button.clicked.connect(lambda _=False, t=technical: window.set_mode(t))
-            self.group.addButton(button)
-            switch.addWidget(button, 1)
-        layout.addLayout(switch)
+        self.view = Segmented(
+            [("simple", text("mode.simple")), ("technical", text("mode.technical"))],
+            "technical" if mode["technical"] else "simple",
+            lambda key: window.set_mode(key == "technical"),
+        )
+        self.simple, self.technical = self.view.buttons.values()
+        layout.addWidget(self.view, 0, Qt.AlignmentFlag.AlignHCenter)
 
     def show_words(self) -> None:
         self.coming_title.setText(text("desktop.panel.coming_up"))
         self.activity_title.setText(text("desktop.panel.activity"))
         self.see_all.setText(text("desktop.panel.see_all"))
-        self.view.setText(text("desktop.panel.view"))
         self.simple.setText(text("mode.simple"))
         self.technical.setText(text("mode.technical"))
-        (self.technical if mode["technical"] else self.simple).setChecked(True)
+        self.view.choose("technical" if mode["technical"] else "simple")
 
     def show_players(self, row: dict, players: dict) -> None:
         count, most = players.get("online_count"), players.get("max_players") or "?"
@@ -323,6 +330,7 @@ class Panel(QFrame):
             line = QWidget()
             h = QHBoxLayout(line)
             h.setContentsMargins(0, 0, 0, 0)
+            h.addWidget(Face(person["username"]))
             h.addWidget(label(person["username"]), 1)
             h.addWidget(label(clock(person.get("session_started")), "muted"))
             rows.append(line)

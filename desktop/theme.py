@@ -93,6 +93,21 @@ def style_sheet(t: dict[str, str], scale: float = 1.0) -> str:
     return re.sub(r"(\d+(?:\.\d+)?)pt", lambda m: f"{float(m[1]) * scale:g}pt", sheet)
 
 
+def row_sheet(t: dict[str, str]) -> str:
+    """The buttons of one server's box on All servers, in that server's
+    color (``t`` are its tokens). Everything else stays the window's."""
+    return f"""
+QPushButton {{ border: 1px solid {t["border-strong"]}; }}
+QPushButton:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QPushButton[kind="primary"] {{ background: {t["accent"]}; color: {t["accent-text"]};
+                               border: 1px solid {t["accent-ring"]}; }}
+QPushButton[kind="primary"]:hover {{ background: {t["accent-hover"]}; }}
+QPushButton[kind="primary"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QPushButton[kind="plain"] {{ color: {t["accent-ink"]}; border: 1px solid transparent; }}
+QPushButton[kind="plain"]:hover {{ background: {t["accent-soft"]}; }}
+"""
+
+
 def _tick(t: dict[str, str]) -> str:
     """The tick mark's picture, white or black like the words on a filled
     button. A style sheet can only take it from a file."""
@@ -210,8 +225,9 @@ QFrame#strip {{ background: {t["paper"]}; border: 1px solid {t["border-strong"]}
 QFrame#strip QToolButton {{ padding: 3px 5px; }}
 QFrame#strip QToolButton#close:hover {{ background: {t["danger"]}; }}
 QFrame#gap {{ background: {t["border-strong"]}; max-width: 1px; min-width: 1px; }}
-QFrame[kind="card"] {{ background: {t["surface"]}; border: 1px solid {t["border"]};
-                       border-radius: {t["radius-lg"]}; }}
+QLabel[kind="big"] {{ font-size: 19pt; font-weight: 600; }}
+QLabel[kind="group"] {{ color: {t["text-secondary"]}; font-size: 9pt; font-weight: 600; }}
+QFrame#newServer {{ border: 1px dashed {t["border-strong"]}; border-radius: 12px; }}
 QFrame#panel {{ border: 0 solid {t["border-strong"]}; border-left-width: 1px; }}
 QFrame#panel[under="true"] {{ border-left-width: 0; border-top-width: 1px; }}
 QLabel#h1 {{ font-size: 25.5pt; font-weight: 700; }}
