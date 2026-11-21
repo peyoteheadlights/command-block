@@ -70,7 +70,9 @@ def test_the_modpack_carries_the_players_half(server, tmp_path):
     made = make(client, headers).json()
     with zipfile.ZipFile(saved(client, headers, made, tmp_path)) as zf:
         got = json.loads(zf.read(f"client-overrides/{companion.PLAYERS_FILE}"))
-    assert got == {"format": 1, "modpack": {"name": "Friends", "version": "1"}}
+    # The modpack's mod jars: an update may replace only these, never the player's own.
+    assert got["format"] == 1 and got["modpack"] == {"name": "Friends", "version": "1"}
+    assert sorted(got["files"]) == sorted(f["path"] for f in settings(client)["files"])
 
 
 def test_the_settings_file_is_never_offered_as_a_config_file_for_players(server):
