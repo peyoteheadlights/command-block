@@ -1403,13 +1403,15 @@ public struct GameSetting: Decodable, Equatable, Identifiable, Sendable {
     public var minecraftDefault: String
     public var choices: [String]
     public var maxLength: Int?
+    /// How many lines the value can have (the MOTD has 2).
+    public var lines: Int
     /// "world_exists" for the seed once the world is made.
     public var readOnly: String?
 
     public var id: String { key }
 
     enum CodingKeys: String, CodingKey {
-        case key, kind, value, set, problem, raw, choices
+        case key, kind, value, set, problem, raw, choices, lines
         case minecraftDefault = "minecraft_default"
         case maxLength = "max_length"
         case readOnly = "read_only"
@@ -1418,7 +1420,7 @@ public struct GameSetting: Decodable, Equatable, Identifiable, Sendable {
     public init(
         key: String, kind: String = "text", value: JSONValue? = nil, set: Bool = false, problem: String? = nil,
         raw: String? = nil, minecraftDefault: String = "", choices: [String] = [], maxLength: Int? = nil,
-        readOnly: String? = nil
+        lines: Int = 1, readOnly: String? = nil
     ) {
         self.key = key
         self.kind = kind
@@ -1429,6 +1431,7 @@ public struct GameSetting: Decodable, Equatable, Identifiable, Sendable {
         self.minecraftDefault = minecraftDefault
         self.choices = choices
         self.maxLength = maxLength
+        self.lines = lines
         self.readOnly = readOnly
     }
 
@@ -1443,6 +1446,7 @@ public struct GameSetting: Decodable, Equatable, Identifiable, Sendable {
         minecraftDefault = c.value(.minecraftDefault, "")
         choices = c.value(.choices, [])
         maxLength = c.maybe(.maxLength)
+        lines = c.value(.lines, 1)
         readOnly = c.maybe(.readOnly)
     }
 }
@@ -1455,20 +1459,23 @@ public struct GameSettings: Decodable, Equatable, Sendable {
     public var restartNeeded: Bool
     /// The whole file as it is now, for the Technical mode editor.
     public var text: String
+    /// Whether server-icon.png is there; nil on Bedrock, which shows none.
+    public var icon: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case file, exists, fields, running, text
+        case file, exists, fields, running, text, icon
         case restartNeeded = "restart_needed"
     }
 
     public init(file: String = "", exists: Bool = false, fields: [GameSetting] = [], running: Bool = false,
-                restartNeeded: Bool = false, text: String = "") {
+                restartNeeded: Bool = false, text: String = "", icon: Bool? = nil) {
         self.file = file
         self.exists = exists
         self.fields = fields
         self.running = running
         self.restartNeeded = restartNeeded
         self.text = text
+        self.icon = icon
     }
 
     public init(from decoder: Decoder) throws {
@@ -1479,6 +1486,32 @@ public struct GameSettings: Decodable, Equatable, Sendable {
         running = c.value(.running, false)
         restartNeeded = c.value(.restartNeeded, false)
         text = c.value(.text, "")
+        icon = c.maybe(.icon)
+    }
+}
+
+/// server-icon.png in base64, or nil when the server has none.
+public struct ServerIcon: Decodable, Equatable, Sendable {
+    public var png: String?
+
+    public init(png: String? = nil) { self.png = png }
+}
+
+public struct ServerIconSaved: Decodable, Equatable, Sendable {
+    public var icon: Bool
+    public var running: Bool
+
+    enum CodingKeys: String, CodingKey { case icon, running }
+
+    public init(icon: Bool = false, running: Bool = false) {
+        self.icon = icon
+        self.running = running
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        icon = c.value(.icon, false)
+        running = c.value(.running, false)
     }
 }
 

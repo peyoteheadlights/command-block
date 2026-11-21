@@ -99,7 +99,8 @@ def test_an_unchanged_value_rewrites_nothing(tmp_path):
         ("view-distance", 99),
         ("view-distance", 2),
         ("pvp", "yes"),
-        ("motd", "two\nlines"),
+        ("motd", "three\nlines\nhere"),  # the MOTD can be two lines, not more
+        ("motd", "carriage\rreturn"),
         ("motd", "x" * 151),
         ("server-port", 80),
         ("server-port", 70000),

@@ -780,6 +780,37 @@ class ContentPages(
         gameRestart = false
     }
 
+    // ------------------------------------------------------------ server icon
+    /** The server icon as base64 PNG; null while unknown or when there is none. */
+    var icon: String? by mutableStateOf(null)
+        private set
+
+    fun loadIcon() {
+        val c = client() ?: return
+        scope.launch {
+            icon = try {
+                c.serverIcon(serverId)
+            } catch (e: AgentException) {
+                noted(e)
+                null
+            }
+        }
+    }
+
+    /** [png] is already 64 x 64 (ServerIconPicker makes it). Undo is the
+     * server's own Undo, like every change the agent backs up first. */
+    fun saveIcon(png: String, strings: Strings) = work("icon", strings, reload = ::loadGame) {
+        val done = it.saveServerIcon(serverId, png)
+        icon = png
+        Said(strings.t("motd.icon_saved") + if (done.running) " " + strings.t("motd.icon_restart") else "", good = true)
+    }
+
+    fun removeIcon(strings: Strings) = work("icon", strings, reload = ::loadGame) {
+        it.removeServerIcon(serverId)
+        icon = null
+        Said(strings.t("motd.icon_removed"), good = true)
+    }
+
     // ------------------------------------------------------------ doing
     private fun work(name: String, strings: Strings, reload: (() -> Unit)? = null, call: suspend (AgentClient) -> Said?) {
         val c = client() ?: return

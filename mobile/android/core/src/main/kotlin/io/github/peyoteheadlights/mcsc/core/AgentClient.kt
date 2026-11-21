@@ -969,6 +969,19 @@ class AgentClient(
         GameSettingsSaved.serializer(),
     )
 
+    /** The server icon, as base64 PNG, or null when there is none. */
+    suspend fun serverIcon(serverId: String): String? =
+        get("${server(serverId)}/server-icon", ServerIcon.serializer()).png
+
+    /** A new server icon: a 64 x 64 PNG in base64 (the app resizes it first). */
+    suspend fun saveServerIcon(serverId: String, png: String): ServerIconSaved = call(
+        request("${server(serverId)}/server-icon").put(buildJsonObject { put("png", png) }.toBody()).build(),
+        ServerIconSaved.serializer(),
+    )
+
+    suspend fun removeServerIcon(serverId: String): ServerIconSaved =
+        call(request("${server(serverId)}/server-icon").delete().build(), ServerIconSaved.serializer())
+
     /** Saves the whole server.properties as typed in Technical mode. The
      * agent still checks the known keys, and writes nothing when one fails. */
     suspend fun saveGameSettingsText(serverId: String, text: String): GameSettingsSaved = call(

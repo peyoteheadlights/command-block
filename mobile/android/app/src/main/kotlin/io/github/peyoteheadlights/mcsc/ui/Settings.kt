@@ -13,7 +13,6 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -81,6 +80,16 @@ fun SettingsScreen(vm: AppViewModel, onAbout: () -> Unit, onAccount: () -> Unit,
                 Card(Modifier.selectableGroup()) {
                     Choice(t("mode.simple"), t("mode.simple_hint"), selected = !vm.technical) { vm.chooseTechnical(false) }
                     Choice(t("mode.technical"), t("mode.technical_hint"), selected = vm.technical) { vm.chooseTechnical(true) }
+                }
+            }
+            item { SectionTitle(t("streamer.title")) }
+            item {
+                Card {
+                    Item(
+                        t("streamer.switch"),
+                        info = t("streamer.hint"),
+                        trailing = { Switch(checked = StreamerMode.on, onCheckedChange = vm::chooseStreamer) },
+                    )
                 }
             }
             item { SectionTitle(t("mobile.settings.unlock")) }
