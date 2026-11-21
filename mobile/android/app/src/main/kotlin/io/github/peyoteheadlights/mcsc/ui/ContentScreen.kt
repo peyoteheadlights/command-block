@@ -1120,8 +1120,7 @@ private fun MakeModpackDialog(vm: AppViewModel, content: ContentPages, options: 
                 Checkbox(checked = chatOn, onCheckedChange = { chatOn = it }, enabled = !required)
                 Text(t("make.chat_line"))
             }
-            OutlinedTextField(value = chatText, onValueChange = { chatText = it.replace("
-", " ").take(300) }, enabled = !required, singleLine = true)
+            OutlinedTextField(value = chatText, onValueChange = { chatText = it.replace("\n", " ").take(300) }, enabled = !required, singleLine = true)
             Text(t("make.chat_line_hint"))
         }
         Text(t(if (options.configs.isEmpty()) "make.no_configs" else "make.configs"), modifier = Modifier.padding(top = 6.dp))
