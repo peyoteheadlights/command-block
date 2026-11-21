@@ -494,7 +494,8 @@ final class ContentTests: XCTestCase {
     func testSignInWithModrinthComesBackAsAnMcscLinkAndTheModpackGoesUp() async throws {
         let c = client()
         StubAgent.json(#"{"url": "https://modrinth.com/auth/authorize?state=s1"}"#)
-        XCTAssertEqual(try await c.modrinthSignIn().url, "https://modrinth.com/auth/authorize?state=s1")
+        let signIn = try await c.modrinthSignIn()
+        XCTAssertEqual(signIn.url, "https://modrinth.com/auth/authorize?state=s1")
         XCTAssertEqual(path(0), "/api/modrinth/sign-in")
         XCTAssertEqual(body(0), #"{"return_to":"phone"}"#)
 
@@ -505,7 +506,8 @@ final class ContentTests: XCTestCase {
         XCTAssertNil(ModrinthCards.cameBack(URL(string: "mcsc://server/abc?code=1&state=2")!))
 
         StubAgent.json(#"{"available": true, "signed_in": true, "username": "mark", "ran_out": false}"#)
-        XCTAssertTrue(try await c.modrinthFinish(code: "abc", state: "x.1.phone.y").signedIn)
+        let finished = try await c.modrinthFinish(code: "abc", state: "x.1.phone.y")
+        XCTAssertTrue(finished.signedIn)
         XCTAssertEqual(body(1), #"{"code":"abc","state":"x.1.phone.y"}"#)
 
         let card = #"{"account": {"available": true, "signed_in": true, "username": "mark", "ran_out": false}, "made": {"name": "Friends", "version": "2"}, "project": {"id": "p1", "slug": "friends", "title": "Friends", "url": "https://modrinth.com/modpack/friends"}, "uploads": [{"version_id": "v2", "version": "2", "at": 1.0}], "own_jars": [{"path": "mods/a.jar", "name": "A", "side": "both", "slug": "a", "url": "https://modrinth.com/mod/a"}], "server_project": {"id": "s", "slug": "s", "url": "https://modrinth.com/server/s"}, "older": {"listed": "1", "newest": "2"}, "address": "play.example.org"}"#
