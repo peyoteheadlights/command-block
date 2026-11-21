@@ -443,11 +443,13 @@ final class ContentTests: XCTestCase {
         StubAgent.enqueue(StubAgent.Answer(status: 200, headers: ["Content-Type": "application/zip"], body: zip))
         let out = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mrpack")
         defer { try? FileManager.default.removeItem(at: out) }
-        XCTAssertEqual(try await c.downloadModpack(serverId: "s", made: made, to: out), 4)
+        let downloaded = try await c.downloadModpack(serverId: "s", made: made, to: out)
+        XCTAssertEqual(downloaded, 4)
         XCTAssertEqual(StubAgent.requests[2].request.url?.path, "/api/servers/s/modpack/made/t1")
 
         StubAgent.json(#"{"ok": true, "posted": 1}"#)
-        XCTAssertEqual(try await c.postModpack(serverId: "s", token: "t1").posted, 1)
+        let posted = try await c.postModpack(serverId: "s", token: "t1")
+        XCTAssertEqual(posted.posted, 1)
         XCTAssertEqual(path(3), "/api/servers/s/modpack/made/discord")
         XCTAssertEqual(body(3), #"{"token":"t1"}"#)
     }
