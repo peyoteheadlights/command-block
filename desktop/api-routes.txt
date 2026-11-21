@@ -146,6 +146,7 @@ POST /api/modrinth/sign-out
 POST /api/servers/{server_id}/mods/needs-you/dismiss
 GET /api/servers/{server_id}/addons
 POST /api/servers/{server_id}/addons/upload
+PUT /api/servers/{server_id}/addons/required
 PUT /api/servers/{server_id}/addons/{pack_uuid}
 DELETE /api/servers/{server_id}/addons/{pack_uuid}
 GET /api/servers/{server_id}/settings

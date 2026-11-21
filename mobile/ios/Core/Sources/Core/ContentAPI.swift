@@ -297,6 +297,11 @@ extension AgentClient {
         try await upload(content(serverId) + "/addons/upload", file, as: AddonResult.self)
     }
 
+    public func setAddonsRequired(serverId: String, required: Bool) async throws -> AddonResult {
+        let body = try AgentClient.encode(["required": required])
+        return try await call("PUT", content(serverId) + "/addons/required", body: body, as: AddonResult.self)
+    }
+
     public func setAddonEnabled(serverId: String, uuid: String, enabled: Bool) async throws -> AddonResult {
         let body = try AgentClient.encode(["enabled": enabled])
         return try await call("PUT", content(serverId) + "/addons/" + AgentClient.pathSegment(uuid), body: body, as: AddonResult.self)
