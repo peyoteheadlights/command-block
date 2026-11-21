@@ -287,6 +287,18 @@ object Modpacks {
         )
     }
 
+    /** Where a found modpack is read from. */
+    fun site(hit: ModrinthHit): String = if (hit.source == "curseforge") "curseforge" else "modrinth"
+
+    /** A found modpack on one line under its name: site, loader and newest Minecraft
+     *  version, downloads, and what Modrinth was told it holds. */
+    fun about(strings: Strings, hit: ModrinthHit): String = listOfNotNull(
+        hit.sourceName,
+        (hit.loaders + listOfNotNull(hit.minecraftVersion)).joinToString(" ").ifBlank { null },
+        hit.downloads?.let { strings.t("pack.downloads", "count" to String.format(java.util.Locale.ROOT, "%,d", it)) },
+        if (hit.serverSide == "unsupported") strings.t("pack.players_only") else null,
+    ).plus(hit.disclosures).joinToString("  ·  ")
+
     fun fileStatus(file: ModpackFile): StateWords = when (file.status) {
         "download" -> StateWords("pack.status_download", Tone.SUCCESS)
         "client_only" -> StateWords("pack.status_client", Tone.NEUTRAL)

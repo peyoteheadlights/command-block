@@ -387,3 +387,73 @@ async def test_a_packs_jars_are_shared_and_not_downloaded_twice(core, tmp_path, 
     assert two.read_bytes() == LITHIUM
     assert os.path.samefile(one, two)
     assert core.get_server(first["server_id"]).mods.store.usage()["files"] == 1
+
+
+# ------------------------------------------------------------ picked on Modrinth
+def modrinth_versions(monkeypatch, files):
+    """Modrinth's API answering one modpack project ``xyz`` whose newest
+    release holds ``files``."""
+    from agent.mods.modrinth import ModrinthClient
+
+    asked = []
+
+    async def send(self, method, path, **sent):
+        asked.append(path)
+        assert path == "/project/xyz/version" and "loaders" not in sent["params"]
+        return [{"id": "v2", "project_id": "xyz", "version_type": "release", "files": files}]
+
+    monkeypatch.setattr(ModrinthClient, "_send", send)
+    return asked
+
+
+def pack_file(data, url="https://cdn.modrinth.com/data/xyz/versions/v2/test-pack.mrpack"):
+    return {
+        "url": url,
+        "filename": "test-pack.mrpack",
+        "primary": True,
+        "size": len(data),
+        "hashes": {"sha512": hashlib.sha512(data).hexdigest()},
+    }
+
+
+def uploads_left(multi_client):
+    return list(modpack.upload_folder(multi_client.app.state.core).glob("*.mrpack*"))
+
+
+def test_a_modrinth_pack_picked_by_name_is_read_like_a_file(
+    multi_client, network, monkeypatch, tmp_path
+):
+    data = make_pack(tmp_path / "p.mrpack").read_bytes()
+    network["test-pack.mrpack"] = data
+    modrinth_versions(monkeypatch, [pack_file(data)])
+    read = multi_client.post(
+        "/api/modpacks/modrinth", json={"project": "xyz", "server_id": "survival"}
+    )
+    assert read.status_code == 200, read.text
+    body = read.json()
+    assert body["pack"]["name"] == "Test Pack" and body["into"]["version_change"] is True
+    assert multi_client.delete(f"/api/modpacks/{body['token']}").status_code == 200
+    assert not uploads_left(multi_client)
+
+
+@pytest.mark.parametrize(
+    ("served", "url", "says"),
+    [
+        (True, None, "checksum"),
+        (False, "https://example.com/test-pack.mrpack", "can't be checked"),
+    ],
+)
+def test_a_modrinth_pack_that_cant_be_checked_is_thrown_away(
+    multi_client, network, monkeypatch, tmp_path, served, url, says
+):
+    data = make_pack(tmp_path / "p.mrpack").read_bytes()
+    network["test-pack.mrpack"] = data[:-1] + b"?" if served else data  # same size, other bytes
+    modrinth_versions(monkeypatch, [pack_file(data, *([url] if url else []))])
+    refused = multi_client.post("/api/modpacks/modrinth", json={"project": "xyz"})
+    assert refused.status_code == 400 and says in refused.json()["detail"]
+    assert not uploads_left(multi_client)
+
+
+def test_a_project_name_that_could_change_the_path_is_refused(multi_client):
+    refused = multi_client.post("/api/modpacks/modrinth", json={"project": "../user"})
+    assert refused.status_code == 422

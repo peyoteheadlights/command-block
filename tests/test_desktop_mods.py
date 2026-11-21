@@ -794,3 +794,37 @@ def test_the_same_mod_twice_offers_turn_off_on_the_older_copy(qapp, agent_http):
     row_button(page, "Turn off", "Alpha 1.0").click()
     wait_for(qapp, lambda: (folder / "alpha.jar.disabled").exists())
     wait_for(qapp, lambda: not page.same_card.isVisible())
+
+
+def test_a_found_modpack_is_read_from_its_own_site_with_a_site_that_is_down_said():
+    from desktop.mods import find_pack
+
+    calls, said, read = [], [], []
+
+    class Window:
+        def __init__(self):
+            self.agent = self
+
+        def call(self, method, path, body=None, slow=False):
+            calls.append((method, path, body))
+            if method == "GET":
+                hit = {"project_id": "curseforge:900", "title": "Cozy", "source": "curseforge"}
+                problems = ["Modrinth isn't available right now."]
+                return {"hits": [hit | {"source_name": "CurseForge"}], "problems": problems}
+            return {"pack": "read"}
+
+        def run(self, work, done, failed):
+            done(work())
+
+        def pick(self, title, body, choices):
+            assert choices == ["Cozy  ·  CurseForge"], "no download count when the site gave none"
+            return 0
+
+    find_pack(Window(), "cozy pack", "survival", said.append, read.append)
+    assert calls[0][1] == "/modpacks/search?q=cozy%20pack&limit=10"
+    assert calls[1] == (
+        "POST",
+        "/modpacks/curseforge",
+        {"project": "curseforge:900", "server_id": "survival"},
+    )
+    assert "Modrinth isn't available right now." in said and read == [{"pack": "read"}]

@@ -1243,6 +1243,11 @@ class ModrinthHit(Open):
     look_alike: str | None = Field(
         None, description="A far more downloaded result whose name is nearly the same"
     )
+    minecraft_version: str | None = Field(None, description="The newest one it's made for")
+    loaders: list[str] = Field([], description='"Fabric", "Quilt", "Forge", "NeoForge"')
+    disclosures: list[str] = Field(
+        [], description='Modrinth: what it told Modrinth it holds, "Shows ads"'
+    )
 
 
 class ModSearch(Open):

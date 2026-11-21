@@ -358,6 +358,23 @@ final class ContentTests: XCTestCase {
 
     // MARK: - The agent
 
+    func testAFoundModpackSaysItsSiteLoaderVersionDownloadsAndWhatItHolds() async throws {
+        let c = client()
+        StubAgent.json(#"{"hits": [{"project_id": "curseforge:9", "slug": "curseforge:9", "title": "Cozy", "source": "curseforge", "source_name": "CurseForge", "loaders": ["Forge"]}, {"project_id": "xyz", "slug": "xyz", "title": "Pack", "downloads": 1234, "source_name": "Modrinth", "loaders": ["Fabric"], "minecraft_version": "1.21.10", "server_side": "unsupported", "disclosures": ["Shows ads"]}], "total": 2, "problems": ["Modrinth isn't available right now."]}"#)
+        let found = try await c.searchModpacks(query: "cozy pack")
+        XCTAssertEqual(found.problems, ["Modrinth isn't available right now."])
+        XCTAssertEqual(path(0), "/api/modpacks/search?q=cozy%20pack&limit=20")
+        XCTAssertEqual(
+            Modpacks.about(s, found.hits[1]),
+            "Modrinth  ·  Fabric 1.21.10  ·  1,234 downloads  ·  Made for players' games, not servers  ·  Shows ads"
+        )
+        StubAgent.json(#"{"token": "t", "pack": {"name": "Cozy", "can_import": true}}"#)
+        let read = try await c.fetchModpack(found.hits[0], serverId: nil)
+        XCTAssertEqual(read.pack.name, "Cozy")
+        XCTAssertEqual(path(1), "/api/modpacks/curseforge")
+        XCTAssertEqual(body(1), #"{"project":"curseforge:9","server_id":""}"#)
+    }
+
     func testTheInstalledListUpdateAllAndHistoryAreRead() async throws {
         let c = client()
         StubAgent.json(#"{"mods": [{"filename": "a.jar", "path": "C:\\s\\mods\\a.jar", "mod_id": "a", "name": "Alpha", "version": "1.0", "enabled": true, "status": "warn", "issues": [{"kind": "version_mismatch", "severity": "warn", "detail": "Made for 1.20"}], "has_history": true, "update_available": {"mod_id": "a", "latest_version": "2.0", "version_id": "va"}}], "problems": [], "minecraft_version": null, "server_state": "OFFLINE", "updates_checked_at": null}"#)
