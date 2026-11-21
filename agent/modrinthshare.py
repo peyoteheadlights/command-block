@@ -426,7 +426,7 @@ async def upload_own_jar(
     saved = _saved(ctx)
     jar = next((j for j in _own_jars(ctx, saved) if j["path"] == jar_path), None)
     base = ctx.config.server_dir.resolve()
-    source = (base / jar_path) if jar else None
+    source = base / jar_path
     if jar is None or not source.is_file() or source.is_symlink() or not is_inside(base, source):
         raise ModrinthShareError("That jar isn't one of the own files in the newest modpack.")
     if jar["slug"]:
