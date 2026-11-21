@@ -529,7 +529,6 @@ class SetupPages(
     var playit: Read<PlayitState> by mutableStateOf(Read())
     /** playit's config.yml box, pasted for WaterdogPE (holds the tunnel's token; never saved). */
     var waterdogBox: String by mutableStateOf("")
-        private set
 
     fun loadPlayit() {
         val c = client() ?: return
