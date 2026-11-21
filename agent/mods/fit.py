@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..events import Event
@@ -53,7 +54,9 @@ def empty(about: str = "") -> dict[str, Any]:
 
 
 def shown(result: dict[str, Any] | None) -> bool:
-    return bool(result) and any(result[key] for key in ("needs_change", "no_fit", "cant_tell"))
+    if not result:
+        return False
+    return any(result[key] for key in ("needs_change", "no_fit", "cant_tell"))
 
 
 # ---------------------------------------------------------------- when
@@ -323,10 +326,10 @@ async def _ask_sites(mods, wanted: list[ModInfo], minecraft: str) -> dict[str, d
             others.append((mod, source, project))
 
     if on_modrinth:
-        hashes = list(on_modrinth)
+        sha1s = list(on_modrinth)
         try:
-            now = await mods.modrinth.installed_versions(hashes)
-            newest = await mods.modrinth.fitting_versions(hashes, minecraft)
+            now = await mods.modrinth.installed_versions(sha1s)
+            newest = await mods.modrinth.fitting_versions(sha1s, minecraft)
         except ModrinthError as exc:
             for mod in on_modrinth.values():
                 found[mod.mod_id]["error"] = str(exc)
@@ -375,7 +378,7 @@ def _hashes(mods, mod: ModInfo) -> dict[str, Any]:
     row = mod.sha256 and mods.store.db.query_one(
         "SELECT sha256, sha1, sha512 FROM stored_files WHERE sha256 = ?", (mod.sha256,)
     )
-    return dict(row) if row else hashes_of(mod.path)
+    return dict(row) if row else hashes_of(Path(mod.path))
 
 
 def _same_file(hashes: dict[str, Any], version: dict[str, Any]) -> bool:
