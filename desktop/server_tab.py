@@ -27,7 +27,7 @@ from . import motion
 from .activity import INTERNAL, ActivityPage, sentence
 from .backups import BackupsPage
 from .console import ConsolePage
-from .mods import AddonsPage, ModsPage
+from .mods import AddonsPage, ModsPage, VanillaModsPage
 from .overview import SimpleOverview, TechnicalOverview
 from .parts import Face, IconButton, Segmented, Status
 from .performance import PerformancePage
@@ -426,6 +426,8 @@ class ServerScreen(QWidget):
         self.pages.addWidget(self.activity)
         self.page_widgets["Add-ons"] = AddonsPage(window)  # a Bedrock server's Mods tab
         self.pages.addWidget(self.page_widgets["Add-ons"])
+        self.page_widgets["Vanilla mods"] = VanillaModsPage(window)  # Make a modpack only
+        self.pages.addWidget(self.page_widgets["Vanilla mods"])
         self.current_page = "Overview"
         self.place_panel()
 
@@ -439,7 +441,7 @@ class ServerScreen(QWidget):
             p
             for p in PAGES
             if (mode["technical"] or not p[3])
-            and (p[0] != "Mods" or content is not None)
+            and (p[0] != "Mods" or content is not None or self.row.get("edition") != "bedrock")
             # Only for people who may run quests here (the owner, Quests and events).
             and (p[0] != "Quests and events" or self.window_.may(self.row["id"], "quests.manage"))
             # Only the owner, only on a community server (agent/store.py).
@@ -457,8 +459,13 @@ class ServerScreen(QWidget):
         self.show_page(self.current_page)
 
     def real(self, page: str) -> str:
-        """The page shown for a tab: a Bedrock server's Mods are its add-ons."""
-        return "Add-ons" if page == "Mods" and has_packs(self.row) else page
+        """The page shown for a tab: a Bedrock server's Mods are its add-ons,
+        and a vanilla server's are only Make a modpack."""
+        if page == "Mods" and has_packs(self.row):
+            return "Add-ons"
+        if page == "Mods" and content_page(self.row) is None:
+            return "Vanilla mods"
+        return page
 
     def show_page(self, page: str) -> None:
         page = self.real(page)

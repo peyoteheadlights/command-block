@@ -204,13 +204,14 @@ struct ServerView: View {
 
     /// Console, Chat, Players, Performance, Backups, Restore world,
     /// Schedules, Activity and Crashes, then Mods / Plugins / Packs (named
-    /// for the server type, when it takes any) and Game settings.
+    /// for the server type; vanilla's only makes a modpack) and Game settings.
     private func screens(_ palette: Palette) -> some View {
         card(palette) {
             ForEach(ServerPage.allCases.filter { model.me?.readsConsole != false || !$0.readsConsole }, id: \.self) { page in
                 screenLink(model.t(page.titleKey), ServerRoute.page(serverId, page), palette)
             }
-            if let kind = Content.kind(model.servers.first(where: { $0.id == serverId })), kind != .none {
+            let row = model.servers.first(where: { $0.id == serverId })
+            if let kind = Content.kind(row), Content.shown(row) {
                 screenLink(model.t(kind.titleKey), ServerRoute.content(serverId), palette)
             }
             screenLink(model.t("page.game_settings"), ServerRoute.game(serverId), palette)

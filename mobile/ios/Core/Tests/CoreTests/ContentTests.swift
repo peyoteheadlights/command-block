@@ -63,6 +63,15 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(s.t(ContentKind.packs.titleKey), "Packs")
     }
 
+    func testVanillaStillGetsTheScreenToMakeAModpack() {
+        let row = ServerRow(id: "s", name: "S")
+        XCTAssertTrue(Content.shown(row))
+        var bedrock = row
+        bedrock.edition = "bedrock"
+        XCTAssertFalse(Content.shown(bedrock))
+        XCTAssertFalse(Content.shown(nil))
+    }
+
     func testEachModSaysWhetherItWorksAndWhyNot() {
         let missing = ModIssue(kind: "missing_dependency", severity: "error", detail: "Alpha needs Fabric API, which isn't installed.")
         let version = ModIssue(kind: "version_mismatch", severity: "warn", detail: "Alpha is made for Minecraft 1.20.")

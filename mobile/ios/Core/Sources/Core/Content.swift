@@ -42,6 +42,12 @@ public enum Content {
         return ContentKind.none
     }
 
+    /// Whether the server screen links to it: vanilla's only makes a modpack.
+    public static func shown(_ row: ServerRow?) -> Bool {
+        guard let kind = kind(row) else { return false }
+        return kind != ContentKind.none || row?.edition != "bedrock"
+    }
+
     /// Which change buttons a mod or plugin row offers. Only someone with
     /// mods.manage sees any; they work only while the server is stopped (or
     /// crashed); a state not known is not guessed

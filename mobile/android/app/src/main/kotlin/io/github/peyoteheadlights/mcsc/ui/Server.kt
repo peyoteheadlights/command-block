@@ -23,7 +23,6 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.Content
-import io.github.peyoteheadlights.mcsc.core.ContentKind
 import io.github.peyoteheadlights.mcsc.core.Display
 import io.github.peyoteheadlights.mcsc.core.ServerForm
 import io.github.peyoteheadlights.mcsc.core.Permissions
@@ -133,8 +132,8 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                 for ((page, key) in PAGES) {
                     if (readsConsole || page !in CONSOLE_PAGES) Item(t(key), onClick = { onOpen(page) })
                 }
-                // Mods, Plugins or Packs by server type; none for a type that takes neither.
-                Content.kind(row)?.takeIf { it != ContentKind.NONE }?.let { kind -> Item(t(kind.titleKey), onClick = { onOpen("content") }) }
+                // Mods, Plugins or Packs by server type; vanilla's Mods only makes a modpack.
+                Content.kind(row)?.takeIf { Content.shown(row) }?.let { kind -> Item(t(kind.titleKey), onClick = { onOpen("content") }) }
                 Item(t("page.game_settings"), onClick = { onOpen("game") })
                 if (vm.canDo(Permissions.SERVER_DIAGNOSE)) Item(t("action.diagnose"), onClick = { onOpen("diagnose") })
                 if (vm.canDo(Permissions.QUESTS_MANAGE)) Item(t("page.quests"), onClick = { onOpen("quests") })
