@@ -19,8 +19,14 @@ object ServerForm {
     /** bool, int, number (seconds, may have a fraction) or text. */
     data class Field(val key: String, val kind: String, val labelKey: String, val hintKey: String? = null)
 
-    /** [technical]: shown only in Technical mode. */
-    data class Group(val titleKey: String, val fields: List<Field>, val noteKey: String? = null, val technical: Boolean = false)
+    /** [technical]: shown only in Technical mode. [bedrockOwner]: only the owner, only on Bedrock. */
+    data class Group(
+        val titleKey: String,
+        val fields: List<Field>,
+        val noteKey: String? = null,
+        val technical: Boolean = false,
+        val bedrockOwner: Boolean = false,
+    )
 
     val GROUPS = listOf(
         Group("serverset.crashes", listOf(
@@ -51,7 +57,15 @@ object ServerForm {
             Field("monitor.ignored_exit_codes", "text", "serverset.ignored_codes", "serverset.ignored_codes_hint"),
             Field("server.low_priority", "bool", "serverset.low_priority", "serverset.low_priority_hint"),
         ), technical = true),
+        // Players' games update themselves; off by default (agent/softwarecheck.py).
+        Group("serverset.bedrock_update", listOf(
+            Field("server.bedrock_auto_update", "bool", "serverset.bedrock_update_label"),
+        ), noteKey = "serverset.bedrock_update_note", bedrockOwner = true),
     )
+
+    /** Whether [group] shows for this account, mode and server. */
+    fun shown(group: Group, technical: Boolean, me: Me?, edition: String?): Boolean =
+        (!group.technical || technical) && (!group.bedrockOwner || (me?.isOwner == true && edition == "bedrock"))
 
     const val NAME = "server.name"
     const val NAME_LIMIT = 60

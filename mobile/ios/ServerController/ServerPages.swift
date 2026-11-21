@@ -27,6 +27,12 @@ enum ServerRoute: Hashable {
     case quests(String)
     /// Diagnose server.
     case diagnose(String)
+    /// The Store tab (owner only, community servers).
+    case store(String)
+    /// A rented server on a host's panel.
+    case rented(String)
+    /// Connect a rented server (owner only).
+    case connectRented
     /// The "+" on All servers.
     case add
 }
@@ -107,6 +113,53 @@ final class ServerPages {
     func openLog(_ name: String) async {
         logText = PageRead()
         await load(\.logText) { client, id in try await client.logFile(serverId: id, name: name) }
+    }
+
+    // MARK: Store
+
+    /// The Store tab (owner only, agent/store.py).
+    var store = PageRead<StoreView>()
+    var storeSaid: Said? = nil
+    var storeBusy = false
+
+    func loadStore() async {
+        await load(\.store) { client, id in try await client.store(serverId: id) }
+    }
+
+    /// True once the PC has the key, to empty the box.
+    func connectStore(_ key: String, _ strings: Strings) async -> Bool {
+        var saved = false
+        await storeWork(strings) { client, id in
+            self.store = PageRead(value: try await client.connectStore(serverId: id, key: key))
+            saved = true
+            return Said(text: strings.t("desktop.store.connected_note"), good: true)
+        }
+        return saved
+    }
+
+    /// Reads the packages back; gives the ones the app didn't make, seen for the first time.
+    func checkStore(_ strings: Strings) async -> [String] {
+        var remind: [String] = []
+        await storeWork(strings) { client, id in
+            let checked = try await client.checkStore(serverId: id)
+            self.store = PageRead(value: checked)
+            remind = checked.remind
+            return nil
+        }
+        return remind
+    }
+
+    private func storeWork(_ strings: Strings, _ work: (AgentClient, String) async throws -> Said?) async {
+        guard let client = client(), !storeBusy else { return }
+        storeBusy = true
+        storeSaid = nil
+        defer { storeBusy = false }
+        do {
+            storeSaid = try await work(client, serverId)
+        } catch let problem as AgentError {
+            noted(problem)
+            storeSaid = Said(text: problem.message(strings), good: false)
+        } catch {}
     }
 
     // MARK: Server files

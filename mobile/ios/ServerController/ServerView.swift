@@ -223,6 +223,10 @@ struct ServerView: View {
             if ServerForm.visible(model.me) {
                 screenLink(model.t("page.server_settings"), ServerRoute.settings(serverId), palette)
             }
+            // Only the owner, in Technical, on a community server (agent/store.py).
+            if Store.shown(model.servers.first(where: { $0.id == serverId }), me: model.me, technical: model.technical) {
+                screenLink(model.t("desktop.page.store"), ServerRoute.store(serverId), palette)
+            }
         }
     }
 
