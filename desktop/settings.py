@@ -549,7 +549,8 @@ class SettingsPage(Page):
         column.addWidget(save)
         column.addWidget(said)
         form.hide()
-        start.clicked.connect(lambda: (form.show(), start.hide()))
+        start.clicked.connect(form.show)
+        start.clicked.connect(start.hide)
         return [*lines, start, form]
 
     def address_lines(self, now: dict, owner: bool, show: Callable[[dict], None]) -> list[QWidget]:
