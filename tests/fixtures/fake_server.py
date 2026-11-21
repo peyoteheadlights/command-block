@@ -79,6 +79,8 @@ def eula_accepted() -> bool:
 LISTS = {"whitelist": "whitelist.json", "ops": "ops.json", "banned": "banned-players.json"}
 FAKE_UUID = "069a79f4-44e9-4726-a5be-fca90e38aaf5"
 INVENTORY: dict[tuple[str, str], int] = {}  # (player, item id) -> count, from "fakeitem"
+# Game rules, answered like Minecraft's /gamerule: a few of each kind.
+GAME_RULES: dict[str, str] = {"keepInventory": "false", "mobGriefing": "true", "spawnRadius": "10"}
 IPS: set[tuple[str, str]] = set()  # (player or "", address): an IP whitelist add-on's list
 
 
@@ -412,6 +414,37 @@ def main() -> int:
             if name in players:
                 players.remove(name)
             out(stamp("Server thread", "INFO", f"{name} left the game"))
+            continue
+        if cmd == "help":
+            for usage in ("/gamerule", "/help [<command>]", "/say <message>", "/stop"):
+                out(stamp("Server thread", "INFO", usage))
+            continue
+        if cmd == "help gamerule":
+            for name in GAME_RULES:
+                out(stamp("Server thread", "INFO", f"/gamerule {name} [<value>]"))
+            continue
+        if cmd.startswith("gamerule "):
+            parts = cmd.split(" ")
+            name, value = parts[1], (parts[2] if len(parts) > 2 else "")
+            if name not in GAME_RULES:
+                out(
+                    stamp(
+                        "Server thread",
+                        "INFO",
+                        "Unknown or incomplete command, see below for error",
+                    )
+                )
+            elif value:
+                GAME_RULES[name] = value
+                out(stamp("Server thread", "INFO", f"Gamerule {name} is now set to: {value}"))
+            else:
+                out(
+                    stamp(
+                        "Server thread",
+                        "INFO",
+                        f"Gamerule {name} is currently set to: {GAME_RULES[name]}",
+                    )
+                )
             continue
         before = list(players)
         answer = player_command(cmd, players)

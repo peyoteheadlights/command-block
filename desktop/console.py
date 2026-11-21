@@ -4,12 +4,24 @@ is open; the agent keeps the rest, so "Load more" can fetch them."""
 
 from __future__ import annotations
 
+import json
 import time
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
+from PySide6.QtCore import QEvent, QStringListModel, Qt
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton, QWidget
+from PySide6.QtWidgets import (
+    QCompleter,
+    QDialog,
+    QHBoxLayout,
+    QLineEdit,
+    QListWidget,
+    QPlainTextEdit,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import streamer
 from .agent import AgentError
@@ -20,6 +32,54 @@ if TYPE_CHECKING:
     from .window import MainWindow
 
 KEPT = 1000  # lines the page holds
+HISTORY = 50  # commands remembered per server, on this PC
+
+
+class CommandLine(QLineEdit):
+    """The command box: Up and Down bring back earlier commands, Tab takes
+    the completion, Escape empties it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.history: list[str] = []
+        self.at = 0  # where Up and Down are in history; len(history) is "new"
+        self.draft = ""
+
+    def remember(self, command: str) -> None:
+        if command in self.history:
+            self.history.remove(command)
+        self.history = [*self.history, command][-HISTORY:]
+        self.at = len(self.history)
+
+    def event(self, event) -> bool:
+        # Tab would move to the next button before keyPressEvent sees it.
+        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Tab:
+            completer = self.completer()
+            if completer and completer.completionCount():
+                completer.setCompletionPrefix(self.text())
+                self.setText(completer.currentCompletion() + " ")
+                completer.popup().hide()
+                return True
+        return super().event(event)
+
+    def keyPressEvent(self, event) -> None:
+        popup = self.completer().popup() if self.completer() else None
+        if popup is not None and popup.isVisible():
+            super().keyPressEvent(event)
+            return
+        key = event.key()
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down) and self.history:
+            if self.at == len(self.history):
+                self.draft = self.text()
+            step = -1 if key == Qt.Key.Key_Up else 1
+            self.at = max(0, min(len(self.history), self.at + step))
+            self.setText(self.history[self.at] if self.at < len(self.history) else self.draft)
+            return
+        if key == Qt.Key.Key_Escape and self.text():
+            self.clear()
+            self.at = len(self.history)
+            return
+        super().keyPressEvent(event)
 
 
 def words(key: str, **values) -> str:
@@ -71,7 +131,14 @@ class ConsolePage(Page):
         self.column.addWidget(self.editor)
         send_row = QHBoxLayout()
         send_row.addWidget(label(">", "address"))
-        self.command = QLineEdit()
+        self.command = CommandLine()
+        self.command.setToolTip(words("console.keys_hint"))
+        self.names = QStringListModel()
+        completer = QCompleter(self.names, self.command)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.command.setCompleter(completer)
+        self.usages: dict[str, str] = {}
+        self.command.textChanged.connect(self.show_usage)
         self.command.setObjectName("consoleCommand")
         self.command.setPlaceholderText(words("console.command_placeholder"))
         self.command.setAccessibleName(words("console.command_label"))
@@ -87,6 +154,9 @@ class ConsolePage(Page):
         more = push(words("console.load_more"), "plain")
         more.clicked.connect(lambda: self.ask("GET", "/logs?lines=500", self.show_log))
         hint.addWidget(more)
+        older = push(words("console.older_logs"), "plain")
+        older.clicked.connect(lambda: OlderLogs(self).exec())
+        hint.addWidget(older)
         self.column.addLayout(hint)
 
     def toggle(self, key: str, tip: str, on: bool) -> QPushButton:
@@ -110,7 +180,29 @@ class ConsolePage(Page):
         refill(self.button_row, [])
         if typing:
             self.ask("GET", "/command-buttons", self.show_buttons, lambda _e: None)
+            self.ask("GET", "/console/commands", self.show_commands, lambda _e: None)
+        self.command.history = self.saved_history().get(self.row["id"], [])
+        self.command.at = len(self.command.history)
         self.command.setFocus()
+
+    def saved_history(self) -> dict[str, list[str]]:
+        try:
+            found = json.loads(self.window_.pc.setting("console_history") or "{}")
+        except (TypeError, ValueError):
+            return {}
+        return found if isinstance(found, dict) else {}
+
+    def show_commands(self, data: dict) -> None:
+        """The server's own command list (its help), for Tab and the list
+        under the box. Empty while it's stopped: nothing is completed."""
+        found = data.get("commands") or []
+        self.usages = {c["name"]: c["usage"] for c in found}
+        self.names.setStringList(list(self.usages))
+
+    def show_usage(self, typed: str) -> None:
+        first = typed.strip().split(" ", 1)[0].lower()
+        usage = self.usages.get(first)
+        self.hint.setText(usage or words("console.hint"))
 
     def changed(self) -> None:
         pass  # new lines come on the live feed
@@ -202,6 +294,10 @@ class ConsolePage(Page):
         def done(_result) -> None:
             if self.command.text().strip() == command:
                 self.command.clear()
+            self.command.remember(command)
+            saved = self.saved_history()
+            saved[self.row["id"]] = self.command.history
+            self.window_.pc.set_setting("console_history", json.dumps(saved))
             self.say("")
 
         self.ask(
@@ -255,4 +351,49 @@ class ConsolePage(Page):
 
         self.ask(
             "PUT", "/command-buttons", done, lambda exc: self.say(str(exc)), body={"buttons": rows}
+        )
+
+
+class OlderLogs(QDialog):
+    """Minecraft's own log files (logs/latest.log and the zipped older
+    ones), read-only: pick one on the left, read it on the right."""
+
+    def __init__(self, page: ConsolePage) -> None:
+        super().__init__(page.window_)
+        self.page = page
+        self.setWindowTitle(words("console.older_title"))
+        self.resize(900, 600)
+        column = QVBoxLayout(self)
+        self.said = label(words("console.older_loading"), "sub")
+        column.addWidget(self.said)
+        row = QHBoxLayout()
+        self.files = QListWidget()
+        self.files.setAccessibleName(words("console.older_title"))
+        self.files.setMaximumWidth(240)
+        self.files.currentTextChanged.connect(self.open_file)
+        self.text = QPlainTextEdit()
+        self.text.setReadOnly(True)
+        row.addWidget(self.files)
+        row.addWidget(self.text, 1)
+        column.addLayout(row, 1)
+        page.ask("GET", "/logs/files", self.show_files, lambda exc: self.said.setText(str(exc)))
+
+    def show_files(self, data: dict) -> None:
+        names = [f["name"] for f in data.get("files") or []]
+        self.said.setText("" if names else words("console.older_none"))
+        self.files.addItems(names)
+        if names:
+            self.files.setCurrentRow(0)
+
+    def open_file(self, name: str) -> None:
+        if not name:
+            return
+
+        def show(data: dict) -> None:
+            if self.files.currentItem() and self.files.currentItem().text() == name:
+                self.text.setPlainText(streamer.shown("\n".join(data.get("lines") or [])))
+                self.said.setText(words("console.older_cut") if data.get("cut") else "")
+
+        self.page.ask(
+            "GET", "/logs/files/" + quote(name, safe=""), show, lambda e: self.said.setText(str(e))
         )

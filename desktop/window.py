@@ -16,8 +16,18 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QPoint, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
+from PySide6.QtCore import (
+    QMimeData,
+    QObject,
+    QPoint,
+    QRunnable,
+    QSize,
+    Qt,
+    QThreadPool,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import QDrag, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QBoxLayout,
@@ -172,15 +182,27 @@ class SignInScreen(QWidget):
         )
 
 
+DRAGGED = "application/x-command-block-server"  # a server row being dragged
+
+
 class ServerRow(Box):
     """One server on All servers: a raised box with its edge, color bar and
     Start button in the server's own color. ``act`` starts or stops a
-    server on another of the owner's PCs (that PC checks the account may)."""
+    server on another of the owner's PCs (that PC checks the account may).
+    ``arrange`` (the owner, this PC's servers): a ⋯ menu to move it or put
+    it in a group, and the row can be dragged to a new place."""
 
     def __init__(
-        self, window: MainWindow, row: dict, act: Callable[[str], None] | None = None
+        self,
+        window: MainWindow,
+        row: dict,
+        act: Callable[[str], None] | None = None,
+        arrange: Callable[[str, str], None] | None = None,
     ) -> None:
         super().__init__()
+        self.server_id = row["id"]
+        self.arrange = arrange
+        self.pressed: QPoint | None = None
         # The parts in the box take their colors from here, not from the window.
         self.look = theme.tokens(window.dark, row.get("color"))
         self.setStyleSheet(theme.row_sheet(self.look))
@@ -221,6 +243,42 @@ class ServerRow(Box):
             button.clicked.connect(lambda: window.server_action(row["id"], action))
             button.setVisible(window.may(row["id"], "server.control"))
         line.addWidget(button)
+        if arrange is not None:
+            self.setToolTip(text("servers.drag_hint"))
+            more = QToolButton()
+            more.setText("⋯")
+            more.setAccessibleName(text("servers.more", name=row["name"]))
+            more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            menu = QMenu(more)
+            for how, key in (
+                ("up", "servers.move_up"),
+                ("down", "servers.move_down"),
+                ("group", "servers.group"),
+            ):
+                menu.addAction(text(key)).triggered.connect(
+                    lambda _=False, h=how: arrange(row["id"], h)
+                )
+            more.setMenu(menu)
+            line.addWidget(more)
+
+    def mousePressEvent(self, event) -> None:
+        self.pressed = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        moved = self.pressed is not None and (
+            (event.position().toPoint() - self.pressed).manhattanLength()
+            >= QApplication.startDragDistance()
+        )
+        if self.arrange is None or not moved:
+            return super().mouseMoveEvent(event)
+        self.pressed = None
+        drag = QDrag(self)
+        data = QMimeData()
+        data.setData(DRAGGED, self.server_id.encode())
+        drag.setMimeData(data)
+        drag.setPixmap(self.grab())
+        drag.exec(Qt.DropAction.MoveAction)
 
 
 class NoticeScreen(QWidget):
@@ -292,6 +350,25 @@ class AllServersScreen(QWidget):
         self.said = label(kind="ok")  # what was just done here, like a server removed
         self.said.hide()
         outer.addWidget(self.said)
+        tools = QHBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText(text("servers.search"))
+        self.search.setAccessibleName(text("servers.search"))
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self.show_all)
+        tools.addWidget(self.search, 1)
+        self.start_all = push(text("servers.start_all"), "plain")
+        self.start_all.clicked.connect(lambda: self.all_servers("start"))
+        self.stop_all = push(text("servers.stop_all"), "plain")
+        self.stop_all.clicked.connect(lambda: self.all_servers("stop"))
+        tools.addWidget(self.start_all)
+        tools.addWidget(self.stop_all)
+        self.tools = QWidget()
+        self.tools.setLayout(tools)
+        tools.setContentsMargins(0, 0, 0, 4)
+        outer.addWidget(self.tools)
+        self.setAcceptDrops(True)
+        self.placed: list[ServerRow] = []  # this PC's rows, which a dragged one can land on
         body = QWidget()
         self.rows = QVBoxLayout(body)
         self.rows.setContentsMargins(0, 0, 0, 0)
@@ -352,21 +429,47 @@ class AllServersScreen(QWidget):
         self.servers = servers
         self.show_all()
 
+    def matches(self, row: dict) -> bool:
+        needle = self.search.text().strip().lower()
+        return not needle or needle in f"{row.get('name', '')} {row.get('group') or ''}".lower()
+
     def show_all(self) -> None:
-        """This PC's servers, then each of the owner's other PCs' (Your
-        PCs), under the PC's name."""
+        """This PC's servers (under their group names, when the owner made
+        groups), then each of the owner's other PCs' (Your PCs), under the
+        PC's name. The search box narrows all of them by name or group."""
         refill(self.rows, [])
         window = self.window_
         others = window.other_pcs()
         group = lambda words: label(words, "group")  # noqa: E731
+        everywhere = (
+            len(self.servers)
+            + len(window.rented)
+            + sum(len(found) for found in window.elsewhere.values() if isinstance(found, list))
+        )
+        self.tools.setVisible(everywhere >= 2)
+        control = [r for r in self.servers if window.may(r["id"], "server.control")]
+        self.start_all.setVisible(len(control) >= 2)
+        self.stop_all.setVisible(len(control) >= 2)
         if others or (window.rented and self.servers):
             self.rows.addWidget(group(window.this_pc_name()))
-        for row in self.servers:
-            self.rows.addWidget(ServerRow(window, row))
+        shown = [r for r in self.servers if self.matches(r)]
+        arrange = self.arrange if window.role in (None, "owner") else None
+        names = [g for g in dict.fromkeys(r.get("group") or "" for r in shown) if g]
+        self.placed = []
+        for name in [*names, ""] if names else [""]:
+            if names:
+                self.rows.addWidget(label(name or text("servers.no_group"), "step"))
+            for row in shown:
+                if (row.get("group") or "") == name:
+                    self.placed.append(ServerRow(window, row, arrange=arrange))
+                    self.rows.addWidget(self.placed[-1])
+        if self.search.text().strip() and not shown and self.servers:
+            self.rows.addWidget(label(text("servers.no_match", search=self.search.text()), "sub"))
         if window.rented:
             self.rows.addWidget(group(text("desktop.rented.heading_list")))
             for row in window.rented:
-                self.rows.addWidget(RentedRow(window, row))
+                if self.matches(row):
+                    self.rows.addWidget(RentedRow(window, row))
         for pc in others:
             self.rows.addWidget(group(pc.get("name") or ""))
             found = window.elsewhere.get(pc["id"])
@@ -377,7 +480,7 @@ class AllServersScreen(QWidget):
             elif not found:
                 self.rows.addWidget(label(text("servers.none"), "sub"))
             else:
-                for row in found:
+                for row in filter(self.matches, found):
                     act = lambda action, p=pc, r=row: window.act_elsewhere(p, r, action)  # noqa: E731
                     self.rows.addWidget(ServerRow(window, row, act))
         first = not (self.servers or window.rented or others)
@@ -385,6 +488,108 @@ class AllServersScreen(QWidget):
             self.rows.addSpacing(8)
         self.rows.addWidget(self.add_card(first))
         self.rows.addStretch()
+
+    # -- the owner's order and groups -------------------------------------
+    def arrange(self, server_id: str, how: str) -> None:
+        """The ⋯ menu: move a server up or down among the ones shown, or put
+        it in a group."""
+        window = self.window_
+        if how == "group":
+            row = next(r for r in self.servers if r["id"] == server_id)
+            name = window.ask(
+                text("servers.group_title"),
+                text("servers.group_ask"),
+                text("action.save"),
+                text("servers.group_title"),
+                row.get("group") or "",
+            )
+            if name is not None:
+                self.put(f"/servers/{server_id}/group", {"group": name.strip()})
+            return
+        group_of = {r["id"]: r.get("group") or "" for r in self.servers}
+        # Among the shown servers of its own group: the group stays as it is.
+        shown = [r.server_id for r in self.placed if group_of[r.server_id] == group_of[server_id]]
+        at = shown.index(server_id) + (-1 if how == "up" else 1)
+        if 0 <= at < len(shown):
+            self.move_to(server_id, shown[at], after=how == "down")
+
+    def move_to(self, server_id: str, target: str, after: bool) -> None:
+        """Put a server just before (or after) another. Landing among another
+        group's servers puts it in that group."""
+        order = [
+            r["id"] for r in self.window_.all_servers
+        ]  # with Test servers, so they keep their place
+        order.remove(server_id)
+        order.insert(order.index(target) + after, server_id)
+        group_of = {r["id"]: r.get("group") or "" for r in self.servers}
+        if group_of[server_id] != group_of[target]:
+            self.put(f"/servers/{server_id}/group", {"group": group_of[target]})
+        self.put("/servers/order", {"ids": order})
+
+    def put(self, path: str, body: dict) -> None:
+        window = self.window_
+        window.run(
+            lambda: window.agent.call("PUT", path, body), lambda _r: window.refresh(), self.failed
+        )
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasFormat(DRAGGED):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasFormat(DRAGGED):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        """Dropped on a row: before it when on its top half, after it when
+        on its bottom half. Below the last row: after the last."""
+        dragged = bytes(event.mimeData().data(DRAGGED).data()).decode()
+        at = self.mapToGlobal(event.position().toPoint())
+        for row in self.placed:
+            spot = row.mapFromGlobal(at)
+            if row.rect().contains(spot) or row is self.placed[-1] and spot.y() > 0:
+                if row.server_id != dragged:
+                    event.acceptProposedAction()
+                    self.move_to(dragged, row.server_id, after=spot.y() > row.height() / 2)
+                return
+
+    def all_servers(self, action: str) -> None:
+        """Start all or Stop all, for the servers shown (the search narrows it)."""
+        window = self.window_
+        ids = [r.server_id for r in self.placed if window.may(r.server_id, "server.control")]
+        if action == "stop" and not window.confirm(
+            text(
+                "servers.stop_all_title",
+                n=sum(r.get("state") != "OFFLINE" for r in self.servers if r["id"] in ids),
+            ),
+            text("servers.stop_all_body"),
+            text("servers.stop_all"),
+        ):
+            return
+
+        def done(result: dict) -> None:
+            rows = result.get("servers") or []
+            done_ = [r for r in rows if r["result"] in ("started", "stopped", "stopping")]
+            failed = [
+                text("servers.all_failed", name=r["name"], reason=r.get("detail") or "")
+                for r in rows
+                if r["result"] == "failed"
+            ]
+            words = (
+                text(f"servers.all_done_{action}", n=len(done_))
+                if done_
+                else text(f"servers.all_none_{action}")
+            )
+            self.say(" ".join([words, *failed]))
+            window.refresh()
+
+        window.run(
+            lambda: window.agent.call(
+                "POST", f"/servers/{action}-all", {"ids": ids}, slow=action == "stop"
+            ),
+            done,
+            self.failed,
+        )
 
 
 class ScreenStack(QStackedWidget):

@@ -59,10 +59,67 @@ class ServerRow(Open):
     type: str | None = None
     type_name: str | None = None
     default: bool | None = None
+    position: int | None = Field(None, description="Place on All servers; null: never moved")
+    group: str | None = Field(None, description="The heading it's under; empty: none")
     edition: str | None = Field(None, description="java or bedrock")
     capabilities: dict[str, bool] | None = Field(
         None, description="What this server's type can do; false means not applicable"
     )
+
+
+class AllServersResult(Open):
+    id: str
+    name: str
+    result: str = Field(description="started, already, stopped, stopping or failed")
+    detail: str | None = None
+
+
+class AllServersAction(Open):
+    servers: list[AllServersResult]
+
+
+class ServerGroupSaved(Open):
+    ok: bool
+    group: str
+
+
+class GameRule(Open):
+    name: str
+    value: bool | int | str
+
+
+class GameRules(Open):
+    """Every rule as the running server says it is. ``running`` false: none read."""
+
+    running: bool
+    rules: list[GameRule]
+    presets: list[str]
+
+
+class GameRulesSaved(Open):
+    rules: list[GameRule]
+    before: dict[str, bool | int | str] = Field(description="What each changed rule was, for Undo")
+    skipped: list[str] = Field(description="Rules this server doesn't have, left out")
+
+
+class ConsoleCommands(Open):
+    commands: list[dict[str, str]] = Field(description="name and usage, as the server's help says")
+
+
+class LogFile(Open):
+    name: str
+    size: int
+    changed: float
+
+
+class LogFiles(Open):
+    files: list[LogFile]
+
+
+class LogFileText(Open):
+    name: str
+    lines: list[str]
+    cut: bool = Field(description="The file goes on after these lines")
 
 
 class ServerList(Open):

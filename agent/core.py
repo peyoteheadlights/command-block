@@ -368,10 +368,14 @@ class ServerContext:
     def summary(self) -> dict[str, Any]:
         """One row of the All servers view: measured facts only."""
         status = self.server.status()
+        place = self.core.db.server_row(self.server_id) or {}
         return {
             "id": self.server_id,
             "name": self.name,
-            "color": self.color,
+            "color": place.get("color"),
+            # Where the owner put it on All servers: null is after the placed ones.
+            "position": place.get("position"),
+            "group": place.get("group_name") or "",
             "state": status["state"],
             "state_verified": status["state_verified"],
             "uptime": status["uptime"],
