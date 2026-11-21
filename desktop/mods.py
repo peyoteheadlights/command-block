@@ -1917,6 +1917,12 @@ class AddonsPage(Page):
         super().__init__(window)
         self.state = label(kind="sub")
         self.column.addWidget(self.state)
+        # Bedrock's own "Required to join" (texturepack-required).
+        self.required = QCheckBox()
+        self.required.clicked.connect(self.set_required)
+        required_hint = label(kind="sub")
+        self.column.addWidget(self.required)
+        self.column.addWidget(required_hint)
         self.list_card, layout = card("")
         self.rows = QVBoxLayout()
         layout.addLayout(self.rows)
@@ -1927,6 +1933,8 @@ class AddonsPage(Page):
         for widget in (lead, choose, drop_hint):
             layout.addWidget(widget)
         self.wording: list[tuple[Callable[[str], None], str]] = [
+            (self.required.setText, "make.required"),
+            (required_hint.setText, "addons.required_hint"),
             (title_of(self.add_card).setText, "addons.add_title"),
             (lead.setText, "addons.add_lead"),
             (choose.setText, "addons.choose"),
@@ -1939,12 +1947,15 @@ class AddonsPage(Page):
     def load(self) -> None:
         for set_words, key in self.wording:
             set_words(text(key))
-        self.add_card.setVisible(self.window_.may(self.row["id"], "mods.manage"))
+        manage = self.window_.may(self.row["id"], "mods.manage")
+        self.add_card.setVisible(manage)
+        self.required.setEnabled(manage)
         self.ask("GET", "/addons", self.show_packs)
 
     def show_packs(self, data: dict) -> None:
         packs = data.get("addons") or []
         self.world = bool(data.get("world"))
+        self.required.setChecked(bool(data.get("required")))
         notes = []
         if data.get("running"):
             notes.append(text("addons.running"))
@@ -2001,6 +2012,19 @@ class AddonsPage(Page):
     def done(self, words: str, result: dict) -> None:
         self.say(f"{words} {text('addons.restart')}" if result.get("restart_needed") else words)
         self.load()
+
+    def set_required(self, on: bool) -> None:
+        def failed(exc: Exception) -> None:
+            self.say(str(exc))
+            self.load()
+
+        self.ask(
+            "PUT",
+            "/addons/required",
+            lambda r: self.done(text("addons.required_on" if on else "addons.required_off"), r),
+            failed,
+            body={"required": on},
+        )
 
     def turn(self, pack: dict, on: bool) -> None:
         self.ask(

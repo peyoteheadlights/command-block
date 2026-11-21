@@ -690,15 +690,20 @@ final class ContentTests: XCTestCase {
 
     func testBedrockPacksAndGameSettingsAreReadAndSaved() async throws {
         let c = client()
-        StubAgent.json(#"{"addons": [{"uuid": "u1", "version": "1.0.0", "name": "Skins", "description": null, "kind": "resource", "folder": "resource_packs/skins", "enabled": true}], "world": "Bedrock level", "running": true, "restart_needed": true}"#)
+        StubAgent.json(#"{"addons": [{"uuid": "u1", "version": "1.0.0", "name": "Skins", "description": null, "kind": "resource", "folder": "resource_packs/skins", "enabled": true}], "world": "Bedrock level", "required": true, "running": true, "restart_needed": true}"#)
         let packs = try await c.addons(serverId: "s")
         XCTAssertEqual(packs.world, "Bedrock level")
+        XCTAssertTrue(packs.required)
         XCTAssertEqual(Content.packKind(packs.addons[0]), "addons.kind_resource")
         StubAgent.json(#"{"ok": true, "installed": [], "restart_needed": true}"#)
         let toggled = try await c.setAddonEnabled(serverId: "s", uuid: "u1", enabled: false)
         XCTAssertEqual(toggled.restartNeeded, true)
         XCTAssertEqual(method(1), "PUT")
         XCTAssertEqual(body(1), #"{"enabled":false}"#)
+        StubAgent.json(#"{"ok": true, "required": false, "undo": null, "running": true, "restart_needed": true}"#)
+        _ = try await c.setAddonsRequired(serverId: "s", required: false)
+        XCTAssertEqual(method(2), "PUT")
+        XCTAssertEqual(body(2), #"{"required":false}"#)
 
         StubAgent.json(#"{"file": "C:\\s\\server.properties", "exists": true, "modified_at": 1.0, "world_exists": true, "world_folder": "world", "fields": [{"key": "max-players", "kind": "int", "value": 20, "raw": "20", "set": true, "problem": null, "minecraft_default": "20", "choices": [], "min": 1, "max": 10000, "max_length": 200, "read_only": null}], "text": "", "running": false, "restart_needed": false}"#)
         let game = try await c.gameSettings(serverId: "s")
@@ -710,7 +715,7 @@ final class ContentTests: XCTestCase {
         } catch AgentError.failed(_, _, _, let problems) {
             XCTAssertEqual(problems["server-port"], "Another program is using port 80.")
         }
-        XCTAssertEqual(method(3), "PUT")
-        XCTAssertEqual(body(3), #"{"values":{"server-port":80}}"#)
+        XCTAssertEqual(method(4), "PUT")
+        XCTAssertEqual(body(4), #"{"values":{"server-port":80}}"#)
     }
 }

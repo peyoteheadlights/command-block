@@ -12,8 +12,8 @@ from ...security.auth import Principal
 from ...security.permissions import MODS_MANAGE, SERVER_VIEW, require
 from ..deps import audit, get_server
 from ..errors import audit_failure
-from ..responses import AddonList, AddonResult
-from .models import AddonToggleRequest
+from ..responses import AddonList, AddonRequired, AddonResult
+from .models import AddonRequiredRequest, AddonToggleRequest
 
 router = APIRouter()
 
@@ -55,6 +55,21 @@ async def upload_addon(
 
         result = await ctx.mod_change(f"Adding {name[:60]}", change, principal.user)
     audit(ctx, request, "addon_upload", target=name)
+    return {"ok": True, **result}
+
+
+@router.put("/addons/required", response_model=AddonRequired)
+async def set_addons_required(
+    payload: AddonRequiredRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Bedrock's "Required to join": players must take the server's packs."""
+    _bedrock_only(ctx)
+    with audit_failure(ctx, request, "addon_required"):
+        result = await addons.set_required(ctx, payload.required, principal.user)
+    audit(ctx, request, "addon_required", detail="on" if payload.required else "off")
     return {"ok": True, **result}
 
 

@@ -1020,8 +1020,19 @@ class Addon(Open):
 class AddonList(Open):
     addons: list[Addon]
     world: str | None = Field(None, description="The world the packs are enabled in")
+    required: bool = Field(
+        False, description="texturepack-required: players must take the packs to join"
+    )
     running: bool
     restart_needed: bool | None = None
+
+
+class AddonRequired(Open):
+    ok: bool
+    required: bool
+    undo: Undo | None = None
+    running: bool
+    restart_needed: bool
 
 
 class AddonResult(Open):

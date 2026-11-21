@@ -705,6 +705,11 @@ class ContentPages(
         }
     }
 
+    fun setAddonsRequired(on: Boolean, strings: Strings) = work("required", strings, reload = ::loadAddons) {
+        restartOffered = it.setAddonsRequired(serverId, on).restartNeeded == true
+        Said(strings.t(if (on) "addons.required_on" else "addons.required_off"), good = true)
+    }
+
     fun setAddon(addon: Addon, on: Boolean, strings: Strings) = work("pack:${addon.uuid}", strings, reload = ::loadAddons) {
         restartOffered = it.setAddonEnabled(serverId, addon.uuid, on).restartNeeded == true
         Said(strings.t(if (on) "addons.turned_on" else "addons.turned_off", "name" to addon.name), good = true)

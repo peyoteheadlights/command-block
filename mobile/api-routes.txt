@@ -115,6 +115,7 @@ POST /api/modrinth/sign-in/finish
 POST /api/modrinth/sign-out
 GET /api/servers/{server_id}/addons
 POST /api/servers/{server_id}/addons/upload
+PUT /api/servers/{server_id}/addons/required
 PUT /api/servers/{server_id}/addons/{pack_uuid}
 DELETE /api/servers/{server_id}/addons/{pack_uuid}
 GET /api/servers/{server_id}/game-settings

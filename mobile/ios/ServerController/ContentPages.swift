@@ -628,6 +628,14 @@ final class ContentPages {
         }
     }
 
+    func setAddonsRequired(_ on: Bool, _ strings: Strings) async {
+        await work("required", strings, reload: loadAddons) { [weak self] client, id in
+            let done = try await client.setAddonsRequired(serverId: id, required: on)
+            self?.restartOffered = done.restartNeeded == true
+            return Said(text: strings.t(on ? "addons.required_on" : "addons.required_off"), good: true)
+        }
+    }
+
     func setAddon(_ addon: Addon, _ on: Bool, _ strings: Strings) async {
         await work("pack:\(addon.uuid)", strings, reload: loadAddons) { [weak self] client, id in
             let done = try await client.setAddonEnabled(serverId: id, uuid: addon.uuid, enabled: on)
