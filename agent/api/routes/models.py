@@ -823,3 +823,23 @@ class BotLinkRequest(BaseModel):
     name: str | None = Field(None, max_length=20)
     servers: list[str] = Field(default_factory=list, max_length=50)
     until: float | None = None
+
+
+class InternetRequest(BaseModel):
+    """Turn "Let friends join from the internet" on or off."""
+
+    on: bool
+
+
+class InternetTestRequest(BaseModel):
+    # True when the owner said yes to sending the address to mcsrvstat.us
+    # (asked once, kept for this PC).
+    allow_mcsrvstat: bool = False
+
+
+class PhoneTestRequest(BaseModel):
+    """The phone app's ping over mobile data."""
+
+    address: str = Field(min_length=1, max_length=64)
+    port: int = Field(ge=1, le=65535)
+    works: bool

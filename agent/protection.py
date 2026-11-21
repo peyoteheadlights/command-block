@@ -100,9 +100,9 @@ class ProtectionError(RuntimeError):
 # ---------------------------------------------------------------- the router port
 @dataclass
 class RouterHooks:
-    """The router port while the server runs. UPnP fills these
-    in; until then they are None and the hooks do nothing. ``open`` decides
-    itself whether "Let friends join from the internet" is on."""
+    """The router port while the server runs, filled in by agent/internet.py
+    (UPnP). ``open`` decides itself whether "Let friends join from the
+    internet" is on."""
 
     open: Callable[[ServerContext], Awaitable[bool]] | None = None
     close: Callable[[ServerContext], Awaitable[None]] | None = None
@@ -110,7 +110,18 @@ class RouterHooks:
     mapped: Callable[[ServerContext], bool | None] | None = None
 
 
-ROUTER = RouterHooks()
+def _internet_hooks() -> RouterHooks:
+    from . import internet
+
+    return RouterHooks(
+        open=internet.open_port,
+        close=internet.close_port,
+        outside_test=internet.outside_test,
+        mapped=internet.mapped,
+    )
+
+
+ROUTER = _internet_hooks()
 
 
 async def router_open(ctx: ServerContext) -> None:
@@ -163,7 +174,7 @@ class Facts:
     addons: set[str] = field(default_factory=set)  # add-ons that are on, by id
     home: bool = False
     tailscale: bool | None = None
-    router: bool | None = None  # None: this app doesn't open router ports yet
+    router: bool | None = None  # None: "Let friends join from the internet" is off
     played_by: str = ""
     shared_address: str = ""
     minecraft: str | None = None

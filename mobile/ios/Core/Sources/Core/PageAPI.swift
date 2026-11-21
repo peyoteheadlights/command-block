@@ -99,6 +99,26 @@ extension AgentClient {
         try await call("GET", server(serverId) + "/join", as: JoinInfo.self)
     }
 
+    /// "Let friends join from the internet": its state, the switch and the outside tests.
+    public func internet(serverId: String) async throws -> InternetReach {
+        try await call("GET", server(serverId) + "/internet", as: InternetReach.self)
+    }
+
+    public func setInternet(serverId: String, on: Bool) async throws -> InternetReach {
+        try await call("PUT", server(serverId) + "/internet", body: try AgentClient.encode(["on": on]), slow: true, as: InternetReach.self)
+    }
+
+    /// mcsrvstat.us pings it; `allow` once the owner said yes to sending the address there.
+    public func testInternet(serverId: String, allow: Bool) async throws -> InternetReach {
+        try await call("POST", server(serverId) + "/internet/test", body: try AgentClient.encode(["allow_mcsrvstat": allow]), slow: true, as: InternetReach.self)
+    }
+
+    /// What this phone's own ping over mobile data found.
+    public func phoneTest(serverId: String, address: String, port: Int, works: Bool) async throws -> InternetReach {
+        let body: [String: JSONValue] = ["address": .string(address), "port": .number(Double(port)), "works": .bool(works)]
+        return try await call("POST", server(serverId) + "/internet/phone-test", body: try AgentClient.encode(body), as: InternetReach.self)
+    }
+
     private func server(_ id: String) -> String {
         "/api/servers/" + AgentClient.pathSegment(id)
     }

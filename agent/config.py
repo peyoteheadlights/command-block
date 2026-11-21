@@ -172,6 +172,9 @@ class ServerSettings(Section):
     # "Who's this server for?"), "" when not answered. Picks Simple mode's
     # one add-on suggestion (agent/suggestions.py).
     played_by: str = ""
+    # "Let friends join from the internet": the router sends the game ports
+    # to this PC by UPnP while the server runs (agent/internet.py).
+    internet: bool = False
     # Join protection (agent/joinguard.py): the guard in front of a Java
     # server, off by default. Size "" picks small or big by itself; limits
     # the owner changed in Technical; only home network and Tailscale.

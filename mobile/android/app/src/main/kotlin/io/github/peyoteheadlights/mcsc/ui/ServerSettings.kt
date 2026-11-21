@@ -29,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -38,6 +39,7 @@ import io.github.peyoteheadlights.mcsc.core.CpuCores
 import io.github.peyoteheadlights.mcsc.core.Crossplay
 import io.github.peyoteheadlights.mcsc.core.Duplicate
 import io.github.peyoteheadlights.mcsc.core.FolderPicker
+import io.github.peyoteheadlights.mcsc.core.Internet
 import io.github.peyoteheadlights.mcsc.core.Memory
 import io.github.peyoteheadlights.mcsc.core.RawText
 import io.github.peyoteheadlights.mcsc.core.RemoveServer
@@ -64,6 +66,7 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
         setup.loadMemory()
         setup.loadVersion()
         setup.loadCrossplay()
+        setup.loadInternet()
         if (Duplicate.allowed(vm.me)) setup.loadCopyOptions()
     }
 
@@ -77,6 +80,7 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             setup.loadMemory()
             setup.loadVersion()
             setup.loadCrossplay()
+            setup.loadInternet()
         },
         overlay = {
             when (asking) {
@@ -116,6 +120,17 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
                     },
                     onDismiss = { asking = null },
                 )
+                SetupAsk.MCSRVSTAT -> Confirm(
+                    t("address.test"),
+                    t("address.test_ask", "address" to (setup.internet.value?.let(Internet::address) ?: "")),
+                    t("address.test"),
+                    danger = false,
+                    onConfirm = {
+                        asking = null
+                        setup.testInternet(true, strings)
+                    },
+                    onDismiss = { asking = null },
+                )
                 null -> Unit
             }
         },
@@ -130,6 +145,8 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             return@ServerFrame
         }
 
+        item { SectionTitle(t("address.title")) }
+        item { Card { AddressCard(vm, setup, serverId) { asking = it } } }
         item { SectionTitle(t("serverset.identity")) }
         item {
             Card {
@@ -225,6 +242,68 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             item { Card { RemoveCard(vm, setup) { asking = it } } }
         }
     }
+}
+
+/**
+ * Server address: "Let friends join from the internet" (owner only), what
+ * the router did, the two outside tests (mcsrvstat.us after asking once,
+ * or this phone over mobile data), port forwarding by hand, and playit.gg
+ * when the internet provider blocks it. Home and Tailscale addresses are
+ * on the Overview's "How friends join".
+ */
+@Composable
+private fun AddressCard(vm: AppViewModel, setup: SetupPages, serverId: String, ask: (SetupAsk) -> Unit) {
+    val colors = LocalColors.current
+    val context = LocalContext.current
+    val read = setup.internet
+    val owner = vm.me?.isOwner == true
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Gap) {
+        read.problem?.let { Text(it.text(vm.strings), color = colors.danger) }
+        val info = read.value ?: return@Column
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(t("address.internet_label"), color = colors.text, modifier = Modifier.weight(1f))
+            Switch(
+                checked = info.on,
+                onCheckedChange = { setup.setInternet(it, vm.strings) },
+                enabled = owner && setup.busy == null,
+            )
+        }
+        if (setup.busy == "internet") Text(t("address.busy"), color = colors.text2)
+        for (line in Internet.lines(vm.strings, info, owner)) Text(line.text, color = colors.tone(line.tone))
+        info.playit?.let { link ->
+            OutlinedButton(onClick = { openLink(context, link) }) { Text(t("address.playit")) }
+        }
+        val address = info.address
+        val port = info.port
+        if (Internet.testable(info) && address != null && port != null) {
+            if (owner) {
+                Button(onClick = { if (info.mcsrvstatOk) setup.testInternet(false, vm.strings) else ask(SetupAsk.MCSRVSTAT) }, enabled = setup.busy == null) {
+                    Text(t("address.test"))
+                }
+            }
+            val mobile = onMobileDataOnly(context)
+            val bedrock = vm.servers.list.firstOrNull { it.id == serverId }?.edition == "bedrock"
+            OutlinedButton(onClick = { setup.phoneTest(address, port, bedrock, vm.strings) }, enabled = mobile && setup.busy == null) {
+                Text(t("address.test_phone_button"))
+            }
+            if (!mobile) Text(t("address.wifi_off"), color = colors.text2)
+        }
+        val steps = Internet.forwardSteps(vm.strings, info, vm.technical)
+        if (steps.isNotEmpty()) {
+            Text(t("address.forward_title"), color = colors.text)
+            for (step in steps) Text(step, color = colors.text2)
+        }
+    }
+}
+
+/** Wi-Fi off and mobile data on, so the phone asks from outside the home, like a friend. */
+private fun onMobileDataOnly(context: android.content.Context): Boolean {
+    val manager = context.getSystemService(android.net.ConnectivityManager::class.java) ?: return false
+    @Suppress("DEPRECATION") // allNetworks: every network, the VPN's underlying ones too (Tailscale)
+    val all = manager.allNetworks.mapNotNull(manager::getNetworkCapabilities)
+    val wifi = all.any { it.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) }
+    val cellular = all.any { it.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) }
+    return cellular && !wifi
 }
 
 /** Which CPU cores the server may use, who else uses each, and what the
