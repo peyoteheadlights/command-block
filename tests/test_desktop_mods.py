@@ -895,7 +895,11 @@ def test_a_linked_modpack_card_updates_and_unlinks(qapp, agent_http, monkeypatch
     monkeypatch.setattr(linkedpack, "preview", preview)
     monkeypatch.setattr(linkedpack, "update", update)
     window, page = mods_page(qapp, agent_http)
-    wait_for(qapp, lambda: "Version 1.3.0 is out." in shown_text(page))
+    # The mod rows are shown a moment after the card text, so wait for both.
+    wait_for(
+        qapp,
+        lambda: "Version 1.3.0 is out." in shown_text(page) and "Added by you" in shown_text(page),
+    )
     shown = shown_text(page)
     assert "Made from Test Pack 1.2.0 on Modrinth." in shown
     assert "2 mods were added by you. Modpack update keeps them." in shown
