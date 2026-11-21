@@ -77,9 +77,12 @@ class MainActivity : FragmentActivity() {
         vm.foreground(false)
     }
 
-    /** A shortcut, the widget or an alert can name a server to open. */
+    /** A shortcut, the widget or an alert can name a server to open, and
+     * Modrinth's sign-in comes back as mcsc://modrinth. */
     private fun open(intent: Intent?) {
         intent?.getStringExtra(EXTRA_SERVER)?.let { vm.pendingServer = it }
+        // Sign in with Modrinth: the Mods screen hands the code to the PC.
+        intent?.data?.takeIf { it.scheme == "mcsc" && it.host == "modrinth" }?.let { vm.modrinthReturn = it.toString() }
     }
 
     private val authenticators: Int

@@ -1875,6 +1875,9 @@ class ModpackMadeFile(Open):
     made_at: float
     trust_note: bool = False
     get_yourself: list[str] = []
+    own_jars: list[dict[str, Any]] = Field(
+        default=[], description="Own jars inside: name, path (in the server folder), side"
+    )
 
 
 class ModpackMakeOptions(Open):
@@ -1945,6 +1948,40 @@ class DownloadLinkState(Open):
     max_pack_bytes: int
     undo: Undo | None = None
     restart_needed: bool = False
+
+
+class ModrinthAccount(Open):
+    """Sign in with Modrinth on this PC. The token itself is never in an answer."""
+
+    available: bool = Field(description="False when this copy has no sign-in service set")
+    signed_in: bool
+    username: str | None = None
+    ran_out: bool = Field(description="Was signed in, but Modrinth's sign-in ran out")
+
+
+class ModrinthSignInStarted(Open):
+    url: str = Field(description="Modrinth's page to open in the browser")
+
+
+class ModrinthShare(Open):
+    """The "Put it on Modrinth" card of one server."""
+
+    account: ModrinthAccount
+    made: dict[str, Any] | None = Field(None, description="The newest made modpack: name, version")
+    project: dict[str, Any] | None = Field(
+        None, description="This server's Modrinth modpack project: id, slug, title, url"
+    )
+    uploads: list[dict[str, Any]] = Field(description="version_id, version, at; newest first")
+    own_jars: list[dict[str, Any]] = Field(
+        description="Own jars in the newest modpack: path, name, side, slug, url (once put up)"
+    )
+    server_project: dict[str, Any] | None = Field(
+        None, description="The owner's Modrinth Server Project: id, slug, url"
+    )
+    older: dict[str, Any] | None = Field(
+        None, description="The Server Project lists an older upload: listed, newest"
+    )
+    address: str | None = Field(None, description="The address typed for friends, if any")
 
 
 class ModpackUpdated(Open):

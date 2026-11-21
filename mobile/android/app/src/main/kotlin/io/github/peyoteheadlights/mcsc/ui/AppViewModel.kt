@@ -151,6 +151,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** A server to open (from a shortcut, the widget or an alert). */
     var pendingServer: String? by mutableStateOf(null)
 
+    /** mcsc://modrinth?..., the browser coming back from Sign in with Modrinth. */
+    var modrinthReturn: String? by mutableStateOf(null)
+
     /** Scanning the code again from Settings, still signed in. */
     var rescanning: Boolean by mutableStateOf(false)
         private set

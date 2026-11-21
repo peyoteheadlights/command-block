@@ -226,6 +226,50 @@ data class DownloadLink(
     @SerialName("restart_needed") val restartNeeded: Boolean = false,
 )
 
+/** Sign in with Modrinth on the PC. The token itself never reaches the phone. */
+@Serializable
+data class ModrinthAccount(
+    val available: Boolean = false,
+    @SerialName("signed_in") val signedIn: Boolean = false,
+    val username: String? = null,
+    @SerialName("ran_out") val ranOut: Boolean = false,
+)
+
+@Serializable
+data class ModrinthSignInStarted(val url: String)
+
+@Serializable
+data class ModrinthMade(val name: String, val version: String)
+
+@Serializable
+data class ModrinthOwnProject(val id: String, val slug: String, val title: String = "", val url: String)
+
+@Serializable
+data class ModrinthUpload(@SerialName("version_id") val versionId: String, val version: String)
+
+/** An own jar in the newest modpack; [url] once it is on Modrinth. */
+@Serializable
+data class ModrinthJar(val path: String, val name: String, val url: String? = null)
+
+@Serializable
+data class ModrinthServerProject(val url: String)
+
+@Serializable
+data class ModrinthOlder(val listed: String, val newest: String)
+
+/** The "Put it on Modrinth" card. [address]: the address typed for friends. */
+@Serializable
+data class ModrinthShare(
+    val account: ModrinthAccount = ModrinthAccount(),
+    val made: ModrinthMade? = null,
+    val project: ModrinthOwnProject? = null,
+    val uploads: List<ModrinthUpload> = emptyList(),
+    @SerialName("own_jars") val ownJars: List<ModrinthJar> = emptyList(),
+    @SerialName("server_project") val serverProject: ModrinthServerProject? = null,
+    val older: ModrinthOlder? = null,
+    val address: String? = null,
+)
+
 /** One mod in an [Overlap]. [turnOff]: the pick isn't this one. */
 @Serializable
 data class OverlapMod(

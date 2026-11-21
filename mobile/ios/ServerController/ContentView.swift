@@ -331,6 +331,73 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Put it on Modrinth
+
+    /// Sign in with Modrinth, upload the modpack and own jars, the Server Project helper.
+    @ViewBuilder
+    private func modrinthCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        let owner = model.can(Permissions.PC_SETTINGS)
+        SectionTitle(text: model.t("modrinth.title"), palette: palette)
+        CardBox(palette: palette) {
+            Text(verbatim: model.t("modrinth.intro")).foregroundStyle(palette.textSecondary)
+            if let share = content.modrinth {
+                let account = share.account
+                let signedIn = account?.signedIn == true
+                ForEach(ModrinthCards.lines(strings, share, owner: owner), id: \.self) { line in
+                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                }
+                let waiting = share.ownJars.first(where: { $0.url == nil })
+                let upload = share.made.map { strings.t("modrinth.upload_named", ["name": $0.name, "version": $0.version]) } ?? model.t("modrinth.upload")
+                Presses(presses: (owner && account?.available == true && !signedIn ? [
+                    Press(title: model.t("modrinth.sign_in"), enabled: ready) {
+                        Task { await content.signInModrinth(strings) }
+                    },
+                ] : []) + [
+                    Press(title: upload, enabled: ready && signedIn && share.made != nil) {
+                        if share.project != nil {
+                            Task { await content.uploadToModrinth("", "", strings) }
+                        } else {
+                            content.askingModrinth = ModrinthAsk(jar: nil, name: share.made?.name ?? "")
+                        }
+                    },
+                ] + (waiting.map { jar in [
+                    Press(title: model.t("modrinth.own_jar"), enabled: ready && signedIn) {
+                        content.askingModrinth = ModrinthAsk(jar: jar, name: jar.name)
+                    },
+                ] } ?? []) + (owner && signedIn ? [
+                    Press(title: model.t("modrinth.sign_out"), enabled: ready) {
+                        Task { await content.signOutModrinth(strings) }
+                    },
+                ] : []), palette: palette)
+                Text(verbatim: model.t("modrinth.review_note")).foregroundStyle(palette.textSecondary)
+                Text(verbatim: model.t("modrinth.server_title")).foregroundStyle(palette.textPrimary)
+                Text(verbatim: model.t("modrinth.server_intro")).foregroundStyle(palette.textSecondary)
+                ForEach(ModrinthCards.serverLines(strings, share), id: \.self) { line in
+                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                }
+                if share.address != nil {
+                    Text(verbatim: ModrinthCards.steps(strings, share)).foregroundStyle(palette.textSecondary)
+                    Presses(presses: [
+                        Press(title: model.t("modrinth.server_paste"), enabled: ready) { content.askingServerLink = true },
+                    ], palette: palette)
+                }
+            }
+        }
+        .task(id: serverId) { await content.loadModrinth() }
+        .task(id: model.modrinthReturn) {
+            guard let url = model.modrinthReturn else { return }
+            model.modrinthReturn = nil
+            await content.finishModrinth(url, strings)
+        }
+        .sheet(item: Binding(get: { content.askingModrinth }, set: { content.askingModrinth = $0 })) { ask in
+            NavigationStack { ModrinthProjectSheet(content: content, ask: ask) }
+        }
+        .sheet(isPresented: Binding(get: { content.askingServerLink }, set: { content.askingServerLink = $0 })) {
+            NavigationStack { ServerProjectSheet(content: content) }
+        }
+    }
+
     // MARK: - Still fit?
 
     /// After a mod or version change: the ones to change (one Update all), the
@@ -412,6 +479,7 @@ struct ContentView: View {
             if model.can(Permissions.MODS_MANAGE) {
                 makeModpackCard(content, ready: idle, palette)
                 downloadLinkCard(content, ready: idle, palette)
+                modrinthCard(content, ready: idle, palette)
             }
             if let fit = list.fit {
                 stillFitCard(content, list, fit, kind, ready: changes == .ready && idle, palette)
@@ -1490,6 +1558,71 @@ private struct MakeModpackSheet: View {
 }
 
 /// A resource pack someone else hosts: its link, and its SHA-1 if the site gives one.
+/// The Modrinth address and one-line summary of a new project.
+private struct ModrinthProjectSheet: View {
+    let content: ContentPages
+    let ask: ModrinthAsk
+
+    @Environment(AppModel.self) private var model
+    @State private var slug = ""
+    @State private var summary = ""
+
+    var body: some View {
+        let strings = model.strings
+        Form {
+            if ask.jar != nil { Text(verbatim: model.t("modrinth.own_jar_pick")) }
+            TextField(model.t("modrinth.slug_prompt"), text: $slug)
+                .textInputAutocapitalization(.never)
+            TextField(model.t("modrinth.summary_prompt"), text: $summary)
+        }
+        .onAppear { slug = ModrinthCards.slug(ask.name) }
+        .navigationTitle(ask.jar?.name ?? model.t("modrinth.title"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(model.t("mobile.common.cancel")) { content.askingModrinth = nil }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(model.t("modrinth.upload")) {
+                    let s = String(slug.trimmingCharacters(in: .whitespaces).prefix(64))
+                    let line = String(summary.trimmingCharacters(in: .whitespaces).prefix(256))
+                    Task { await content.uploadToModrinth(s, line, strings) }
+                }
+                .disabled(slug.isEmpty || summary.trimmingCharacters(in: .whitespaces).count < 3)
+            }
+        }
+    }
+}
+
+private struct ServerProjectSheet: View {
+    let content: ContentPages
+
+    @Environment(AppModel.self) private var model
+    @State private var link = ""
+
+    var body: some View {
+        let strings = model.strings
+        Form {
+            TextField(model.t("modrinth.server_paste_prompt"), text: $link)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+        }
+        .navigationTitle(model.t("modrinth.server_title"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(model.t("mobile.common.cancel")) { content.askingServerLink = false }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(model.t("modrinth.server_paste")) {
+                    let value = String(link.trimmingCharacters(in: .whitespaces).prefix(200))
+                    Task { await content.setServerProject(value, strings) }
+                }
+            }
+        }
+    }
+}
+
 private struct PackLinkSheet: View {
     let content: ContentPages
 

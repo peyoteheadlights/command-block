@@ -28,7 +28,10 @@ import io.github.peyoteheadlights.mcsc.core.ModpackMade
 import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
 import io.github.peyoteheadlights.mcsc.core.ModpackUpdatePreview
 import io.github.peyoteheadlights.mcsc.core.ModSearch
+import io.github.peyoteheadlights.mcsc.core.ModrinthCards
 import io.github.peyoteheadlights.mcsc.core.ModrinthHit
+import io.github.peyoteheadlights.mcsc.core.ModrinthJar
+import io.github.peyoteheadlights.mcsc.core.ModrinthShare
 import io.github.peyoteheadlights.mcsc.core.PickedFile
 import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
 import io.github.peyoteheadlights.mcsc.core.Strings
@@ -44,6 +47,9 @@ import kotlinx.coroutines.withContext
 
 /** A remove waiting for "yes", with what else needs the mod. */
 data class RemoveAsk(val mod: Mod, val impact: ModImpact)
+
+/** The Modrinth address and summary being asked: the modpack, or one own [jar]. */
+data class ModrinthAsk(val jar: ModrinthJar?, val name: String)
 
 /** The kept versions of one mod, shown to roll back to. */
 data class VersionsAsk(val mod: Mod, val versions: Read<ModVersions>)
@@ -476,6 +482,7 @@ class ContentPages(
         work("make", strings) {
             made = it.makeModpack(serverId, answers)
             loadLink() // the modpack's download link, if it's on
+            loadModrinth() // "Upload Friends 2"
             null
         }
     }
@@ -557,6 +564,65 @@ class ContentPages(
     fun removePack(strings: Strings) = work("pack", strings) {
         link = it.removeResourcePack(serverId)
         null
+    }
+
+    // ------------------------------------------------------------ Put it on Modrinth
+    var modrinth: ModrinthShare? by mutableStateOf(null)
+        private set
+
+    /** Asking the Modrinth address and summary: for the modpack (no [ModrinthAsk.jar]) or one own jar. */
+    var askingModrinth: ModrinthAsk? by mutableStateOf(null)
+
+    /** Set while "Paste its link…" asks for the Server Project's link. */
+    var askingServerLink by mutableStateOf(false)
+
+    fun loadModrinth() {
+        val c = client() ?: return
+        scope.launch {
+            try {
+                modrinth = c.modrinth(serverId)
+            } catch (e: AgentException) {
+                noted(e)
+            }
+        }
+    }
+
+    /** Opens Modrinth's page; it comes back as mcsc://modrinth (MainActivity). */
+    fun signInModrinth(open: (String) -> Unit, strings: Strings) = work("modrinth", strings) {
+        open(it.modrinthSignIn().url)
+        Said(strings.t("modrinth.waiting"), good = true)
+    }
+
+    fun finishModrinth(link: String, strings: Strings) {
+        val (code, state) = ModrinthCards.cameBack(link) ?: return tell(Said(strings.t("modrinth.said_no"), good = false))
+        work("modrinth", strings) {
+            it.modrinthFinish(code, state)
+            modrinth = it.modrinth(serverId)
+            Said(strings.t("modrinth.welcome"), good = true)
+        }
+    }
+
+    fun signOutModrinth(strings: Strings) = work("modrinth", strings) {
+        it.modrinthSignOut()
+        modrinth = it.modrinth(serverId)
+        null
+    }
+
+    fun uploadToModrinth(slug: String, summary: String, strings: Strings) {
+        val jar = askingModrinth?.jar
+        askingModrinth = null
+        work("modrinth", strings) {
+            modrinth = if (jar == null) it.modrinthUpload(serverId, slug, summary) else it.modrinthOwnJar(serverId, jar.path, slug, summary)
+            Said(strings.t("modrinth.uploaded"), good = true)
+        }
+    }
+
+    fun setServerProject(link: String, strings: Strings) {
+        askingServerLink = false
+        work("modrinth", strings) {
+            modrinth = it.modrinthServerProject(serverId, link)
+            null
+        }
     }
 
     // ------------------------------------------------------------ Bedrock packs
