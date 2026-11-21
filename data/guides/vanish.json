@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "id": "vanish",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "vanish"
+    ],
+    "modrinth": "vanish"
+  },
+  "versions": ">=1.6.0 <2",
+  "title": "Vanish",
+  "what": "Lets an operator be invisible: other players can't see them or find them in the player list.",
+  "steps": [
+    "Operators can also type /vanish in the game to switch it for themselves."
+  ],
+  "source": "https://github.com/DrexHD/Vanish",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "on",
+      "label": "Hide a player",
+      "command": "vanish on {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "permission": "players.manage"
+    },
+    {
+      "id": "off",
+      "label": "Show a player again",
+      "command": "vanish off {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "permission": "players.manage"
+    },
+    {
+      "id": "reload",
+      "label": "Read settings again",
+      "command": "vanish reload"
+    }
+  ]
+}

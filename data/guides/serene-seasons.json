@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "id": "serene-seasons",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "sereneseasons"
+    ],
+    "modrinth": "serene-seasons"
+  },
+  "versions": ">=9.1.0 <27",
+  "title": "Serene Seasons",
+  "what": "Adds spring, summer, autumn and winter: colours, snow and crops change with the season.",
+  "steps": [
+    "Each season has an early, middle and late part.",
+    "Show the season tells you where the world is now; Set the season jumps to the start of one."
+  ],
+  "source": "https://github.com/Glitchfiend/SereneSeasons/tree/26.3/common/src/main/java/sereneseasons/command",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "get",
+      "label": "Show the season",
+      "command": "season get"
+    },
+    {
+      "id": "set",
+      "label": "Set the season",
+      "command": "season set {season}",
+      "fields": [
+        {
+          "id": "season",
+          "kind": "choice",
+          "label": "Season",
+          "options": [
+            {
+              "value": "early_spring",
+              "label": "Spring"
+            },
+            {
+              "value": "early_summer",
+              "label": "Summer"
+            },
+            {
+              "value": "early_autumn",
+              "label": "Autumn"
+            },
+            {
+              "value": "early_winter",
+              "label": "Winter"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
