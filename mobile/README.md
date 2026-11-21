@@ -31,6 +31,10 @@ by the desktop app and both phone apps:
 - `theme.json`: each theme's colors.
 - `color-cases.json`: how each palette color tints each theme. The tests of
   all three apps check their tinting against it.
+- `look-cases.json`: the binder look per theme and server color (plain
+  paper, the color on the band, buttons, edges and tab). The tests of all
+  three apps check against it too.
+- `fonts/`: Archivo, the heading font of all three apps.
 - `version.json`: the phone apps' version and the agent API versions they
   work with.
 

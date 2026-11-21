@@ -171,6 +171,43 @@ public enum ServerColors {
         return out
     }
 
+    /// The app icon's copper: the buttons' color where no server is open.
+    public static let COPPER = "#C8794A"
+
+    /// The binder look, the same sums as the desktop app's (desktop/theme.py
+    /// tokens): the page stays the theme's plain paper, and the server's
+    /// color goes on the band behind the sheet, the buttons, the edges and
+    /// its tab. Without a server the buttons are copper and the rest stays
+    /// the theme's. ServerColorsTests checks it against the recorded cases
+    /// (shared/look-cases.json).
+    public static func binder(_ baseHex: String?, _ k: [String: String], _ theme: String) -> [String: String] {
+        var out: [String: String] = [:]
+        out["--accent-band"] = k["accent-band"]
+        out["--accent-edge"] = k["accent-edge"]
+        out["--tab-fill"] = k["tab-neutral"]
+        out["--tab-text"] = k["text-primary"]
+        var own: [String: String]? = nil
+        if let baseHex = baseHex {
+            own = derive(baseHex, k, theme)
+        }
+        let tint = own ?? derive(COPPER, k, theme) ?? [:]
+        var names = ["accent", "accent-text", "accent-ink", "accent-ring"]
+        if own != nil {
+            names += ["accent-band", "accent-edge", "tab-fill", "tab-text"]
+        }
+        for name in names {
+            if let value = tint["--" + name] {
+                out["--" + name] = value
+            }
+        }
+        let sheet = rgb(k["sheet"]) ?? WHITE
+        out["--paper"] = luminance(sheet) < 0.18 ? k["sheet"] : k["surface"]
+        let band = mix(rgb(out["--accent-band"]) ?? sheet, rgb(out["--accent-edge"]) ?? sheet, 0.28)
+        out["--band"] = hex(band)
+        out["--band-text"] = hex(readable(rgb(k["text-primary"]) ?? BLACK, [band]))
+        return out
+    }
+
     /// A server's badge: its color as a fill, with text that reads on it,
     /// as ("#RRGGBB" fill, "#RRGGBB" text).
     public static func badge(_ baseHex: String?) -> (fill: String, text: String)? {

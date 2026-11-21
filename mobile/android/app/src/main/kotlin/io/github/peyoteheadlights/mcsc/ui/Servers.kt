@@ -31,42 +31,48 @@ fun ServersScreen(vm: AppViewModel, onOpen: (String) -> Unit, onAdd: () -> Unit)
     val ui = vm.servers
     val colors = LocalColors.current
     val now = rememberNow()
-    Scaffold(
-        containerColor = colors.sheet,
-        topBar = {
-            Bar(t("mobile.servers.title"), actions = {
-                if (vm.live) {
-                    Text(t("mobile.servers.live"), color = colors.success, modifier = Modifier.padding(end = 16.dp))
-                }
-                if (AddServer.allowed(vm.me)) {
-                    IconButton(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = t("mobile.add.title")) }
-                }
-            })
-        },
-    ) { padding ->
-        PullToRefreshBox(
-            isRefreshing = ui.refreshing,
-            onRefresh = { vm.refreshAll() },
-            modifier = Modifier.padding(padding).fillMaxSize(),
-        ) {
-            LazyColumn(contentPadding = ScreenPadding, verticalArrangement = Gap, modifier = Modifier.fillMaxSize()) {
-                ui.problem?.let { problem -> item { ProblemNote(problem, onRetry = { vm.refreshServers() }) } }
-                if (ui.problem?.key == "mobile.error.unreachable" || vm.wake.waking || vm.wake.awake) item { WakeCard(vm) }
-                if (ui.loaded && ui.list.isEmpty()) {
-                    item {
-                        Note(t(if (vm.me?.isOwner == false) "mobile.servers.helper_none" else "servers.none"))
+    Binder(vm, current = null) {
+        Scaffold(
+            containerColor = colors.sheet,
+            topBar = {
+                Bar(t("mobile.servers.title"), actions = {
+                    if (vm.live) {
+                        // On the band, so in the band's own text color.
+                        Text(t("mobile.servers.live"), color = colors.bandText, modifier = Modifier.padding(end = 16.dp))
                     }
-                }
-                items(ui.list, key = { it.id }) { row ->
-                    // Read before the last failed attempt: not current, so not shown as if it were.
-                    ServerCard(if (ui.problem != null) row.copy(state = States.UNKNOWN, playersOnline = null) else row) {
-                        onOpen(row.id)
+                    if (AddServer.allowed(vm.me)) {
+                        IconButton(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = t("mobile.add.title")) }
                     }
+                })
+            },
+        ) { padding ->
+            PullToRefreshBox(
+                isRefreshing = ui.refreshing,
+                onRefresh = { vm.refreshAll() },
+                modifier = Modifier.padding(padding).fillMaxSize(),
+            ) {
+                LazyColumn(contentPadding = ScreenPadding, verticalArrangement = Gap, modifier = Modifier.fillMaxSize()) {
+                    ui.problem?.let { problem -> item { ProblemNote(problem, onRetry = { vm.refreshServers() }) } }
+                    if (ui.problem?.key == "mobile.error.unreachable" || vm.wake.waking || vm.wake.awake) item { WakeCard(vm) }
+                    if (ui.loaded && ui.list.isEmpty()) {
+                        item {
+                            Note(t(if (vm.me?.isOwner == false) "mobile.servers.helper_none" else "servers.none"))
+                        }
+                    }
+                    items(ui.list, key = { it.id }) { row ->
+                        // Read before the last failed attempt: not current, so not shown as if it were.
+                        // Each server's box has its edge and buttons in its own color.
+                        McscTheme(vm.shared, themeName(vm.theme), serverColor = row.color) {
+                            ServerCard(if (ui.problem != null) row.copy(state = States.UNKNOWN, playersOnline = null) else row) {
+                                onOpen(row.id)
+                            }
+                        }
+                    }
+                    ui.checkedAt?.let { at ->
+                        item { Note(t("mobile.servers.checked", "when" to Display.ago(vm.strings, at, now))) }
+                    }
+                    if (ui.loaded) item { Note(t("mobile.servers.more_on_pc"), color = colors.text3) }
                 }
-                ui.checkedAt?.let { at ->
-                    item { Note(t("mobile.servers.checked", "when" to Display.ago(vm.strings, at, now))) }
-                }
-                if (ui.loaded) item { Note(t("mobile.servers.more_on_pc"), color = colors.text3) }
             }
         }
     }

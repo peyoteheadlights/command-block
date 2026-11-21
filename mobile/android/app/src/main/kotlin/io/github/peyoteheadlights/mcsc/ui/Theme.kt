@@ -1,7 +1,10 @@
 package io.github.peyoteheadlights.mcsc.ui
 
+import android.content.res.AssetManager
+import android.provider.Settings
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -10,13 +13,18 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import io.github.peyoteheadlights.mcsc.core.ServerColors
 import io.github.peyoteheadlights.mcsc.core.Strings
 import io.github.peyoteheadlights.mcsc.core.Tone
 import io.github.peyoteheadlights.mcsc.data.SharedData
 
-/** The shared color tokens (shared/theme.json), tinted with a server's
- * color on its screens exactly as the desktop app tints its window. */
+/** The shared color tokens (shared/theme.json) in the binder look, as in
+ * the desktop app: the page is plain paper, and a server's color goes on
+ * the band behind the sheet, the buttons and the edges of its screens. */
 @Immutable
 data class McscColors(
     val dark: Boolean,
@@ -35,8 +43,13 @@ data class McscColors(
     val success: Color,
     val warning: Color,
     val danger: Color,
+    val onDanger: Color,
     val neutral: Color,
+    /** The line around a box: the server's color, half see-through. */
     val border: Color,
+    /** The band behind the sheet (the top bar), and the words on it. */
+    val band: Color,
+    val bandText: Color,
 ) {
     fun tone(tone: Tone): Color = when (tone) {
         Tone.SUCCESS -> success
@@ -48,19 +61,19 @@ data class McscColors(
 
 fun hexColor(hex: String?): Color? = ServerColors.rgb(hex)?.let { Color(it[0], it[1], it[2]) }
 
-fun colorsFor(tokens: Map<String, String>, tint: Map<String, String>?): McscColors {
-    fun c(name: String): Color = hexColor(tint?.get("--$name") ?: tokens[name]) ?: Color.Gray
-    val sheet = c("sheet")
-    val dark = ServerColors.luminance(ServerColors.rgb(tint?.get("--sheet") ?: tokens["sheet"]) ?: intArrayOf(255, 255, 255)) < 0.18
-    val text = c("text-primary")
+/** [tokens] is the theme, [look] what ServerColors.binder sets on it. */
+fun colorsFor(tokens: Map<String, String>, look: Map<String, String>): McscColors {
+    fun c(name: String): Color = hexColor(look["--$name"] ?: tokens[name]) ?: Color.Gray
+    val paper = look["--paper"] ?: tokens["sheet"]
+    val dark = ServerColors.luminance(ServerColors.rgb(paper) ?: intArrayOf(255, 255, 255)) < 0.18
     return McscColors(
         dark = dark,
         desk = c("desk"),
-        sheet = sheet,
+        sheet = c("paper"),
         surface = c("surface"),
         sunken = c("surface-sunken"),
         float = c("surface-float"),
-        text = text,
+        text = c("text-primary"),
         text2 = c("text-secondary"),
         text3 = c("text-tertiary"),
         accent = c("accent"),
@@ -70,13 +83,38 @@ fun colorsFor(tokens: Map<String, String>, tint: Map<String, String>?): McscColo
         success = c("success"),
         warning = c("warning"),
         danger = c("danger"),
+        onDanger = c("on-danger"),
         neutral = c("neutral"),
-        border = text.copy(alpha = if (dark) 0.14f else 0.12f),
+        border = c("accent-ring").copy(alpha = 0.5f),
+        band = c("band"),
+        bandText = c("band-text"),
+    )
+}
+
+/** Archivo, the heading font, from the app's own files (shared/fonts). */
+private fun headings(assets: AssetManager): Typography {
+    val archivo = FontFamily(
+        Font("fonts/Archivo-Medium.ttf", assets, FontWeight.Medium),
+        Font("fonts/Archivo-SemiBold.ttf", assets, FontWeight.SemiBold),
+        Font("fonts/Archivo-Bold.ttf", assets, FontWeight.Bold),
+    )
+    val base = Typography()
+    return base.copy(
+        headlineLarge = base.headlineLarge.copy(fontFamily = archivo, fontWeight = FontWeight.Bold),
+        headlineMedium = base.headlineMedium.copy(fontFamily = archivo, fontWeight = FontWeight.Bold),
+        headlineSmall = base.headlineSmall.copy(fontFamily = archivo, fontWeight = FontWeight.Bold),
+        titleLarge = base.titleLarge.copy(fontFamily = archivo, fontWeight = FontWeight.SemiBold),
+        titleMedium = base.titleMedium.copy(fontFamily = archivo, fontWeight = FontWeight.SemiBold),
+        titleSmall = base.titleSmall.copy(fontFamily = archivo, fontWeight = FontWeight.SemiBold),
     )
 }
 
 val LocalColors = staticCompositionLocalOf<McscColors> { error("McscTheme is missing") }
 val LocalStrings = staticCompositionLocalOf<Strings> { error("McscTheme is missing") }
+
+/** True when the phone's "Remove animations" setting is on: nothing glides,
+ * things are just there. */
+val LocalReduceMotion = staticCompositionLocalOf { false }
 
 /** The shared theme name for the person's choice ("system" follows the phone). */
 @Composable
@@ -87,8 +125,12 @@ fun themeName(choice: String): String =
 fun McscTheme(shared: SharedData, theme: String, serverColor: String? = null, content: @Composable () -> Unit) {
     val tokens = remember(shared, theme) { shared.theme(theme) }
     val colors = remember(tokens, theme, serverColor) {
-        colorsFor(tokens, serverColor?.let { ServerColors.derive(it, tokens, theme) })
+        colorsFor(tokens, ServerColors.binder(serverColor, tokens, theme))
     }
+    val context = LocalContext.current
+    val typography = remember(context) { headings(context.assets) }
+    // "Remove animations" sets Android's animation scale to 0.
+    val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val scheme = if (colors.dark) {
         darkColorScheme(
             primary = colors.accent, onPrimary = colors.accentText,
@@ -99,8 +141,8 @@ fun McscTheme(shared: SharedData, theme: String, serverColor: String? = null, co
             surfaceContainer = colors.surface, surfaceContainerLow = colors.surface,
             surfaceContainerHigh = colors.float, surfaceContainerHighest = colors.float,
             surfaceContainerLowest = colors.sunken,
-            outline = colors.border, outlineVariant = colors.border,
-            error = colors.danger, onError = colors.sheet,
+            outline = colors.border.copy(alpha = 1f), outlineVariant = colors.border,
+            error = colors.danger, onError = colors.onDanger,
             secondaryContainer = colors.accentBand, onSecondaryContainer = colors.text,
         )
     } else {
@@ -113,13 +155,13 @@ fun McscTheme(shared: SharedData, theme: String, serverColor: String? = null, co
             surfaceContainer = colors.surface, surfaceContainerLow = colors.surface,
             surfaceContainerHigh = colors.float, surfaceContainerHighest = colors.float,
             surfaceContainerLowest = colors.surface,
-            outline = colors.border, outlineVariant = colors.border,
-            error = colors.danger, onError = colors.surface,
+            outline = colors.border.copy(alpha = 1f), outlineVariant = colors.border,
+            error = colors.danger, onError = colors.onDanger,
             secondaryContainer = colors.accentBand, onSecondaryContainer = colors.text,
         )
     }
-    CompositionLocalProvider(LocalColors provides colors) {
-        MaterialTheme(colorScheme = scheme, content = content)
+    CompositionLocalProvider(LocalColors provides colors, LocalReduceMotion provides reduceMotion) {
+        MaterialTheme(colorScheme = scheme, typography = typography, content = content)
     }
 }
 
