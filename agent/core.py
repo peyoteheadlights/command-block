@@ -35,6 +35,7 @@ from .minecraft.chat import ChatLog, parse_chat
 from .minecraft.crash import CrashReporter
 from .minecraft.playeractions import PlayerActions
 from .minecraft.process import MinecraftServer, ServerError
+from .mods.fit import Later as FitCheck
 from .mods.manager import ModManager
 from .monitoring.answering import AnswerWatch
 from .monitoring.metrics import MetricsMonitor
@@ -85,6 +86,8 @@ class ServerContext:
         self.metrics = MetricsMonitor(self.config, self.bus, self.db, self.server)
         self.tps = TpsMonitor(self.config, self.bus, self.db, self.server)
         self.mods = ModManager(self.config, self.bus, self.db, self.server)
+        # The "Still fit?" check, after a mod or version change (agent/mods/fit.py).
+        self.fit = FitCheck(self)
         self.backups = BackupManager(self.config, self.bus, self.db, self.server, jobs=core.jobs)
         self.crashes = CrashReporter(
             self.config, self.db, self.server, self.metrics, self.players, self.mods
@@ -197,6 +200,7 @@ class ServerContext:
     async def handle(self, event: Event) -> None:
         """This server's own events, passed on by AgentCore."""
         await self.tps.handle(event)
+        self.fit.heard(event)
         if event.type in ("server_stopped", "server_crashed"):
             try:
                 await self.players.clear_online()
@@ -312,6 +316,7 @@ class ServerContext:
     async def stop(self) -> None:
         if self._update_task:
             self._update_task.cancel()
+        self.fit.stop()
         await self.autosleep.stop()
         await self.answering.stop()
         await self.metrics.stop()

@@ -727,3 +727,56 @@ def test_the_settings_page_lists_the_folders_other_config_files(qapp, agent_http
     names = [listed.item(i).text() for i in range(listed.count())]
     assert "bukkit.yml" in names and "plugins/Chunky/config.yml" in names
     assert "server.properties" not in names
+
+
+def test_still_fit_card_changes_the_ticked_ones_as_one_update_all(qapp, agent_http):
+    with_mods(agent_http)
+    core_of(agent_http).servers["survival"].db.set_setting(
+        "mod_fit",
+        {
+            "about": "Create 6.0",
+            "needs_change": [
+                {
+                    "mod_id": "alpha",
+                    "name": "Alpha",
+                    "filename": "alpha.jar",
+                    "why": "Rails needs Alpha 2.0 or newer",
+                    "from": "1.0",
+                    "to": "2.0",
+                    "version_id": "alpha-2.0",
+                },
+            ],
+            "no_fit": [
+                {
+                    "mod_id": "gamma",
+                    "name": "Gamma",
+                    "filename": "gamma.jar",
+                    "why": "No version for Minecraft 1.21.1 yet",
+                }
+            ],
+            "cant_tell": [
+                {
+                    "mod_id": "beta",
+                    "name": "Beta",
+                    "filename": "beta.jar.disabled",
+                    "why": "Can't read its range",
+                }
+            ],
+        },
+    )
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: "Can't read its range" in shown_text(page))
+    shown = shown_text(page)
+    assert "1 mod needs a different version to go with Create 6.0." in shown
+    assert [t.text() for t, _ in page.fit_ticks] == ["Alpha   1.0 → 2.0"]
+    assert "No version for Minecraft 1.21.1 yet" in shown
+    assert "Can't tell" in shown and "Can't read its range" in shown
+    assert row_button(page, "Turn off", "Gamma")
+    wait_for(qapp, lambda: button(page, "Change these").isEnabled())
+    button(page, "Change these").click()
+    wait_for(qapp, lambda: "Updated 1." in page.note.text(), 60)
+    assert undo_titles(agent_http, owner(agent_http))[0] == "Update all"
+    assert list(mods_folder(agent_http).glob("alpha-2.0*"))
+
+    button(page, "Hide").click()
+    wait_for(qapp, lambda: not page.fit_card.isVisible())

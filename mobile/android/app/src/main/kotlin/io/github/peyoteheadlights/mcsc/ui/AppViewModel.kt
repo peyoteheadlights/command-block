@@ -708,6 +708,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Asked from Discord while the screen is open.
             "discord_link_request", "whitelist_form", "new_address" -> if (pages.links != null || pages.whitelist != null) pages.loadCommunity()
             "quest_claim", "quest_suggested", "event_attendance" -> if (pages.quests.page.loaded) pages.quests.load()
+            // The Still fit? check finished a few seconds after the change.
+            "mod_fit" -> if (pages.content.mods.loaded) pages.content.loadMods()
         }
         // Started or stopped: Players and Chat say whether their buttons
         // work now, so they read it again rather than keep the old answer.

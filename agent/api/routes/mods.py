@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from ... import protection, suggestions
 from ...jobs import JobConflict
 from ...mods import copy as copy_module
+from ...mods import fit
 from ...mods.addfrom import add_file, add_from_link, read_link
 from ...mods.dependencies import DependencyError
 from ...mods.sources import SourceError, split
@@ -80,7 +81,20 @@ async def list_mods(principal: Principal = Depends(require(SERVER_VIEW)), ctx=De
         "updates_checked_at": ctx.db.get_setting("mod_updates_checked_at"),
         "needs_you": ctx.mods.needs_you(),
         "stored_separately": ctx.db.get_setting("mods_stored_separately") is True,
+        "fit": ctx.db.get_setting(fit.SETTING),
     }
+
+
+@router.post("/mods/fit/hide", response_model=Ok)
+async def hide_fit(
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Hide the "Still fit?" card until the next change checks again."""
+    ctx.db.set_setting(fit.SETTING, None)
+    audit(ctx, request, "mod_fit_hide")
+    return {"ok": True}
 
 
 @router.get("/mods/search", response_model=ModSearch)

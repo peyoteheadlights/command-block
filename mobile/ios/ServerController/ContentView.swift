@@ -147,6 +147,59 @@ struct ContentView: View {
         return nil
     }
 
+    // MARK: - Still fit?
+
+    /// After a mod or version change: the ones to change (one Update all), the
+    /// ones with no version that fits (Turn off) and the ones nothing said about.
+    @ViewBuilder
+    private func stillFitCard(_ content: ContentPages, _ list: ModList, _ fit: ModFit, _ kind: ContentKind, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        let manage = model.can(Permissions.MODS_MANAGE)
+        SectionTitle(text: model.t("fit.title"), palette: palette)
+        CardBox(palette: palette) {
+            Text(verbatim: StillFit.lead(strings, fit, plugins: kind == .plugins))
+                .foregroundStyle(palette.textPrimary)
+            ForEach(fit.needsChange) { row in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: row.name).foregroundStyle(palette.textPrimary)
+                    Hint(text: Content.change(strings, row.from, row.to) + "\n" + row.why, palette: palette)
+                }
+            }
+            if !fit.noFit.isEmpty {
+                Text(verbatim: model.t("fit.no_fit")).foregroundStyle(palette.textPrimary)
+            }
+            ForEach(fit.noFit) { row in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: row.name).foregroundStyle(palette.textPrimary)
+                    Hint(text: row.why, palette: palette)
+                    if manage, let mod = list.mods.first(where: { $0.filename == row.filename && $0.enabled }) {
+                        Presses(presses: [
+                            Press(title: model.t("mods.turn_off"), enabled: ready) {
+                                Task { await content.setEnabled(mod, false, strings) }
+                            },
+                        ], palette: palette)
+                    }
+                }
+            }
+            if !fit.cantTell.isEmpty {
+                Text(verbatim: model.t("fit.cant_tell")).foregroundStyle(palette.textPrimary)
+            }
+            ForEach(fit.cantTell) { row in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: row.name).foregroundStyle(palette.textPrimary)
+                    Hint(text: row.why, palette: palette)
+                }
+            }
+            if manage {
+                Presses(presses: (fit.needsChange.isEmpty ? [] : [
+                    Press(title: model.t("fit.change"), enabled: ready) { content.openFit(fit) },
+                ]) + [
+                    Press(title: model.t("fit.hide"), enabled: true) { Task { await content.hideFit(strings) } },
+                ], palette: palette)
+            }
+        }
+    }
+
     // MARK: - Mods and plugins
 
     @ViewBuilder
@@ -168,6 +221,9 @@ struct ContentView: View {
         if let list = read.value {
             if list.storedSeparately {
                 Hint(text: model.t("mods.stored_separately"), palette: palette)
+            }
+            if let fit = list.fit {
+                stillFitCard(content, list, fit, kind, ready: changes == .ready && idle, palette)
             }
             if changes == .ready {
                 Presses(presses: [
