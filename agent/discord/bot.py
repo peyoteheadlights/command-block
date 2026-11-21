@@ -1923,11 +1923,11 @@ def diagnose_words(name: str, result: dict[str, Any]) -> str:
     out = [f"Diagnose server on {name}:"]
     for group, oks in groups.items():
         if False in oks:
-            out.append(f"\N{CROSS MARK} {group}: failed")
+            out.append(f"{group}: failed")
         elif None in oks:
-            out.append(f"\N{WHITE QUESTION MARK ORNAMENT} {group}: not checked")
+            out.append(f"{group}: not checked")
         else:
-            out.append(f"\N{WHITE HEAVY CHECK MARK} {group}: worked")
+            out.append(f"{group}: worked")
     out += [f"- {known['say']}" for known in result.get("known") or []]
     changes = len(result.get("changes") or [])
     if changes:

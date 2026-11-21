@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QAbstractSlider,
     QButtonGroup,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -115,6 +116,39 @@ def _go(move: QVariantAnimation, widget: QWidget, start: float, end: float) -> b
     move.setEndValue(float(end))
     move.start()
     return True
+
+
+def glide(owner: QObject, ms: int, moved: Callable[[float], None]) -> QVariantAnimation:
+    """A move from 0 to 1 that starts fast and slows into its end, with no
+    bounce (the design's cubic-bezier(0.22, 1, 0.36, 1))."""
+    curve = QEasingCurve(QEasingCurve.Type.BezierSpline)
+    curve.addCubicBezierSegment(QPointF(0.22, 1), QPointF(0.36, 1), QPointF(1, 1))
+    move = QVariantAnimation(owner)
+    move.setDuration(ms)
+    move.setEasingCurve(curve)
+    move.setStartValue(0.0)
+    move.setEndValue(1.0)
+    move.valueChanged.connect(moved)
+    return move
+
+
+def arrive(part: QWidget) -> None:
+    """Fades ``part`` in. Qt has no opacity on a widget, so for the time of
+    the fade it draws through a QGraphicsOpacityEffect (a filter Qt puts
+    between the widget and the screen), which is taken off again after."""
+    if not part.isVisible() or not animated(part):
+        return
+    effect = QGraphicsOpacityEffect(part)
+    effect.setOpacity(0.0)
+    part.setGraphicsEffect(effect)  # replaces, and deletes, a fade still running
+    move = glide(effect, 250, effect.setOpacity)
+
+    def done() -> None:
+        if part.graphicsEffect() is effect:
+            part.setGraphicsEffect(None)  # type: ignore[arg-type]
+
+    move.finished.connect(done)
+    move.start()
 
 
 # ---------------------------------------------------------------- hover name
@@ -242,18 +276,47 @@ class Box(QFrame):
 
     SHADOW = 10  # room under the box for its shadow
     ROUND = 12
+    LIFT = 2  # how far it comes up under the mouse; it rests this much lower
 
     def __init__(self, raised: bool = True) -> None:
         super().__init__()
         self.raised = raised
+        self.lift = 0.0  # 0 resting, 1 all the way up
+        self._rise = glide(self, 200, self._lift_to)
         if raised:
-            self.setContentsMargins(3 + 16, 1 + 12, 3 + 16, self.SHADOW + 14)
+            self.setContentsMargins(*self.around(16, 12, 16, 14))
         self.column = QVBoxLayout(self)
         self.column.setContentsMargins(0, 0, 0, 0)
         self.column.setSpacing(8)
 
+    def around(self, left: int, top: int, right: int, bottom: int) -> tuple[int, int, int, int]:
+        """The box's margins for this much room inside the paper."""
+        down = self.LIFT
+        return 3 + left, 1 + down + top, 3 + right, self.SHADOW - down + bottom
+
     def paper(self) -> QRectF:
-        return QRectF(self.rect()).adjusted(3, 1, -3, -self.SHADOW)
+        down = self.LIFT * (1 - self.lift)
+        return QRectF(self.rect()).adjusted(3, 1 + down, -3, -self.SHADOW + down)
+
+    def enterEvent(self, event) -> None:
+        super().enterEvent(event)
+        if self.raised:
+            _go(self._rise, self, self.lift, 1.0)
+
+    def leaveEvent(self, event) -> None:
+        super().leaveEvent(event)
+        if not _go(self._rise, self, self.lift, 0.0):
+            self._lift_to(0.0)
+
+    def _lift_to(self, lift: float) -> None:
+        # What is in the box comes up with the paper: whole pixels taken
+        # from the top margin go to the bottom one, so the box's size stays.
+        up = round(self.LIFT * lift) - round(self.LIFT * self.lift)
+        self.lift = lift
+        if up:
+            m = self.contentsMargins()
+            self.setContentsMargins(m.left(), m.top() - up, m.right(), m.bottom() + up)
+        self.update()
 
     def paintEvent(self, event) -> None:
         if not self.raised:
@@ -263,7 +326,7 @@ class Box(QFrame):
         paper = self.paper()
         for step in range(self.SHADOW):  # darker toward the box, and narrower than it
             out = self.SHADOW - step
-            painter.setBrush(QColor(0, 0, 0, 4))
+            painter.setBrush(QColor(0, 0, 0, 4 + round(2 * self.lift)))
             painter.drawRoundedRect(
                 paper.adjusted(out, self.ROUND, -out, out - 1), self.ROUND, self.ROUND
             )
@@ -279,7 +342,7 @@ class Row(Box):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setContentsMargins(3 + 14, 1 + 8, 3 + 10, self.SHADOW + 8)
+        self.setContentsMargins(*self.around(14, 8, 10, 8))
         self.line = QHBoxLayout()
         self.column.addLayout(self.line)
 
@@ -708,9 +771,17 @@ class Status(QLabel):
     def __init__(self, state: str = "off", words: str = "") -> None:
         super().__init__()
         self.state = state
+        self.grown = 1.0  # the dot's size; a new state's dot grows in
+        self._pulse = glide(self, 300, self._grow_to)
         self.say(state, words)
 
+    def _grow_to(self, grown: float) -> None:
+        self.grown = grown
+        self.update()
+
     def say(self, state: str, words: str) -> None:
+        if state != self.state and not _go(self._pulse, self, 0.4, 1.0):
+            self.grown = 1.0
         self.state = state
         self.setText(words)
         self.updateGeometry()
@@ -735,7 +806,8 @@ class Status(QLabel):
         middle = self.height() / 2
         dot = "neutral" if self.state == "off" else self.COLORS[self.state]
         painter.setBrush(ink(look[dot]))
-        painter.drawEllipse(QPointF(self.DOT / 2, middle), self.DOT / 2, self.DOT / 2)
+        radius = self.DOT / 2 * self.grown
+        painter.drawEllipse(QPointF(self.DOT / 2, middle), radius, radius)
         painter.setPen(ink(look[self.COLORS[self.state]]))
         painter.setFont(self._font())
         words = QRectF(self.rect()).adjusted(self.DOT + self.GAP, 0, 0, 0)
@@ -848,6 +920,8 @@ class Steps(QWidget):
                 label.setProperty("kind", kind)
                 label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
                 words.addWidget(label)
+                arrive(label)
+        arrive(mark)
         row.addLayout(words, 1)
         self.rows.addLayout(row)
 
