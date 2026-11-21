@@ -366,6 +366,21 @@ after the owner's click (`servers.manage`, which no moderator can have):
   leave a `level.dat` is an error with the log's path, even when Chunker
   exits with 0.
 
+### playit.gg's Reconnect, after a click
+
+playit.gg's program (`playitd`, BSD-2-Clause) is installed by the desktop
+app after a click (`desktop/pc.py`, its signed setup). The agent only talks
+to it over its local pipe, with one exception: the Reconnect button, which
+shows when the program stopped. `agent/playit.py` `reconnect()` is the only
+place that runs it, and only after the owner's click (`pc.settings` and
+owner only, `POST /playit/reconnect`):
+
+- the command is a fixed list (`[playit.exe, "start"]`), never through a
+  shell, and nothing from a request reaches it. The program's path is the
+  one its setup put it at;
+- `stdin` is `DEVNULL`, output is captured and only its first 300
+  characters are shown, and it is killed after 60 seconds.
+
 ### The separate Windows user
 
 With "Run servers as a separate Windows user" on (the default for new
