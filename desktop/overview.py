@@ -14,7 +14,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QFrame,
@@ -223,6 +223,16 @@ class ProtectionCard(QWidget):
         self.window_.install_addon(addon["project"])
 
 
+class EvenGrid(QGridLayout):
+    """Two equal columns: with an odd width left over, one column would get
+    the spare pixel, so leave that pixel empty on the right instead."""
+
+    def setGeometry(self, rect: QRect) -> None:
+        if (rect.width() - self.horizontalSpacing()) % 2:
+            rect = rect.adjusted(0, 0, -1, 0)
+        super().setGeometry(rect)
+
+
 class SimpleOverview(QWidget):
     def __init__(self, window: MainWindow) -> None:
         super().__init__()
@@ -255,7 +265,7 @@ class SimpleOverview(QWidget):
         self.protection = ProtectionCard(window)
         column.addWidget(self.protection)
 
-        self.grid = grid = QGridLayout()
+        self.grid = grid = EvenGrid()
         grid.setSpacing(12)
         address, layout = card(text("desktop.card.address"), "address")
         self.address = label(name="h2")
@@ -322,10 +332,13 @@ class SimpleOverview(QWidget):
             self.grid.addWidget(frame, i // 2, i % 2, 1, 2 if last_alone else 1)
 
     def even_cards(self) -> None:
-        """All four cards as tall as the tallest, at the width they have."""
+        """All four cards as wide as the widest needs and as tall as the
+        tallest, so a narrow window doesn't give one column more room."""
         shown = [c for c in self.cards if not c.isHidden()]
+        widest = max(c.minimumSizeHint().width() for c in shown)
         tallest = max(max(c.sizeHint().height(), c.heightForWidth(c.width())) for c in shown)
         for frame in self.cards:
+            frame.setMinimumWidth(widest)
             frame.setMinimumHeight(tallest)
 
     def resizeEvent(self, event) -> None:
