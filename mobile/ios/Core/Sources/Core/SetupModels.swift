@@ -806,6 +806,7 @@ public struct CrossplayInfo: Decodable, Equatable, Sendable {
         differences = c.value(.differences, [])
         address = c.maybe(.address)
         addressUnknown = c.maybe(.addressUnknown)
+        consoleFriends = c.maybe(.consoleFriends)
     }
 }
 
