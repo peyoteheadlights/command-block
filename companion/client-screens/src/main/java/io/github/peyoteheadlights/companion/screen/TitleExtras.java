@@ -142,12 +142,12 @@ public final class TitleExtras {
         });
     }
 
-    /** A checked PNG from the modpack as a texture; its size, or null when there's none. */
     /** "play.example.net" and "Play.Example.net:25565" are the same server. */
     static boolean sameAddress(String a, String b) {
         return a.replaceFirst(":25565$", "").equalsIgnoreCase(b.replaceFirst(":25565$", ""));
     }
 
+    /** A checked PNG from the modpack as a texture; its size, or null when there's none. */
     private static int[] texture(Path file, long maxBytes, Identifier id) {
         if (!Files.isRegularFile(file)) {
             return null;
