@@ -65,6 +65,8 @@ jobs:
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
     with:
       # The verification file lists every library Gradle uses, with its version.
+      # osv-scanner.toml skips the build-only ones, each with a reason.
       scan-args: |-
+        --config=./companion/osv-scanner.toml
         -r
         ./companion
