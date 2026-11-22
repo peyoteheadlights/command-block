@@ -241,9 +241,6 @@ struct ContentView: View {
 
     // MARK: - Make a modpack
 
-    /// Make a modpack from this server, then share it through the share
-    /// sheet or have the Discord bot post it.
-    @ViewBuilder
     /// Vanilla runs no mods: Make a modpack, and why Required to join needs Fabric.
     @ViewBuilder
     private func vanilla(_ content: ContentPages, _ palette: Palette) -> some View {
@@ -262,6 +259,9 @@ struct ContentView: View {
         }
     }
 
+    /// Make a modpack from this server, then share it through the share
+    /// sheet or have the Discord bot post it.
+    @ViewBuilder
     private func makeModpackCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
         let strings = model.strings
         SectionTitle(text: model.t("make.title"), palette: palette)
