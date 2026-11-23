@@ -736,6 +736,19 @@ class AgentClient(
         slow = true,
     )
 
+    /** Modrinth's and CurseForge's modpacks side by side, each named. */
+    suspend fun searchModpacks(query: String): ModSearch =
+        get("/api/modpacks/search?q=${path(query)}&limit=$SEARCH_PAGE", ModSearch.serializer())
+
+    /** Downloads a found modpack's newest release and reads it like a picked file. */
+    suspend fun fetchModpack(hit: ModrinthHit, serverId: String?): ModpackInspected {
+        val body = buildJsonObject {
+            put("project", hit.projectId.orEmpty())
+            put("server_id", serverId.orEmpty())
+        }
+        return call(post("/api/modpacks/${Modpacks.site(hit)}", body), ModpackInspected.serializer(), slow = true)
+    }
+
     /** Throws away a modpack read but not imported. */
     suspend fun forgetModpack(token: String): Ok =
         call(request("/api/modpacks/${path(token)}").delete().build(), Ok.serializer())

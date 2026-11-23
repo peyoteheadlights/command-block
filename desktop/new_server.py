@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .mods import pack_lines
+from .mods import find_pack, pack_lines
 from .overview import card
 from .ui import clock, field, label, push, refill, size, swatches
 from .words import has, mode, text
@@ -855,10 +855,30 @@ class NewServerScreen(QScrollArea):
         row.addWidget(choose)
         row.addStretch()
         layout.addLayout(row)
+        line = QHBoxLayout()
+        self.pack_box = QLineEdit()
+        self.pack_box.setMaxLength(100)
+        self.pack_box.setPlaceholderText(text("pack.find_placeholder"))
+        self.pack_box.setAccessibleName(text("pack.find_placeholder"))
+        find = push(text("pack.find"))
+        line.addWidget(self.pack_box, 1)
+        line.addWidget(find)
+        layout.addLayout(line)
         self.pack_slot = QVBoxLayout()
         layout.addLayout(self.pack_slot)
         choose.clicked.connect(self.pick_pack)
+        find.clicked.connect(self.find_pack)
+        self.pack_box.returnPressed.connect(self.find_pack)
         return frame
+
+    def find_pack(self) -> None:
+        """A modpack from Modrinth or CurseForge by name, read like a file."""
+        query = self.pack_box.text().strip()
+        if query:
+            find_pack(self.window_, query, "", self.say_pack, self.show_pack)
+
+    def say_pack(self, words: str) -> None:
+        refill(self.pack_slot, [label(words, "sub")] if words else [])
 
     def take(self, paths: list[str]) -> None:
         """A modpack dropped on the "+" tab."""

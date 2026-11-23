@@ -255,6 +255,30 @@ struct AddServerView: View {
             if adding.busy == "inspect" { Text(model.t("mobile.content.reading")).foregroundStyle(.secondary) }
             Button(model.t("mobile.content.modpack_choose")) { pickingPack = true }
                 .disabled(adding.busy != nil)
+            TextField(model.t("pack.find_placeholder"), text: Binding(get: { adding.packQuery }, set: { adding.packQuery = String($0.prefix(100)) }))
+            Button(model.t(adding.busy == "find" ? "mods.searching" : "pack.find")) {
+                let strings = model.strings
+                Task { await adding.findPacks(strings) }
+            }
+            .disabled(adding.busy != nil || adding.packQuery.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        if let found = adding.packsFound {
+            Section {
+                ForEach(found.problems, id: \.self) { Text($0).font(.footnote).foregroundStyle(.secondary) }
+                Text(model.t(found.hits.isEmpty ? "mods.nothing_found" : "pack.find_pick")).font(.footnote)
+                ForEach(found.hits) { hit in
+                    Button {
+                        let strings = model.strings
+                        Task { await adding.readFound(hit, strings) }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(hit.title)
+                            Text(Modpacks.about(model.strings, hit)).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    .disabled(adding.busy != nil)
+                }
+            }
         }
         if let inspected = adding.pack {
             let pack = inspected.pack

@@ -474,41 +474,65 @@ public struct ModHistory: Decodable, Equatable, Sendable {
 
 /// A Modrinth search result. `iconUrl` is loaded straight from Modrinth.
 public struct ModrinthHit: Decodable, Equatable, Identifiable, Sendable {
+    public var projectId: String?
     public var slug: String
     public var title: String
     public var description: String?
     public var downloads: Int64?
     public var iconUrl: String?
     public var page: String?
+    /// "modrinth" or "curseforge", and the site's name as shown.
+    public var source: String?
+    public var sourceName: String?
+    /// Modpacks: "Fabric", "Forge"..., the newest Minecraft version, "unsupported" when it's
+    /// made for players' games only, and what Modrinth was told it holds ("Shows ads").
+    public var loaders: [String]
+    public var minecraftVersion: String?
+    public var serverSide: String?
+    public var disclosures: [String]
 
     public var id: String { slug }
 
     enum CodingKeys: String, CodingKey {
-        case slug, title, description, downloads, page
+        case slug, title, description, downloads, page, source, loaders, disclosures
+        case projectId = "project_id"
         case iconUrl = "icon_url"
+        case sourceName = "source_name"
+        case minecraftVersion = "minecraft_version"
+        case serverSide = "server_side"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        projectId = c.maybe(.projectId)
         slug = c.value(.slug, "")
         title = c.value(.title, "")
         description = c.maybe(.description)
         downloads = c.maybe(.downloads)
         iconUrl = c.maybe(.iconUrl)
         page = c.maybe(.page)
+        source = c.maybe(.source)
+        sourceName = c.maybe(.sourceName)
+        loaders = c.each(.loaders)
+        minecraftVersion = c.maybe(.minecraftVersion)
+        serverSide = c.maybe(.serverSide)
+        disclosures = c.each(.disclosures)
     }
 }
 
 public struct ModSearch: Decodable, Equatable, Sendable {
     public var hits: [ModrinthHit]
     public var total: Int?
+    /// A site that couldn't be asked: "CurseForge isn't available right now."
+    public var problems: [String]
 
-    enum CodingKeys: String, CodingKey { case hits, total }
+    enum CodingKeys: String, CodingKey { case hits, total, problems }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         hits = c.each(.hits)
         total = c.maybe(.total)
+        problems = c.each(.problems)
     }
 }
 

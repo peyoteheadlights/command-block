@@ -37,6 +37,9 @@ final class AddServerPages {
     var ruled = false
     var jar = ""
     private(set) var pack: ModpackInspected?
+    var packQuery = ""
+    /// Modpacks found by name; picking one reads it like a picked file.
+    private(set) var packsFound: ModSearch?
     private(set) var task: Job?
     private(set) var busy: String?
     var said: Said?
@@ -79,6 +82,8 @@ final class AddServerPages {
         typedFolder = nil
         ruled = false
         jar = ""
+        packQuery = ""
+        packsFound = nil
         said = nil
         addedLines = []
         added = nil
@@ -215,6 +220,37 @@ final class AddServerPages {
         do {
             let read = try await client.inspectModpack(serverId: nil, file: file)
             pack = read
+            if name.trimmingCharacters(in: .whitespaces).isEmpty { name = read.pack.name }
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+    }
+
+    func findPacks(_ strings: Strings) async {
+        let query = packQuery.trimmingCharacters(in: .whitespaces)
+        guard let client = client(), busy == nil, !query.isEmpty else { return }
+        busy = "find"
+        said = nil
+        defer { busy = nil }
+        do {
+            packsFound = try await client.searchModpacks(query: query)
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+    }
+
+    func readFound(_ hit: ModrinthHit, _ strings: Strings) async {
+        guard let client = client(), busy == nil else { return }
+        busy = "inspect"
+        said = nil
+        defer { busy = nil }
+        await dropPack()
+        do {
+            let read = try await client.fetchModpack(hit, serverId: nil)
+            pack = read
+            packsFound = nil
             if name.trimmingCharacters(in: .whitespaces).isEmpty { name = read.pack.name }
         } catch let problem as AgentError {
             noted(problem)

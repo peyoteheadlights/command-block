@@ -22,6 +22,7 @@ import io.github.peyoteheadlights.mcsc.core.ModProject
 import io.github.peyoteheadlights.mcsc.core.ModVersion
 import io.github.peyoteheadlights.mcsc.core.ModVersions
 import io.github.peyoteheadlights.mcsc.core.ModpackInspected
+import io.github.peyoteheadlights.mcsc.core.ModSearch
 import io.github.peyoteheadlights.mcsc.core.ModrinthHit
 import io.github.peyoteheadlights.mcsc.core.PickedFile
 import io.github.peyoteheadlights.mcsc.core.Strings
@@ -345,6 +346,21 @@ class ContentPages(
     /** Reads the modpack on the PC; nothing changes until Import. */
     fun inspectModpack(file: PickedFile, strings: Strings) = work("modpack", strings) {
         modpack = it.inspectModpack(serverId, file)
+        null
+    }
+
+    /** Modpacks found by name on Modrinth and CurseForge; picking one reads it like a file. */
+    var packsFound: ModSearch? by mutableStateOf(null)
+        private set
+
+    fun findPacks(query: String, strings: Strings) = work("find_pack", strings) {
+        packsFound = it.searchModpacks(query.trim())
+        null
+    }
+
+    fun readFound(hit: ModrinthHit, strings: Strings) = work("modpack", strings) {
+        modpack = it.fetchModpack(hit, serverId)
+        packsFound = null
         null
     }
 

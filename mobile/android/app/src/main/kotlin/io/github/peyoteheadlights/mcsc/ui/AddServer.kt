@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.AddServer
 import io.github.peyoteheadlights.mcsc.core.Display
 import io.github.peyoteheadlights.mcsc.core.Memory
+import io.github.peyoteheadlights.mcsc.core.Modpacks
 import io.github.peyoteheadlights.mcsc.core.NewServerOptions
 
 /**
@@ -275,6 +276,31 @@ private fun LazyListScope.fromModpack(vm: AppViewModel, adding: AddServerPages, 
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Gap) {
                 if (adding.busy == "inspect") Text(t("mobile.content.reading"), color = LocalColors.current.text2)
                 OutlinedButton(onClick = pick, enabled = adding.busy == null) { Text(t("mobile.content.modpack_choose")) }
+                OutlinedTextField(
+                    value = adding.packQuery,
+                    onValueChange = { adding.packQuery = it.take(100) },
+                    label = { Text(t("pack.find_placeholder")) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedButton(onClick = { adding.findPacks(strings) }, enabled = adding.busy == null && adding.packQuery.isNotBlank()) {
+                    Text(t(if (adding.busy == "find") "mods.searching" else "pack.find"))
+                }
+            }
+        }
+    }
+    adding.packsFound?.let { found ->
+        item {
+            val strings = vm.strings
+            Card {
+                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    for (problem in found.problems) Text(problem, color = LocalColors.current.text2, modifier = Modifier.padding(horizontal = 16.dp))
+                    if (found.hits.isEmpty()) Text(t("mods.nothing_found"), color = LocalColors.current.text2, modifier = Modifier.padding(horizontal = 16.dp))
+                    else Text(t("pack.find_pick"), color = LocalColors.current.text2, modifier = Modifier.padding(horizontal = 16.dp))
+                    for (hit in found.hits) {
+                        Item(hit.title, subtitle = Modpacks.about(strings, hit), onClick = { adding.readFound(hit, strings) })
+                    }
+                }
             }
         }
     }

@@ -116,6 +116,18 @@ extension AgentClient {
         return try await upload(path, file, as: ModpackInspected.self)
     }
 
+    /// Modrinth's and CurseForge's modpacks side by side, each named.
+    public func searchModpacks(query: String) async throws -> ModSearch {
+        let path = "/api/modpacks/search?q=" + AgentClient.pathSegment(query) + "&limit=\(AgentClient.SEARCH_PAGE)"
+        return try await call("GET", path, as: ModSearch.self)
+    }
+
+    /// Downloads a found modpack's newest release and reads it like a picked file.
+    public func fetchModpack(_ hit: ModrinthHit, serverId: String?) async throws -> ModpackInspected {
+        let body = try AgentClient.encode(FetchBody(project: hit.projectId ?? "", server_id: serverId ?? ""))
+        return try await call("POST", "/api/modpacks/" + Modpacks.site(hit), body: body, slow: true, as: ModpackInspected.self)
+    }
+
     /// Throws away a modpack read but not imported.
     public func forgetModpack(token: String) async throws {
         _ = try await call("DELETE", "/api/modpacks/" + AgentClient.pathSegment(token), as: Ok.self)
@@ -255,6 +267,11 @@ extension AgentClient {
     private struct ImportBody: Encodable {
         let token: String
         let confirm: Bool
+    }
+
+    private struct FetchBody: Encodable {
+        let project: String
+        let server_id: String
     }
 }
 

@@ -7,7 +7,9 @@ import io.github.peyoteheadlights.mcsc.core.AddServer
 import io.github.peyoteheadlights.mcsc.core.AgentClient
 import io.github.peyoteheadlights.mcsc.core.AgentException
 import io.github.peyoteheadlights.mcsc.core.Job
+import io.github.peyoteheadlights.mcsc.core.ModSearch
 import io.github.peyoteheadlights.mcsc.core.ModpackInspected
+import io.github.peyoteheadlights.mcsc.core.ModrinthHit
 import io.github.peyoteheadlights.mcsc.core.NewServerOptions
 import io.github.peyoteheadlights.mcsc.core.NewServerRequest
 import io.github.peyoteheadlights.mcsc.core.OfferedVersion
@@ -59,6 +61,10 @@ class AddServerPages(
     var jar: String by mutableStateOf("")
     var pack: ModpackInspected? by mutableStateOf(null)
         private set
+    var packQuery: String by mutableStateOf("")
+    /** Modpacks found by name; picking one reads it like a picked file. */
+    var packsFound: ModSearch? by mutableStateOf(null)
+        private set
     var task: Job? by mutableStateOf(null)
         private set
     var busy: String? by mutableStateOf(null)
@@ -99,6 +105,8 @@ class AddServerPages(
         typedFolder = null
         ruled = false
         jar = ""
+        packQuery = ""
+        packsFound = null
         said = null
         addedLines = emptyList()
         added = null
@@ -252,6 +260,42 @@ class AddServerPages(
             try {
                 dropPack()
                 pack = c.inspectModpack(null, file).also { if (name.isBlank()) name = it.pack.name }
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
+    }
+
+    fun findPacks(strings: Strings) {
+        val c = client() ?: return
+        if (busy != null || packQuery.isBlank()) return
+        busy = "find"
+        said = null
+        scope.launch {
+            try {
+                packsFound = c.searchModpacks(packQuery.trim())
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
+    }
+
+    fun readFound(hit: ModrinthHit, strings: Strings) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = "inspect"
+        said = null
+        scope.launch {
+            try {
+                dropPack()
+                pack = c.fetchModpack(hit, null).also { if (name.isBlank()) name = it.pack.name }
+                packsFound = null
             } catch (e: AgentException) {
                 noted(e)
                 said = Said(Message.of(e).text(strings), good = false)

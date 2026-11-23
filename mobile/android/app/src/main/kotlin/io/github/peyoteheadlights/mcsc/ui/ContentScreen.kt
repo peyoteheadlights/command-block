@@ -382,6 +382,22 @@ private fun AddFiles(vm: AppViewModel, content: ContentPages, kind: ContentKind)
                 ),
             )
             Note(t("pack.into_intro"), color = LocalColors.current.text3)
+            var packQuery by rememberSaveable { mutableStateOf("") }
+            OutlinedTextField(
+                value = packQuery,
+                onValueChange = { packQuery = it.take(100) },
+                label = { Text(t("pack.find_placeholder")) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            )
+            Presses(listOf(Press(t(if (busy == "find_pack") "mods.searching" else "pack.find"), { content.findPacks(packQuery, strings) }, enabled = busy == null && packQuery.isNotBlank())))
+            content.packsFound?.let { found ->
+                for (problem in found.problems) Note(problem)
+                Note(t(if (found.hits.isEmpty()) "mods.nothing_found" else "pack.find_pick"))
+                for (hit in found.hits) {
+                    Item(hit.title, subtitle = Modpacks.about(strings, hit), onClick = { content.readFound(hit, strings) })
+                }
+            }
         }
     }
 }
