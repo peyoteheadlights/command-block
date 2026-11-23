@@ -180,6 +180,28 @@ extension AgentClient {
         _ = try await call("DELETE", content(serverId) + "/modpack/link", as: Ok.self)
     }
 
+    /// What Make a modpack offers: name, next version, config files, players' loaders.
+    public func makeModpackOptions(serverId: String) async throws -> ModpackMakeOptions {
+        try await call("GET", content(serverId) + "/modpack/make", as: ModpackMakeOptions.self)
+    }
+
+    /// Makes a modpack from this server, as a task; `downloadModpack` fetches it.
+    public func makeModpack(serverId: String, _ answers: MakeModpack) async throws -> ModpackMade {
+        let body = try AgentClient.encode(answers)
+        return try await call("POST", content(serverId) + "/modpack/make", body: body, slow: true, as: ModpackMade.self)
+    }
+
+    /// Writes the made modpack to `destination`, for the share sheet.
+    public func downloadModpack(serverId: String, made: ModpackMade, to destination: URL) async throws -> Int64 {
+        try await downloadZip(content(serverId) + "/modpack/made/" + AgentClient.pathSegment(made.token), to: destination, progress: { _, _ in })
+    }
+
+    /// The Discord bot posts the made modpack in this server's chat channels.
+    public func postModpack(serverId: String, token: String) async throws -> ModpackPosted {
+        let body = try AgentClient.encode(["token": token])
+        return try await call("POST", content(serverId) + "/modpack/made/discord", body: body, as: ModpackPosted.self)
+    }
+
     /// A Bedrock server's behavior and resource packs.
     public func addons(serverId: String) async throws -> AddonList {
         try await call("GET", content(serverId) + "/addons", as: AddonList.self)

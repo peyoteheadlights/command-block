@@ -20,6 +20,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,6 +54,9 @@ import io.github.peyoteheadlights.mcsc.core.SameJob
 import io.github.peyoteheadlights.mcsc.core.Modpacks
 import io.github.peyoteheadlights.mcsc.core.LinkedModpack
 import io.github.peyoteheadlights.mcsc.core.LinkedPacks
+import io.github.peyoteheadlights.mcsc.core.MadeModpacks
+import io.github.peyoteheadlights.mcsc.core.MakeModpack
+import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
 import io.github.peyoteheadlights.mcsc.core.PlayerFile
 import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
 import io.github.peyoteheadlights.mcsc.core.Sides
@@ -152,6 +156,7 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
     }
     if (list.storedSeparately) item { Note(t("mods.stored_separately"), color = LocalColors.current.text2) }
     list.modpack?.let { pack -> item { LinkedPackCard(vm, content, pack, changes == Changes.READY && idle) } }
+    if (vm.canDo(Permissions.MODS_MANAGE)) item { MakeModpackCard(vm, content, idle) }
     list.fit?.let { fit -> item { StillFitCard(vm, content, list, fit, kind, changes == Changes.READY && idle) } }
     if (list.overlaps.isNotEmpty()) item { SameJobCard(vm, content, list, changes == Changes.READY && idle) }
 
@@ -613,6 +618,7 @@ private fun ContentDialogs(vm: AppViewModel, content: ContentPages, ask: (Conten
     content.missingPlan?.let { MissingDialog(vm, content) }
     content.modpack?.let { ModpackDialog(vm, content) }
     content.packUpdate?.let { PackUpdateDialog(vm, content) }
+    content.makeOptions?.let { options -> MakeModpackDialog(vm, content, options) }
 }
 
 /** A sheet-like question: a title, scrolling words, and one button plus Cancel. */
@@ -760,6 +766,85 @@ private fun PackUpdateDialog(vm: AppViewModel, content: ContentPages) {
             }
         }
         for (step in LinkedPacks.steps(strings, read)) Text("• $step", modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
+/** Make a modpack from this server, then share it through the phone's
+ * share menu or have the Discord bot post it. */
+@Composable
+private fun MakeModpackCard(vm: AppViewModel, content: ContentPages, idle: Boolean) {
+    val strings = vm.strings
+    val context = LocalContext.current
+    SectionTitle(t("make.title"))
+    Card {
+        Note(t("make.intro"))
+        val made = content.made
+        if (made != null) {
+            for (line in MadeModpacks.lines(strings, made)) Note(line, color = LocalColors.current.text)
+        }
+        Presses(
+            listOfNotNull(
+                Press(t("make.start"), { content.askMakeModpack(strings) }, enabled = idle),
+                Press(t("make.share"), {
+                    content.shareModpack(sharedFolder(context, "modpack"), strings) { shareFile(context, it, strings.t("make.share")) }
+                }, enabled = idle).takeIf { made != null },
+                Press(t("make.discord"), { content.postModpack(strings) }, enabled = idle).takeIf { made?.discord == true },
+            ),
+        )
+        if (made != null) {
+            Note(t("make.guide_title"), color = LocalColors.current.text)
+            Note(t("make.guide"))
+        }
+    }
+}
+
+@Composable
+private fun MakeModpackDialog(vm: AppViewModel, content: ContentPages, options: ModpackMakeOptions) {
+    val strings = vm.strings
+    var name by remember(options) { mutableStateOf(options.name) }
+    var version by remember(options) { mutableStateOf(options.version) }
+    var leaveOut by remember(options) { mutableStateOf(true) }
+    var loader by remember(options) { mutableStateOf(options.playersLoaders.firstOrNull()?.id ?: "fabric") }
+    var configs by remember(options) { mutableStateOf(setOf<String>()) }
+    Question(
+        strings.t("make.title"),
+        confirm = strings.t("make.title"),
+        enabled = name.isNotBlank() && version.isNotBlank(),
+        onConfirm = { content.makeModpack(MakeModpack(name.trim(), version.trim(), leaveOut, configs.toList(), loader), strings) },
+        onDismiss = content::cancelMakeModpack,
+    ) {
+        OutlinedTextField(value = name, onValueChange = { name = it.take(64) }, label = { Text(t("make.name")) }, singleLine = true)
+        OutlinedTextField(value = version, onValueChange = { version = it.take(32) }, label = { Text(t("make.version")) }, singleLine = true)
+        if (options.playersLoaders.isNotEmpty()) {
+            Text(t("make.loader"), modifier = Modifier.padding(top = 6.dp))
+            for (choice in options.playersLoaders) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = loader == choice.id, onClick = { loader = choice.id })
+                    Text(choice.name)
+                }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+            Checkbox(checked = leaveOut, onCheckedChange = { leaveOut = it })
+            Text(t("make.leave_out"))
+        }
+        Text(t("make.leave_out_hint"))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Greyed until the join check (the Companion mod) exists.
+            Checkbox(checked = false, onCheckedChange = null, enabled = options.requiredToJoin.available)
+            Text(t("make.required"))
+        }
+        if (!options.requiredToJoin.available) Text(t("make.required_later"))
+        Text(t(if (options.configs.isEmpty()) "make.no_configs" else "make.configs"), modifier = Modifier.padding(top = 6.dp))
+        for (config in options.configs) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = config.path in configs,
+                    onCheckedChange = { on -> configs = if (on) configs + config.path else configs - config.path },
+                )
+                Text(config.path)
+            }
+        }
     }
 }
 

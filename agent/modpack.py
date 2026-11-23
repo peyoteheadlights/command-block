@@ -68,6 +68,7 @@ from urllib.parse import urlparse
 from . import downloads, linkedpack, notes, servertypes
 from .downloads import DownloadError, FileSpec
 from .events import Event
+from .mods.curseforge import FILE_HOSTS as CURSEFORGE_HOSTS
 from .mods.curseforge import GOOD_STATUS, LOADERS, Blocked, CurseForgeClient, version_of
 from .mods.sides import FOLDER as PLAYER_FOLDER
 from .mods.sources import SourceError
@@ -139,6 +140,10 @@ CLIENT_ONLY = frozenset(
 )
 # Mods are only taken from Modrinth's own CDN.
 DOWNLOAD_HOSTS = frozenset({"cdn.modrinth.com"})
+# A file entry may also come from CurseForge's file servers: a modpack made
+# by Command Block puts in a CurseForge mod only when its author lets other
+# apps download it (agent/modpackmake.py). Checked by SHA-512 all the same.
+FILE_HOSTS = DOWNLOAD_HOSTS | CURSEFORGE_HOSTS
 SHA512_RE = re.compile(r"^[0-9a-fA-F]{128}$")
 TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -276,13 +281,13 @@ def _check_file(entry: Any) -> PackFile:
         found.status, found.reason = REFUSED, f"it's on the list of known bad files ({bad['why']})"
         return found
     urls = [str(u) for u in (entry.get("downloads") or []) if isinstance(u, str)]
-    modrinth = [
-        u for u in urls if urlparse(u).scheme == "https" and urlparse(u).hostname in DOWNLOAD_HOSTS
+    sites = [
+        u for u in urls if urlparse(u).scheme == "https" and urlparse(u).hostname in FILE_HOSTS
     ]
-    if not modrinth:
-        found.status, found.reason = REFUSED, "it isn't on Modrinth's download site"
+    if not sites:
+        found.status, found.reason = REFUSED, "it isn't on Modrinth's or CurseForge's download site"
         return found
-    found.sha512, found.url = sha512.lower(), modrinth[0]
+    found.sha512, found.url = sha512.lower(), sites[0]
     found.key = found.sha512
     project = MODRINTH_DATA.match(urlparse(found.url).path)
     found.project = project.group(1) if project else None

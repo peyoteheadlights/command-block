@@ -94,6 +94,11 @@ POST /api/servers/{server_id}/modpack
 POST /api/servers/{server_id}/modpack/update/preview
 POST /api/servers/{server_id}/modpack/update
 DELETE /api/servers/{server_id}/modpack/link
+GET /api/servers/{server_id}/modpack/make
+POST /api/servers/{server_id}/modpack/make
+POST /api/servers/{server_id}/modpack/made/discord
+# The made modpack is a zip, not JSON, so it has no typed answer; the apps
+# download it from GET /api/servers/{server_id}/modpack/made/{token}.
 GET /api/servers/{server_id}/addons
 POST /api/servers/{server_id}/addons/upload
 PUT /api/servers/{server_id}/addons/{pack_uuid}

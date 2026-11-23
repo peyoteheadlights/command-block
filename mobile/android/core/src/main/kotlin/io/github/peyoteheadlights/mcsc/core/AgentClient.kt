@@ -813,6 +813,34 @@ class AgentClient(
     suspend fun unlinkModpack(serverId: String): Ok =
         call(request("${server(serverId)}/modpack/link").delete().build(), Ok.serializer())
 
+    /** What Make a modpack offers: name, next version, config files, players' loaders. */
+    suspend fun makeModpackOptions(serverId: String): ModpackMakeOptions =
+        get("${server(serverId)}/modpack/make", ModpackMakeOptions.serializer())
+
+    /** Makes a modpack from this server, as a task; [downloadModpack] fetches it. */
+    suspend fun makeModpack(serverId: String, make: MakeModpack): ModpackMade {
+        val body = buildJsonObject {
+            put("name", make.name)
+            put("version", make.version)
+            put("leave_out_server_only", make.leaveOutServerOnly)
+            put("configs", JsonArray(make.configs.map { JsonPrimitive(it) }))
+            put("players_loader", make.playersLoader)
+        }
+        return call(post("${server(serverId)}/modpack/make", body), ModpackMade.serializer(), slow = true)
+    }
+
+    /** Streams the made modpack into [out], as [downloadBackup] does, for the share menu. */
+    suspend fun downloadModpack(
+        serverId: String,
+        made: ModpackMade,
+        out: java.io.OutputStream,
+        progress: (Long, Long?) -> Unit = { _, _ -> },
+    ): Long = downloadZip("${server(serverId)}/modpack/made/${path(made.token)}", out, progress)
+
+    /** The Discord bot posts the made modpack in this server's chat channels. */
+    suspend fun postModpack(serverId: String, token: String): ModpackPosted =
+        call(post("${server(serverId)}/modpack/made/discord", buildJsonObject { put("token", token) }), ModpackPosted.serializer())
+
     /** A Bedrock server's behavior and resource packs. */
     suspend fun addons(serverId: String): AddonList = get("${server(serverId)}/addons", AddonList.serializer())
 

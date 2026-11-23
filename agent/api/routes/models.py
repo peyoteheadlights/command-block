@@ -371,6 +371,20 @@ class ModpackUpdateRequest(BaseModel):
     own_jars: bool = False
 
 
+class ModpackMakeRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    version: str = Field(min_length=1, max_length=32)
+    # On by default: friends get a smaller file without the server's mods.
+    leave_out_server_only: bool = True
+    configs: list[str] = Field(default_factory=list, max_length=2000)
+    # For a plugin or plain server: the loader players' mods are for.
+    players_loader: str = Field(default="fabric", pattern=r"^[a-z]{1,16}$")
+
+
+class ModpackPostRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=32)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(max_length=220)
 

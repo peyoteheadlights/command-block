@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 from .agent import AgentError
 from .editor import GuideWindow, pick_file
 from .fixes import install
+from .make_modpack import MakeCard
 from .overview import card, title_of
 from .ui import Page, clock, label, push, refill, size
 from .words import mode, text
@@ -222,6 +223,9 @@ class ModsPage(Page):
         layout.addWidget(self.linked_words)
         layout.addWidget(self.linked_buttons)
         self.column.addWidget(self.linked_card)
+        # Make a modpack from this server and share it.
+        self.make_card = MakeCard(self)
+        self.column.addWidget(self.make_card.frame)
 
         # Still fit?: after a mod or version change, the mods that need a
         # different version (ticked, run as one Update all), the ones with
@@ -545,6 +549,7 @@ class ModsPage(Page):
             button.setEnabled(self.can_change)
         self.update_all_ready()
         self.show_linked(data.get("modpack"))
+        self.make_card.show(self.row)
         self.show_sides(data)
         self.show_fit(data.get("fit"))
         self.show_same(data.get("overlaps") or [])
