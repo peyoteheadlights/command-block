@@ -86,6 +86,9 @@ POST /api/modpacks/modrinth
 POST /api/modpacks/curseforge
 DELETE /api/modpacks/{token}
 POST /api/servers/{server_id}/modpack
+POST /api/servers/{server_id}/modpack/update/preview
+POST /api/servers/{server_id}/modpack/update
+DELETE /api/servers/{server_id}/modpack/link
 GET /api/servers/{server_id}/addons
 POST /api/servers/{server_id}/addons/upload
 PUT /api/servers/{server_id}/addons/{pack_uuid}

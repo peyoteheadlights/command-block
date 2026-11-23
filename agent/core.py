@@ -19,7 +19,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from . import __version__, colors, memory, protection, supportask, watchers
+from . import __version__, colors, linkedpack, memory, protection, supportask, watchers
 from .autosleep import AutoSleep
 from .backups.manager import BackupManager
 from .config import ConfigError
@@ -297,6 +297,7 @@ class ServerContext:
         await asyncio.sleep(60)
         while True:
             try:
+                await linkedpack.check_quietly(self, relay=False)
                 updates = await self.mods.check_updates(background=True)
                 if updates:
                     await self.bus.publish(

@@ -62,6 +62,8 @@ public struct Mod: Decodable, Equatable, Identifiable, Sendable {
     public var status: String?
     public var issues: [ModIssue]
     public var updateAvailable: ModUpdate?
+    /// On a linked modpack's server: true when the modpack didn't put it there.
+    public var addedByYou: Bool?
 
     public var id: String { filename }
 
@@ -70,6 +72,7 @@ public struct Mod: Decodable, Equatable, Identifiable, Sendable {
         case modId = "mod_id"
         case minecraftRange = "minecraft_range"
         case updateAvailable = "update_available"
+        case addedByYou = "added_by_you"
     }
 
     public init(
@@ -101,6 +104,7 @@ public struct Mod: Decodable, Equatable, Identifiable, Sendable {
         status = c.maybe(.status)
         issues = c.each(.issues)
         updateAvailable = c.maybe(.updateAvailable)
+        addedByYou = c.maybe(.addedByYou)
     }
 }
 
@@ -115,9 +119,11 @@ public struct ModList: Decodable, Equatable, Sendable {
     public var fit: ModFit?
     /// The same mod twice, or mods that do the same job.
     public var overlaps: [Overlap]
+    /// The modpack this server came from; nil: not linked.
+    public var modpack: LinkedModpack?
 
     enum CodingKeys: String, CodingKey {
-        case mods, fit, overlaps
+        case mods, fit, overlaps, modpack
         case minecraftVersion = "minecraft_version"
         case serverState = "server_state"
         case storedSeparately = "stored_separately"
@@ -140,7 +146,118 @@ public struct ModList: Decodable, Equatable, Sendable {
         storedSeparately = c.value(.storedSeparately, false)
         fit = c.maybe(.fit)
         overlaps = c.each(.overlaps)
+        modpack = c.maybe(.modpack)
     }
+}
+
+public struct LinkedModpackUpdate: Decodable, Equatable, Sendable {
+    public var versionId: String
+    /// Empty for CurseForge, whose names aren't kept.
+    public var version: String
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case versionId = "version_id"
+    }
+
+    public init(versionId: String, version: String = "") {
+        self.versionId = versionId
+        self.version = version
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        versionId = try c.decode(String.self, forKey: .versionId)
+        version = c.value(.version, "")
+    }
+}
+
+/// The modpack a server came from, for its card on the Mods page.
+public struct LinkedModpack: Decodable, Equatable, Sendable {
+    public var name: String
+    /// Modrinth or CurseForge.
+    public var site: String
+    public var version: String
+    public var update: LinkedModpackUpdate?
+    public var addedByYou: Int
+
+    enum CodingKeys: String, CodingKey {
+        case name, site, version, update
+        case addedByYou = "added_by_you"
+    }
+
+    public init(name: String = "", site: String = "", version: String = "", update: LinkedModpackUpdate? = nil, addedByYou: Int = 0) {
+        self.name = name
+        self.site = site
+        self.version = version
+        self.update = update
+        self.addedByYou = addedByYou
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = c.value(.name, "")
+        site = c.value(.site, "")
+        version = c.value(.version, "")
+        update = c.maybe(.update)
+        addedByYou = c.value(.addedByYou, 0)
+    }
+}
+
+public struct NewerMod: Decodable, Equatable, Sendable {
+    public var name: String
+    public var from: String
+    public var to: String
+
+    enum CodingKeys: String, CodingKey { case name, from, to }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = c.value(.name, "")
+        from = c.value(.from, "")
+        to = c.value(.to, "")
+    }
+}
+
+/// What Modpack update changes, compared by file hash.
+public struct ModpackChanges: Decodable, Equatable, Sendable {
+    public var toVersion: String
+    public var added: [String]
+    public var removed: [String]
+    public var newer: [NewerMod]
+    public var addedByYou: [String]
+    public var configsChangedByYou: [String]
+    public var versionChange: Bool
+    public var minecraftVersion: String
+    public var problems: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case added, removed, newer, problems
+        case toVersion = "to_version"
+        case addedByYou = "added_by_you"
+        case configsChangedByYou = "configs_changed_by_you"
+        case versionChange = "version_change"
+        case minecraftVersion = "minecraft_version"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        toVersion = c.value(.toVersion, "")
+        added = c.value(.added, [])
+        removed = c.value(.removed, [])
+        newer = c.each(.newer)
+        addedByYou = c.value(.addedByYou, [])
+        configsChangedByYou = c.value(.configsChangedByYou, [])
+        versionChange = c.value(.versionChange, false)
+        minecraftVersion = c.value(.minecraftVersion, "")
+        problems = c.value(.problems, [])
+    }
+}
+
+public struct ModpackUpdatePreview: Decodable, Equatable, Sendable {
+    public var token: String
+    public var pack: Modpack
+    public var changes: ModpackChanges
 }
 
 /// One mod in an `Overlap`. `turnOff`: the pick isn't this one.

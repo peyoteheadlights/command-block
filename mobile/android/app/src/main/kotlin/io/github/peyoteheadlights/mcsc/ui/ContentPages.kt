@@ -22,6 +22,7 @@ import io.github.peyoteheadlights.mcsc.core.ModProject
 import io.github.peyoteheadlights.mcsc.core.ModVersion
 import io.github.peyoteheadlights.mcsc.core.ModVersions
 import io.github.peyoteheadlights.mcsc.core.ModpackInspected
+import io.github.peyoteheadlights.mcsc.core.ModpackUpdatePreview
 import io.github.peyoteheadlights.mcsc.core.ModSearch
 import io.github.peyoteheadlights.mcsc.core.ModrinthHit
 import io.github.peyoteheadlights.mcsc.core.PickedFile
@@ -382,6 +383,39 @@ class ContentPages(
             val done = it.importModpack(serverId, read.token)
             Said(strings.t("mobile.content.modpack_done", "name" to done.modpack.name.ifBlank { read.pack.name }), good = true)
         }
+    }
+
+    // ------------------------------------------------------------ linked modpack
+    var packUpdate: ModpackUpdatePreview? by mutableStateOf(null)
+        private set
+
+    /** Gets the new version; nothing changes until Modpack update is pressed. */
+    fun previewPackUpdate(versionId: String?, strings: Strings) = work("modpack", strings) {
+        packUpdate = it.previewModpackUpdate(serverId, versionId)
+        null
+    }
+
+    fun cancelPackUpdate() {
+        val token = packUpdate?.token ?: return
+        packUpdate = null
+        val c = client() ?: return
+        scope.launch {
+            try { c.forgetModpack(token) } catch (e: AgentException) { /* The PC drops it later itself. */ }
+        }
+    }
+
+    fun updatePack(usePackConfigs: Boolean, strings: Strings) {
+        val read = packUpdate ?: return
+        packUpdate = null
+        work("modpack", strings, reload = ::loadMods) {
+            it.updateModpack(serverId, read.token, usePackConfigs)
+            Said(strings.t("linked.updated", "name" to read.pack.name, "version" to read.changes.toVersion), good = true)
+        }
+    }
+
+    fun unlinkPack(strings: Strings) = work("unlink", strings, reload = ::loadMods) {
+        it.unlinkModpack(serverId)
+        null
     }
 
     // ------------------------------------------------------------ Bedrock packs

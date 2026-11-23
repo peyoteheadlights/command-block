@@ -186,6 +186,24 @@ class ModsPage(Page):
         self.separate = label(text("mods.stored_separately"), "sub")
         self.column.addWidget(self.separate)
 
+        # The modpack this server came from: Modpack update and Unlink
+        # (agent/linkedpack.py).
+        self.linked_card, layout = card(text("linked.title"))
+        self.linked_words = label(kind="sub")
+        self.linked_update = push(text("linked.update"), "primary")
+        self.linked_update.clicked.connect(self.preview_pack_update)
+        self.linked_unlink = push(text("linked.unlink"), "plain")
+        self.linked_unlink.clicked.connect(self.unlink_pack)
+        self.linked_buttons = QWidget()
+        line = QHBoxLayout(self.linked_buttons)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.addWidget(self.linked_update)
+        line.addWidget(self.linked_unlink)
+        line.addStretch()
+        layout.addWidget(self.linked_words)
+        layout.addWidget(self.linked_buttons)
+        self.column.addWidget(self.linked_card)
+
         # Still fit?: after a mod or version change, the mods that need a
         # different version (ticked, run as one Update all), the ones with
         # none and the ones nothing said about (agent/mods/fit.py).
@@ -339,6 +357,7 @@ class ModsPage(Page):
             self.stop_row,
             self.problems,
             self.needs_you_card,
+            self.linked_card,
             self.fit_card,
             self.same_card,
             self.missing_card,
@@ -482,6 +501,7 @@ class ModsPage(Page):
         ]:
             button.setEnabled(self.can_change)
         self.update_all_ready()
+        self.show_linked(data.get("modpack"))
         self.show_fit(data.get("fit"))
         self.show_same(data.get("overlaps") or [])
         needs = data.get("needs_you") or []
@@ -522,6 +542,8 @@ class ModsPage(Page):
             words.addWidget(label(text("desktop.mods.not_checked"), "muted"))
         elif mod.get("checked_with") == "sha1":
             words.addWidget(label(text("desktop.mods.checked_sha1"), "muted"))
+        if mod.get("added_by_you"):
+            words.addWidget(label(text("linked.added_by_you"), "muted"))
         for issue in (mod.get("issues") or [])[:2]:
             words.addWidget(
                 label(issue["detail"], "problem" if issue.get("severity") == "error" else "sub")
@@ -785,6 +807,128 @@ class ModsPage(Page):
             self.ask("POST", "/mods/remove", done, self.said, body={"filename": mod["filename"]})
 
         self.ask("GET", f"/mods/impact?filename={quote(mod['filename'])}", ask_first, self.said)
+
+    # ------------------------------------------------------------ linked modpack
+    def show_linked(self, pack: dict | None) -> None:
+        self.linked_card.setVisible(bool(pack))
+        if not pack:
+            return
+        lines = [text("linked.from", name=pack["name"], version=pack["version"], site=pack["site"])]
+        update = pack.get("update")
+        if update:
+            lines.append(
+                text("linked.update_ready", version=update["version"])
+                if update.get("version")
+                else text("linked.update_ready_unnamed")
+            )
+        count = pack.get("added_by_you") or 0
+        if count:
+            lines.append(
+                text("linked.yours.one" if count == 1 else "linked.yours.other", count=count)
+            )
+        self.linked_words.setText("\n".join(lines))
+        self.linked_buttons.setVisible(self.may("mods.manage"))
+        self.linked_update.setVisible(bool(update) and self.may("settings.server"))
+        self.linked_update.setEnabled(self.can_change)
+        self.linked_unlink.setEnabled(self.can_change)
+
+    def preview_pack_update(self) -> None:
+        """Get the new version and show what changes before anything does."""
+        version_id = ((self.data.get("modpack") or {}).get("update") or {}).get("version_id")
+        self.linked_update.setEnabled(False)
+        self.say(text("linked.getting"))
+        self.ask(
+            "POST",
+            "/modpack/update/preview",
+            self.confirm_pack_update,
+            self.said,
+            body={"version_id": version_id},
+            always=lambda: self.linked_update.setEnabled(self.can_change),
+            slow=True,
+        )
+
+    def confirm_pack_update(self, read: dict) -> None:
+        pack, token, changes = read["pack"], read["token"], read["changes"]
+        agent = self.window_.agent
+
+        def forget() -> None:  # the downloaded version, when it isn't used
+            self.window_.run(
+                lambda: agent.call("DELETE", f"/modpacks/{token}"), lambda _r: None, lambda _e: None
+            )
+
+        if changes.get("problems"):
+            self.say("\n".join([text("pack.cant_import"), *changes["problems"]]))
+            forget()
+            return
+        lines = []
+        newer = [f"{n['from']} → {n['to']}" for n in changes.get("newer") or []]
+        for key, items in (
+            ("linked.newer", newer),
+            ("linked.added", changes.get("added")),
+            ("linked.removed", changes.get("removed")),
+            ("linked.kept", changes.get("added_by_you")),
+            ("linked.configs", changes.get("configs_changed_by_you")),
+        ):
+            if items:
+                lines.append(text(key, names=", ".join(items)))
+        steps = [text("pack.step_stop"), text("linked.step_one_backup")]
+        if changes.get("version_change"):
+            steps.append(
+                text(
+                    "pack.step_version",
+                    type=pack.get("type_name"),
+                    version=pack.get("minecraft_version"),
+                )
+            )
+        body = "\n".join(lines) + "\n\n" + "\n".join(f"• {s}" for s in steps)
+        title = text(
+            "linked.update_title", name=pack["name"], version=changes.get("to_version") or ""
+        )
+        self.say("")
+        if changes.get("configs_changed_by_you"):
+            ticked = self.window_.tick(
+                title, body, [(text("linked.use_pack_configs"), False)], text("linked.update")
+            )
+            if ticked is None:
+                forget()
+                return
+            use_pack_configs = bool(ticked)
+        elif self.window_.confirm(title, body, text("linked.update")):
+            use_pack_configs = False
+        else:
+            forget()
+            return
+
+        def done(result: dict) -> None:
+            self.say(
+                text("linked.updated", name=pack["name"], version=changes.get("to_version") or ""),
+                (lambda: self.window_.move_change("undo")) if result.get("undo") else None,
+            )
+            self.window_.load_server_parts()
+
+        def failed(exc: Exception) -> None:
+            self.said(exc)
+            forget()
+
+        self.say(text("linked.updating"))
+        self.ask(
+            "POST",
+            "/modpack/update",
+            done,
+            failed,
+            body={"token": token, "use_pack_configs": use_pack_configs, "confirm": True},
+            always=self.after_change,
+            slow=True,
+        )
+
+    def unlink_pack(self) -> None:
+        name = (self.data.get("modpack") or {}).get("name") or ""
+        if self.window_.confirm(
+            text("linked.unlink_title", name=name),
+            text("linked.unlink_body"),
+            text("linked.unlink"),
+        ):
+            self.ask("DELETE", "/modpack/link", lambda _r: self.changed(), self.said)
 
     # ------------------------------------------------------------ Still fit?
     def show_fit(self, fit: dict | None) -> None:
