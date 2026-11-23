@@ -270,6 +270,25 @@ data class ModrinthShare(
     val address: String? = null,
 )
 
+/** A free anti-cheat, installed from Modrinth with the normal install. [warning]: Fabric with mods players need. */
+@Serializable
+data class AntiCheatFree(val id: String, val name: String, val project: String, val on: Boolean = false, val warning: Boolean = false)
+
+/** A paid anti-cheat: bought on the seller's [link]. [price]: null when none was read; [checked]: the day it was. */
+@Serializable
+data class AntiCheatPaid(val id: String, val name: String, val on: Boolean = false, val link: String, val setup: String? = null, val price: String? = null, val checked: String? = null)
+
+/** The anti-cheat picker. [supported]: false when none runs on this server type. */
+@Serializable
+data class AntiCheat(
+    val supported: Boolean = false,
+    val installed: List<String> = emptyList(),
+    val free: List<AntiCheatFree> = emptyList(),
+    val paid: List<AntiCheatPaid> = emptyList(),
+    @SerialName("may_install") val mayInstall: Boolean = false,
+    @SerialName("may_add_own_jar") val mayAddOwnJar: Boolean = false,
+)
+
 /** One mod in an [Overlap]. [turnOff]: the pick isn't this one. */
 @Serializable
 data class OverlapMod(

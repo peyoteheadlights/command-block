@@ -6,11 +6,11 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ... import joinguard, protection
+from ... import anticheat, joinguard, protection
 from ...security.auth import Principal
 from ...security.permissions import SERVER_VIEW, SETTINGS_SERVER, on_server, require
 from ..deps import audit, get_server
-from ..responses import JoinProtection, Ok, ProtectionCard, ProtectionFixed
+from ..responses import AntiCheat, JoinProtection, Ok, ProtectionCard, ProtectionFixed
 from .models import JoinBlockRequest, JoinLaunchRequest, ProtectionFixRequest
 
 router = APIRouter()
@@ -39,6 +39,18 @@ async def protection_fix(
     )
     audit(ctx, request, "protection_fix", target=payload.fix)
     return {"ok": True, "fix": payload.fix, **result}
+
+
+@router.get("/anticheat", response_model=AntiCheat)
+async def anticheat_picker(
+    principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
+):
+    """The anti-cheat picker: free ones to install, paid ones to buy on the
+    seller's site (a price read at most once a day), or your own jar.
+    Installing goes through /mods/install
+    and /mods/upload, with their own permission checks."""
+    await anticheat.read_prices(ctx)
+    return await asyncio.to_thread(anticheat.picker, ctx, on_server(principal, ctx.server_id))
 
 
 # ---------------------------------------------------------------- Join protection

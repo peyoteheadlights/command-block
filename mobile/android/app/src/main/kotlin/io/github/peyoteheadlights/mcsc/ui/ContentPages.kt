@@ -24,6 +24,7 @@ import io.github.peyoteheadlights.mcsc.core.ModVersions
 import io.github.peyoteheadlights.mcsc.core.DownloadLink
 import io.github.peyoteheadlights.mcsc.core.MakeModpack
 import io.github.peyoteheadlights.mcsc.core.ModpackInspected
+import io.github.peyoteheadlights.mcsc.core.AntiCheat
 import io.github.peyoteheadlights.mcsc.core.ModpackMade
 import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
 import io.github.peyoteheadlights.mcsc.core.ModpackUpdatePreview
@@ -622,6 +623,21 @@ class ContentPages(
         work("modrinth", strings) {
             modrinth = it.modrinthServerProject(serverId, link)
             null
+        }
+    }
+
+    // ------------------------------------------------------------ the anti-cheat picker
+    var antiCheat: AntiCheat? by mutableStateOf(null)
+        private set
+
+    fun loadAntiCheat() {
+        val c = client() ?: return
+        scope.launch {
+            try {
+                antiCheat = c.antiCheat(serverId)
+            } catch (e: AgentException) {
+                noted(e)
+            }
         }
     }
 

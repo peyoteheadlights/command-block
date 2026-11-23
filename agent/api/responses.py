@@ -1706,6 +1706,33 @@ class ProtectionCard(Open):
     running: bool
 
 
+class AntiCheatFree(Open):
+    id: str
+    name: str
+    project: str = Field(description="Its Modrinth project, for the normal add-on install")
+    on: bool = Field(description="It is in and turned on")
+    warning: bool = Field(description="Fabric with mods players need: try it with a friend first")
+
+
+class AntiCheatPaid(Open):
+    id: str
+    name: str
+    on: bool
+    link: str = Field(description="The seller's page")
+    setup: str | None = Field(None, description="The seller's own setup steps")
+    price: str | None = Field(None, description="Like 19.99 USD; null: no price was read")
+    checked: str | None = Field(None, description="When the price was read, like 14 November 2026")
+
+
+class AntiCheat(Open):
+    supported: bool = Field(description="False: no anti-cheat runs on this server type")
+    installed: list[str] = Field(description="The anti-cheats that are in, by name")
+    free: list[AntiCheatFree]
+    paid: list[AntiCheatPaid]
+    may_install: bool = False
+    may_add_own_jar: bool = False
+
+
 class ProtectionFixed(Open):
     ok: bool
     fix: str

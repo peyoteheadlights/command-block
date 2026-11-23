@@ -646,3 +646,30 @@ object ModrinthCards {
         return code to state
     }
 }
+
+/** What the anti-cheat picker says above its buttons. */
+object AntiCheats {
+    fun status(strings: Strings, picker: AntiCheat): String {
+        val names = picker.installed.joinToString(", ")
+        return when {
+            !picker.supported -> strings.t("anticheat.none_here")
+            picker.installed.size > 1 -> strings.t("anticheat.two", "names" to names)
+            picker.installed.isNotEmpty() -> strings.t("anticheat.in_now", "names" to names)
+            else -> strings.t("anticheat.nothing_in")
+        }
+    }
+
+    fun free(strings: Strings, item: AntiCheatFree): List<String> = listOfNotNull(
+        strings.t("anticheat.about.${item.id}"),
+        strings.t("anticheat.fabric_warning").takeIf { item.warning },
+        strings.t("anticheat.is_in", "name" to item.name).takeIf { item.on },
+    )
+
+    /** Never a guessed price: no checked price sends people to the seller's page. */
+    fun paid(strings: Strings, item: AntiCheatPaid): List<String> = listOfNotNull(
+        strings.t("anticheat.about.${item.id}"),
+        item.price?.let { strings.t("anticheat.price", "price" to it, "day" to (item.checked ?: "")) } ?: strings.t("anticheat.price_unknown"),
+        strings.t("anticheat.is_in", "name" to item.name).takeIf { item.on },
+    )
+
+}

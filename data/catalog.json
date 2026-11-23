@@ -646,10 +646,10 @@
       "types": [
         "paper",
         "purpur",
-        "leaf"
+        "leaf",
+        "fabric"
       ],
-      "why": "Both are anti-cheats, and one is enough.",
-      "usual_pick": "LJNGWSvH",
+      "why": "They are all anti-cheats, and one is enough.",
       "addons": [
         {
           "project": "LJNGWSvH",
@@ -658,9 +658,25 @@
           ]
         },
         {
+          "project": "4zi91sqi",
+          "ids": [
+            "intave"
+          ]
+        },
+        {
           "project": "CzhWXA8H",
           "ids": [
             "spartan"
+          ]
+        },
+        {
+          "ids": [
+            "vulcan"
+          ]
+        },
+        {
+          "ids": [
+            "polarloader"
           ]
         }
       ]

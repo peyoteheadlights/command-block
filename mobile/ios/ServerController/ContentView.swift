@@ -331,6 +331,72 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - The anti-cheat picker
+
+    /// Free from Modrinth, paid from the seller's page, or your own jar.
+    @ViewBuilder
+    private func antiCheatCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        Group {
+            if let picker = content.antiCheat {
+                let ownJar = picker.mayInstall && picker.mayAddOwnJar
+                SectionTitle(text: model.t("anticheat.title"), palette: palette)
+                CardBox(palette: palette) {
+                    Text(verbatim: model.t("anticheat.intro")).foregroundStyle(palette.textSecondary)
+                    Text(verbatim: AntiCheats.status(strings, picker)).foregroundStyle(palette.textPrimary)
+                    if picker.supported {
+                        Text(verbatim: model.t("anticheat.cpu")).foregroundStyle(palette.textSecondary)
+                        if !picker.mayInstall {
+                            Text(verbatim: model.t("anticheat.no_install")).foregroundStyle(palette.textSecondary)
+                        }
+                        Text(verbatim: model.t("anticheat.free")).foregroundStyle(palette.textPrimary)
+                        ForEach(picker.free) { item in
+                            ForEach(AntiCheats.free(strings, item), id: \.self) { line in
+                                Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                            }
+                            if !item.on && picker.mayInstall {
+                                Presses(presses: [
+                                    Press(title: strings.t("anticheat.add", ["name": item.name]), enabled: ready) {
+                                        Task { await content.openProject(slug: item.project) }
+                                    },
+                                ], palette: palette)
+                            }
+                        }
+                        if !picker.paid.isEmpty {
+                            Text(verbatim: model.t("anticheat.paid")).foregroundStyle(palette.textPrimary)
+                            Text(verbatim: model.t("anticheat.buy_note")).foregroundStyle(palette.textSecondary)
+                            ForEach(picker.paid) { item in
+                                ForEach(AntiCheats.paid(strings, item), id: \.self) { line in
+                                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                                }
+                                Presses(presses: [
+                                    Press(title: model.t("anticheat.seller")) {
+                                        if let url = URL(string: item.link) { web = WebLink(url: url) }
+                                    },
+                                ] + (item.setup.flatMap(URL.init(string:)).map { url in [
+                                    Press(title: model.t("anticheat.setup")) { web = WebLink(url: url) },
+                                ] } ?? []) + (ownJar && !item.on ? [
+                                    Press(title: model.t("anticheat.from_file"), enabled: ready) { picking = .jar },
+                                ] : []), palette: palette)
+                            }
+                            Text(verbatim: model.t("anticheat.prices_note")).foregroundStyle(palette.textSecondary)
+                        }
+                        Text(verbatim: model.t("anticheat.custom")).foregroundStyle(palette.textPrimary)
+                        Text(verbatim: model.t("anticheat.custom_about")).foregroundStyle(palette.textSecondary)
+                        if ownJar {
+                            Presses(presses: [
+                                Press(title: model.t("anticheat.from_file"), enabled: ready) { picking = .jar },
+                            ], palette: palette)
+                        } else {
+                            Text(verbatim: model.t("anticheat.no_own_jar")).foregroundStyle(palette.textSecondary)
+                        }
+                    }
+                }
+            }
+        }
+        .task(id: serverId) { await content.loadAntiCheat() }
+    }
+
     // MARK: - Put it on Modrinth
 
     /// Sign in with Modrinth, upload the modpack and own jars, the Server Project helper.
@@ -481,6 +547,7 @@ struct ContentView: View {
                 downloadLinkCard(content, ready: idle, palette)
                 modrinthCard(content, ready: idle, palette)
             }
+            antiCheatCard(content, ready: idle, palette)
             if let fit = list.fit {
                 stillFitCard(content, list, fit, kind, ready: changes == .ready && idle, palette)
             }
