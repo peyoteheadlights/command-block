@@ -154,6 +154,29 @@ def deny_writes(path: Path) -> bool:
     return code == 0
 
 
+def deny_all(folder: Path) -> bool:
+    """Say "no" to everything for the account on a folder and all it will
+    hold (the player-only folder, agent/mods/sides.py: the server never
+    needs it). A "deny" beats the Modify the server folder gives it.
+    Looked at first, so it isn't added twice. False when the account isn't
+    there or Windows refused."""
+    if not IS_WINDOWS or not account_exists():
+        return False
+    try:
+        code, now = _icacls([str(folder)])
+        if code == 0 and any(
+            ACCOUNT.lower() in line.lower() and "(deny)" in line.lower()
+            for line in now.splitlines()
+        ):
+            return True
+        code, out = _icacls([str(folder), "/deny", f"{ACCOUNT}:(OI)(CI)F"])
+    except (OSError, subprocess.SubprocessError) as exc:
+        code, out = -1, str(exc)
+    if code != 0:
+        log.warning("couldn't lock %s from the server's user: %s", folder, out.strip()[:300])
+    return code == 0
+
+
 def remove_grant(folder: Path) -> str | None:
     """Take the account's access off a folder (Turn off). Returns why it
     failed, or None."""

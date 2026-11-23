@@ -230,6 +230,17 @@ one Undo), `POST /api/mods/link` (`{"url"}`: a GitHub release's files, or
 `"kind": "browser"`), `POST /api/mods/link/add` (`{"version_id"}` from it),
 `GET /api/mods/impact?filename=`,
 `POST /api/mods/remove`, `POST /api/mods/enable`, `POST /api/mods/disable`,
+`POST /api/mods/side` (`{"filename", "side"}`: server, players or both;
+players moves the jar into the server folder's `player-only/`, which the
+server never loads, and leaving players moves it back; needs the server
+stopped for a move), `POST /api/mods/player-only/upload` (multipart: a mod,
+resource pack or shader pack for players only; `confirm=true` for a file no
+site lists), `POST /api/mods/player-only/remove` (`{"filename"}`, to the
+trash), `POST /api/mods/player-only/fetch` (`{"filename"}`: a missing file
+Modrinth lists, downloaded again and checked by its SHA-512),
+`POST /api/mods/player-only/options` (`{"backup": true, "skip_listed":
+false}`, needs `settings.server`). `GET /api/mods` gives each mod `side` and `side_from`, plus
+`player_only` and `odd_setups`,
 `GET /api/mods/updates?refresh=`, `POST /api/mods/update`,
 `GET /api/mods/versions/{mod_id}`, `POST /api/mods/rollback`,
 `GET /api/mods/history`, `GET /api/mods/check`,

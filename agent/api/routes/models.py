@@ -75,6 +75,15 @@ class ModFileRequest(BaseModel):
     filename: str = Field(max_length=180)
 
 
+class ModSideRequest(ModFileRequest):
+    side: Literal["server", "players", "both"]
+
+
+class PlayerOnlyOptionsRequest(BaseModel):
+    backup: bool = True
+    skip_listed: bool = False
+
+
 class ModUpdateRequest(ModFileRequest):
     # Modrinth's, "hangar:<id>" or a GitHub file's "owner/repo/<id>".
     version_id: str | None = Field(default=None, max_length=200)

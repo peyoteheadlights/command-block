@@ -920,3 +920,90 @@ def test_a_linked_modpack_card_updates_and_unlinks(qapp, agent_http, monkeypatch
     button(page, "Unlink").click()
     wait_for(qapp, lambda: not page.linked_card.isVisible())
     assert linkedpack.read_link(ctx) is None
+
+
+# ---------------------------------------------------------------- Server / Players / Both
+def row_menu_item(page, mod, words):
+    """An item of one mod's ⋯ menu."""
+    for more in page.findChildren(QtWidgets.QToolButton):
+        if more.isVisibleTo(page) and more.accessibleName().endswith(f": {mod}") and more.menu():
+            for action in more.menu().actions():
+                if action.text() == words:
+                    return action
+    raise AssertionError(f"no {words!r} in {mod}'s menu")
+
+
+def test_marks_move_a_mod_to_players_only_and_back(qapp, agent_http, tmp_path):
+    folder = with_mods(agent_http)
+    make_jar(folder / "map.jar", "minimap", name="Minimap", environment="client")
+    players = core_of(agent_http).servers["survival"].config.server_dir / "player-only"
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc)
+    window.confirm = lambda *words: True  # no site lists these files
+    wait_for(qapp, lambda: "For: Players (from the mod's file)" in shown_text(page))
+    assert "For: Both (from the mod's file)" in shown_text(page)
+    assert "Players only" in shown_text(page) and "Nothing here yet." in shown_text(page)
+
+    wait_for(qapp, lambda: can(page, "Turn off", "Minimap"))
+    row_menu_item(page, "Minimap", "Only players need it").trigger()
+    wait_for(qapp, lambda: "Minimap moved to Players only" in page.note.text(), 20)
+    assert (players / "map.jar").is_file() and not (folder / "map.jar").exists()
+    wait_for(qapp, lambda: can(page, "Move to the server", "Minimap"))
+
+    pack = tmp_path / "faithful.zip"
+    import zipfile
+
+    with zipfile.ZipFile(pack, "w") as zf:
+        zf.writestr("pack.mcmeta", "{}")
+    pc.picked = str(pack)
+    button(page, "Add for players").click()
+    wait_for(qapp, lambda: "faithful.zip was added for players." in page.note.text(), 20)
+    assert (players / "faithful.zip").is_file()
+
+    row_button(page, "Move to the server", "Minimap").click()
+    wait_for(qapp, lambda: "Minimap is now marked Both." in page.note.text(), 20)
+    assert (folder / "map.jar").is_file()
+    wait_for(qapp, lambda: "For: Both (set by you)" in shown_text(page))
+
+
+def test_player_files_backup_options_and_get_it_again(qapp, agent_http, tmp_path, monkeypatch):
+    import zipfile
+
+    from agent import downloads
+    from agent.mods import sides
+
+    with_mods(agent_http)
+    ctx = core_of(agent_http).servers["survival"]
+    pack = tmp_path / "faithful.zip"
+    with zipfile.ZipFile(pack, "w") as zf:
+        zf.writestr("pack.mcmeta", "{}")
+    data = pack.read_bytes()
+
+    async def known(mods, sent):
+        return "modrinth", {"project_id": "x"}
+
+    async def file_url(sha512):
+        return "https://cdn.modrinth.com/data/x/versions/y/faithful.zip"
+
+    async def fetched(spec):
+        return data, None
+
+    monkeypatch.setattr(sides, "known_source", known)
+    monkeypatch.setattr(downloads, "download_bytes", fetched)
+    ctx.mods.modrinth.file_url = file_url
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc)
+    pc.picked = str(pack)
+    wait_for(qapp, lambda: button(page, "Add for players").isEnabled())
+    button(page, "Add for players").click()
+    wait_for(qapp, lambda: "faithful.zip was added for players." in page.note.text(), 20)
+
+    wait_for(qapp, lambda: page.back_up_players.isChecked() and page.skip_listed.isVisible())
+    page.skip_listed.click()
+    wait_for(qapp, lambda: sides.options(ctx)["skip_listed"] is True)
+
+    (ctx.config.server_dir / "player-only" / "faithful.zip").unlink()  # left out, then restored
+    page.changed()
+    wait_for(qapp, lambda: can(page, "Get it again", "faithful"))
+    row_button(page, "Get it again", "faithful").click()
+    wait_for(qapp, lambda: (ctx.config.server_dir / "player-only" / "faithful.zip").is_file(), 20)

@@ -386,6 +386,44 @@ final class ContentPages {
         }
     }
 
+    // MARK: - Server / Players / Both
+
+    func setSide(_ filename: String, name: String, side: String, _ strings: Strings) async {
+        await work("side:" + filename, strings, reload: loadMods) { client, id in
+            try await client.setModSide(serverId: id, filename: filename, side: side)
+            return Said(text: strings.t("sides.marked_" + side, ["name": name]), good: true)
+        }
+    }
+
+    func uploadForPlayers(_ file: PickedFile, _ strings: Strings) async {
+        defer { try? FileManager.default.removeItem(at: file.url) }
+        await work("players", strings, reload: loadMods) { client, id in
+            try await client.uploadForPlayers(serverId: id, file: file)
+            return Said(text: strings.t("sides.players_added", ["name": file.name]), good: true)
+        }
+    }
+
+    func fetchForPlayers(_ filename: String, _ strings: Strings) async {
+        await work("fetch:" + filename, strings, reload: loadMods) { client, id in
+            try await client.fetchForPlayers(serverId: id, filename: filename)
+            return Said(text: strings.t("sides.players_added", ["name": filename]), good: true)
+        }
+    }
+
+    func setPlayerOnlyOptions(_ options: PlayerOnlyOptions, _ strings: Strings) async {
+        await work("options", strings, reload: loadMods) { client, id in
+            try await client.setPlayerOnlyOptions(serverId: id, options: options)
+            return Said(text: strings.t("sides.options_saved"), good: true)
+        }
+    }
+
+    func removeForPlayers(_ filename: String, _ strings: Strings) async {
+        await work("remove:" + filename, strings, reload: loadMods) { client, id in
+            try await client.removeForPlayers(serverId: id, filename: filename)
+            return nil
+        }
+    }
+
     // MARK: - Linked modpack
 
     private(set) var packUpdate: ModpackUpdatePreview? = nil

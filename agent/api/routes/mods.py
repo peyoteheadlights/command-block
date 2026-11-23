@@ -14,13 +14,20 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from ... import linkedpack, protection, suggestions
 from ...jobs import JobConflict
 from ...mods import copy as copy_module
-from ...mods import fit
+from ...mods import fit, sides
 from ...mods.addfrom import add_file, add_from_link, read_link
 from ...mods.dependencies import DependencyError
 from ...mods.sources import SourceError, split
 from ...mods.updateall import update_all
 from ...security.auth import AuthError, Principal
-from ...security.permissions import MODS_MANAGE, SERVER_VIEW, check, check_server, require
+from ...security.permissions import (
+    MODS_MANAGE,
+    SERVER_VIEW,
+    SETTINGS_SERVER,
+    check,
+    check_server,
+    require,
+)
 from ..deps import audit, get_core, get_server
 from ..errors import DOMAIN_ERRORS, audit_failure, respond_as
 from ..responses import (
@@ -40,11 +47,14 @@ from ..responses import (
     ModRemoved,
     ModRolledBack,
     ModSearch,
+    ModSideChanged,
     ModUpdated,
     ModUpdates,
     ModUploaded,
     ModVersions,
     Ok,
+    PlayerFileAdded,
+    PlayerOnlyOptions,
     Suggestions,
     UpdateAllPlan,
     UpdateAllResult,
@@ -58,7 +68,9 @@ from .models import (
     ModLinkRequest,
     ModProjectRequest,
     ModRollbackRequest,
+    ModSideRequest,
     ModUpdateRequest,
+    PlayerOnlyOptionsRequest,
     UpdateAllRequest,
 )
 
@@ -76,6 +88,7 @@ async def list_mods(principal: Principal = Depends(require(SERVER_VIEW)), ctx=De
     except TimeoutError:
         pass
     mods = ctx.mods.list_installed()
+    sides.add_marks(ctx, mods)
     checks = ctx.mods.check_all()
     return {
         "mods": mods,
@@ -93,7 +106,104 @@ async def list_mods(principal: Principal = Depends(require(SERVER_VIEW)), ctx=De
         "stored_separately": ctx.db.get_setting("mods_stored_separately") is True,
         "fit": ctx.db.get_setting(fit.SETTING),
         "modpack": linkedpack.card(ctx, mods),
+        "player_only": sides.player_files(ctx),
+        "player_only_options": sides.options(ctx),
+        "odd_setups": sides.odd_setups(ctx, mods),
     }
+
+
+@router.post("/mods/side", response_model=ModSideChanged)
+async def set_mod_side(
+    payload: ModSideRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Server / Players / Both. Players moves the jar out of the mods
+    folder into the player-only folder; leaving Players moves it back."""
+    with audit_failure(ctx, request, "mod_side", target=payload.filename):
+        result = await ctx.mod_change(
+            f"Marking {payload.filename}",
+            lambda: sides.set_side(ctx, payload.filename, payload.side, principal.user),
+            principal.user,
+        )
+    audit(ctx, request, "mod_side", target=payload.filename, detail=payload.side)
+    return {"ok": True, **result}
+
+
+@router.post("/mods/player-only/upload", response_model=PlayerFileAdded)
+async def add_player_file(
+    request: Request,
+    file: UploadFile = File(...),
+    confirm: bool = False,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """A mod, resource pack or shader pack for players only. The server
+    never loads it; it's kept for the modpack."""
+    data = await file.read(320 * 1024 * 1024)
+    with audit_failure(ctx, request, "mod_player_add", target=file.filename):
+        result = await ctx.mod_change(
+            f"Adding {file.filename} for players",
+            lambda: sides.add(ctx, file.filename or "", data, principal.user, confirm=confirm),
+            principal.user,
+        )
+    audit(ctx, request, "mod_player_add", target=file.filename)
+    return {"ok": True, **result}
+
+
+@router.post("/mods/player-only/fetch", response_model=PlayerFileAdded)
+async def fetch_player_file(
+    payload: ModFileRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Get a missing player-only file again from Modrinth, by its hash."""
+    with audit_failure(ctx, request, "mod_player_fetch", target=payload.filename):
+        result = await ctx.mod_change(
+            f"Getting {payload.filename} again",
+            lambda: sides.fetch_again(ctx, payload.filename, principal.user),
+            principal.user,
+        )
+    audit(ctx, request, "mod_player_fetch", target=payload.filename)
+    return {"ok": True, **result}
+
+
+@router.post("/mods/player-only/options", response_model=PlayerOnlyOptions)
+async def player_only_options(
+    payload: PlayerOnlyOptionsRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    """Back up the player-only folder or not, and leave out the files
+    Modrinth lists (got again by hash after a restore)."""
+    result = sides.set_options(ctx, payload.backup, payload.skip_listed)
+    audit(
+        ctx,
+        request,
+        "mod_player_options",
+        detail=f"backup={payload.backup} skip_listed={payload.skip_listed}",
+    )
+    return result
+
+
+@router.post("/mods/player-only/remove", response_model=Ok)
+async def remove_player_file(
+    payload: ModFileRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    with audit_failure(ctx, request, "mod_player_remove", target=payload.filename):
+        await ctx.mod_change(
+            f"Removing {payload.filename} from Players",
+            lambda: sides.remove(ctx, payload.filename, principal.user),
+            principal.user,
+        )
+    audit(ctx, request, "mod_player_remove", target=payload.filename)
+    return {"ok": True}
 
 
 @router.post("/mods/fit/hide", response_model=Ok)

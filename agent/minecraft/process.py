@@ -535,6 +535,9 @@ class MinecraftServer:
                     from ..mods import store
 
                     await asyncio.to_thread(store.for_config(self.db, self.config).lock_missing)
+                    from ..mods import sides
+
+                    await asyncio.to_thread(sides.lock, self.config)
                 self.process = await serveruser.start(
                     self.config,
                     cmd,

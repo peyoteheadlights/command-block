@@ -64,12 +64,18 @@ public struct Mod: Decodable, Equatable, Identifiable, Sendable {
     public var updateAvailable: ModUpdate?
     /// On a linked modpack's server: true when the modpack didn't put it there.
     public var addedByYou: Bool?
+    public var loader: String?
+    /// server, players or both: who needs it.
+    public var side: String?
+    /// Where `side` came from: you, modpack, modrinth, curseforge, file or unknown.
+    public var sideFrom: String?
 
     public var id: String { filename }
 
     enum CodingKeys: String, CodingKey {
-        case filename, name, version, enabled, description, status, issues
+        case filename, name, version, enabled, description, status, issues, loader, side
         case modId = "mod_id"
+        case sideFrom = "side_from"
         case minecraftRange = "minecraft_range"
         case updateAvailable = "update_available"
         case addedByYou = "added_by_you"
@@ -78,7 +84,7 @@ public struct Mod: Decodable, Equatable, Identifiable, Sendable {
     public init(
         filename: String, modId: String = "", name: String = "", version: String = "", enabled: Bool = true,
         description: String? = nil, minecraftRange: String? = nil, status: String? = nil, issues: [ModIssue] = [],
-        updateAvailable: ModUpdate? = nil
+        updateAvailable: ModUpdate? = nil, loader: String? = nil, side: String? = nil, sideFrom: String? = nil
     ) {
         self.filename = filename
         self.modId = modId
@@ -90,6 +96,9 @@ public struct Mod: Decodable, Equatable, Identifiable, Sendable {
         self.status = status
         self.issues = issues
         self.updateAvailable = updateAvailable
+        self.loader = loader
+        self.side = side
+        self.sideFrom = sideFrom
     }
 
     public init(from decoder: Decoder) throws {
@@ -105,6 +114,9 @@ public struct Mod: Decodable, Equatable, Identifiable, Sendable {
         issues = c.each(.issues)
         updateAvailable = c.maybe(.updateAvailable)
         addedByYou = c.maybe(.addedByYou)
+        loader = c.maybe(.loader)
+        side = c.maybe(.side)
+        sideFrom = c.maybe(.sideFrom)
     }
 }
 
@@ -121,9 +133,17 @@ public struct ModList: Decodable, Equatable, Sendable {
     public var overlaps: [Overlap]
     /// The modpack this server came from; nil: not linked.
     public var modpack: LinkedModpack?
+    /// The player-only folder: kept for the modpack, never loaded by the server.
+    public var playerOnly: [PlayerFile] = []
+    public var playerOnlyOptions = PlayerOnlyOptions()
+    /// A mod needs one that sits on the other side.
+    public var oddSetups: [OddSetup] = []
 
     enum CodingKeys: String, CodingKey {
         case mods, fit, overlaps, modpack
+        case playerOnly = "player_only"
+        case playerOnlyOptions = "player_only_options"
+        case oddSetups = "odd_setups"
         case minecraftVersion = "minecraft_version"
         case serverState = "server_state"
         case storedSeparately = "stored_separately"
@@ -147,6 +167,81 @@ public struct ModList: Decodable, Equatable, Sendable {
         fit = c.maybe(.fit)
         overlaps = c.each(.overlaps)
         modpack = c.maybe(.modpack)
+        playerOnly = c.each(.playerOnly)
+        playerOnlyOptions = c.value(.playerOnlyOptions, PlayerOnlyOptions())
+        oddSetups = c.each(.oddSetups)
+    }
+}
+
+/// A file in the player-only folder.
+public struct PlayerFile: Decodable, Equatable, Identifiable, Sendable {
+    public var filename: String
+    public var name: String
+    public var version: String
+    /// mod or pack (a resource pack or shader pack).
+    public var kind: String
+    /// Not the file the app first saw: changed outside it.
+    public var changed: Bool = false
+    /// The app added it, but it's gone ("Get it again" when `site` is modrinth).
+    public var missing: Bool = false
+    public var site: String?
+
+    public var id: String { filename }
+
+    enum CodingKeys: String, CodingKey { case filename, name, version, kind, changed, missing, site }
+
+    public init(filename: String, name: String = "", version: String = "", kind: String = "") {
+        self.filename = filename
+        self.name = name
+        self.version = version
+        self.kind = kind
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        filename = try c.decode(String.self, forKey: .filename)
+        name = c.value(.name, "")
+        version = c.value(.version, "")
+        kind = c.value(.kind, "")
+        changed = c.value(.changed, false)
+        missing = c.value(.missing, false)
+        site = c.maybe(.site)
+    }
+}
+
+/// The player-only folder's two backup options.
+public struct PlayerOnlyOptions: Codable, Equatable, Sendable {
+    public var backup: Bool
+    /// Leave out files Modrinth lists; got again by hash after a restore.
+    public var skipListed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case backup
+        case skipListed = "skip_listed"
+    }
+
+    public init(backup: Bool = true, skipListed: Bool = false) {
+        self.backup = backup
+        self.skipListed = skipListed
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        backup = c.value(.backup, true)
+        skipListed = c.value(.skipListed, false)
+    }
+}
+
+public struct OddSetup: Decodable, Equatable, Sendable {
+    public var filename: String
+    public var text: String
+
+    enum CodingKeys: String, CodingKey { case filename, text }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        filename = c.value(.filename, "")
+        text = c.value(.text, "")
     }
 }
 
