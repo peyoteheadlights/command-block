@@ -1,5 +1,6 @@
 """The desktop app's main window: sign-in, then binder tabs for All servers,
-each server and "+", with the server's color tinting the whole window.
+each server and "+". The open server's color is on its tab, the band behind
+the sheet, the buttons and the edges.
 
 Every call to the agent runs off the window's thread (``MainWindow.run``),
 so a slow network never freezes the window.
@@ -15,7 +16,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QObject, QPoint, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
@@ -28,12 +29,10 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
-    QMainWindow,
     QMenu,
     QMessageBox,
     QScrollArea,
     QStackedWidget,
-    QTabBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -48,6 +47,7 @@ from .alerts import KEPT, PAGES, PC_PAGES, RESTART_FOR, NotificationsScreen
 from .backups import is_world
 from .discord import Discord
 from .feed import Feed
+from .frame import ROOM, FramelessWindow
 from .gear import Account, Devices, ListScreen, PCSettings, Updates
 from .help import About, Guide
 from .moderators import Moderators
@@ -57,6 +57,7 @@ from .overview import SimpleOverview, TechnicalOverview
 from .pc import WindowsPC
 from .rented import ConnectPanel, RentedRow, RentedScreen
 from .server_tab import BUSY, ServerScreen, state_words
+from .shell import BinderTabs, Desk, Sheet
 from .tailscale_step import TailscaleStep
 from .ui import clock, content_page, has_packs, label, push, refill
 from .words import mode, text
@@ -351,7 +352,7 @@ class ScreenStack(QStackedWidget):
         return shown.minimumSizeHint() if shown is not None else super().minimumSizeHint()
 
 
-class MainWindow(QMainWindow):
+class MainWindow(FramelessWindow):
     STILL_DOWN_MS = 180_000  # then "may be off or asleep"
     TASK_AFTER_MS = 15_000  # after a Tailscale move, then run the agent's task
     WAKE_WAIT_MS = 120_000  # then "<PC> didn't wake"
@@ -360,7 +361,7 @@ class MainWindow(QMainWindow):
     OWN_UPDATE_POLL_MS = 3_600_000  # then is a day up? (self_update.due)
 
     def __init__(self, agent: AgentClient, pc: WindowsPC, dark: bool | None = None) -> None:
-        super().__init__()
+        super().__init__(pc)
         self.agent, self.pc = agent, pc
         self._tasks: set[Task] = set()
         # Agent calls wait on the network, not the CPU, and a backup can wait
@@ -395,24 +396,30 @@ class MainWindow(QMainWindow):
         self.ask_answered = False  # the donation card was answered here
         self.setWindowTitle(text("app.name"))
         self.resize(1280, 800)
-        desk = QWidget()
-        desk.setObjectName("desk")
-        desk.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        theme.load_fonts()
+        desk = Desk(self.see_through)
         column = QVBoxLayout(desk)
-        column.setContentsMargins(10, 6, 10, 10)
+        column.setContentsMargins(ROOM)
         column.setSpacing(0)
         self.topbar = QWidget()
         bar = QHBoxLayout(self.topbar)
         bar.setContentsMargins(0, 0, 0, 0)
-        self.binder = QTabBar()
+        self.binder = BinderTabs()
         self.binder.setObjectName("binder")
         self.binder.setAccessibleName(text("page.servers"))
         self.binder.setDrawBase(False)
         self.binder.setExpanding(False)
         self.binder.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.binder.currentChanged.connect(self.binder_changed)
-        bar.addWidget(self.binder)
+        self.binder.tabBarClicked.connect(self.binder_clicked)
+        bar.addWidget(self.binder, 0, Qt.AlignmentFlag.AlignBottom)
         bar.addStretch()
+        # The bell, gear and "?" share a strip with the window's own buttons.
+        strip = QFrame()
+        strip.setObjectName("strip")
+        strip_row = QHBoxLayout(strip)
+        strip_row.setContentsMargins(2, 2, 2, 2)
+        strip_row.setSpacing(4)
         self.tools: dict[str, QToolButton] = {}
         for name, words, opens in (
             ("bell", "desktop.tool.alerts", "Notifications"),
@@ -427,14 +434,33 @@ class MainWindow(QMainWindow):
             tool.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             tool.clicked.connect(lambda _=False, s=opens: self.show_screen(s))
             self.tools[name] = tool
-            bar.addWidget(tool)
+            strip_row.addWidget(tool)
+        self.tool_gap = QFrame()
+        self.tool_gap.setObjectName("gap")
+        self.tool_gap.setFixedHeight(16)
+        strip_row.addWidget(self.tool_gap)
+        for button in self.window_buttons.values():
+            strip_row.addWidget(button)
+        self.strip = strip
+        bar.addWidget(strip, 0, Qt.AlignmentFlag.AlignVCenter)
         column.addWidget(self.topbar)
+        # The band is the server's colored divider; the sheet lies on it.
+        self.band = QFrame()
+        self.band.setObjectName("band")
+        on_band = QHBoxLayout(self.band)
+        on_band.setContentsMargins(0, 12, 12, 12)
+        self.sheet = Sheet()
+        on_band.addWidget(self.sheet)
+        desk.band = self.band
+        column.addWidget(self.band, 1)
         self.stack = ScreenStack()
-        column.addWidget(self.stack, 1)
+        self.sheet.inside.addWidget(self.stack)
         self.setCentralWidget(desk)
+        self.place_frame()
         self.setAcceptDrops(True)
         self.screens: dict[str, QWidget] = {}
         self.server_screen = ServerScreen(self)
+        self.sheet.set_list(self.server_screen.page_list)
         self.rented_screen = RentedScreen(self)
         self.notifications = NotificationsScreen(self)
         self.down_screen = NoticeScreen("Agent not running")
@@ -516,6 +542,7 @@ class MainWindow(QMainWindow):
             pc.set_start_with_windows(True)
             pc.set_setting("start_with_windows_set", True)
         self.apply_look(None)
+        self.tab_to_window_buttons_last()
         saved = pc.saved_sign_in(agent.place)
         once = pc.setting("one_time_sign_in") if agent.place == "this PC" else None
         if once:
@@ -599,6 +626,12 @@ class MainWindow(QMainWindow):
             self.open_page(found[0])
             self.server_screen.page.take(found[1])  # type: ignore[attr-defined]
 
+    def can_drag(self, pos: QPoint) -> bool:
+        """By the top row and the band. A press on the paper is for what is
+        on the page."""
+        paper = self.sheet.paper().toRect().translated(self.sheet.mapTo(self, QPoint(0, 0)))
+        return self.sheet.bare or not paper.contains(pos)
+
     def bring_back(self) -> None:
         self.showNormal()
         self.raise_()
@@ -618,13 +651,19 @@ class MainWindow(QMainWindow):
         self.dark = self.dark_look(look)
         row = self.server_screen.row if self.screen_name == "Server" else {}
         self.apply_look(row.get("color"))
+        self.fill_binder()
 
     def apply_look(self, color: str | None) -> None:
-        """The theme, tinted with the open server's color (None: neutral)."""
+        """The theme, with the open server's color on it (None: the copper)."""
         self.look = theme.tokens(self.dark, color)
         self.setStyleSheet(theme.style_sheet(self.look, self.scale))
         for name, tool in self.tools.items():
             tool.setIcon(icons.icon(name, self.look["text-primary"], 20))
+        self.show_frame_look(self.look)
+        self.binder.look = self.sheet.look = self.look
+        self.binder.update()
+        self.sheet.update()
+        self.server_screen.page_list.set_look(self.look)
         self.server_screen.technical_overview.style_graphs(self.look)
 
     @property
@@ -636,9 +675,17 @@ class MainWindow(QMainWindow):
             self.unread = 0
             self.show_unread()
             self.mark_alerts_read()
-        self.topbar.setVisible(
-            name not in ("Sign-in", "Agent not running", "Update needed", "Tailscale")
-        )
+        # These four fill the window: no tabs, no tools, and their own small
+        # sheet. The window's own buttons stay when it has no Windows frame.
+        whole = name in ("Sign-in", "Agent not running", "Update needed", "Tailscale")
+        for widget in (self.binder, self.tool_gap, *self.tools.values()):
+            widget.setVisible(not whole)
+        self.strip.setVisible(self.frameless or not whole)
+        self.sheet.bare = whole
+        self.binder.none_open = name in ("Notifications", "PC settings", "Help")
+        self.binder.update()
+        self.server_screen.page_list.setVisible(name == "Server")
+        self.sheet.arrange()
         if name != "Server":
             self.apply_look(None)
         if name in ("PC settings", "Help"):
@@ -646,6 +693,9 @@ class MainWindow(QMainWindow):
             # section by itself and forget the one asked for.
             self.screens[name].load()  # type: ignore[attr-defined]
         self.stack.setCurrentWidget(self.screens[name])
+        self.binder.blockSignals(True)  # the tab that goes with the screen, however it was opened
+        self.select_binder_tab()
+        self.binder.blockSignals(False)
         if name == "New server":
             self.new_server.load()
 
@@ -660,25 +710,23 @@ class MainWindow(QMainWindow):
         current = [
             (self.binder.tabData(i), self.binder.tabText(i)) for i in range(self.binder.count())
         ]
-        colors = [r.get("color") for r in self.servers]
-        if current == tabs + [("new", "")] and colors == getattr(self, "_binder_colors", None):
+        running = {r["id"] for r in self.servers if r.get("state") == "ONLINE"}
+        shape = ([r.get("color") for r in self.servers], running, self.dark)
+        if current == tabs + [("new", "")] and shape == getattr(self, "_binder_shape", None):
             return
-        self._binder_colors = colors
+        self._binder_shape = shape
+        # Each server's tab is in that server's color, with a dot while it runs.
+        self.binder.looks = {r["id"]: theme.tokens(self.dark, r.get("color")) for r in self.servers}
+        self.binder.running = running
         self.binder.blockSignals(True)
         while self.binder.count():
             self.binder.removeTab(0)
-        self.binder.addTab(icons.icon("servers", self.look["text-secondary"]), text("page.servers"))
-        self.binder.setTabData(0, "all")
-        for row in self.servers:
-            i = self.binder.addTab(
-                icons.badge_icon(row.get("color") or "#8E8E93", row["name"][:1].upper()),
-                row["name"],
-            )
-            self.binder.setTabData(i, row["id"])
-        i = self.binder.addTab(icons.icon("plus", self.look["text-secondary"]), "")
-        self.binder.setTabData(i, "new")
+        for which, words in tabs + [("new", "")]:
+            i = self.binder.addTab(words)
+            self.binder.setTabData(i, which)
         self.binder.setTabToolTip(i, text("page.add_server"))
         self.binder.setAccessibleTabName(i, text("page.add_server"))
+        self.binder.refit()
         self.select_binder_tab()
         self.binder.blockSignals(False)
 
@@ -692,6 +740,12 @@ class MainWindow(QMainWindow):
         for i in range(self.binder.count()):
             if self.binder.tabData(i) == wanted:
                 self.binder.setCurrentIndex(i)
+
+    def binder_clicked(self, index: int) -> None:
+        """A click on the tab that is already the current one: go back to
+        its screen from the bell's, the gear's or "?"'s."""
+        if index == self.binder.currentIndex() and self.binder.none_open:
+            self.binder_changed(index)
 
     def binder_changed(self, index: int) -> None:
         which = self.binder.tabData(index)

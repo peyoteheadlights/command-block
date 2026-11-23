@@ -4,6 +4,10 @@ The colors are the ones the phone apps use (``shared/theme.json``), so
 every app looks the same. Qt
 style sheets have no ``var()``, so the sheet below is filled in from them.
 The installer uses the same look.
+
+The page is plain paper in every server: a server's color goes on its tab,
+the band behind the sheet, the buttons and the edges. Where no server is
+open, the app icon's copper takes its place.
 """
 
 from __future__ import annotations
@@ -15,7 +19,23 @@ from pathlib import Path
 from agent import colors
 
 SHARED = Path(__file__).resolve().parent.parent / "shared"
-RADIUS = {"radius-sm": "6px", "radius": "8px", "radius-lg": "12px"}
+FONTS = Path(__file__).resolve().parent / "fonts"
+RADIUS = {"radius-sm": "8px", "radius": "8px", "radius-lg": "14px"}
+COPPER = "#C8794A"
+HEADING = '"Archivo", "Segoe UI Variable Display", "Segoe UI", sans-serif'
+# What a server's color (or the copper) sets. The rest stays the theme's.
+ACCENT = ("accent", "accent-text", "accent-hover", "accent-hover-text", "accent-ink", "accent-ring")
+SERVER = ("accent-band", "accent-edge", "tab-fill", "tab-text")
+
+
+def load_fonts() -> None:
+    """Archivo, the heading font, from the app's own folder (no download).
+    Qt keeps one font list per program, so this only works once."""
+    from PySide6.QtGui import QFontDatabase  # here, so the colors load without Qt
+
+    if "Archivo" not in QFontDatabase.families():
+        for file in sorted(FONTS.glob("*.ttf")):
+            QFontDatabase.addApplicationFont(str(file))
 
 
 def _qt(value) -> str:
@@ -33,20 +53,34 @@ def _theme(dark: bool) -> dict:
 
 
 def tokens(dark: bool, server_color: str | None = None) -> dict[str, str]:
-    """The theme's colors, tinted with a server's color when one is given
-    (the same tinting as the phone apps)."""
+    """The theme's colors, with a server's color on the accents, the band
+    and the edges when one is given (copper when not)."""
     theme = _theme(dark)
+    mode = "dark" if dark else "light"
     out = {**{k: _qt(v) for k, v in theme.items()}, **RADIUS}
     out["tab-fill"], out["tab-text"] = out["tab-neutral"], out["text-primary"]
-    tint = (
-        colors.derive_from(server_color, theme, "dark" if dark else "light")
-        if server_color
-        else None
-    )
-    if tint:
-        out.update(tint)
-        out["accent-soft"] = _qt({"rgb": tint["accent-edge"], "alpha": 0.2 if dark else 0.13})
+    tint = colors.derive_from(server_color, theme, mode) if server_color else None
+    keys = ACCENT + SERVER if tint else ACCENT
+    tint = tint or colors.derive_from(COPPER, theme, mode) or {}
+    out.update({k: tint[k] for k in keys})
+    out["accent-soft"] = _qt({"rgb": tint["accent-edge"], "alpha": 0.2 if dark else 0.13})
+    out["paper"] = out["sheet"] if dark else out["surface"]
+    # Edges take the color too. accent-ring is that color made dark (or
+    # light) enough to see as a line: 3 to 1 against the paper.
+    out["border"] = _qt({"rgb": out["accent-ring"], "alpha": 0.5})
+    out["border-strong"] = out["accent-ring"]
+    # The band is stronger than the phones' (their part of the redesign
+    # comes later), and the words on it are moved until they read on it.
+    band = colors.mix(_rgb(out["accent-band"]), _rgb(out["accent-edge"]), 0.28)
+    out["band"] = colors.to_hex(band)
+    out["band-text"] = colors.to_hex(colors.readable(_rgb(out["text-primary"]), [band]))
     return out
+
+
+def _rgb(value: str) -> colors.RGB:
+    found = colors.rgb(value)
+    assert found is not None, value  # theme.json and derive_from only give hex here
+    return found
 
 
 def style_sheet(t: dict[str, str], scale: float = 1.0) -> str:
@@ -64,9 +98,11 @@ def _sheet(t: dict[str, str]) -> str:
 * {{ font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif; font-size: 10pt;
      color: {t["text-primary"]}; }}
 QWidget#desk {{ background: {t["desk"]}; }}
-QFrame#sheet {{ background: {t["sheet"]}; border-radius: {t["radius-lg"]};
-                border: 1px solid {t["border"]}; }}
+QFrame#sheet {{ background: {t["paper"]}; border-radius: 12px;
+                border: 1px solid {t["border-strong"]}; }}
 QLabel {{ background: transparent; }}
+QLabel#appName, QLabel#title, QLabel#h1, QLabel#h2, QTabBar#binder, QToolButton#pageTab {{
+    font-family: {HEADING}; }}
 QLabel#appName {{ font-size: 15pt; font-weight: 600; }}
 QLabel#appVersion, QLabel[kind="sub"] {{ color: {t["text-secondary"]}; }}
 QLabel#title {{ font-size: 13pt; font-weight: 600; }}
@@ -94,7 +130,7 @@ QPushButton[kind="primary"]:hover {{ background: {t["accent-hover"]}; }}
 QPushButton[kind="primary"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
 QPushButton[kind="primary"]:disabled {{ background: {t["accent-soft"]}; color: {t["text-tertiary"]};
                                         border-color: transparent; }}
-QPushButton[kind="danger"] {{ background: {t["danger"]}; color: #FFFFFF; border: 1px solid {t["danger"]};
+QPushButton[kind="danger"] {{ background: {t["danger"]}; color: {t["on-danger"]}; border: 1px solid {t["danger"]};
                               font-weight: 600; }}
 QPushButton[kind="plain"] {{ background: transparent; border: 1px solid transparent;
                              color: {t["accent-ink"]}; padding: 5px 8px; }}
@@ -136,15 +172,10 @@ QPlainTextEdit {{ background: {t["console-bg"]}; border: 1px solid {t["border"]}
                   border-radius: {t["radius"]}; font-family: "Cascadia Mono", Consolas, monospace;
                   font-size: 9pt; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: 0; }}
-QMessageBox {{ background: {t["sheet"]}; }}
+QMessageBox {{ background: {t["paper"]}; }}
 QToolTip {{ background: {t["surface"]}; border: 1px solid {t["border-strong"]}; }}
 
-QTabBar#binder::tab {{ background: {t["tab-neutral"]}; color: {t["text-secondary"]}; padding: 7px 16px;
-                       margin-right: 3px; border-top-left-radius: {t["radius"]};
-                       border-top-right-radius: {t["radius"]}; }}
-QTabBar#binder::tab:selected {{ background: {t["accent-band"]}; color: {t["text-primary"]};
-                                font-weight: 600; }}
-QTabBar#binder::tab:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QTabBar#binder {{ font-weight: 500; }}
 QToolButton {{ background: transparent; border: 1px solid transparent; border-radius: {t["radius"]};
                padding: 4px 8px; }}
 QToolButton:hover {{ background: {t["surface-hover"]}; }}
@@ -152,17 +183,24 @@ QToolButton:focus {{ border: 2px solid {t["accent-ring"]}; }}
 QToolButton::menu-indicator {{ image: none; width: 0; }}
 QScrollBar:horizontal {{ height: 8px; background: transparent; }}
 QScrollBar:vertical {{ width: 8px; background: transparent; }}
-QScrollBar::handle {{ background: {t["border-strong"]}; border-radius: 4px; min-width: 24px; min-height: 24px; }}
+QScrollBar::handle {{ background: {t["neutral"]}; border-radius: 4px; min-width: 24px; min-height: 24px; }}
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{ width: 0; height: 0;
                                                                                        background: none; }}
-QToolButton#pageTab {{ border-radius: 14px; padding: 5px 10px; }}
-QToolButton#pageTab:checked {{ background: {t["surface"]}; font-weight: 600; }}
-QFrame#band {{ background: {t["accent-band"]}; border-radius: {t["radius-lg"]};
-               border-top-left-radius: 0; }}
+QToolButton#pageTab {{ color: {t["band-text"]}; border: 2px solid transparent; border-radius: 9px;
+                       padding: 0 10px; min-height: 32px; font-weight: 500; }}
+QToolButton#pageTab:hover {{ background: transparent; }}
+QToolButton#pageTab:checked {{ color: {t["text-primary"]}; font-weight: 600; }}
+QToolButton#pageTab:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QFrame#band {{ background: {t["band"]}; border-radius: {t["radius-lg"]}; }}
+QFrame#strip {{ background: {t["paper"]}; border: 1px solid {t["border-strong"]}; border-radius: 10px; }}
+QFrame#strip QToolButton {{ padding: 3px 5px; }}
+QFrame#strip QToolButton#close:hover {{ background: {t["danger"]}; }}
+QFrame#gap {{ background: {t["border-strong"]}; max-width: 1px; min-width: 1px; }}
 QFrame[kind="card"] {{ background: {t["surface"]}; border: 1px solid {t["border"]};
                        border-radius: {t["radius-lg"]}; }}
-QFrame#panel {{ background: {t["sheet"]}; border-radius: {t["radius-lg"]}; }}
-QLabel#h1 {{ font-size: 20pt; font-weight: 600; }}
+QFrame#panel {{ border: 0 solid {t["border-strong"]}; border-left-width: 1px; }}
+QFrame#panel[under="true"] {{ border-left-width: 0; border-top-width: 1px; }}
+QLabel#h1 {{ font-size: 25.5pt; font-weight: 700; }}
 QLabel#h2 {{ font-size: 12pt; font-weight: 600; }}
 QLabel[kind="chip"] {{ background: {t["surface-sunken"]}; color: {t["text-secondary"]};
                        border-radius: 10px; padding: 2px 10px; }}

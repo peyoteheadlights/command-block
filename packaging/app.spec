@@ -13,6 +13,8 @@ ICON = str(ROOT / "desktop" / "images" / "app.ico")
 
 datas = [
     (str(ROOT / "desktop" / "images"), "desktop/images"),
+    # Archivo, the heading font (its license is licenses/Archivo-OFL.txt).
+    (str(ROOT / "desktop" / "fonts"), "desktop/fonts"),
     (str(ROOT / "shared"), "shared"),
     # The notes file as it was at release: its add-on suggestions are used
     # until a signed one is fetched (agent/notes.py load_shipped).
