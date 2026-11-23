@@ -457,10 +457,22 @@ def qapp():
 def pytest_runtest_teardown(item, nextitem):
     """Close the desktop app's windows after each test, before its agent
     stops, so their live feeds stop instead of trying the next test's agent
-    with an old sign-in."""
+    with an old sign-in. Then delete them: a closed window keeps its timers,
+    and processEvents() alone never runs deleteLater(), so old windows piled
+    up and kept calling closed agents until later tests timed out."""
     widgets = sys.modules.get("PySide6.QtWidgets")
     app = widgets.QApplication.instance() if widgets else None
-    for window in app.topLevelWidgets() if app else []:
-        if hasattr(window, "feed"):
-            window.quitting = True
-            window.close()
+    windows = [w for w in app.topLevelWidgets() if hasattr(w, "feed")] if app else []
+    if not windows:
+        return
+    from PySide6.QtCore import QEvent, QThreadPool
+
+    for window in windows:
+        window.quitting = True
+        window.close()
+    # Let running agent calls finish while the agent is still up.
+    QThreadPool.globalInstance().waitForDone(5000)
+    app.processEvents()
+    for window in windows:
+        window.deleteLater()
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
