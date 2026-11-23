@@ -454,6 +454,43 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(body(3), #"{"token":"t1"}"#)
     }
 
+    func testTheDownloadLinkTurnsOnAndTheResourcePackIsSetByLinkAndRemoved() async throws {
+        let c = client()
+        StubAgent.json(#"{"on": false, "why_not": null, "listening": false, "modpack_url": null, "speed_cap_bytes": 4194304, "resource_pack": null, "max_pack_bytes": 262144000}"#)
+        let off = try await c.downloadLink(serverId: "s")
+        XCTAssertEqual(path(0), "/api/servers/s/download-link")
+        XCTAssertEqual(DownloadLinks.packLines(s, off), ["No resource pack."])
+        XCTAssertTrue(DownloadLinks.lines(s, off, owner: false).first?.contains("owner") == true)
+
+        let on = #"{"on": true, "listening": true, "modpack_url": "http://100.64.0.1:25590/abc/modpack.mrpack", "speed_cap_bytes": 4194304, "resource_pack": {"source": "file", "filename": "Textures.zip", "url": "http://100.64.0.1:25590/abc/resource-pack.zip", "sha1": "aa", "size_bytes": 2048, "required": true, "served": true}, "max_pack_bytes": 262144000, "restart_needed": true}"#
+        StubAgent.json(on)
+        let link = try await c.setDownloadLink(serverId: "s", on: true)
+        XCTAssertEqual(method(1), "POST")
+        XCTAssertEqual(body(1), #"{"on":true}"#)
+        XCTAssertTrue(DownloadLinks.lines(s, link, owner: true)[0].hasSuffix("/abc/modpack.mrpack"))
+        let pack = DownloadLinks.packLines(s, link)
+        XCTAssertTrue(pack[0].hasPrefix("Textures.zip") && pack[0].contains("served by the download link"), pack[0])
+        XCTAssertTrue(pack.last?.hasPrefix("Restart the server") == true)
+
+        StubAgent.json(on)
+        _ = try await c.setResourcePackLink(serverId: "s", url: "https://packs.example.com/t.zip", sha1: "", required: false)
+        XCTAssertEqual(path(2), "/api/servers/s/resource-pack")
+        XCTAssertEqual(body(2), #"{"required":false,"sha1":"","url":"https://packs.example.com/t.zip"}"#)
+
+        StubAgent.json(on)
+        _ = try await c.setResourcePackRequired(serverId: "s", required: true)
+        XCTAssertEqual(body(3), #"{"required":true}"#)
+
+        StubAgent.json(#"{"on": true, "listening": true, "speed_cap_bytes": 1, "max_pack_bytes": 1}"#)
+        let removed = try await c.removeResourcePack(serverId: "s")
+        XCTAssertNil(removed.resourcePack)
+        XCTAssertEqual(method(4), "DELETE")
+
+        StubAgent.json(on)
+        _ = try await c.newDownloadLink(serverId: "s")
+        XCTAssertEqual(path(5), "/api/servers/s/download-link/new")
+    }
+
     func testTheInstalledListUpdateAllAndHistoryAreRead() async throws {
         let c = client()
         StubAgent.json(#"{"mods": [{"filename": "a.jar", "path": "C:\\s\\mods\\a.jar", "mod_id": "a", "name": "Alpha", "version": "1.0", "enabled": true, "status": "warn", "issues": [{"kind": "version_mismatch", "severity": "warn", "detail": "Made for 1.20"}], "has_history": true, "update_available": {"mod_id": "a", "latest_version": "2.0", "version_id": "va"}}], "problems": [], "minecraft_version": null, "server_state": "OFFLINE", "updates_checked_at": null}"#)

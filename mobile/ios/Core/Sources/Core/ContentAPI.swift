@@ -202,6 +202,43 @@ extension AgentClient {
         return try await call("POST", content(serverId) + "/modpack/made/discord", body: body, as: ModpackPosted.self)
     }
 
+    /// The download link and the server resource pack.
+    public func downloadLink(serverId: String) async throws -> DownloadLink {
+        try await call("GET", content(serverId) + "/download-link", as: DownloadLink.self)
+    }
+
+    /// Turns the download link on (a new link) or off (the old link stops). Owner only.
+    public func setDownloadLink(serverId: String, on: Bool) async throws -> DownloadLink {
+        let body = try AgentClient.encode(["on": on])
+        return try await call("POST", content(serverId) + "/download-link", body: body, slow: true, as: DownloadLink.self)
+    }
+
+    /// A new link: the old one stops working at once.
+    public func newDownloadLink(serverId: String) async throws -> DownloadLink {
+        try await call("POST", content(serverId) + "/download-link/new", body: Data("{}".utf8), slow: true, as: DownloadLink.self)
+    }
+
+    /// A resource pack (.zip) picked on the phone, served by the download link.
+    public func uploadResourcePack(serverId: String, file: PickedFile, required: Bool) async throws -> DownloadLink {
+        try await upload(content(serverId) + "/resource-pack/upload?required=\(required)", file, as: DownloadLink.self)
+    }
+
+    /// A resource pack someone else hosts, with the site's SHA-1 when it gives one.
+    public func setResourcePackLink(serverId: String, url: String, sha1: String, required: Bool) async throws -> DownloadLink {
+        let body = try AgentClient.encode(PackLink(url: url, sha1: sha1, required: required))
+        return try await call("POST", content(serverId) + "/resource-pack", body: body, slow: true, as: DownloadLink.self)
+    }
+
+    /// "Players must accept the resource pack".
+    public func setResourcePackRequired(serverId: String, required: Bool) async throws -> DownloadLink {
+        let body = try AgentClient.encode(["required": required])
+        return try await call("POST", content(serverId) + "/resource-pack", body: body, slow: true, as: DownloadLink.self)
+    }
+
+    public func removeResourcePack(serverId: String) async throws -> DownloadLink {
+        try await call("DELETE", content(serverId) + "/resource-pack", slow: true, as: DownloadLink.self)
+    }
+
     /// A Bedrock server's behavior and resource packs.
     public func addons(serverId: String) async throws -> AddonList {
         try await call("GET", content(serverId) + "/addons", as: AddonList.self)
@@ -381,4 +418,10 @@ public struct UpdateAllBody: Encodable, Equatable, Sendable {
     }
 
     public let mods: [Item]
+}
+
+private struct PackLink: Encodable {
+    var url: String
+    var sha1: String
+    var required: Bool
 }

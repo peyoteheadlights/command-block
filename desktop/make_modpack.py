@@ -159,6 +159,7 @@ class MakeCard:
             self.result = result
             self.page.say("")
             self.show_result()
+            self.page.link_card.load()  # the modpack's download link, if it's on
 
         self.page.ask(
             "POST",
@@ -188,7 +189,9 @@ class MakeCard:
         self.page.ask(
             "POST",
             "/modpack/made/discord",
-            lambda r: self.page.say(text("make.posted", count=r["posted"])),
+            lambda r: self.page.say(
+                text("make.posted_link" if r.get("as_link") else "make.posted", count=r["posted"])
+            ),
             self.page.said,
             body={"token": made["token"]},
             always=lambda: self.discord.setEnabled(True),

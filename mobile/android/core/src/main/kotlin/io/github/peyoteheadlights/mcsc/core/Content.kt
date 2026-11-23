@@ -553,3 +553,36 @@ object MadeModpacks {
         "make.left_out" to made.leftOut,
     ).filter { it.second.isNotEmpty() }.map { (key, names) -> strings.t(key, "names" to names.joinToString(", ")) }
 }
+
+/** What the Download link card says: the modpack's link and the speed cap
+ * while it's on, why it can't run, and the resource pack. [owner]: may turn it on. */
+object DownloadLinks {
+    fun lines(strings: Strings, link: DownloadLink, owner: Boolean): List<String> {
+        val lines = mutableListOf<String>()
+        if (link.on && !link.listening && link.whyNot != null) {
+            lines += strings.t("link.not_listening", "why" to link.whyNot)
+        } else if (link.on) {
+            lines += link.modpackUrl?.let { strings.t("link.modpack", "url" to it) } ?: strings.t("link.no_modpack")
+            lines += strings.t("link.speed", "speed" to Display.bytes(strings, link.speedCapBytes))
+            lines += strings.t("link.new_hint")
+        } else if (link.whyNot != null) {
+            lines += link.whyNot
+        }
+        if (!owner) lines += strings.t("link.owner_only")
+        return lines
+    }
+
+    fun packLines(strings: Strings, link: DownloadLink): List<String> {
+        val pack = link.resourcePack ?: return listOf(strings.t("pack.none"))
+        val lines = mutableListOf(
+            when {
+                !pack.served -> strings.t("pack.outside", "url" to (pack.url ?: ""))
+                pack.url != null -> strings.t("pack.file", "name" to (pack.filename ?: ""), "size" to Display.bytes(strings, pack.sizeBytes))
+                else -> strings.t("pack.file_off", "name" to (pack.filename ?: ""), "size" to Display.bytes(strings, pack.sizeBytes))
+            },
+        )
+        if (pack.sha1 == null) lines += strings.t("pack.no_sha1")
+        if (link.restartNeeded) lines += strings.t("pack.restart")
+        return lines
+    }
+}

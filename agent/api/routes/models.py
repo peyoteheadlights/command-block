@@ -385,6 +385,19 @@ class ModpackPostRequest(BaseModel):
     token: str = Field(min_length=32, max_length=32)
 
 
+class DownloadLinkRequest(BaseModel):
+    on: bool
+
+
+class ResourcePackRequest(BaseModel):
+    """An outside link (with the site's SHA-1, if it gives one), or just
+    "Players must accept the resource pack" when ``url`` is left out."""
+
+    url: str | None = Field(default=None, max_length=1000)
+    sha1: str = Field(default="", max_length=40)
+    required: bool = False
+
+
 class ChatRequest(BaseModel):
     message: str = Field(max_length=220)
 

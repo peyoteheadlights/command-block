@@ -1914,6 +1914,37 @@ class ModpackMade(Open):
 class ModpackPosted(Open):
     ok: bool
     posted: int
+    as_link: bool = Field(
+        default=False, description="Too big for Discord, so the bot posted the download link"
+    )
+
+
+class ResourcePack(Open):
+    """The server resource pack: a zip the link serves, or an outside link."""
+
+    source: str = Field(description="file or link")
+    filename: str | None = None
+    url: str | None = Field(
+        None, description="What players' games download; none while unreachable"
+    )
+    sha1: str | None = None
+    size_bytes: int | None = None
+    required: bool = Field(description="Players must accept the resource pack")
+    served: bool = Field(description="Served by this PC's download link")
+
+
+class DownloadLinkState(Open):
+    """The Download link card: on or off, the modpack's link, the resource pack."""
+
+    on: bool
+    why_not: str | None = Field(None, description="Why the link can't be turned on here")
+    listening: bool
+    modpack_url: str | None = None
+    speed_cap_bytes: int
+    resource_pack: ResourcePack | None = None
+    max_pack_bytes: int
+    undo: Undo | None = None
+    restart_needed: bool = False
 
 
 class ModpackUpdated(Open):
