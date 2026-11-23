@@ -113,8 +113,11 @@ extension AgentClient {
     }
 
     /// Makes a new server from a pack already read by `inspectModpack`.
-    public func modpackServer(token: String, name: String, directory: String, memoryMb: Int?, color: String?, eulaAccepted: Bool) async throws -> ServerCreated {
-        var body: [String: JSONValue] = ["name": .string(name), "directory": .string(directory), "eula_accepted": .bool(eulaAccepted)]
+    /// `ownJars`: its own jars were shown and said yes to.
+    public func modpackServer(token: String, name: String, directory: String, memoryMb: Int?, color: String?, eulaAccepted: Bool, ownJars: Bool = false) async throws -> ServerCreated {
+        var body: [String: JSONValue] = [
+            "name": .string(name), "directory": .string(directory), "eula_accepted": .bool(eulaAccepted), "own_jars": .bool(ownJars),
+        ]
         if let memory = memoryMb { body["memory_mb"] = .number(Double(memory)) }
         if let color { body["color"] = .string(color) }
         return try await call("POST", "/api/modpacks/" + AgentClient.pathSegment(token) + "/new-server", body: try AgentClient.encode(body), slow: true, as: ServerCreated.self)

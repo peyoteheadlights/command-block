@@ -531,8 +531,26 @@ class ContentTest {
             assertEquals("/api/modpacks/inspect?server_id=s", agent.server.takeRequest().path)
             agent.server.enqueue(agent.json("""{"ok": true, "job_id": "j", "modpack": {"name": "Pack"}, "version_change": false, "undo": null}"""))
             assertEquals("Pack", c.importModpack("s", "tok").modpack.name)
-            assertEquals("""{"token":"tok","confirm":true}""", agent.server.takeRequest().body.readUtf8())
+            assertEquals("""{"token":"tok","confirm":true,"own_jars":false}""", agent.server.takeRequest().body.readUtf8())
+            agent.server.enqueue(agent.json("""{"ok": true, "job_id": "j", "modpack": {"name": "Pack"}, "version_change": false, "undo": null}"""))
+            c.importModpack("s", "tok", ownJars = true)
+            assertEquals("""{"token":"tok","confirm":true,"own_jars":true}""", agent.server.takeRequest().body.readUtf8())
         }
+    }
+
+    @Test
+    fun `another owner's modpack lists its own jars and the plugins to get`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val pack = json.decodeFromString(
+            Modpack.serializer(),
+            """{"name": "P", "own_jars": ["mods/a.jar"], "plugins_to_get": ["EssentialsX"], "can_import": true}""",
+        )
+        val notes = Modpacks.notes(strings, pack)
+        assertEquals("Get these plugins yourself: EssentialsX", notes[0])
+        assertTrue(notes[1], notes[1].startsWith("Not checked by a site: mods/a.jar."))
+        assertEquals(emptyList<String>(), Modpacks.notes(strings, Modpack()))
+        val changes = json.decodeFromString(ModpackChanges.serializer(), """{"new_own_jars": ["mods/a.jar"]}""")
+        assertTrue(LinkedPacks.changes(strings, changes).single().startsWith("Not checked by a site"))
     }
 
     @Test

@@ -246,6 +246,16 @@ final class ContentTests: XCTestCase {
         XCTAssertNil(ModList().modpack)
     }
 
+    func testAnotherOwnersModpackListsItsOwnJarsAndThePluginsToGet() throws {
+        let pack = try JSONDecoder().decode(Modpack.self, from: Data(#"{"name": "P", "own_jars": ["mods/a.jar"], "plugins_to_get": ["EssentialsX"], "can_import": true}"#.utf8))
+        let notes = Modpacks.notes(s, pack)
+        XCTAssertEqual(notes.first, "Get these plugins yourself: EssentialsX")
+        XCTAssertTrue(notes[1].hasPrefix("Not checked by a site: mods/a.jar."), notes[1])
+        XCTAssertEqual(Modpacks.notes(s, Modpack()), [])
+        let changes = try JSONDecoder().decode(ModpackChanges.self, from: Data(#"{"new_own_jars": ["mods/a.jar"]}"#.utf8))
+        XCTAssertTrue(LinkedPacks.changes(s, changes).first?.hasPrefix("Not checked by a site") == true)
+    }
+
     func testTheStillFitCardReadsTheAgentsAnswerAndChangesTheseAsOneUpdateAll() throws {
         let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [], "server_state": "OFFLINE", "fit": {"about": "Create 6.0", "needs_change": [{"mod_id": "r", "name": "Rails", "filename": "r.jar", "why": "Rails needs Create below 6", "from": "1.0", "to": "2.0", "version_id": "R2"}], "no_fit": [{"mod_id": "g", "name": "Gamma", "filename": "g.jar", "why": "No version for Minecraft 1.21.4 yet"}], "cant_tell": []}}"#.utf8))
         let fit = try XCTUnwrap(list.fit)
@@ -491,7 +501,7 @@ final class ContentTests: XCTestCase {
         StubAgent.json(#"{"ok": true, "job_id": "j", "modpack": {"name": "Pack"}, "version_change": false, "undo": null}"#)
         let imported = try await c.importModpack(serverId: "s", token: "tok")
         XCTAssertEqual(imported.name, "Pack")
-        XCTAssertEqual(body(2), #"{"confirm":true,"token":"tok"}"#)
+        XCTAssertEqual(body(2), #"{"confirm":true,"own_jars":false,"token":"tok"}"#)
     }
 
     func testTheUploadFormHoldsTheFileUnderTheFieldTheAgentReads() throws {

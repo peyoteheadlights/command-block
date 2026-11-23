@@ -341,8 +341,8 @@ def test_a_modpack_is_read_first_then_imported(qapp, agent_http, tmp_path, monke
     with_mods(agent_http)
     imported = []
 
-    async def import_into(ctx, token, user="system"):
-        imported.append(token)
+    async def import_into(ctx, token, user="system", own_jars=False):
+        imported.append((token, own_jars))
         return {
             "job_id": "j1",
             "modpack": {"name": "Test Pack"},
@@ -361,13 +361,23 @@ def test_a_modpack_is_read_first_then_imported(qapp, agent_http, tmp_path, monke
     assert title == "Import Test Pack?"
     assert "Skipped, only for the game itself: sodium.jar" in body
     assert "A backup is taken and checked first" in body
-    assert len(imported) == 1
+    assert len(imported) == 1 and imported[0][1] is False
 
     # Dropped on the window: the same question; No throws the upload away.
     questions = asked(window, answer=False)
     assert drop(qapp, window, [tmp_path / "pack.mrpack"])
     wait_for(qapp, lambda: questions)
     assert len(imported) == 1
+
+    # Own jars are in the question, and Import is the yes to them.
+    questions = asked(window)
+    own = {"overrides/mods/our-tweaks.jar": b"PK own"}
+    pc.picked = str(make_pack(tmp_path / "own.mrpack", overrides=own))
+    page.note.say("")
+    button(page, "Choose a modpack file").click()
+    wait_for(qapp, lambda: "Imported Test Pack" in page.note.text(), 30)
+    assert "Not checked by a site: mods/our-tweaks.jar" in questions[0][1]
+    assert imported[-1][1] is True
 
 
 # ---------------------------------------------------------------- Bedrock add-ons
@@ -876,14 +886,15 @@ def test_a_linked_modpack_card_updates_and_unlinks(qapp, agent_http, monkeypatch
                 "newer": [{"name": "alpha-2.jar", "from": "alpha.jar", "to": "alpha-2.jar"}],
                 "added_by_you": ["gamma.jar"],
                 "configs_changed_by_you": ["config/alpha.toml"],
+                "new_own_jars": ["mods/our-tweaks.jar"],
                 "version_change": False,
                 "minecraft_version": "1.21.1",
                 "problems": [],
             },
         }
 
-    async def update(ctx, token, use_pack_configs=False, user="system"):
-        sent.append(("update", use_pack_configs))
+    async def update(ctx, token, use_pack_configs=False, user="system", own_jars=False):
+        sent.append(("update", use_pack_configs, own_jars))
         return {
             "job_id": "j1",
             "changes": (await preview(ctx))["changes"],
@@ -913,8 +924,9 @@ def test_a_linked_modpack_card_updates_and_unlinks(qapp, agent_http, monkeypatch
     assert title == "Update Test Pack to 1.3.0?"
     assert "Newer: alpha.jar → alpha-2.jar" in body and "Added: ferrite.jar" in body
     assert "Kept, added by you: gamma.jar" in body
+    assert "Not checked by a site: mods/our-tweaks.jar" in body
     assert choices == [("Use the modpack's config files instead of mine", False)]
-    assert sent == [("preview", "v2"), ("update", True), ("preview", None)]
+    assert sent == [("preview", "v2"), ("update", True, True), ("preview", None)]
 
     asked(window)
     button(page, "Unlink").click()

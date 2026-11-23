@@ -317,6 +317,7 @@ private fun LazyListScope.fromModpack(vm: AppViewModel, adding: AddServerPages, 
                 Text(t("pack.files") + ": " + t("pack.files_value", "count" to pack.downloadCount, "size" to Display.bytes(strings, pack.downloadBytes)), color = LocalColors.current.text2)
                 for (problem in pack.problems) Text("• $problem", color = LocalColors.current.danger)
                 if (pack.clientOnly.isNotEmpty()) Text(t("pack.client_only", "names" to pack.clientOnly.joinToString(", ")), color = LocalColors.current.text2)
+                for (note in Modpacks.notes(vm.strings, pack)) Text(note, color = LocalColors.current.warning)
             }
         }
     }

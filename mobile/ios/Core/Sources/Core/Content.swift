@@ -294,6 +294,7 @@ public enum LinkedPacks {
             ("linked.removed", changes.removed),
             ("linked.kept", changes.addedByYou),
             ("linked.configs", changes.configsChangedByYou),
+            ("pack.own_jars", changes.newOwnJars),
         ].filter { !$0.1.isEmpty }.map { strings.t($0.0, ["names": $0.1.joined(separator: ", ")]) }
     }
 
@@ -366,6 +367,13 @@ public enum UpdateAll {
 
 /// A modpack import's steps, as the confirmation lists them.
 public enum Modpacks {
+    /// What another owner's pack asks of you: plugins to get by hand, and its
+    /// own jars no site checked. Shown in the question; a yes sends own_jars.
+    public static func notes(_ strings: Strings, _ pack: Modpack) -> [String] {
+        [("pack.plugins_to_get", pack.pluginsToGet), ("pack.own_jars", pack.ownJars)]
+            .filter { !$0.1.isEmpty }.map { strings.t($0.0, ["names": $0.1.joined(separator: ", ")]) }
+    }
+
     public static func steps(_ strings: Strings, _ inspected: ModpackInspected) -> [String] {
         let pack = inspected.pack
         let unknown = strings.t("value.unknown")

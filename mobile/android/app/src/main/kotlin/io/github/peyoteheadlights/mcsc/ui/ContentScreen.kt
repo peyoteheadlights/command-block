@@ -904,6 +904,7 @@ private fun ModpackDialog(vm: AppViewModel, content: ContentPages) {
         }
         if (pack.clientOnly.isNotEmpty()) Text(t("pack.client_only", "names" to pack.clientOnly.joinToString(", ")), modifier = Modifier.padding(top = 6.dp))
         if (pack.skippedOverrides.isNotEmpty()) Text(t("pack.skipped_extras", "names" to pack.skippedOverrides.joinToString(", ")), modifier = Modifier.padding(top = 6.dp))
+        for (note in Modpacks.notes(strings, pack)) Text(note, color = LocalColors.current.warning, modifier = Modifier.padding(top = 6.dp))
         if (pack.canImport) {
             Text(t("mobile.content.modpack_failed_note"), modifier = Modifier.padding(top = 8.dp))
             for (step in Modpacks.steps(strings, inspected)) Text("• $step", modifier = Modifier.padding(top = 2.dp))

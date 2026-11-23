@@ -381,7 +381,8 @@ class ContentPages(
         modpack = null
         task = null
         work("modpack", strings, reload = ::loadMods) {
-            val done = it.importModpack(serverId, read.token)
+            // Its own jars were listed in the question just answered.
+            val done = it.importModpack(serverId, read.token, ownJars = read.pack.ownJars.isNotEmpty())
             Said(strings.t("mobile.content.modpack_done", "name" to done.modpack.name.ifBlank { read.pack.name }), good = true)
         }
     }
@@ -435,7 +436,7 @@ class ContentPages(
         val read = packUpdate ?: return
         packUpdate = null
         work("modpack", strings, reload = ::loadMods) {
-            it.updateModpack(serverId, read.token, usePackConfigs)
+            it.updateModpack(serverId, read.token, usePackConfigs, ownJars = read.changes.newOwnJars.isNotEmpty())
             Said(strings.t("linked.updated", "name" to read.pack.name, "version" to read.changes.toVersion), good = true)
         }
     }

@@ -55,10 +55,11 @@ from typing import TYPE_CHECKING, Any
 
 from .. import downloads, serveruser
 from ..minecraft.properties import FormError
+from ..security.auth import AuthError
 from ..security.paths import assert_not_symlink, is_inside, safe_filename, safe_join
 from .addfrom import known_source
 from .jarinfo import DISABLED_SUFFIX, ModInfo, read_mod_jar, sha256_file, wrong_loader_reason
-from .manager import MAX_FILE_BYTES, UNKNOWN_FILE, ModError, refuse_known_bad
+from .manager import MAX_FILE_BYTES, OWN_JAR_NEEDED, UNKNOWN_FILE, ModError, refuse_known_bad
 from .modrinth import ModrinthError
 
 if TYPE_CHECKING:
@@ -419,10 +420,17 @@ def _player_mods(ctx: ServerContext) -> list[ModInfo]:
 
 
 async def add(
-    ctx: ServerContext, filename: str, data: bytes, user: str, confirm: bool = False
+    ctx: ServerContext,
+    filename: str,
+    data: bytes,
+    user: str,
+    confirm: bool = False,
+    *,
+    own_jar: bool,
 ) -> dict[str, Any]:
     """Put a mod, resource pack or shader pack in the player-only folder.
-    The server never loads it; it's there for the modpack."""
+    The server never loads it; it's there for the modpack. A jar no site
+    lists needs ``own_jar`` ("Add own .jar"): players run it."""
     mods = ctx.mods
     safe_filename(filename, FILE_EXT)
     if len(data) > MAX_FILE_BYTES:
@@ -455,6 +463,8 @@ async def add(
                 if reason:
                     raise ModError(reason + " It wasn't added.")
         listed = await known_source(mods, data)
+        if jar and not listed and not own_jar:
+            raise AuthError(OWN_JAR_NEEDED, status=403)
         if not confirm and not listed:
             raise FormError({"confirm": UNKNOWN_FILE})
         temp.replace(target)

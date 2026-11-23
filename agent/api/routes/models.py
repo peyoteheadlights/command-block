@@ -336,6 +336,8 @@ class ModpackNewRequest(BaseModel):
     color: str | None = Field(default=None, max_length=16)
     # True only when the person ticked the box themselves.
     eula_accepted: bool = False
+    # True only when the person was shown the pack's own jars and said yes.
+    own_jars: bool = False
 
 
 class CurseForgeModpackRequest(BaseModel):
@@ -351,6 +353,8 @@ class ModrinthModpackRequest(BaseModel):
 class ModpackIntoRequest(BaseModel):
     token: str = Field(min_length=32, max_length=32)
     confirm: bool = False
+    # True only when the person was shown the pack's own jars and said yes.
+    own_jars: bool = False
 
 
 class ModpackPreviewRequest(BaseModel):
@@ -363,6 +367,8 @@ class ModpackUpdateRequest(BaseModel):
     token: str = Field(min_length=32, max_length=32)
     use_pack_configs: bool = False
     confirm: bool = False
+    # True only when the person was shown the pack's own jars and said yes.
+    own_jars: bool = False
 
 
 class ChatRequest(BaseModel):

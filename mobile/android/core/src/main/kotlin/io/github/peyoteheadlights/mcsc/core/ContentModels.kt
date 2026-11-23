@@ -131,6 +131,8 @@ data class ModpackChanges(
     val newer: List<NewerMod> = emptyList(),
     @SerialName("added_by_you") val addedByYou: List<String> = emptyList(),
     @SerialName("configs_changed_by_you") val configsChangedByYou: List<String> = emptyList(),
+    /** New or changed own jars: the update needs ownJars = true. */
+    @SerialName("new_own_jars") val newOwnJars: List<String> = emptyList(),
     @SerialName("version_change") val versionChange: Boolean = false,
     @SerialName("minecraft_version") val minecraftVersion: String = "",
     val problems: List<String> = emptyList(),
@@ -466,6 +468,10 @@ data class Modpack(
     @SerialName("download_bytes") val downloadBytes: Long = 0,
     @SerialName("client_only") val clientOnly: List<String> = emptyList(),
     @SerialName("skipped_overrides") val skippedOverrides: List<String> = emptyList(),
+    /** Jars no site checked: importing them needs ownJars = true and "Add own .jar". */
+    @SerialName("own_jars") val ownJars: List<String> = emptyList(),
+    /** From the pack's command-block.json: plugins to get by hand. */
+    @SerialName("plugins_to_get") val pluginsToGet: List<String> = emptyList(),
     val problems: List<String> = emptyList(),
     @SerialName("can_import") val canImport: Boolean = false,
 )

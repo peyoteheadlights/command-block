@@ -291,6 +291,7 @@ struct AddServerView: View {
                 if !pack.clientOnly.isEmpty {
                     Text(model.t("pack.client_only", ["names": pack.clientOnly.joined(separator: ", ")])).font(.footnote)
                 }
+                ForEach(Modpacks.notes(model.strings, pack), id: \.self) { Text(verbatim: $0).font(.footnote).foregroundStyle(.orange) }
             }
             if pack.canImport {
                 detailsStep(adding, options, memory: true)

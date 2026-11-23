@@ -322,6 +322,8 @@ public struct ModpackChanges: Decodable, Equatable, Sendable {
     public var newer: [NewerMod]
     public var addedByYou: [String]
     public var configsChangedByYou: [String]
+    /// New or changed own jars: the update needs ownJars = true.
+    public var newOwnJars: [String]
     public var versionChange: Bool
     public var minecraftVersion: String
     public var problems: [String]
@@ -331,6 +333,7 @@ public struct ModpackChanges: Decodable, Equatable, Sendable {
         case toVersion = "to_version"
         case addedByYou = "added_by_you"
         case configsChangedByYou = "configs_changed_by_you"
+        case newOwnJars = "new_own_jars"
         case versionChange = "version_change"
         case minecraftVersion = "minecraft_version"
     }
@@ -343,6 +346,7 @@ public struct ModpackChanges: Decodable, Equatable, Sendable {
         newer = c.each(.newer)
         addedByYou = c.value(.addedByYou, [])
         configsChangedByYou = c.value(.configsChangedByYou, [])
+        newOwnJars = c.value(.newOwnJars, [])
         versionChange = c.value(.versionChange, false)
         minecraftVersion = c.value(.minecraftVersion, "")
         problems = c.value(.problems, [])
@@ -1219,6 +1223,10 @@ public struct Modpack: Decodable, Equatable, Sendable {
     public var downloadBytes: Int64
     public var clientOnly: [String]
     public var skippedOverrides: [String]
+    /// Jars no site checked: importing them needs ownJars = true and "Add own .jar".
+    public var ownJars: [String]
+    /// From the pack's command-block.json: plugins to get by hand.
+    public var pluginsToGet: [String]
     public var problems: [String]
     public var canImport: Bool
 
@@ -1231,13 +1239,16 @@ public struct Modpack: Decodable, Equatable, Sendable {
         case downloadBytes = "download_bytes"
         case clientOnly = "client_only"
         case skippedOverrides = "skipped_overrides"
+        case ownJars = "own_jars"
+        case pluginsToGet = "plugins_to_get"
         case canImport = "can_import"
     }
 
     public init(
         name: String = "", minecraftVersion: String? = nil, typeName: String? = nil, loaderVersion: String? = nil,
         files: [ModpackFile] = [], downloadCount: Int = 0, downloadBytes: Int64 = 0, clientOnly: [String] = [],
-        skippedOverrides: [String] = [], problems: [String] = [], canImport: Bool = false
+        skippedOverrides: [String] = [], ownJars: [String] = [], pluginsToGet: [String] = [],
+        problems: [String] = [], canImport: Bool = false
     ) {
         self.name = name
         self.minecraftVersion = minecraftVersion
@@ -1248,6 +1259,8 @@ public struct Modpack: Decodable, Equatable, Sendable {
         self.downloadBytes = downloadBytes
         self.clientOnly = clientOnly
         self.skippedOverrides = skippedOverrides
+        self.ownJars = ownJars
+        self.pluginsToGet = pluginsToGet
         self.problems = problems
         self.canImport = canImport
     }
@@ -1263,6 +1276,8 @@ public struct Modpack: Decodable, Equatable, Sendable {
         downloadBytes = c.value(.downloadBytes, 0)
         clientOnly = c.value(.clientOnly, [])
         skippedOverrides = c.value(.skippedOverrides, [])
+        ownJars = c.value(.ownJars, [])
+        pluginsToGet = c.value(.pluginsToGet, [])
         problems = c.value(.problems, [])
         canImport = c.value(.canImport, false)
     }
