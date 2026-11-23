@@ -204,6 +204,26 @@ class ContentTest {
     }
 
     @Test
+    fun `the same job card offers turn off on the pick's others, or on each one when there's no pick`() {
+        val list = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(
+            ModList.serializer(),
+            """{"mods": [], "server_state": "OFFLINE", "overlaps": [
+                {"kind": "same_mod", "why": "Sodium is here 2 times.", "keep": "new.jar", "say": "Keep 0.5.2, turn off 0.5.1",
+                 "mods": [{"filename": "old.jar", "mod_id": "sodium", "name": "Sodium", "version": "0.5.1", "turn_off": true, "needed_by": ""},
+                          {"filename": "new.jar", "mod_id": "sodium", "name": "Sodium", "version": "0.5.2", "turn_off": false, "needed_by": ""}]},
+                {"kind": "same_job", "why": "They all draw a web map of the world.", "keep": "", "say": "These do the same job. Keep the one you use.",
+                 "mods": [{"filename": "dynmap.jar", "name": "Dynmap", "version": "3.7", "turn_off": false, "needed_by": "Dynmap Addon"},
+                          {"filename": "squaremap.jar", "name": "squaremap", "version": "1.2", "turn_off": false, "needed_by": ""}]}
+            ]}""",
+        )
+        val (twice, maps) = list.overlaps
+        assertEquals("Keep 0.5.2, turn off 0.5.1", twice.say)
+        assertEquals(listOf("old.jar"), SameJob.turnOff(twice).map { it.filename })
+        assertEquals(listOf("squaremap.jar"), SameJob.turnOff(maps).map { it.filename })
+        assertEquals(emptyList<Overlap>(), ModList().overlaps)
+    }
+
+    @Test
     fun `update all says why it can't start and what it did`() {
         assertEquals(strings.t("mobile.content.stop_first"), UpdateAll.blocked(strings, plan.copy(serverRunning = true)))
         assertEquals("Wait for Backing up to finish first.", UpdateAll.blocked(strings, plan.copy(blockedBy = "Backing up")))
