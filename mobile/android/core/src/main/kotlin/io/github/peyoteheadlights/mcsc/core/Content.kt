@@ -243,6 +243,23 @@ object UpdateAll {
         job?.takeIf { it.state == "running" && it.serverId == serverId && it.kind == "mods" }?.step
 }
 
+/** The "Still fit?" card: its first line, and "Change these" as an Update all. */
+object StillFit {
+    fun lead(strings: Strings, fit: ModFit, plugins: Boolean): String {
+        val word = if (plugins) "plugin" else "mod"
+        val count = fit.needsChange.size
+        return if (count > 0) strings.tn("fit.lead", count, "word" to word, "about" to fit.about)
+        else strings.t("fit.lead_none", "word" to word, "about" to fit.about)
+    }
+
+    /** The mods to change, shown and sent the way Update all's own list is (all ticked). */
+    fun plan(fit: ModFit): UpdateAllPlan = UpdateAllPlan(
+        updates = fit.needsChange.map {
+            UpdateAllRow(modId = it.modId, name = it.name, filename = it.filename, installedVersion = it.from, latestVersion = it.to, versionId = it.versionId)
+        },
+    )
+}
+
 /** A modpack import's steps, as the confirmation lists them. */
 object Modpacks {
     fun steps(strings: Strings, inspected: ModpackInspected): List<String> {

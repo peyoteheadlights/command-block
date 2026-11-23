@@ -65,6 +65,11 @@ extension AgentClient {
         try await call("GET", content(serverId) + "/mods/update-all", slow: true, as: UpdateAllPlan.self)
     }
 
+    /// Hides the "Still fit?" card until the next change checks again.
+    public func hideFit(serverId: String) async throws {
+        _ = try await call("POST", content(serverId) + "/mods/fit/hide", body: Data("{}".utf8), as: Ok.self)
+    }
+
     /// Updates the ticked ones as one change (one backup, all or nothing).
     public func updateAll(serverId: String, _ body: UpdateAllBody) async throws -> UpdateAllResult {
         try await call("POST", content(serverId) + "/mods/update-all", body: try AgentClient.encode(body), slow: true, as: UpdateAllResult.self)

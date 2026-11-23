@@ -188,6 +188,22 @@ class ContentTest {
     }
 
     @Test
+    fun `the still fit card reads the agent's answer and changes these as one update all`() {
+        val list = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(
+            ModList.serializer(),
+            """{"mods": [], "server_state": "OFFLINE", "fit": {"about": "Create 6.0", "needs_change": [{"mod_id": "r", "name": "Rails", "filename": "r.jar", "why": "Rails needs Create below 6", "from": "1.0", "to": "2.0", "version_id": "R2"}], "no_fit": [{"mod_id": "g", "name": "Gamma", "filename": "g.jar", "why": "No version for Minecraft 1.21.4 yet"}], "cant_tell": []}}""",
+        )
+        val fit = list.fit!!
+        assertEquals("1 mod needs a different version to go with Create 6.0.", StillFit.lead(strings, fit, plugins = false))
+        assertEquals("Some plugins may not go with Create 6.0.", StillFit.lead(strings, fit.copy(needsChange = emptyList()), plugins = true))
+        val plan = StillFit.plan(fit)
+        assertEquals(setOf("r.jar"), UpdateAll.ticked(plan))
+        assertEquals("""{"mods":[{"filename":"r.jar","version_id":"R2"}]}""", UpdateAll.body(plan, UpdateAll.ticked(plan)).toString())
+        assertEquals("No version for Minecraft 1.21.4 yet", fit.noFit.single().why)
+        assertNull(ModList().fit)
+    }
+
+    @Test
     fun `update all says why it can't start and what it did`() {
         assertEquals(strings.t("mobile.content.stop_first"), UpdateAll.blocked(strings, plan.copy(serverRunning = true)))
         assertEquals("Wait for Backing up to finish first.", UpdateAll.blocked(strings, plan.copy(blockedBy = "Backing up")))

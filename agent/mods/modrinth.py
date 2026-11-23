@@ -78,10 +78,16 @@ class ModrinthClient:
             await self._client.aclose()
 
     async def _get(self, path: str, params: dict | None = None) -> Any:
+        return await self._send("GET", path, params=params)
+
+    async def _post(self, path: str, body: dict[str, Any]) -> Any:
+        return await self._send("POST", path, json=body)
+
+    async def _send(self, method: str, path: str, **sent: Any) -> Any:
         client = await self._http()
         url = f"{self.base}{path}"
         try:
-            response = await client.get(url, params=params)
+            response = await client.request(method, url, **sent)
         except httpx.HTTPError as exc:
             raise ModrinthError(
                 "Couldn't reach Modrinth. Check the PC's internet connection and try again."
@@ -145,8 +151,7 @@ class ModrinthClient:
                     "categories": hit.get("categories", []),
                     "versions": hit.get("versions", []),
                     "latest_version": hit.get("latest_version"),
-                    "client_side": hit.get("client_side"),
-                    "server_side": hit.get("server_side"),
+                    **sides(hit),
                     "icon_url": hit.get("icon_url"),
                     "license": hit.get("license"),
                     "page": f"https://modrinth.com/{self.page_kind(hit)}/{hit.get('slug')}",
@@ -195,8 +200,7 @@ class ModrinthClient:
             "loaders": data.get("loaders", []),
             "game_versions": data.get("game_versions", []),
             "downloads": data.get("downloads"),
-            "client_side": data.get("client_side"),
-            "server_side": data.get("server_side"),
+            **sides(data),
             "license": (data.get("license") or {}).get("id"),
             "icon_url": data.get("icon_url"),
             "page": f"https://modrinth.com/{self.page_kind(data)}/{data.get('slug')}",
@@ -290,6 +294,26 @@ class ModrinthClient:
                     return version
         return versions[0] if versions else None
 
+    async def installed_versions(self, sha1s: list[str]) -> dict[str, dict[str, Any]]:
+        """What each installed file is on Modrinth, by its sha1, in one call.
+        A file Modrinth doesn't know is left out."""
+        data = await self._post("/version_files", {"hashes": sha1s, "algorithm": "sha1"})
+        return _by_hash(data)
+
+    async def fitting_versions(
+        self, sha1s: list[str], minecraft_version: str
+    ) -> dict[str, dict[str, Any]]:
+        """The newest version that fits this Minecraft version and the
+        server's loader, for each installed file by its sha1, in one call.
+        A file with no fitting version is left out."""
+        body = {
+            "hashes": sha1s,
+            "algorithm": "sha1",
+            "loaders": list(self.loaders),
+            "game_versions": [minecraft_version],
+        }
+        return _by_hash(await self._post("/version_files/update", body))
+
     async def by_hash(self, sha512: str) -> str | None:
         """The project a file belongs to, found by its SHA-512, or None."""
         try:
@@ -339,3 +363,54 @@ class ModrinthClient:
                 "The downloaded file isn't a mod (.jar) file, so it was thrown away."
             )
         return data, filename, fetched.sha256
+
+
+def _by_hash(data: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(data, dict):
+        raise ModrinthError("Modrinth sent an answer that couldn't be read.")
+    return {
+        str(sha).lower(): ModrinthClient._version_summary(v)
+        for sha, v in data.items()
+        if isinstance(v, dict)
+    }
+
+
+# Modrinth's ``environment`` values (it replaced the project's client_side
+# and server_side), sorted by what each needs on the server and in players'
+# games. "unknown" says nothing.
+SERVER_NEEDS = {
+    "client_and_server",
+    "server_only",
+    "server_only_client_optional",
+    "dedicated_server_only",
+}
+SERVER_NO = {"client_only", "singleplayer_only"}
+CLIENT_NEEDS = {
+    "client_and_server",
+    "client_only",
+    "client_only_server_optional",
+    "singleplayer_only",
+}
+CLIENT_NO = {"server_only", "dedicated_server_only"}
+
+
+def sides(data: dict[str, Any]) -> dict[str, str | None]:
+    """``client_side`` and ``server_side`` (required, optional or
+    unsupported) read from Modrinth's ``environment``. A project lists one
+    value per kind of version it has. The old fields are used only while
+    Modrinth still sends them and ``environment`` says nothing."""
+    found = data.get("environment")
+    values = {found} if isinstance(found, str) else set(found or [])
+    values.discard("unknown")
+    if not values:
+        return {"client_side": data.get("client_side"), "server_side": data.get("server_side")}
+
+    def side(needs: set[str], no: set[str]) -> str:
+        if values & needs:
+            return "required"
+        return "unsupported" if values <= no else "optional"
+
+    return {
+        "client_side": side(CLIENT_NEEDS, CLIENT_NO),
+        "server_side": side(SERVER_NEEDS, SERVER_NO),
+    }

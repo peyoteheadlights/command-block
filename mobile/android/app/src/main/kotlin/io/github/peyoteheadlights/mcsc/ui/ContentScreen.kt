@@ -46,10 +46,13 @@ import io.github.peyoteheadlights.mcsc.core.Display
 import io.github.peyoteheadlights.mcsc.core.IconCache
 import io.github.peyoteheadlights.mcsc.core.Install
 import io.github.peyoteheadlights.mcsc.core.Mod
+import io.github.peyoteheadlights.mcsc.core.ModFit
+import io.github.peyoteheadlights.mcsc.core.ModList
 import io.github.peyoteheadlights.mcsc.core.ModVersion
 import io.github.peyoteheadlights.mcsc.core.Modpacks
 import io.github.peyoteheadlights.mcsc.core.Permissions
 import io.github.peyoteheadlights.mcsc.core.States
+import io.github.peyoteheadlights.mcsc.core.StillFit
 import io.github.peyoteheadlights.mcsc.core.Tone
 import io.github.peyoteheadlights.mcsc.core.UpdateAll
 import kotlinx.coroutines.Dispatchers
@@ -142,6 +145,7 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
         return
     }
     if (list.storedSeparately) item { Note(t("mods.stored_separately"), color = LocalColors.current.text2) }
+    list.fit?.let { fit -> item { StillFitCard(vm, content, list, fit, kind, changes == Changes.READY && idle) } }
 
     if (changes == Changes.READY) {
         item {
@@ -551,6 +555,36 @@ private fun VersionRow(vm: AppViewModel, version: ModVersion, canChange: Boolean
         )
         if (canChange && Content.canRollBack(version)) {
             TextButton(onClick = onUse) { Text(t("mods.rollback")) }
+        }
+    }
+}
+
+/** After a mod or version change: the ones to change (one Update all), the
+ * ones with no version that fits (Turn off) and the ones nothing said about. */
+@Composable
+private fun StillFitCard(vm: AppViewModel, content: ContentPages, list: ModList, fit: ModFit, kind: ContentKind?, ready: Boolean) {
+    val strings = vm.strings
+    SectionTitle(t("fit.title"))
+    Card {
+        Note(StillFit.lead(strings, fit, kind == ContentKind.PLUGINS))
+        for (row in fit.needsChange) Item(row.name, subtitle = "${Content.change(strings, row.from, row.to)}\n${row.why}")
+        if (fit.noFit.isNotEmpty()) Note(t("fit.no_fit"), color = LocalColors.current.text)
+        for (row in fit.noFit) {
+            Item(row.name, subtitle = row.why)
+            val mod = list.mods.firstOrNull { it.filename == row.filename && it.enabled }
+            if (mod != null && vm.canDo(Permissions.MODS_MANAGE)) {
+                Presses(listOf(Press(t("mods.turn_off"), { content.setEnabled(mod, false, strings) }, enabled = ready)))
+            }
+        }
+        if (fit.cantTell.isNotEmpty()) Note(t("fit.cant_tell"), color = LocalColors.current.text)
+        for (row in fit.cantTell) Item(row.name, subtitle = row.why)
+        if (vm.canDo(Permissions.MODS_MANAGE)) {
+            Presses(
+                listOfNotNull(
+                    Press(t("fit.change"), { content.openFit(fit) }, enabled = ready).takeIf { fit.needsChange.isNotEmpty() },
+                    Press(t("fit.hide"), { content.hideFit(strings) }),
+                ),
+            )
         }
     }
 }
