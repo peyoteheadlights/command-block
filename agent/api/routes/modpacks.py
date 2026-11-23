@@ -10,7 +10,7 @@ from functools import partial
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from ... import downloadlink, linkedpack, modpack, modpackmake
+from ... import downloadlink, linkedpack, modpack, modpackmake, modrinthshare
 from ...mods.curseforge import MODPACKS, CurseForgeClient
 from ...mods.modrinth import ModrinthClient
 from ...security.auth import AuthError, Principal
@@ -33,6 +33,9 @@ from ..responses import (
     ModpackPosted,
     ModpackUpdated,
     ModpackUpdatePreview,
+    ModrinthAccount,
+    ModrinthShare,
+    ModrinthSignInStarted,
     ModSearch,
     Ok,
     ServerCreated,
@@ -46,7 +49,12 @@ from .models import (
     ModpackPostRequest,
     ModpackPreviewRequest,
     ModpackUpdateRequest,
+    ModrinthFinishRequest,
+    ModrinthJarRequest,
     ModrinthModpackRequest,
+    ModrinthServerProjectRequest,
+    ModrinthSignInRequest,
+    ModrinthUploadRequest,
     ResourcePackRequest,
 )
 from .mods import side_by_side
@@ -426,3 +434,103 @@ async def resource_pack_remove(
     """No server resource pack any more."""
     request.state.audited = True
     return await downloadlink.remove_pack(ctx, user=principal.user)
+
+
+# ---------------------------------------------------------------- Sign in with Modrinth
+# One sign-in per PC. Signing in and out is the owner's (PC settings): what
+# goes up goes up under their Modrinth account. Uploads are drafts, which
+# only the owner can submit for review on Modrinth's site.
+@global_router.post("/modrinth/sign-in", response_model=ModrinthSignInStarted)
+async def modrinth_sign_in(
+    payload: ModrinthSignInRequest,
+    request: Request,
+    principal: Principal = Depends(require(PC_SETTINGS)),
+    core=Depends(get_core),
+):
+    """Modrinth's page to open. It sends the browser back to ``return_to``
+    with a code, which goes to ``POST /modrinth/sign-in/finish``."""
+    started = await core.modrinth.start(payload.return_to)
+    audit(core, request, "modrinth_sign_in")
+    return started
+
+
+@global_router.post("/modrinth/sign-in/finish", response_model=ModrinthAccount)
+async def modrinth_sign_in_finish(
+    payload: ModrinthFinishRequest,
+    request: Request,
+    principal: Principal = Depends(require(PC_SETTINGS)),
+    core=Depends(get_core),
+):
+    """Swap the code for the token and keep it on this PC."""
+    request.state.audited = True
+    try:
+        status = await core.modrinth.finish(payload.code, payload.state)
+    except modrinthshare.ModrinthShareError:
+        audit(core, request, "modrinth_sign_in_finish", result="failed")
+        raise
+    audit(core, request, "modrinth_sign_in_finish")
+    return status
+
+
+@global_router.post("/modrinth/sign-out", response_model=ModrinthAccount)
+async def modrinth_sign_out(
+    request: Request,
+    principal: Principal = Depends(require(PC_SETTINGS)),
+    core=Depends(get_core),
+):
+    """Forget the Modrinth sign-in on this PC."""
+    core.modrinth.sign_out()
+    audit(core, request, "modrinth_sign_out")
+    return core.modrinth.status()
+
+
+@router.get("/modrinth", response_model=ModrinthShare)
+async def modrinth_share_state(
+    principal: Principal = Depends(require(MODS_MANAGE)), ctx=Depends(get_server)
+):
+    """The "Put it on Modrinth" card."""
+    await modrinthshare.refresh(ctx)
+    return modrinthshare.state(ctx)
+
+
+@router.post("/modrinth/upload", response_model=ModrinthShare)
+async def modrinth_upload(
+    payload: ModrinthUploadRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """The newest made modpack as a new version (the project, a draft, is
+    made the first time with ``slug`` and ``summary``)."""
+    request.state.audited = True
+    return await modrinthshare.upload_modpack(
+        ctx, payload.slug, payload.summary, user=principal.user
+    )
+
+
+@router.post("/modrinth/own-jar", response_model=ModrinthShare)
+async def modrinth_own_jar(
+    payload: ModrinthJarRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """One own jar from the newest modpack as its own Modrinth mod (a draft).
+    Needs "Add own .jar" too: it is a file no site checked."""
+    _own_jars_allowed(principal, ctx.server_id, True)
+    request.state.audited = True
+    return await modrinthshare.upload_own_jar(
+        ctx, payload.path, payload.slug, payload.summary, user=principal.user
+    )
+
+
+@router.post("/modrinth/server-project", response_model=ModrinthShare)
+async def modrinth_server_project(
+    payload: ModrinthServerProjectRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Remember (or, empty, forget) this server's Modrinth Server Project."""
+    request.state.audited = True
+    return await modrinthshare.set_server_project(ctx, payload.link, user=principal.user)

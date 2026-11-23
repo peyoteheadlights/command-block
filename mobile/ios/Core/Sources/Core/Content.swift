@@ -670,3 +670,67 @@ public enum DownloadLinks {
         return lines
     }
 }
+
+/// What the "Put it on Modrinth" card says. `owner`: may sign in and out.
+public enum ModrinthCards {
+    public static func lines(_ strings: Strings, _ share: ModrinthShare, owner: Bool) -> [String] {
+        var lines: [String] = []
+        if let account = share.account {
+            if !account.available {
+                lines.append(strings.t("modrinth.not_available"))
+            } else if account.signedIn {
+                lines.append(strings.t("modrinth.signed_in", ["name": account.username ?? "?"]))
+            } else {
+                lines.append(strings.t(account.ranOut ? "modrinth.ran_out" : "modrinth.signed_out"))
+            }
+        }
+        if !owner { lines.append(strings.t("modrinth.owner_only")) }
+        if let project = share.project {
+            lines.append(strings.t("modrinth.project", ["url": project.url, "version": share.uploads.first?.version ?? "-"]))
+        }
+        if share.made == nil { lines.append(strings.t("modrinth.make_first")) }
+        for jar in share.ownJars {
+            if let url = jar.url { lines.append(strings.t("modrinth.jar_up", ["name": jar.name, "url": url])) }
+        }
+        return lines
+    }
+
+    public static func serverLines(_ strings: Strings, _ share: ModrinthShare) -> [String] {
+        var lines: [String] = []
+        if share.address == nil {
+            lines.append(strings.t("modrinth.server_no_address"))
+        } else if let project = share.serverProject {
+            lines.append(strings.t("modrinth.server_listed", ["url": project.url]))
+        }
+        if let older = share.older {
+            lines.append(strings.t("modrinth.server_older", ["listed": older.listed, "newest": older.newest]))
+        }
+        return lines
+    }
+
+    public static func steps(_ strings: Strings, _ share: ModrinthShare) -> String {
+        let title = share.project?.title ?? ""
+        return strings.t("modrinth.server_steps", [
+            "address": share.address ?? "",
+            "project": title.isEmpty ? strings.t("modrinth.your_modpack") : title,
+            "version": share.uploads.first?.version ?? "-",
+        ])
+    }
+
+    /// A first try at the Modrinth address, which the person can change.
+    public static func slug(_ name: String) -> String {
+        let dashed = String(name.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        return String(dashed.split(separator: "-").joined(separator: "-").prefix(64))
+    }
+
+    /// (code, state) from mcsc://modrinth?state=..&code=.., or nil when
+    /// Modrinth sent no code (the person said no) or it isn't that link.
+    public static func cameBack(_ url: URL) -> (code: String, state: String)? {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme?.lowercased() == DeepLink.scheme, parts.host == "modrinth",
+              let code = parts.queryItems?.first(where: { $0.name == "code" })?.value,
+              let state = parts.queryItems?.first(where: { $0.name == "state" })?.value
+        else { return nil }
+        return (code, state)
+    }
+}

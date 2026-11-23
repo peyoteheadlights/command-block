@@ -874,6 +874,48 @@ class AgentClient(
     suspend fun removeResourcePack(serverId: String): DownloadLink =
         call(request("${server(serverId)}/resource-pack").delete().build(), DownloadLink.serializer(), slow = true)
 
+    /** The "Put it on Modrinth" card. */
+    suspend fun modrinth(serverId: String): ModrinthShare = get("${server(serverId)}/modrinth", ModrinthShare.serializer())
+
+    /** Modrinth's sign-in page; it comes back to the app as mcsc://modrinth. Owner only. */
+    suspend fun modrinthSignIn(): ModrinthSignInStarted =
+        call(post("/api/modrinth/sign-in", buildJsonObject { put("return_to", "phone") }), ModrinthSignInStarted.serializer())
+
+    /** The code Modrinth gave: the PC swaps it and keeps the sign-in. */
+    suspend fun modrinthFinish(code: String, state: String): ModrinthAccount {
+        val body = buildJsonObject {
+            put("code", code)
+            put("state", state)
+        }
+        return call(post("/api/modrinth/sign-in/finish", body), ModrinthAccount.serializer(), slow = true)
+    }
+
+    suspend fun modrinthSignOut(): ModrinthAccount =
+        call(post("/api/modrinth/sign-out", buildJsonObject {}), ModrinthAccount.serializer())
+
+    /** The newest modpack up as a draft; [slug] and [summary] only the first time. */
+    suspend fun modrinthUpload(serverId: String, slug: String, summary: String): ModrinthShare {
+        val body = buildJsonObject {
+            put("slug", slug)
+            put("summary", summary)
+        }
+        return call(post("${server(serverId)}/modrinth/upload", body), ModrinthShare.serializer(), slow = true)
+    }
+
+    /** One own jar of the newest modpack as its own Modrinth mod (a draft). */
+    suspend fun modrinthOwnJar(serverId: String, path: String, slug: String, summary: String): ModrinthShare {
+        val body = buildJsonObject {
+            put("path", path)
+            put("slug", slug)
+            put("summary", summary)
+        }
+        return call(post("${server(serverId)}/modrinth/own-jar", body), ModrinthShare.serializer(), slow = true)
+    }
+
+    /** The Modrinth Server Project's link (empty: forget it). */
+    suspend fun modrinthServerProject(serverId: String, link: String): ModrinthShare =
+        call(post("${server(serverId)}/modrinth/server-project", buildJsonObject { put("link", link) }), ModrinthShare.serializer(), slow = true)
+
     /** A Bedrock server's behavior and resource packs. */
     suspend fun addons(serverId: String): AddonList = get("${server(serverId)}/addons", AddonList.serializer())
 
