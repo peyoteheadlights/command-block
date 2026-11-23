@@ -284,4 +284,18 @@ class PcSettingsTest {
             assertEquals(strings.t("oldcopy.removed_kept", "count" to 2), PcUpdate.oldCopyRemoved(strings, c.removeOldCopy()))
         }
     }
+
+    @Test
+    fun `shared mod files say their real disk use`() {
+        assertNull(PcSettings.modFiles(strings, view)) // an older agent doesn't say
+        val shared = json.decodeFromString(
+            PcSettingsView.serializer(),
+            """{"config": {}, "secrets": {}, "mod_storage": {"files": 3, "on_disk": 1048576, "saved": 2097152}}""",
+        )
+        assertEquals(strings.t("modfiles.usage", "used" to "1.0 MB", "saved" to "2.0 MB"), PcSettings.modFiles(strings, shared))
+        val empty = shared.copy(modStorage = ModStorage())
+        assertEquals(strings.t("modfiles.none"), PcSettings.modFiles(strings, empty))
+        val list = json.decodeFromString(ModList.serializer(), """{"mods": [], "server_state": "OFFLINE", "stored_separately": true}""")
+        assertTrue(list.storedSeparately)
+    }
 }

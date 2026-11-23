@@ -394,6 +394,11 @@ struct PcSettingsScreen: View {
                         }
                     }
                 }
+                if let words = PcSettings.modFiles(model.strings, view) {
+                    Section(model.t("modfiles.title")) {
+                        Text(words).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 Section(model.t("appset.maintenance")) {
                     Toggle(model.t("appset.maintenance_label"), isOn: Binding(
                         get: { PcSettings.maintenance(view) },

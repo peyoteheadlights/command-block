@@ -70,6 +70,13 @@ def three(value: Any, yes: str, no: str, unknown: str = "value.unknown") -> str:
     return text(yes if value is True else no if value is False else unknown)
 
 
+def mod_files_words(usage: dict) -> str:
+    """Real disk use of the shared mod files, read from the agent."""
+    if not usage.get("files"):
+        return text("modfiles.none")
+    return text("modfiles.usage", used=size(usage["on_disk"]), saved=size(usage["saved"]))
+
+
 def yes_no(value: Any) -> str:
     return three(value, "value.yes", "value.no")
 
@@ -242,6 +249,7 @@ class PCSettings(Section):
                 "look",
                 "alerts",
                 "awake",
+                "mod_files",
                 "server_user",
                 "maintenance",
                 "tailscale",
@@ -303,6 +311,7 @@ class PCSettings(Section):
         data, power = found
         self.fill("alerts", self.alerts_card(data))
         self.fill("awake", self.awake_card(data, power) if power else QWidget())
+        self.fill("mod_files", self.mod_files_card(data.get("mod_storage")))
         self.fill("maintenance", self.maintenance_card(data))
 
     # -------------------------------------------------------- look and detail
@@ -486,6 +495,14 @@ class PCSettings(Section):
                     "sub",
                 )
             )
+        return frame
+
+    # -------------------------------------------------------- shared mod files
+    def mod_files_card(self, usage: dict | None) -> QWidget:
+        if usage is None:  # an older agent doesn't say
+            return QWidget()
+        frame, layout = card(text("modfiles.title"))
+        layout.addWidget(label(mod_files_words(usage), "sub"))
         return frame
 
     # -------------------------------------------------------- separate Windows user

@@ -487,10 +487,20 @@ def test_all_servers_groups_other_pcs_servers_by_pc(qapp, agent_http):
     window._elsewhere_at = 10**12  # the agent's own list (this PC alone) isn't asked for again
     screen = window.screens["All servers"]
     screen.show_all()
-    qapp.processEvents()
+    # The cards show on the next turn of the event loop, later on a slow PC.
+    wait_for(qapp, lambda: "Kids world" in shown_text(screen))
     shown = shown_text(screen)
     assert "Living room" in shown and "Bedroom" in shown and "Kids world" in shown
     window.elsewhere["b"] = "Can't reach x:1."
     screen.show_all()
     qapp.processEvents()
     assert "Can't reach x:1." in shown_text(screen)
+
+
+def test_shared_mod_files_show_real_disk_use():
+    from desktop.gear import mod_files_words
+    from desktop.words import text
+
+    assert mod_files_words({"files": 0, "on_disk": 0, "saved": 0}) == text("modfiles.none")
+    words = mod_files_words({"files": 2, "on_disk": 3 * 1024**2, "saved": 5 * 1024**3})
+    assert words == text("modfiles.usage", used="3.0 MB", saved="5.0 GB")

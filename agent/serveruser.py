@@ -138,6 +138,22 @@ def grant(folder: Path, rights: str = "M") -> None:
         )
 
 
+def deny_writes(path: Path) -> bool:
+    """Say "no writing or deleting" for the account on one shared mod file
+    (agent/mods/store.py). It's set on the file itself, not inherited, so
+    giving a server folder Modify later doesn't undo it. False when the
+    account isn't there or Windows refused."""
+    if not IS_WINDOWS or not account_exists():
+        return False
+    try:
+        code, out = _icacls([str(path), "/deny", f"{ACCOUNT}:(W,D)"])
+    except (OSError, subprocess.SubprocessError) as exc:
+        code, out = -1, str(exc)
+    if code != 0:
+        log.warning("couldn't take writing away on %s: %s", path, out.strip()[:300])
+    return code == 0
+
+
 def remove_grant(folder: Path) -> str | None:
     """Take the account's access off a folder (Turn off). Returns why it
     failed, or None."""
@@ -184,6 +200,13 @@ async def start(
     folders = [Path(cwd), *(writable or [])]
     for folder in folders:
         await asyncio.to_thread(grant, folder)
+    # The shared mod files the server's mods folder links to: read and run
+    # only (each file also says no writing, agent/mods/store.py).
+    from .mods.store import folder as store_folder
+
+    store = store_folder(config)
+    if store.is_dir():
+        await asyncio.to_thread(grant, store, "RX")
     home = java_home(cmd[0])
     if home:
         try:

@@ -606,7 +606,10 @@ def test_suggestions_map_link_and_speed_ups_are_shown(qapp, agent_http, monkeypa
     with_mods(agent_http)
     pc = FakePC()
     window, page = mods_page(qapp, agent_http, pc)
-    wait_for(qapp, lambda: page.players_card.isVisibleTo(page))
+    wait_for(
+        qapp,
+        lambda: page.players_card.isVisibleTo(page) and "Sodium" in shown_text(page.players_card),
+    )
     assert "Sodium" in shown_text(page.players_card)
     assert not page.ideas_card.isVisibleTo(page)  # the lists are Technical only
     # Qt shows a button added to a shown page on the next turn of the event loop.

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ... import serveruser
 from ...config import ConfigError
 from ...events import Event
+from ...mods import store
 from ...security.auth import Principal
 from ...security.permissions import PC_SETTINGS, require
 from ..deps import audit, get_core
@@ -61,7 +62,9 @@ async def get_settings(
 ):
     """The PC's own settings, the owner's alone. A moderator's screens read
     each server's settings (/api/servers/{id}/settings) instead."""
+    usage = await asyncio.to_thread(store.for_config(core.db, core.config).usage)
     return {
+        "mod_storage": usage,
         "config": core.config.as_dict(redact_secrets=True),
         "editable": list(SETTABLE_PREFIXES),
         "secrets": {
