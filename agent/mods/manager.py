@@ -27,6 +27,7 @@ import logging
 import shutil
 import time
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -660,6 +661,26 @@ class ModManager:
         )
         return target
 
+    @staticmethod
+    @contextmanager
+    def letting_go(path: Path):
+        """Windows won't remove or rename a file another program has open,
+        and a linked file is open on every server that runs with it."""
+        try:
+            yield
+        except PermissionError as exc:
+            try:
+                shared = path.stat().st_nlink > 1
+            except OSError:
+                shared = False
+            if not shared:
+                raise
+            raise ModError(
+                f"Couldn't change {path.name}. It's one file shared with another server, "
+                "and a running server keeps its files locked. If one of those servers "
+                "is running, stop it and try again."
+            ) from exc
+
     def place_jar(self, source: Path, target: Path) -> None:
         """Put a checked jar into the server's folder through the store,
         and remember whether it could be linked (the Mods page says so when
@@ -792,7 +813,8 @@ class ModManager:
                 old = read_mod_jar(target)
                 self.archive(target, old, source="replaced-on-install")
                 replaced = old.to_dict()
-                target.unlink()
+                with self.letting_go(target):
+                    target.unlink()
             self.place_jar(temp, target)
         finally:
             if temp.exists():
@@ -1001,7 +1023,8 @@ class ModManager:
             if target.exists():
                 old = read_mod_jar(target)
                 self.archive(target, old, source="replaced-on-upload")
-                target.unlink()
+                with self.letting_go(target):
+                    target.unlink()
             self.place_jar(temp, target)
         finally:
             temp.unlink(missing_ok=True)
@@ -1118,7 +1141,8 @@ class ModManager:
             archived = str(self.archive(path, mod, source="removed"))
         stamp = time.strftime("%Y%m%d-%H%M%S")
         trash_target = self.trash_dir / f"{stamp}-{path.name}"
-        shutil.move(str(path), str(trash_target))
+        with self.letting_go(path):
+            shutil.move(str(path), str(trash_target))
         self.record(
             "remove",
             user,
@@ -1153,7 +1177,8 @@ class ModManager:
             )
         if target.exists():
             raise ModError(f"{new_name} is already in the {self.server_type.content} folder.")
-        path.rename(target)
+        with self.letting_go(path):
+            path.rename(target)
         self._cache = None
         updated = read_mod_jar(target)
         action = "enable" if enabled else "disable"
@@ -1359,7 +1384,8 @@ class ModManager:
         try:
             probe = read_mod_jar(temp, compute_hash=False)
             self._check_loader(probe, discarded=False)
-            old_path.unlink()
+            with self.letting_go(old_path):
+                old_path.unlink()
             self.place_jar(temp, target)
         except Exception:
             temp.unlink(missing_ok=True)
@@ -1427,7 +1453,8 @@ class ModManager:
         if current:
             current_path = Path(current.path)
             self.archive(current_path, current, source="pre-rollback")
-            current_path.unlink()
+            with self.letting_go(current_path):
+                current_path.unlink()
         target = safe_join(self.mods_dir, row["filename"], allowed_extensions=JAR_EXT)
         self.place_jar(source, target)
         restored = read_mod_jar(target)

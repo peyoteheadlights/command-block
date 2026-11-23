@@ -88,10 +88,12 @@ class Later:
 
     async def _run(self) -> None:
         await asyncio.sleep(WAIT)
-        names, ids = self.names, None if self.everything else self.ids
-        self.names, self.ids, self.everything = [], set(), False
+        names = self.names
         about = names[0] if len(names) == 1 else "these changes"
-        await refresh(self.ctx, about, ids)
+        await refresh(self.ctx, about, None if self.everything else set(self.ids))
+        # Cleared only once checked: a newer change cancels this run and
+        # the next run checks these changes too.
+        self.names, self.ids, self.everything = [], set(), False
 
     def stop(self) -> None:
         if self.task:
@@ -103,13 +105,13 @@ async def catch_up(mods) -> None:
     doesn't work with (for the "Doing the same job" card): asked all at
     once by the sha1 the store saved, then never again."""
     missing: dict[str, ModInfo] = {}
-    for mod in mods.scan(use_cache=True):
+    for mod in await asyncio.to_thread(mods.scan, use_cache=True):
         if (
             mod.enabled
             and mods.source_of(mod) == "modrinth"
             and "incompatible" not in mods.record_of(mod)
         ):
-            missing[_hashes(mods, mod)["sha1"]] = mod
+            missing[(await asyncio.to_thread(_hashes, mods, mod))["sha1"]] = mod
     if not missing:
         return
     try:
@@ -166,7 +168,7 @@ async def check_fit(
     if not minecraft or not mods.server_type.has_content:
         return result  # nothing to check against yet
     result["minecraft_version"] = minecraft
-    installed = [m for m in mods.scan() if m.enabled]
+    installed = [m for m in await asyncio.to_thread(mods.scan) if m.enabled]
     index, _ = mods.provided(installed)
     tops = {id(m) for m in installed}
     # A range one jar states on another, as (who states it, on whom, range).
@@ -309,6 +311,16 @@ async def check_fit(
                 "version_id": candidate["version_id"],
             }
         )
+    if mod_ids is not None:
+        # A check of a few changed mods only adds to the saved card: rows
+        # for mods still here that it didn't look at stay.
+        keep = {m.mod_id for m in installed} - {m.mod_id for m in checking} - mod_ids
+        saved = ctx.db.get_setting(SETTING) or {}
+        for key in ("needs_change", "no_fit", "cant_tell"):
+            kept = [r for r in saved.get(key) or [] if r["mod_id"] in keep]
+            if kept:
+                result[key] += kept
+                result["about"] = "these changes"
     return result
 
 
@@ -351,7 +363,7 @@ async def _ask_sites(mods, wanted: list[ModInfo], minecraft: str) -> dict[str, d
             continue
         found[mod.mod_id] = {"label": LABELS.get(source, source)}
         if source == "modrinth":
-            on_modrinth[_hashes(mods, mod)["sha1"]] = mod
+            on_modrinth[(await asyncio.to_thread(_hashes, mods, mod))["sha1"]] = mod
         else:
             others.append((mod, source, project))
 
@@ -390,7 +402,7 @@ async def _ask_sites(mods, wanted: list[ModInfo], minecraft: str) -> dict[str, d
         except (SourceError, ModError) as exc:
             answer["error"] = str(exc)
             continue
-        hashes = _hashes(mods, mod)
+        hashes = await asyncio.to_thread(_hashes, mods, mod)
         mine = [v for v in versions if _same_file(hashes, v)]
         if hasattr(site, "versions"):
             answer["listed"] = bool(mine)
