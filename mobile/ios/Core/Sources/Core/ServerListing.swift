@@ -42,6 +42,46 @@ public struct LogFileText: Decodable, Equatable, Sendable {
     public let cut: Bool
 }
 
+/// One entry of a folder in the server's folder (Server files).
+public struct ServerFileEntry: Decodable, Equatable, Identifiable, Sendable {
+    public let name: String
+    public let folder: Bool
+    /// Bytes; nil for a folder.
+    public let size: Int64?
+    public let changed: Double
+    public var id: String { name }
+}
+
+/// A folder in the server's folder; `path` is relative with "/", "" for the server folder itself.
+public struct ServerFiles: Decodable, Equatable, Sendable {
+    public let path: String
+    public let parent: String?
+    public let entries: [ServerFileEntry]
+    public let truncated: Bool
+
+    public init(path: String, parent: String? = nil, entries: [ServerFileEntry] = [], truncated: Bool = false) {
+        self.path = path
+        self.parent = parent
+        self.entries = entries
+        self.truncated = truncated
+    }
+
+    /// The path of `name` inside this folder.
+    public func inside(_ name: String) -> String { path.isEmpty ? name : path + "/" + name }
+}
+
+public struct ServerFileUploaded: Decodable, Equatable, Sendable {
+    public let path: String
+    public let name: String
+    public let size: Int64
+}
+
+/// The graphs' points as a CSV file's text.
+public struct PerformanceCsv: Decodable, Equatable, Sendable {
+    public let filename: String
+    public let text: String
+}
+
 /// One game rule as the running server said it.
 public struct GameRule: Decodable, Equatable, Identifiable, Sendable {
     public let name: String
@@ -166,5 +206,35 @@ extension AgentClient {
             "GET", "/api/servers/\(AgentClient.pathSegment(serverId))/logs/files/" + AgentClient.pathSegment(name),
             as: LogFileText.self
         )
+    }
+
+    /// One folder of the server's folder (owner only).
+    public func serverFiles(serverId: String, folder: String) async throws -> ServerFiles {
+        try await call(
+            "GET", "/api/servers/\(AgentClient.pathSegment(serverId))/files?path=" + AgentClient.pathSegment(folder),
+            as: ServerFiles.self
+        )
+    }
+
+    /// Downloads one file of the server's folder into `destination`, as a backup's zip is.
+    public func downloadServerFile(serverId: String, file: String, to destination: URL) async throws -> Int64 {
+        try await downloadZip(
+            "/api/servers/\(AgentClient.pathSegment(serverId))/files/download?path=" + AgentClient.pathSegment(file),
+            to: destination, type: "application/octet-stream", progress: { _, _ in }
+        )
+    }
+
+    /// Puts `file` into `folder` of the server's folder; never over a file that's there.
+    public func uploadServerFile(serverId: String, folder: String, file: PickedFile) async throws -> ServerFileUploaded {
+        try await upload(
+            "/api/servers/\(AgentClient.pathSegment(serverId))/files/upload?path=" + AgentClient.pathSegment(folder),
+            file, as: ServerFileUploaded.self
+        )
+    }
+
+    /// The graphs' points for `hours` as CSV text, for a spreadsheet.
+    public func performanceCsv(serverId: String, hours: Int) async throws -> PerformanceCsv {
+        let range = Swift.min(Swift.max(hours, 1), 168)
+        return try await call("GET", "/api/servers/\(AgentClient.pathSegment(serverId))/performance/csv?hours=\(range)", as: PerformanceCsv.self)
     }
 }

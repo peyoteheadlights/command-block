@@ -480,7 +480,7 @@ class AgentClient(
 
     /** Streams the help file into [out], as [downloadBackup] does, for the share menu. */
     suspend fun downloadHelpFile(made: HelpFileMade, out: java.io.OutputStream): Long =
-        downloadZip("/api/help-bundle/${path(made.token)}?filename=${path(made.filename)}", out) { _, _ -> }
+        downloadZip("/api/help-bundle/${path(made.token)}?filename=${path(made.filename)}", out, { _, _ -> })
 
     suspend fun newServerOptions(): NewServerOptions = get("/api/new-server/options", NewServerOptions.serializer())
 
@@ -556,6 +556,7 @@ class AgentClient(
         path: String,
         out: java.io.OutputStream,
         progress: (Long, Long?) -> Unit,
+        type: String = "application/zip",
     ): Long = withContext(Dispatchers.IO) {
         val current = token() ?: throw AgentException.SignedOut()
         val request = Request.Builder().url(pairing.origin + path).header("Authorization", "Bearer $current").get().build()
@@ -567,7 +568,7 @@ class AgentClient(
         }
         response.use {
             log.line("GET ${request.url.encodedPath} -> ${it.code}")
-            if (!it.isSuccessful || !it.header("Content-Type").orEmpty().startsWith("application/zip")) {
+            if (!it.isSuccessful || !it.header("Content-Type").orEmpty().startsWith(type)) {
                 read(it, request, JsonObject.serializer(), signedIn = true)
                 throw AgentException.NotAnAgent()
             }
@@ -998,6 +999,22 @@ class AgentClient(
 
     /** Minecraft's own log files (logs/), newest first. */
     suspend fun logFiles(serverId: String): LogFiles = get("${server(serverId)}/logs/files", LogFiles.serializer())
+
+    /** One folder of the server's folder (owner only). */
+    suspend fun serverFiles(serverId: String, folder: String): ServerFiles =
+        get("${server(serverId)}/files?path=${path(folder)}", ServerFiles.serializer())
+
+    /** Streams one file of the server's folder into [out], as [downloadBackup] does. */
+    suspend fun downloadServerFile(serverId: String, file: String, out: java.io.OutputStream): Long =
+        downloadZip("${server(serverId)}/files/download?path=${path(file)}", out, { _, _ -> }, type = "application/octet-stream")
+
+    /** Puts [file] into [folder] of the server's folder; never over a file that's there. */
+    suspend fun uploadServerFile(serverId: String, folder: String, file: PickedFile): ServerFileUploaded =
+        call(upload("${server(serverId)}/files/upload?path=${path(folder)}", file), ServerFileUploaded.serializer(), slow = true)
+
+    /** The graphs' points for [hours] as CSV text, for a spreadsheet. */
+    suspend fun performanceCsv(serverId: String, hours: Int): PerformanceCsv =
+        get("${server(serverId)}/performance/csv?hours=${hours.coerceIn(1, 168)}", PerformanceCsv.serializer())
 
     /** One of them, read-only. */
     suspend fun logFile(serverId: String, name: String): LogFileText =

@@ -78,6 +78,9 @@ from .yourpcs import YourPCs
 
 log = logging.getLogger(__name__)
 
+# The live feed's events that can play a sound on this PC, and their switch.
+SOUNDS = {"server_crashed": "sound_crash", "player_joined": "sound_join"}
+
 
 class _Signals(QObject):
     done = Signal(object)
@@ -1296,6 +1299,13 @@ class MainWindow(FramelessWindow):
                 self.close_for_update()
             elif event.get("type") == "alert":
                 self.alerts_loaded([event.get("data") or {}], pop=True)
+            elif event.get("type") in SOUNDS and self.pc.setting(SOUNDS[event["type"]]) in (
+                True,
+                "true",
+            ):
+                self.pc.play_sound(crash=event["type"] == "server_crashed")
+                self.parts_due = self.parts_due or event.get("server_id") == self.server_id
+                self.soon.start()
             elif event.get("type") in ("console", "metrics", "chat"):
                 # Only the open page of the open server uses these, and only
                 # while the window shows.

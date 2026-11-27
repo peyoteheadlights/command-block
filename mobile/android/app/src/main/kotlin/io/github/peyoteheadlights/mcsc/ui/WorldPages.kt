@@ -487,6 +487,30 @@ class WorldPages(
     }
 
     // ------------------------------------------------------------ performance
+    /** Why the graphs couldn't be shared as CSV, until the next try. */
+    var csvProblem: Message? by mutableStateOf(null)
+        private set
+
+    /** The graphs' points for the time shown, as a CSV file in [folder], then [share]. */
+    fun shareCsv(folder: File, share: (File) -> Unit) {
+        val c = client() ?: return
+        csvProblem = null
+        scope.launch {
+            try {
+                val csv = c.performanceCsv(serverId, range)
+                val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    folder.mkdirs()
+                    folder.listFiles()?.forEach { it.delete() }
+                    File(folder, csv.filename.substringAfterLast('/')).apply { writeText(csv.text) }
+                }
+                share(file)
+            } catch (e: AgentException) {
+                noted(e)
+                csvProblem = Message.of(e)
+            }
+        }
+    }
+
     var range: Int by mutableStateOf(Charts.DEFAULT_RANGE)
         private set
     var performance: Read<Performance> by mutableStateOf(Read())

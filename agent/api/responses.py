@@ -687,6 +687,11 @@ class Performance(Open):
     storage: Storage | None = Field(None, description="null when asked with storage=false")
 
 
+class PerformanceCsv(Open):
+    filename: str
+    text: str = Field(description="The graphs' points as CSV, one row per point, oldest first")
+
+
 class HealthCheck(Open):
     name: str
     status: str = Field(description="ok, warn or unknown (never counted as passing)")
@@ -2627,6 +2632,30 @@ class PcFolder(Open):
     name: str
     path: str
     world: bool = Field(description="It holds a Minecraft world (a level.dat inside)")
+
+
+class ServerFileEntry(Open):
+    name: str
+    folder: bool
+    size: int | None = Field(None, description="Bytes; null for a folder")
+    changed: float
+
+
+class ServerFiles(Open):
+    """One folder inside a server's folder. Paths use / and are relative
+    to the server folder ("" is the server folder itself)."""
+
+    path: str
+    parent: str | None = Field(description="null in the server folder itself")
+    entries: list[ServerFileEntry]
+    truncated: bool = False
+
+
+class ServerFileUploaded(Open):
+    ok: bool = True
+    path: str
+    name: str
+    size: int
 
 
 class FolderListing(Open):

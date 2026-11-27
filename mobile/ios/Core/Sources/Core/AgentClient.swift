@@ -359,7 +359,7 @@ public final class AgentClient: @unchecked Sendable {
     /// with the sign-in in a header (never in the address), and returns its
     /// size. `progress` gets the bytes so far and the size, when the PC said
     /// it, about twice a second. A refusal comes back in the agent's words.
-    func downloadZip(_ path: String, to destination: URL, progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> Int64 {
+    func downloadZip(_ path: String, to destination: URL, type: String = "application/zip", progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> Int64 {
         let logPath = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map { String($0) } ?? path
         guard let url = URL(string: pairing.origin + path) else {
             throw AgentError.notAnAgent
@@ -418,7 +418,7 @@ public final class AgentClient: @unchecked Sendable {
             try? files.removeItem(at: file)
             throw AgentClient.refusal(http, data, isJson: contentType.contains("application/json"))
         }
-        guard contentType.hasPrefix("application/zip") else {
+        guard contentType.hasPrefix(type) else {
             try? files.removeItem(at: file)
             throw AgentError.notAnAgent
         }
