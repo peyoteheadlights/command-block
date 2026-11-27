@@ -1701,3 +1701,82 @@ def test_a_failed_install_removes_the_separate_user_it_made(tmp_path, places, pr
         eng.roll_back()  # when the run leaves it to the setup window's button
     assert ("remove_server_user", "CommandBlockServer") in system.calls
     assert ("remove_starter",) in system.calls
+
+
+# ====================================================================
+# a power cut in the middle of an install or update
+# ====================================================================
+def test_a_power_cut_between_the_program_swap_puts_the_old_copy_back(places):
+    found = make_installer_copy(places, "1.0.0")
+    program = places["program"]
+    # The old program was parked, the new one not moved in yet.
+    program.rename(program.with_name(program.name + ".previous"))
+    (program.with_name(program.name + ".incoming")).mkdir()
+
+    again = detect.find_installs(
+        task_folder=program, registry_folder=program, data_root=places["data"], places=[]
+    )
+
+    assert [f.version for f in again] == ["1.0.0"]
+    assert (program / "CommandBlockAgent.exe").read_bytes() == b"old agent"
+    assert engine.decide_action(again[0], "1.2.0")[0] == engine.UPDATE
+    assert found.env_path.is_file()
+
+
+def test_a_parked_folder_that_is_not_the_app_is_left_alone(tmp_path):
+    folder = tmp_path / "Command Block"
+    previous = folder.with_name(folder.name + ".previous")
+    previous.mkdir()
+    (previous / "notes.txt").write_text("not the app")
+    folder.with_name(folder.name + ".incoming").mkdir()
+
+    assert detect.find_installs(task_folder=folder, data_root=tmp_path / "x", places=[]) == []
+    assert previous.is_dir() and not folder.exists()
+
+
+def test_an_old_parked_copy_without_a_new_one_beside_it_stays_parked(places):
+    make_installer_copy(places, "1.0.0")
+    program = places["program"]
+    # Left over after an update or uninstall that couldn't delete it, then
+    # the program folder went away. No update was half done.
+    shutil.copytree(program, program.with_name(program.name + ".previous"))
+    shutil.rmtree(program)
+
+    detect.find_installs(
+        task_folder=program, registry_folder=program, data_root=places["data"], places=[]
+    )
+
+    assert not program.exists()
+
+
+def test_a_new_install_never_replaces_the_password_of_a_finished_install(places, program_files):
+    from agent.security.auth import verify_password
+
+    found = make_installer_copy(places, "1.0.0")
+    shutil.rmtree(places["program"])  # the program folder is gone, the settings are not
+    choices = new_install(places)
+    choices.password = "a different long password"
+
+    run_engine(choices, program_files)
+
+    env = found.env_path.read_text()
+    saved = env.split("MCSC_ADMIN_PASSWORD_HASH=")[1].split("\n")[0]
+    assert verify_password(PASSWORD, saved)
+
+
+def test_a_new_install_tried_again_uses_the_password_typed_last(places, program_files):
+    from agent.security.auth import verify_password
+
+    system = FakeSystem()
+    system.fail_start = True  # the first try never answers
+    _, first, _ = run_engine(new_install(places), program_files, system)
+    assert not first.ok
+    choices = new_install(places)
+    choices.password = "a different long password"
+
+    _, second, _ = run_engine(choices, program_files)
+
+    assert second.ok, second.message + second.details
+    env = (places["data"] / "config" / ".env").read_text()
+    saved = env.split("MCSC_ADMIN_PASSWORD_HASH=")[1].split("\n")[0]
+    assert verify_password("a different long password", saved)

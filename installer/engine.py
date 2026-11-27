@@ -52,6 +52,9 @@ from .uninstall import servers_inside
 INSTALL, UPDATE, REPAIR, MIGRATE = "install", "update", "repair", "migrate"
 OLD_COPY_RECORD = "old-copy.json"
 UPDATE_RESULT = "last-update.json"
+# Kept in the data folder while a new install is unfinished: only then may
+# the password it saved be replaced by the one typed on a try again.
+INSTALL_UNFINISHED = "install-unfinished"
 
 
 class StepFailed(Exception):
@@ -904,9 +907,17 @@ class Engine:
         from .setup_tool import read_env, step_secrets, write_env_value
 
         has_password = is_password_hash(read_env(self.env_path).get("MCSC_ADMIN_PASSWORD_HASH", ""))
-        if has_password and not (self.c.action == INSTALL and self.c.password):
+        unfinished = self.c.data_root / INSTALL_UNFINISHED
+        # A saved password is only replaced while a new install is unfinished
+        # (tried again with a new password). A finished install's password is
+        # the owner's.
+        retyped = self.c.action == INSTALL and self.c.password and unfinished.is_file()
+        if has_password and not retyped:
             step_secrets(self._setup_context())  # adds an API token if one is missing
             return "Your existing password is kept."
+        if self.c.action == INSTALL:
+            unfinished.parent.mkdir(parents=True, exist_ok=True)
+            unfinished.touch()
         if has_password and self.c.password:
             # A new install tried again with a different password: use the
             # one typed this time.
@@ -1093,6 +1104,7 @@ class Engine:
                 else:
                     shutil.rmtree(found.program_dir, ignore_errors=True)
                     done.append(f"removed {found.program_dir}")
+        (self.c.data_root / INSTALL_UNFINISHED).unlink(missing_ok=True)
         self.log.write("finished", done=done)
         return None if done else "Nothing else to do."
 
