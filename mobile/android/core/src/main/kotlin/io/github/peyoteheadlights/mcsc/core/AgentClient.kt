@@ -308,6 +308,32 @@ class AgentClient(
     /** How friends join. Can take a few seconds: the PC asks Tailscale. */
     suspend fun join(serverId: String): JoinInfo = get("${server(serverId)}/join", JoinInfo.serializer())
 
+    /** "Let friends join from the internet": its state, the switch and the outside tests. */
+    suspend fun internet(serverId: String): InternetReach = get("${server(serverId)}/internet", InternetReach.serializer())
+
+    suspend fun setInternet(serverId: String, on: Boolean): InternetReach = call(
+        request("${server(serverId)}/internet").put(buildJsonObject { put("on", on) }.toBody()).build(),
+        InternetReach.serializer(),
+        slow = true,
+    )
+
+    /** mcsrvstat.us pings it; [allow] once the owner said yes to sending the address there. */
+    suspend fun testInternet(serverId: String, allow: Boolean): InternetReach = call(
+        post("${server(serverId)}/internet/test", buildJsonObject { put("allow_mcsrvstat", allow) }),
+        InternetReach.serializer(),
+        slow = true,
+    )
+
+    /** What this phone's own ping over mobile data found. */
+    suspend fun phoneTest(serverId: String, address: String, port: Int, works: Boolean): InternetReach = call(
+        post("${server(serverId)}/internet/phone-test", buildJsonObject {
+            put("address", address)
+            put("port", port)
+            put("works", works)
+        }),
+        InternetReach.serializer(),
+    )
+
     // ------------------------------------------------------------------
     // Backups, Restore world, Schedules and Performance. Making a backup,
     // a restore and Run now answer only once the work is done, which can

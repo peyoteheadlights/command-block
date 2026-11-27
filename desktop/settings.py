@@ -164,6 +164,23 @@ def switch_card(title: str, name: str, hint: str = "") -> tuple[Box, QVBoxLayout
     return frame, layout, switch
 
 
+def address_ways(join: dict) -> list[QWidget]:
+    """The home network and Tailscale addresses friends type, read from this PC."""
+    shown: list[QWidget] = []
+    for part in (join.get("java"), join.get("bedrock")):
+        if not part:
+            continue
+        port = part.get("port")
+        home = next((a["address"] for a in part.get("local") or [] if not a.get("virtual")), None)
+        if home:
+            shown.append(label(text("address.home", address=f"{home}:{port}"), "sub"))
+        tailscale = part.get("tailscale") or {}
+        name = (tailscale.get("dns_name") or "").rstrip(".") or tailscale.get("address")
+        if name:
+            shown.append(label(text("address.tailscale", address=f"{name}:{port}"), "sub"))
+    return shown
+
+
 def saves_when_let_go(slider: SnapSlider, save: Callable[[int], None]) -> None:
     """Calls ``save`` with the slider's value when the mouse lets it go, or
     a moment after the last arrow key: not at every step on the way."""
@@ -366,8 +383,10 @@ class SettingsPage(Page):
     # ------------------------------------------------------------ server settings
     def show_server(self, data: dict) -> None:
         server, editable = data["server"], self.may("settings.server")
+        address = self.address_card()
         cards = [
             self.identity(data),
+            address,
             self.crashes(data["monitor"]),
             self.sleep(server, data.get("sleep") or {}),
             *([self.join(server, data["join"])] if data.get("join") else []),
@@ -379,9 +398,114 @@ class SettingsPage(Page):
             cards.insert(1, self.build_folder(server))
         if self.row.get("edition") == "bedrock" and self.window_.role != "helper":
             cards.insert(3, self.bedrock_updates(server))
-        for frame in cards:
-            frame.setEnabled(editable)
+        for frame in cards:  # the address card's switch is the owner's alone
+            frame.setEnabled(editable or frame is address)
         refill(self.slots["server"], cards)
+
+    # ------------------------------------------------------------ Server address
+    def address_card(self) -> QFrame:
+        """Every way in (agent/joininfo.py) and "Let friends join from the
+        internet" (agent/internet.py): the router port by UPnP, the internet
+        address the router gave, the outside test, port forwarding by hand
+        and playit.gg when the internet provider blocks it."""
+        frame, layout, on = switch_card(text("address.title"), text("address.internet_label"), "")
+        owner = self.window_.role in (None, "owner")
+        on.setEnabled(owner)
+        ways, status = QVBoxLayout(), QVBoxLayout()
+        layout.insertLayout(1, ways)
+        layout.addLayout(status)
+
+        def show(now: dict) -> None:
+            on.blockSignals(True)
+            on.setChecked(bool(now.get("on")))
+            on.blockSignals(False)
+            refill(status, self.address_lines(now, owner, show))
+
+        def flip(want: bool) -> None:
+            on.setEnabled(False)
+            refill(status, [label(text("address.busy"), "sub")])
+            self.ask(
+                "PUT",
+                "/internet",
+                show,
+                lambda exc: refill(status, [label(str(exc), "problem")]),
+                body={"on": want},
+                always=lambda: on.setEnabled(owner),
+                slow=True,
+            )
+
+        on.toggled.connect(flip)
+        self.ask("GET", "/join", lambda join: refill(ways, address_ways(join)), lambda _e: None)
+        self.ask("GET", "/internet", show, lambda exc: refill(status, [label(str(exc), "problem")]))
+        return frame
+
+    def address_lines(self, now: dict, owner: bool, show: Callable[[dict], None]) -> list[QWidget]:
+        """What "Let friends join from the internet" is doing now, with the
+        next step: test, forward by hand, or playit.gg."""
+        shown: list[QWidget] = []
+        reason, address = now.get("reason"), now.get("address")
+        full = f"{address}:{now.get('port')}" if address else ""
+        if not owner:
+            shown.append(label(text("address.owner_only"), "sub"))
+        if reason == "off":
+            shown.append(label(text("address.internet_note", port=now.get("port")), "sub"))
+        elif reason == "not_running":
+            shown.append(label(text("address.not_running"), "sub"))
+        elif now.get("busy"):
+            shown.append(label(text("address.busy"), "sub"))
+        elif reason == "tested":
+            by = text(
+                "address.by_phone" if now.get("tested_by") == "phone" else "address.by_mcsrvstat"
+            )
+            key = "address.works" if now.get("works") else "address.fails"
+            shown.append(
+                label(text(key, address=full, by=by), "sub" if now.get("works") else "problem")
+            )
+        elif reason in ("shared", "private"):
+            shown.append(label(text(f"address.{reason}"), "problem"))
+            playit = push(text("address.playit"))
+            playit.clicked.connect(lambda: self.window_.pc.open_link(now.get("playit") or ""))
+            shown.append(playit)
+        elif reason in ("no_router", "refused"):
+            shown.append(
+                label(text(f"address.{reason}", detail=now.get("detail") or ""), "problem")
+            )
+        elif full:
+            shown.append(label(text("address.open", address=full), "sub"))
+            shown.append(label(text("address.not_known"), "sub"))
+        if full and owner and reason in ("not_tested", "not_checked", "tested"):
+            test = push(text("address.test"), "tonal")
+
+            def run_test() -> None:
+                allow = bool(now.get("mcsrvstat_ok")) or self.window_.confirm(
+                    text("address.test"),
+                    text("address.test_ask", address=full),
+                    text("address.test"),
+                )
+                if allow:
+                    test.setEnabled(False)
+                    self.ask(
+                        "POST",
+                        "/internet/test",
+                        show,
+                        None,
+                        body={"allow_mcsrvstat": True},
+                        slow=True,
+                    )
+
+            test.clicked.connect(run_test)
+            shown += [test, label(text("address.test_phone"), "sub")]
+        forward = reason in ("no_router", "refused") or (
+            reason == "tested" and not now.get("works")
+        )
+        if forward or (mode["technical"] and reason not in ("shared", "private")):
+            local = now.get("local_address") or "?"
+            if not forward:
+                shown.append(label(text("address.forward_title"), name="h3"))
+            for port in now.get("ports") or []:
+                shown.append(label(text("address.forward_step", local=local, **port), "sub"))
+            shown.append(label(text("address.forward_help"), "sub"))
+        return shown
 
     def bedrock_updates(self, server: dict) -> QFrame:
         """Bedrock players' games update themselves, then can't join an older

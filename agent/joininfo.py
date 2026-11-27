@@ -13,9 +13,9 @@ Only addresses the agent actually read from this PC are shown:
     Xbox, PlayStation and Switch can't run Tailscale, so the card says
     consoles can't join that way
 
-Whether the server can be reached from the internet is never guessed: this
-app doesn't test it and doesn't open router ports, so it is reported as
-not known.
+Whether the server can be reached from the internet is never guessed: it is
+"not known" until an outside test passed (agent/internet.py, "Let friends
+join from the internet").
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ def tailscale_address() -> dict[str, Any]:
 def join_info(ctx: ServerContext) -> dict[str, Any]:
     """Everything the card shows. Asks Tailscale, so call it off the event
     loop."""
-    from . import crossplay
+    from . import crossplay, internet
 
     port = ctx.core.ports.port_of(ctx)
     tailscale = tailscale_address()
@@ -121,7 +121,7 @@ def join_info(ctx: ServerContext) -> dict[str, Any]:
                 "consoles_note": True,
                 "own_server": True,
             },
-            "internet": {"known": False, "reason": "not_tested"},
+            "internet": internet.summary(ctx),
             "running": ctx.server.running,
         }
     bedrock = None
@@ -152,9 +152,6 @@ def join_info(ctx: ServerContext) -> dict[str, Any]:
             "shared": layout.addresses(ctx.core.db).get(ctx.server_id),
         },
         "bedrock": bedrock,
-        "internet": {
-            "known": False,
-            "reason": "not_tested",
-        },
+        "internet": internet.summary(ctx),
         "running": ctx.server.running,
     }

@@ -62,3 +62,12 @@ fastutil, lz4-java, JetBrains Annotations and Hive Games' LevelDB for Java,
 under the Apache License 2.0 (`licenses/Apache-2.0.txt`), and the small
 libraries Guava pulls in. Their versions are in Chunker's
 `gradle/libs.versions.toml`.
+
+## Router port (UPnP)
+
+"Let friends join from the internet" asks the home router to open the game
+port with async-upnp-client (https://github.com/StevenLooman/async_upnp_client),
+Copyright Steven Looman, under the Apache License 2.0
+(`licenses/Apache-2.0.txt`). It brings aiohttp and its helpers (Apache 2.0),
+voluptuous (BSD), python-didl-lite (Apache 2.0) and defusedxml (PSF), with the
+versions in `requirements-build.lock`.
