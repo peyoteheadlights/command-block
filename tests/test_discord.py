@@ -622,3 +622,22 @@ def test_pasting_a_token_saves_it_in_env_and_connects(fake, tmp_path, monkeypatc
         assert fake.socket.closed
     finally:
         client.__exit__(None, None, None)
+
+
+def test_set_up_clicked_twice_at_once_makes_each_channel_once(agent, fake):
+    core = core_of(agent)
+    bot = core.discord
+    real = bot.rest.request
+
+    async def slow(method, path, body=None):
+        if method == "POST" and path.endswith("/channels"):
+            await asyncio.sleep(0.2)  # Discord takes a moment to make a channel
+        return await real(method, path, body)
+
+    async def twice():
+        return await asyncio.gather(bot.set_up(GUILD_ID, ["test"]), bot.set_up(GUILD_ID, ["test"]))
+
+    bot.rest.request = slow
+    asyncio.run_coroutine_threadsafe(twice(), core.pcs._loop).result(20)
+    names = [c["name"] for c in fake.channels]
+    assert len(names) == len(set(names)), names

@@ -43,7 +43,7 @@ from ..security.auth import AuthError, Principal, RateLimiter
 from ..startrequests import STOPPED, TOLD, StartRequest, StartRequestError
 from ..stats import player_stats
 from ..whitelist import WhitelistError, settled, settled_words
-from . import bridge, client, layout, live, progress
+from . import botpc, bridge, client, layout, live, progress
 from .botpc import LinkRefused
 from .links import CODE_LIFE, LinkError
 
@@ -60,6 +60,8 @@ LOGO = PROJECT_ROOT / "desktop" / "images" / "icon-192.png"
 INTENTS = client.GUILDS
 MESSAGE_INTENTS = client.GUILD_MESSAGES | client.MESSAGE_CONTENT
 EPHEMERAL = 64
+ALREADY_ANSWERED = 40060  # Discord: this interaction already has its first answer
+SAY_WAITING = 2.5  # another PC this slow: say "Still waiting" before Discord's 3 s run out
 # Minecraft names as the server prints them; Floodgate's "." is kept.
 NAME_RE = re.compile(r"^\.?[A-Za-z0-9_]{1,16}$")
 PROFILE_KEY = "discord_profile"
@@ -204,6 +206,7 @@ class Bot:
         self._task: asyncio.Task | None = None
         self._live: asyncio.Task | None = None
         self._jobs: set[asyncio.Task] = set()
+        self._setting_up = asyncio.Lock()  # one "Set up this server" at a time
         self._levels_lock = asyncio.Lock()
         # Event and poll posts: two quick presses can't leave older counts showing.
         self._posts_lock = asyncio.Lock()
@@ -616,7 +619,7 @@ class Bot:
                 found = await self.core.botpc.call(
                     pc, "leaderboard", {"servers": sids, "until": now.timestamp()}
                 )
-                if found is None:
+                if found is None or found is botpc.WAITING:
                     off.append(self.core.botpc.name_of(pc))
                     continue
                 played += found.get("played") or []
@@ -1067,8 +1070,7 @@ class Bot:
         if gid not in self.guilds or not layout.guild_options(db, gid)["remove_on_leave"]:
             return
         if not self.rest_only:  # the other PCs' servers too
-            for pc in self.core.botpc.linked():
-                self.spawn(self.core.botpc.call(pc, "member_left", {"data": data}))
+            self.core.botpc.member_left(self, data)
         servers = set(layout.servers_of(db, gid))
         for row in self.core.links.of_member(member):
             ctx = self.core.discord_servers.get(row["server_id"])
@@ -1329,7 +1331,8 @@ class Bot:
     async def set_up(self, guild_id: str, server_ids: list[str]) -> dict[str, Any]:
         names = {s["id"]: s["name"] for s in self.status()["servers"]}
         servers = {sid: names[sid] for sid in server_ids}
-        made = await layout.set_up(self.rest, self.core.db, guild_id, servers)
+        async with self._setting_up:  # a double click waits, then finds it all made
+            made = await layout.set_up(self.rest, self.core.db, guild_id, servers)
         await self.refresh(guild_id)
         return made
 
@@ -1459,12 +1462,29 @@ class Bot:
 
     async def pass_on(self, data: dict, ref: str, name: str) -> None:
         """A server on another of the owner's PCs: that PC answers Discord
-        itself. "That PC is off" when it doesn't take it in time."""
+        itself. "Still waiting" when it's slow (Discord wants a first answer
+        within 3 s; that PC's answer then replaces it), "That PC is off"
+        when it can't be reached."""
         sid, _, pc = ref.partition("@")
-        if await self.core.botpc.call(pc, "interaction", {"interaction": data, "server": ref}):
+        asked = asyncio.ensure_future(
+            self.core.botpc.call(pc, "interaction", {"interaction": data, "server": ref})
+        )
+        said_waiting = False
+        if not (await asyncio.wait({asked}, timeout=SAY_WAITING))[0]:
+            said_waiting = True
+            try:
+                await self.respond(data, self.core.botpc.waiting_words(ref))
+            except client.DiscordError as exc:
+                if exc.code != ALREADY_ANSWERED:  # that PC answered first
+                    raise
+        if await asked is not None:
             return
         starting = name in ("/start", "button start_yes", "/request-start")
-        await self.respond(data, self.core.botpc.off_words(ref, starting))
+        words = self.core.botpc.off_words(ref, starting)
+        if said_waiting:
+            await self.rest.request("PATCH", self.original(data), {"content": words})
+        else:
+            await self.respond(data, words)
 
     def pick_server(self, call: Call) -> str:
         """The option if given, else the channel's Minecraft server, else
@@ -1519,9 +1539,17 @@ class Bot:
         )
 
     async def _callback(self, interaction: dict, body: dict) -> None:
-        await self.rest.request(
-            "POST", f"/interactions/{interaction['id']}/{interaction['token']}/callback", body
-        )
+        try:
+            await self.rest.request(
+                "POST", f"/interactions/{interaction['id']}/{interaction['token']}/callback", body
+            )
+        except client.DiscordError as exc:
+            # Passed on from the Bot PC after it said "Still waiting": edit that.
+            if exc.code != ALREADY_ANSWERED:
+                raise
+            if "content" in (body.get("data") or {}):
+                edit = {k: body["data"][k] for k in ("content", "components") if k in body["data"]}
+                await self.rest.request("PATCH", self.original(interaction), edit)
 
     def original(self, interaction: dict) -> str:
         return f"/webhooks/{self.app.get('id')}/{interaction['token']}/messages/@original"
@@ -2076,6 +2104,8 @@ async def unlink(bot: Bot, call: Call) -> str:
         if row["name"].lower() == name.lower():
             asked = {"member": call.member_id, "name": row["name"]}
             found = await bot.core.botpc.call(row["pc"], "unlink", asked)
+            if found is botpc.WAITING:
+                raise Refused(f"{bot.core.botpc.waiting_words(row['server'])} Try again later.")
             if found is None:
                 raise Refused(f"{bot.core.botpc.off_words(row['server'], False)} Try again later.")
             return f"{row['name']} isn't linked to you any more."

@@ -106,6 +106,7 @@ class FakeDiscord:
         self.blocks_dms: set[str] = set()  # members who don't take private messages
         self.rate_limit_next: float | None = None
         self.lock = threading.Lock()
+        self.acknowledged: set[str] = set()  # interactions already answered once
         self._ids = itertools.count(4000000000000000000)
         self.roles: list[dict] = [
             {
@@ -339,6 +340,17 @@ class FakeDiscord:
             return httpx.Response(200, json={"id": BOT_ID, "username": self.bot_name, "bot": True})
         if request.method == "PUT" and path.endswith("/commands"):
             return httpx.Response(200, json=body)
+        if path.startswith("/interactions/"):
+            with self.lock:
+                if path.split("/")[2] in self.acknowledged:
+                    return httpx.Response(
+                        400,
+                        json={
+                            "message": "Interaction has already been acknowledged.",
+                            "code": 40060,
+                        },
+                    )
+                self.acknowledged.add(path.split("/")[2])
         if path.startswith("/interactions/") or path.startswith("/webhooks/"):
             return httpx.Response(204 if path.startswith("/interactions/") else 200, json={})
         if key == ("GET", f"/guilds/{GUILD_ID}/roles"):

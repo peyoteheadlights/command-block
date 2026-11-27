@@ -46,7 +46,9 @@ log = logging.getLogger("msc.botpc")
 
 BOT, SETTINGS, LINK, NEWS = "bot", "bot_settings", "bot_link", "bot_news"
 LINK_HEADER = "X-Command-Block-Bot-Link"
-CALL_SECONDS = 2.0  # Discord waits 3 s for the first answer
+CALL_SECONDS = 2.0  # to reach the other PC; after that it's "off"
+ANSWER_SECONDS = 10.0  # reached, then this long for its answer
+WAITING = {"waiting": True}  # reached, but no answer yet: it may still be at it
 NEWS_EVERY = 60.0  # each PC says what it has at least this often
 NEWS_STALE = 180.0  # no word from a PC this long: its servers' states are unknown
 # The Discord settings copied to the other PCs: each table's columns.
@@ -56,6 +58,7 @@ TABLES = {
     "discord_role_grants": ("guild_id", "role_id", "server_id", "role_name", "permissions"),
 }
 ADDRESSES = "discord_addresses"
+OWED = "bot_member_left"  # [{pc, data}]: someone left Discord, not yet told to that PC
 KEPT = ("discord_guild_options", "discord_levels", ADDRESSES, "discord_leaderboards")
 
 
@@ -71,6 +74,7 @@ class BotPC:
         self.records.applied[SETTINGS] = self._applied
         self.records.applied[NEWS] = self._applied
         self._heard: dict[str, float] = {}  # pc -> when its bot_news came in
+        self._delivering = False
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()
 
@@ -329,16 +333,31 @@ class BotPC:
     # -- calling another PC (on the Bot PC) -----------------------------------
     async def call(self, pc: str, what: str, body: dict[str, Any]) -> dict[str, Any] | None:
         """Pass on what Discord asked about that PC's server. None when it
-        didn't answer in time: "That PC is off"."""
+        couldn't be reached: "That PC is off". WAITING when it was reached
+        but didn't answer in time."""
         peer, key = self.records.get("pc", pc), self._key(pc)
         if peer is None or key is None or not self.records.get(LINK, pc):
             raise LinkRefused(f"{self.name_of(pc)} has no Bot link. The owner can add it back.")
         where = peer["body"]
+        host, port = where["address"], int(where["port"])
         try:
-            answer = await asyncio.wait_for(self._post(where, what, body, key), CALL_SECONDS)
-        except (OSError, httpx.HTTPError, TimeoutError) as exc:
+            context = await asyncio.wait_for(
+                asyncio.to_thread(pinned_context, host, port, where["fingerprint"], CALL_SECONDS),
+                CALL_SECONDS + 0.5,
+            )
+        except (OSError, TimeoutError) as exc:
             log.info("couldn't reach %s for the bot: %s", self.name_of(pc), type(exc).__name__)
             return None
+        try:
+            answer = await asyncio.wait_for(
+                self._post(where, what, body, key, context), ANSWER_SECONDS
+            )
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            log.info("couldn't reach %s for the bot: %s", self.name_of(pc), type(exc).__name__)
+            return None
+        except (OSError, httpx.HTTPError, TimeoutError) as exc:
+            log.info("%s didn't answer the bot in time: %s", self.name_of(pc), type(exc).__name__)
+            return WAITING
         if answer.status_code != 200:
             log.info("%s refused a Bot link call: %s", self.name_of(pc), answer.status_code)
             raise LinkRefused(
@@ -346,17 +365,18 @@ class BotPC:
             )
         return answer.json()
 
-    async def _post(self, where, what: str, body, key: bytes) -> httpx.Response:
+    async def _post(self, where, what: str, body, key: bytes, context) -> httpx.Response:
         host, port = where["address"], int(where["port"])
-        context = await asyncio.to_thread(
-            pinned_context, host, port, where["fingerprint"], CALL_SECONDS
-        )
-        async with httpx.AsyncClient(verify=context, timeout=CALL_SECONDS) as http:
+        async with httpx.AsyncClient(verify=context, timeout=ANSWER_SECONDS) as http:
             return await http.post(
                 f"https://{host}:{port}/api/sync/bot/{what}",
                 json=body,
                 headers={PC_HEADER: self.me, LINK_HEADER: base64.b64encode(key).decode()},
             )
+
+    def waiting_words(self, ref: str) -> str:
+        _sid, _, pc = ref.partition("@")
+        return f"Still waiting for {self.name_of(pc)}: it has your command but hasn't answered yet."
 
     def off_words(self, ref: str, starting: bool) -> str:
         """What Discord hears when the server's PC didn't answer. /start
@@ -465,6 +485,34 @@ class BotPC:
         if not bot.rest_only:
             self.make_links()
             self.save_settings()
+            if self.core.db.get_setting(OWED):
+                bot.spawn(self.deliver())
+
+    # -- someone left Discord (on the Bot PC) ---------------------------------
+    def member_left(self, bot, data: dict[str, Any]) -> None:
+        """Tell each linked PC, retried from the minute until it answers."""
+        owed = self.core.db.get_setting(OWED, [])
+        owed += [{"pc": pc, "data": data} for pc in self.linked()]
+        self.core.db.set_setting(OWED, owed)
+        bot.spawn(self.deliver())
+
+    async def deliver(self) -> None:
+        if self._delivering:
+            return
+        self._delivering = True
+        try:
+            for item in list(self.core.db.get_setting(OWED, [])):
+                try:
+                    answered = await self.call(item["pc"], "member_left", {"data": item["data"]})
+                except LinkRefused:
+                    answered = {}  # no Bot link any more: nothing to tell it
+                if answered is not None and answered is not WAITING:
+                    left = self.core.db.get_setting(OWED, [])
+                    if item in left:
+                        left.remove(item)
+                    self.core.db.set_setting(OWED, left)
+        finally:
+            self._delivering = False
 
     # -- answering the Bot PC (on a controlled PC) ---------------------------
     def answer(self, what: str, body: dict[str, Any]) -> dict[str, Any]:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 
 import pytest
 
@@ -91,6 +92,10 @@ def on_pc(pc: PC, work):
 def run(fake, name, options=None, **kwargs) -> list[str]:
     token = fake.command(name, options, **kwargs)
     return wait_for(lambda: fake.replies(token), 15)
+
+
+async def minute(pc: PC) -> None:
+    pc.core.botpc.minute(pc.core.discord)
 
 
 def link_headers(a: PC, b: PC) -> dict[str, str]:
@@ -328,9 +333,57 @@ def test_a_server_on_a_pc_that_went_quiet_shows_as_unknown(pcs, fake, monkeypatc
     assert a.core.botpc.remote()[ref]["state"] == "OFFLINE"
     monkeypatch.setattr(botpc, "NEWS_STALE", 1.0, raising=False)
     monkeypatch.setattr(botpc, "NEWS_EVERY", 0.0, raising=False)
-    import time
-
     time.sleep(1.2)
     assert a.core.botpc.remote()[ref]["state"] == "UNKNOWN"
     b.core.botpc.publish()  # B says it again, as it does every minute
     wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "OFFLINE")
+
+
+def test_leaving_discord_reaches_a_pc_that_was_off_once_it_answers(pcs, fake, monkeypatch):
+    a, b, owner = two_pcs(pcs)
+    answer = a.call(
+        "PUT", f"/api/discord/guilds/{GUILD_ID}/options", owner, json={"remove_on_leave": True}
+    )
+    assert answer.status_code == 200, answer.text
+    wait_for(lambda: a.core.discord and a.core.discord.connected and a.core.discord.guilds)
+    sent: list[str] = []
+    real_post = a.core.botpc._post
+
+    async def b_is_off(where, what, *rest):
+        sent.append(what)
+        raise OSError("off")
+
+    monkeypatch.setattr(a.core.botpc, "_post", b_is_off)
+    left = {"guild_id": GUILD_ID, "user": {"id": MEMBER_ID}}
+    on_pc(a, a.core.discord.member_left(left))
+    wait_for(lambda: sent == ["member_left"])
+
+    async def b_is_on(where, what, *rest):
+        sent.append(what)
+        return await real_post(where, what, *rest)
+
+    monkeypatch.setattr(a.core.botpc, "_post", b_is_on)
+    on_pc(a, minute(a))  # the bot's minute tries again
+    wait_for(lambda: sent == ["member_left", "member_left"])
+    wait_for(lambda: not a.core.db.get_setting("bot_member_left", []))
+    on_pc(a, minute(a))  # delivered: not sent again
+    time.sleep(0.5)
+    assert sent == ["member_left", "member_left"]
+
+
+def test_a_pc_slow_to_answer_is_still_waiting_not_off(pcs, fake, monkeypatch):
+    a, b, owner = two_pcs(pcs)
+    ref = set_up(a, b, owner)
+    real_post, woken = a.core.botpc._post, []
+
+    async def slow_relay(where, what, *rest):
+        await asyncio.sleep(3)
+        return await real_post(where, what, *rest)
+
+    monkeypatch.setattr(a.core.botpc, "_post", slow_relay)
+    monkeypatch.setattr(a.core.botpc, "wake", lambda pc: woken.append(pc) or True)
+    token = fake.command("start", {"server": ref}, roles=[ROLE])
+    words = wait_for(lambda: len(fake.replies(token)) > 1 and fake.replies(token), 15)
+    assert words[0].startswith("Still waiting for")
+    assert "don't allow" in words[-1]  # B's own answer, in the same reply
+    assert woken == []
