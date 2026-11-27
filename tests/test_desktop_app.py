@@ -352,8 +352,16 @@ def test_the_window_takes_the_servers_color(qapp, agent_http):
     rows = agent_http.get("/api/servers", headers=owner(agent_http)).json()["servers"]
     color = {r["name"]: r["color"] for r in rows}
     themes = json.loads((theme.SHARED / "theme.json").read_text(encoding="utf-8"))
-    survival = colors.derive_from(color["Survival"], themes["light"], "light")["accent-band"]
-    creative = colors.derive_from(color["Creative"], themes["light"], "light")["accent-band"]
+
+    def band(name):
+        """The band behind the sheet: the server's band color with more of
+        the server's own color mixed in."""
+        tint = colors.derive_from(color[name], themes["light"], "light")
+        mixed = colors.mix(colors.rgb(tint["accent-band"]), colors.rgb(tint["accent-edge"]), 0.28)
+        return colors.to_hex(mixed)
+
+    survival, creative = band("Survival"), band("Creative")
+    assert survival != creative
     assert survival in window.styleSheet()
     open_server(qapp, window, "Creative")
     assert creative in window.styleSheet() and survival not in window.styleSheet()
@@ -472,9 +480,19 @@ def test_a_narrow_window_puts_the_right_panel_under_the_overview(qapp, agent_htt
         lambda: panel.isVisibleTo(window) and panel.mapTo(window, panel.rect().topLeft()).x() > 900,
     )
     window.resize(900, 800)
+    # Under the Overview: at the page's left edge (the page list is left of that).
+    page = window.server_screen.pages
     wait_for(
         qapp,
-        lambda: panel.isVisibleTo(window) and panel.mapTo(window, panel.rect().topLeft()).x() < 100,
+        lambda: (
+            panel.isVisibleTo(window)
+            and panel.mapTo(window, QtCore.QPoint(0, 0)).x()
+            == page.mapTo(window, QtCore.QPoint(0, 0)).x()
+        ),
+    )
+    assert window.width() == 900
+    assert (
+        panel.mapTo(window, QtCore.QPoint(0, 0)).y() > page.mapTo(window, QtCore.QPoint(0, 0)).y()
     )
 
 
