@@ -245,6 +245,79 @@ public struct OddSetup: Decodable, Equatable, Sendable {
     }
 }
 
+/// "On all servers": one mod with one mark, and the servers it's on.
+public struct ModSideRow: Decodable, Equatable, Sendable {
+    public var name: String
+    public var modId: String?
+    /// server, players or both.
+    public var side: String
+    public var servers: [ModSideServer]
+
+    enum CodingKeys: String, CodingKey {
+        case name, side, servers
+        case modId = "mod_id"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = c.value(.name, "")
+        modId = c.maybe(.modId)
+        side = c.value(.side, "")
+        servers = c.value(.servers, [])
+    }
+}
+
+public struct ModSideServer: Decodable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+    /// Like `Mod.sideFrom`; unknown: not sure. Nil for the player-only folder.
+    public var sideFrom: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case sideFrom = "side_from"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        name = c.value(.name, "")
+        sideFrom = c.maybe(.sideFrom)
+    }
+}
+
+public struct ModSideNotRead: Decodable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public var detail: String
+
+    enum CodingKeys: String, CodingKey { case id, name, detail }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        name = c.value(.name, "")
+        detail = c.value(.detail, "")
+    }
+}
+
+public struct ModSides: Decodable, Equatable, Sendable {
+    public var mods: [ModSideRow]
+    /// A server whose mods couldn't be read: named, never left out quietly.
+    public var notRead: [ModSideNotRead]
+
+    enum CodingKeys: String, CodingKey {
+        case mods
+        case notRead = "not_read"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mods = c.value(.mods, [])
+        notRead = c.value(.notRead, [])
+    }
+}
+
 public struct LinkedModpackUpdate: Decodable, Equatable, Sendable {
     public var versionId: String
     /// Empty for CurseForge, whose names aren't kept.
