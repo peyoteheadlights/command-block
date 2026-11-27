@@ -890,6 +890,27 @@ class AgentClient(
     /** The anti-cheat picker. Installing goes through [installMod] and [uploadMod]. */
     suspend fun antiCheat(serverId: String): AntiCheat = get("${server(serverId)}/anticheat", AntiCheat.serializer())
 
+    /** The Far view card. */
+    suspend fun farView(serverId: String): FarView = get("${server(serverId)}/far-view", FarView.serializer())
+
+    /** Far view off ("off") or to "distanthorizons" / "voxy": installs what it needs. The server must be stopped. */
+    suspend fun chooseFarView(serverId: String, choice: String): FarViewChanged =
+        call(post("${server(serverId)}/far-view", buildJsonObject { put("choice", choice) }), FarViewChanged.serializer(), slow = true)
+
+    suspend fun farViewOptions(serverId: String, unvisited: Boolean, loadAhead: Boolean, radius: Int, world: String): FarView {
+        val body = buildJsonObject {
+            put("unvisited", unvisited)
+            put("load_ahead", loadAhead)
+            put("radius", radius)
+            put("world", world)
+        }
+        return call(post("${server(serverId)}/far-view/options", body), FarView.serializer())
+    }
+
+    /** Deletes the far-view data; it's built again from the world. */
+    suspend fun rebuildFarView(serverId: String): FarViewRebuilt =
+        call(post("${server(serverId)}/far-view/rebuild", buildJsonObject {}), FarViewRebuilt.serializer(), slow = true)
+
     /** The "Put it on Modrinth" card. */
     suspend fun modrinth(serverId: String): ModrinthShare = get("${server(serverId)}/modrinth", ModrinthShare.serializer())
 

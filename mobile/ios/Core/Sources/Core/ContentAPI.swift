@@ -395,6 +395,39 @@ extension AgentClient {
         }
     }
 
+    /// The Far view card.
+    public func farView(serverId: String) async throws -> FarView {
+        try await call("GET", content(serverId) + "/far-view", as: FarView.self)
+    }
+
+    /// Far view "off", "distanthorizons" or "voxy": installs what it needs. The server must be stopped.
+    public func chooseFarView(serverId: String, choice: String) async throws -> FarViewChanged {
+        let body = try AgentClient.encode(["choice": choice])
+        return try await call("POST", content(serverId) + "/far-view", body: body, slow: true, as: FarViewChanged.self)
+    }
+
+    public func farViewOptions(serverId: String, unvisited: Bool, loadAhead: Bool, radius: Int, world: String) async throws -> FarView {
+        let body = try AgentClient.encode(FarViewBody(unvisited: unvisited, loadAhead: loadAhead, radius: radius, world: world))
+        return try await call("POST", content(serverId) + "/far-view/options", body: body, as: FarView.self)
+    }
+
+    /// Deletes the far-view data; it's built again from the world.
+    public func rebuildFarView(serverId: String) async throws -> FarViewRebuilt {
+        try await call("POST", content(serverId) + "/far-view/rebuild", body: try AgentClient.encode([String: String]()), slow: true, as: FarViewRebuilt.self)
+    }
+
+    private struct FarViewBody: Encodable {
+        let unvisited: Bool
+        let loadAhead: Bool
+        let radius: Int
+        let world: String
+
+        enum CodingKeys: String, CodingKey {
+            case unvisited, radius, world
+            case loadAhead = "load_ahead"
+        }
+    }
+
     private struct InstallBody: Encodable {
         let project: String
         let versionId: String?

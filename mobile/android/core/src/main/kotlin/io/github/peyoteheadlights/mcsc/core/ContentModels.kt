@@ -733,3 +733,43 @@ data class GameSettingsSaved(
     val running: Boolean = false,
     @SerialName("restart_needed") val restartNeeded: Boolean = false,
 )
+
+/** One far-view choice. [available] false: [why] says what's missing. [server]/[players]: what it adds, by name. */
+@Serializable
+data class FarViewChoice(
+    val id: String,
+    val name: String,
+    val available: Boolean = false,
+    val why: String? = null,
+    val server: List<String> = emptyList(),
+    val players: List<String> = emptyList(),
+)
+
+/** "Load the world ahead at night" with Chunky. [running]: loading right now. */
+@Serializable
+data class FarViewLoadAhead(
+    val on: Boolean = false,
+    val radius: Int = 2000,
+    val world: String = "",
+    val chunky: Boolean = false,
+    val running: Boolean = false,
+    val night: String = "",
+    @SerialName("main_world") val mainWorld: String = "",
+)
+
+/** The Far view card: Off / Distant Horizons / Voxy. [unvisited]: DH builds land nobody visited. */
+@Serializable
+data class FarView(
+    val supported: Boolean = false,
+    val choice: String = "off",
+    val choices: List<FarViewChoice> = emptyList(),
+    val unvisited: Boolean = false,
+    @SerialName("load_ahead") val loadAhead: FarViewLoadAhead = FarViewLoadAhead(),
+    @SerialName("may_change") val mayChange: Boolean = false,
+)
+
+@Serializable
+data class FarViewChanged(val ok: Boolean = false, val choice: String = "off", val removed: List<String> = emptyList(), val added: List<String> = emptyList())
+
+@Serializable
+data class FarViewRebuilt(val ok: Boolean = false, val files: Int = 0, @SerialName("size_bytes") val sizeBytes: Long = 0)

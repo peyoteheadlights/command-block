@@ -1945,3 +1945,102 @@ public struct ModrinthShare: Decodable, Equatable, Sendable {
         address = c.maybe(.address)
     }
 }
+
+/// One far-view choice. `available` false: `why` says what's missing. `server`/`players`: what it adds, by name.
+public struct FarViewChoice: Decodable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var available: Bool
+    public var why: String?
+    public var server: [String]
+    public var players: [String]
+
+    enum CodingKeys: String, CodingKey { case id, name, available, why, server, players }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        name = c.value(.name, "")
+        available = c.value(.available, false)
+        why = c.maybe(.why)
+        server = c.value(.server, [])
+        players = c.value(.players, [])
+    }
+}
+
+/// "Load the world ahead at night" with Chunky. `running`: loading right now.
+public struct FarViewLoadAhead: Decodable, Equatable, Sendable {
+    public var on: Bool
+    public var radius: Int
+    public var world: String
+    public var chunky: Bool
+    public var running: Bool
+    public var night: String
+
+    enum CodingKeys: String, CodingKey { case on, radius, world, chunky, running, night }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        on = c.value(.on, false)
+        radius = c.value(.radius, 2000)
+        world = c.value(.world, "")
+        chunky = c.value(.chunky, false)
+        running = c.value(.running, false)
+        night = c.value(.night, "")
+    }
+}
+
+/// The Far view card: Off / Distant Horizons / Voxy. `unvisited`: DH builds land nobody visited.
+public struct FarView: Decodable, Equatable, Sendable {
+    public var supported: Bool
+    public var choice: String
+    public var choices: [FarViewChoice]
+    public var unvisited: Bool
+    public var loadAhead: FarViewLoadAhead?
+    public var mayChange: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case supported, choice, choices, unvisited
+        case loadAhead = "load_ahead"
+        case mayChange = "may_change"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        supported = c.value(.supported, false)
+        choice = c.value(.choice, "off")
+        choices = c.value(.choices, [])
+        unvisited = c.value(.unvisited, false)
+        loadAhead = c.maybe(.loadAhead)
+        mayChange = c.value(.mayChange, false)
+    }
+}
+
+public struct FarViewChanged: Decodable, Equatable, Sendable {
+    public var choice: String
+    public var added: [String]
+
+    enum CodingKeys: String, CodingKey { case choice, added }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        choice = c.value(.choice, "off")
+        added = c.value(.added, [])
+    }
+}
+
+public struct FarViewRebuilt: Decodable, Equatable, Sendable {
+    public var files: Int
+    public var sizeBytes: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case files
+        case sizeBytes = "size_bytes"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        files = c.value(.files, 0)
+        sizeBytes = c.value(.sizeBytes, 0)
+    }
+}
