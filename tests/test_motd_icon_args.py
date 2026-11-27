@@ -96,6 +96,8 @@ def test_an_icon_is_saved_read_back_and_undone(multi_client, multi):
         (b"GIF89a not a png at all" * 3, "isn't a PNG"),
         (b"\x89PNG\r\n\x1a\n" + b"\x00" * 30 + b"x" * (260 * 1024), "too big"),
     ],
+    # Short names: pytest would put the whole picture in the test's name.
+    ids=["128x128", "64x32", "gif", "too-big"],
 )
 def test_a_wrong_picture_is_refused_and_nothing_is_written(multi_client, multi, data, words):
     folder = multi.for_server("survival").server_dir
