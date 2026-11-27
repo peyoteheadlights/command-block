@@ -157,6 +157,9 @@ class MinecraftServer:
         self.before_launch: Callable[[], Awaitable[list[str]]] | None = None
         # True while a start waits for the jar checks before start.
         self.checking_jars = False
+        # True from a Start or Restart that waits for those checks until
+        # that start is over (agent/api/routes/server.py).
+        self.start_queued = False
         self.behind_guard: int | None = None
         self.launch_args: list[str] = []
         # Less downtime (agent/downtime.py). What changed since this run

@@ -520,7 +520,7 @@ private fun VirusTotalKey(vm: AppViewModel, content: ContentPages, hasKey: Boole
     Column(Modifier.padding(horizontal = 16.dp)) {
         PasswordField(key, { key = it.trim().take(128) }, t("deepscan.vt_key"), hint = t("deepscan.vt_key_note"))
     }
-    Presses(listOf(Press(t("deepscan.vt_key_save"), { content.saveVirusTotalKey(key, vm.strings); key = "" }, enabled = idle && key.isNotBlank())))
+    Presses(listOf(Press(t("deepscan.vt_key_save"), { content.saveVirusTotalKey(key, vm.strings) }, enabled = idle && key.isNotBlank())))
 }
 
 private val SCHEDULES = listOf("off", "daily", "weekly")

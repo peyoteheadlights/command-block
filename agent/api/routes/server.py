@@ -136,12 +136,13 @@ def _start_after_checks(ctx, request: Request, action: str, starting) -> dict:
     """The start waits for the jar checks before start, which can take
     minutes, so the answer comes now and the start goes on in the background.
     A start that then fails says so as a start_failed event."""
-    if ctx.server.checking_jars:
+    if ctx.server.checking_jars or ctx.server.start_queued:
         starting.close()
         raise HTTPException(409, "The jars are being checked before a start already.")
 
-    # Set now, so a second tap before the checks begin gets the 409 above.
-    ctx.server.checking_jars = True
+    # Set now and kept until the start is over, so a second tap gets the
+    # 409 above. checking_jars is only on while the checks really run.
+    ctx.server.start_queued = True
 
     async def run() -> None:
         try:
@@ -155,7 +156,7 @@ def _start_after_checks(ctx, request: Request, action: str, starting) -> dict:
                 Event(type="start_failed", level="error", message=f"The server didn't start: {exc}")
             )
         finally:
-            ctx.server.checking_jars = False
+            ctx.server.start_queued = False
 
     task = asyncio.create_task(run())
     _background.add(task)

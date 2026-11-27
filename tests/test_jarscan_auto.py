@@ -302,6 +302,7 @@ def test_a_start_that_cant_happen_says_so_at_once(client, ctx, monkeypatch):
     assert answer.status_code == 409
     assert "Restart Now" in answer.json()["detail"]
     assert ctx.server.checking_jars is False
+    assert ctx.server.start_queued is False
 
 
 def test_a_start_that_fails_after_the_checks_says_so(client, ctx, monkeypatch):
@@ -309,7 +310,7 @@ def test_a_start_that_fails_after_the_checks_says_so(client, ctx, monkeypatch):
     failed = events_of(ctx, monkeypatch, "start_failed")
 
     async def broken_start(actor=None):
-        assert ctx.server.checking_jars  # set before the task began
+        assert ctx.server.start_queued  # set before the task began
         raise RuntimeError("java went missing")
 
     monkeypatch.setattr(ctx.server, "start", broken_start)
@@ -317,6 +318,7 @@ def test_a_start_that_fails_after_the_checks_says_so(client, ctx, monkeypatch):
     client.portal.call(asyncio.sleep, 0.05)
     assert "java went missing" in failed[0].message
     assert ctx.server.checking_jars is False
+    assert ctx.server.start_queued is False
 
 
 # ------------------------------------------------------------ schedule
@@ -445,3 +447,65 @@ def test_the_bot_finds_the_owner_of_its_application():
     assert bot.owner_id() == "7"
     bot.app = {}
     assert bot.owner_id() is None
+
+
+def test_a_second_start_after_the_checks_but_before_the_launch_is_refused(client, ctx, monkeypatch):
+    client.post(f"{BASE}/mods/scan/options", json={"before_start": True})
+    launch = asyncio.Event()
+
+    async def slow_start(actor=None):
+        ctx.server.checking_jars = True  # what the checks before start do
+        ctx.server.checking_jars = False
+        await launch.wait()
+        return {"pid": 1}
+
+    monkeypatch.setattr(ctx.server, "start", slow_start)
+    assert client.post(f"{BASE}/server/start").json()["result"] == "CHECKING"
+    client.portal.call(asyncio.sleep, 0.05)
+    assert client.post(f"{BASE}/server/start").status_code == 409
+    client.portal.call(launch.set)
+    client.portal.call(asyncio.sleep, 0.05)
+    assert client.post(f"{BASE}/server/start").json()["result"] == "CHECKING"
+
+
+def test_a_restart_doesnt_say_checking_jars_while_it_stops(client, ctx, monkeypatch):
+    client.post(f"{BASE}/mods/scan/options", json={"before_start": True})
+    stopped = asyncio.Event()
+
+    async def slow_restart(actor=None):
+        await stopped.wait()
+        return {"restarted": True}
+
+    monkeypatch.setattr(ctx.server, "restart", slow_restart)
+    assert client.post(f"{BASE}/server/restart").json()["result"] == "CHECKING"
+    client.portal.call(asyncio.sleep, 0.05)
+    assert client.get(f"{BASE}/status").json()["checking_jars"] is False
+    client.portal.call(stopped.set)
+
+
+def test_a_file_a_moderator_quarantines_during_the_checks_doesnt_stop_the_start(
+    client, ctx, sites, monkeypatch
+):
+    client.post(f"{BASE}/mods/scan/options", json={"before_start": True})
+    other = mod_with(ctx.config.server_dir / "other.jar", {"a/B.class": CLASS})
+
+    async def checks():  # a moderator presses Quarantine while the checks run
+        async with ctx.jarscan.lock:
+            await ctx.jarscan.quarantine_file(other, "server", "other.jar", "0" * 64, [], "mod")
+
+    monkeypatch.setattr(ctx.jarscan, "_checks", checks)
+    client.portal.call(ctx.jarscan.before_start)  # no ServerError
+    assert ctx.jarscan.store()["quarantine"][0]["by"] == "mod"
+
+
+def test_turning_the_schedule_off_and_on_again_doesnt_run_at_once(client, ctx):
+    client.post(f"{BASE}/mods/deepscan/options", json={"schedule": "daily"})
+    client.post(f"{BASE}/mods/deepscan/options", json={"schedule": "off"})
+    saved = ctx.deepscan.store()
+    if saved.get("next"):
+        saved["next"] = time.time() - 1  # the old time went by while it was off
+        ctx.deepscan.save(saved)
+    client.post(f"{BASE}/mods/deepscan/options", json={"schedule": "daily"})
+    client.portal.call(ctx.deepscan.tick)
+    assert ctx.deepscan.store().get("last") is None
+    assert ctx.deepscan.store()["next"] > time.time()

@@ -492,10 +492,14 @@ class DeepScanner:
         from ..scheduler.scheduler import ScheduleError, next_run
 
         wanted = self.plan()
-        if wanted is None:
-            return False
+        if wanted is None and not self.store().get("next"):
+            return False  # off, and nothing to forget: no need to wait for the lock
         async with self.ctx.jarscan.lock:
             saved = self.store()
+            if wanted is None:  # off: forget the old time, or turning it on runs at once
+                if saved.pop("next", None) is not None:
+                    self.save(saved)
+                return False
             changed = saved.get("plan") != list(wanted) or not saved.get("next")
             due = not changed and time.time() >= saved["next"]
             if changed or (due and ran):
@@ -626,12 +630,14 @@ class DeepScanner:
         except asyncio.CancelledError:
             stop.set()
             raise
+        # VirusTotal shares the outside programs' time limit, so a run never takes twice as long.
+        deadline = virustotal.clock() + limit
         for key in programs:
             if stop.is_set():
                 break
             await self._program(handle, key, scope, files, result, download, limit)
         if lookup and not stop.is_set():
-            await self._virustotal(handle, scope, files, result, limit)
+            await self._virustotal(handle, scope, files, result, deadline)
         result.update(
             scope=scope,
             target=filename,
@@ -706,17 +712,22 @@ class DeepScanner:
         if hits:
             await asyncio.to_thread(self._merge, result, files, hits)
 
-    async def _virustotal(self, handle, scope, files, result, limit) -> None:
+    async def _virustotal(self, handle, scope, files, result, deadline) -> None:
         """Ask VirusTotal about each jar (and program, for the whole folder)
-        by its SHA-256, and add what it said to ``result``."""
+        by its SHA-256, and add what it said to ``result``. The loader's own
+        library jars are left out, so they don't use up the day's lookups."""
+        libraries = JAR_HOMES - {"mods", "plugins"}
         wanted = [
             (root, path, rel)
             for root, path, rel in files
-            if scope != "folder" or path.suffix.lower() in PROGRAMS | {".jar"}
+            if scope != "folder"
+            or (
+                path.suffix.lower() in PROGRAMS | {".jar"}
+                and not (root == "server" and rel.split("/", 1)[0].lower() in libraries)
+            )
         ]
         handle.step("Looking up files on VirusTotal", total=len(wanted), unit="files")
         begun = time.monotonic()
-        deadline = virustotal.clock() + limit
         hits = []
         done = unknown = 0
         for _root, path, _rel in wanted:
@@ -724,6 +735,7 @@ class DeepScanner:
                 sha256 = await asyncio.to_thread(_sha256, path)
             except OSError:
                 done += 1  # the YARA-X pass already said it couldn't be read
+                handle.advance(1)
                 continue
             try:
                 seen = await self.virustotal.lookup(sha256, deadline)

@@ -782,7 +782,11 @@ async def virustotal_key(
             why = VIRUSTOTAL_SAID.get(exc.words) or (
                 f"Couldn't reach VirusTotal: {exc.values.get('why', '')}"
             )
-            raise HTTPException(400, why) from exc
+            # A bad key is the owner's to fix; a limit or a failed call is VirusTotal's.
+            code = 400 if exc.words == "deepscan.error.vt_key" else 502
+            if isinstance(exc, virustotal.LimitReached):
+                code = 503
+            raise HTTPException(code, why) from exc
     audit(ctx, request, "virustotal_key", detail="saved")
     return ctx.deepscan.status()
 

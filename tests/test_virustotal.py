@@ -54,7 +54,8 @@ class Fake:
             return httpx.Response(self.status)
         sha = request.url.path.rsplit("/", 1)[-1]
         if sha in self.known:
-            return httpx.Response(200, json=self.known[sha])
+            # json.dumps, not httpx's json=, so an odd answer like Infinity can be sent
+            return httpx.Response(200, content=json.dumps(self.known[sha]).encode())
         return httpx.Response(404, json={"error": {"code": "NotFoundError"}})
 
 
@@ -280,7 +281,7 @@ def test_a_lookup_that_would_wait_past_the_time_limit_stops(ctx, waits, monkeypa
 def test_after_500_lookups_in_a_day_nothing_more_is_sent(signed_in, ctx, monkeypatch):
     vt = with_key(ctx)
     saved = vt.state()
-    saved["used"] = virustotal.PER_DAY
+    saved["used"] = {virustotal.key_id(KEY): virustotal.PER_DAY}
     vt._save(saved)
     jar(ctx, "one.jar")
     fake = Fake(monkeypatch)
@@ -358,3 +359,170 @@ def test_only_virustotals_file_lookups_are_allowed_there():
     downloads.check_url(virustotal.API + "0" * 64)
     with pytest.raises(downloads.DownloadError):
         downloads.check_url("https://www.virustotal.com/gui/home")
+
+
+# ------------------------------------------------------------ odd answers and damaged files
+@pytest.mark.parametrize(
+    "odd",
+    [
+        {"data": "x"},
+        {"data": {"attributes": {"last_analysis_results": ["x"]}}},
+        {"data": {"attributes": {"last_analysis_stats": {"malicious": "lots"}}}},
+        {"data": {"attributes": {"last_analysis_stats": {"malicious": float("inf")}}}},
+    ],
+)
+def test_an_odd_answer_is_said_and_the_scan_keeps_its_other_results(
+    signed_in, ctx, monkeypatch, odd
+):
+    with_key(ctx)
+    one = jar(ctx, "one.jar")
+    Fake(monkeypatch, known={sha(one): odd})
+    last = scan(signed_in, scope="mods", scanners=["behaviour", "virustotal"])["last"]
+    assert last["scanners"] == ["behaviour", "virustotal"]
+    assert last["errors"][0]["words"] == "deepscan.error.vt_failed"
+
+
+def test_a_damaged_virustotal_file_is_started_again(signed_in, ctx, monkeypatch):
+    vt = with_key(ctx)
+    one = jar(ctx, "one.jar")
+    fake = Fake(monkeypatch)
+    for damaged in (
+        {"day": "x", "used": "lots", "seen": []},
+        {"used": {}, "seen": {sha(one): {"known": True}}},
+        {"seen": {sha(one): {"known": True, "at": 9e12, "count": "x"}}},
+    ):
+        vt.state_path.write_text(json.dumps(damaged), encoding="utf-8")
+        scan(signed_in, scope="mods", scanners=["virustotal"])
+    assert len(fake.asked) == 3
+
+
+# ------------------------------------------------------------ each key has its own limits
+def test_a_new_key_is_taken_after_the_old_key_used_up_its_day(signed_in, ctx, monkeypatch):
+    vt = with_key(ctx)
+    monkeypatch.setattr(virustotal, "PER_DAY", 1)
+    Fake(monkeypatch)
+    signed_in.portal.call(vt.lookup, "1" * 64)
+    saved = signed_in.post(f"{BASE}/mods/deepscan/virustotal", json={"key": "b" * 64})
+    assert saved.status_code == 200, saved.text
+
+
+def test_a_refused_key_check_doesnt_use_up_the_saved_keys_lookups(signed_in, ctx, monkeypatch):
+    vt = with_key(ctx)
+    monkeypatch.setattr(virustotal, "PER_DAY", 1)
+    fake = Fake(monkeypatch, status=401)
+    signed_in.post(f"{BASE}/mods/deepscan/virustotal", json={"key": "b" * 64})
+    fake.status = None
+    signed_in.portal.call(vt.lookup, "1" * 64)
+    assert fake.asked[-1].headers["x-apikey"] == KEY
+
+
+def test_saving_a_new_key_doesnt_wait_for_the_old_keys_minute(signed_in, ctx, waits, monkeypatch):
+    vt = with_key(ctx)
+    Fake(monkeypatch)
+    for n in range(4):
+        signed_in.portal.call(vt.lookup, f"{n:064x}")
+    saved = signed_in.post(f"{BASE}/mods/deepscan/virustotal", json={"key": "b" * 64})
+    assert saved.status_code == 200 and waits == []
+
+
+# ------------------------------------------------------------ waiting
+def test_waiting_for_another_lookup_stops_at_the_time_limit(signed_in, ctx, waits, monkeypatch):
+    vt = with_key(ctx)
+    Fake(monkeypatch)
+
+    async def behind_a_busy_lookup():
+        async with vt.lock:  # another server's lookup that takes long
+            await asyncio.wait_for(vt.lookup("1" * 64, virustotal.clock() + 0.05), 2)
+
+    with pytest.raises(virustotal.LimitReached) as caught:
+        signed_in.portal.call(behind_a_busy_lookup)
+    assert caught.value.words == "deepscan.error.vt_time"
+
+
+def test_a_pacing_scan_doesnt_hold_the_lock_while_it_waits(ctx, monkeypatch, signed_in):
+    vt = with_key(ctx)
+    Fake(monkeypatch)
+    for n in range(4):
+        signed_in.portal.call(vt.lookup, f"{n:064x}")
+
+    async def pacing_and_a_key_check():
+        paced = asyncio.create_task(vt.lookup("9" * 64))
+        await asyncio.sleep(0.05)  # the scan is now waiting for its free slot
+        try:
+            await asyncio.wait_for(vt.save_key("b" * 64), 2)
+        finally:
+            paced.cancel()
+
+    signed_in.portal.call(pacing_and_a_key_check)
+    assert vt.key() == "b" * 64
+
+
+# ------------------------------------------------------------ the deep scan
+def test_a_folder_scan_doesnt_look_up_the_loaders_library_jars(signed_in, ctx, monkeypatch):
+    with_key(ctx)
+    server = ctx.config.server_dir
+    lib = server / "libraries" / "org" / "lib.jar"
+    lib.parent.mkdir(parents=True)
+    lib.write_bytes(b"PK library")
+    one = jar(ctx, "one.jar")
+    fake = Fake(monkeypatch)
+    scan(signed_in, scope="folder", scanners=["virustotal"])
+    asked = {r.url.path.rsplit("/", 1)[-1] for r in fake.asked}
+    assert sha(one) in asked and sha(lib) not in asked
+
+
+def test_virustotal_shares_the_time_limit_with_the_other_programs(signed_in, ctx, monkeypatch):
+    from .test_scanprograms import MCANTIMALWARE, fake_runs, set_up
+
+    with_key(ctx)
+    set_up(ctx, MCANTIMALWARE)
+    now = [1000.0]
+    monkeypatch.setattr(virustotal, "clock", lambda: now[0])
+
+    async def sleep(seconds):
+        now[0] += seconds
+
+    monkeypatch.setattr(virustotal, "sleep", sleep)
+
+    def slow_program(argv):
+        now[0] += deepscan.scanprograms.TIMEOUT - 10  # it used most of the time
+        return 0, []
+
+    fake_runs(monkeypatch, slow_program)
+    for n in range(5):
+        jar(ctx, f"{n}.jar")
+    fake = Fake(monkeypatch)
+    last = scan(signed_in, scope="mods", scanners=["mcantimalware", "virustotal"])["last"]
+    assert len(fake.asked) == 4
+    assert last["errors"][0]["words"] == "deepscan.error.vt_time"
+
+
+def test_the_progress_bar_ends_full_when_a_file_cant_be_read(signed_in, ctx, monkeypatch):
+    from .test_first_run_safety import wait_for_job
+
+    with_key(ctx)
+    bad = jar(ctx, "bad.jar")
+    jar(ctx, "ok.jar")
+    read_sha = deepscan._sha256
+
+    def sha256(path):
+        if path.name == bad.name:
+            raise OSError("locked")
+        return read_sha(path)
+
+    monkeypatch.setattr(deepscan, "_sha256", sha256)
+    Fake(monkeypatch)
+    started = signed_in.post(
+        f"{BASE}/mods/deepscan", json={"scope": "mods", "scanners": ["virustotal"]}
+    )
+    job = wait_for_job(signed_in, started.json()["running"]["id"])
+    assert job["state"] == "succeeded" and job["total"] == 2
+    assert job["done"] == job["total"]
+
+
+# ------------------------------------------------------------ what the apps are told
+@pytest.mark.parametrize("status, code", [(500, 502), (429, 503), (401, 400)])
+def test_saving_a_key_says_whose_problem_it_was(signed_in, monkeypatch, status, code):
+    Fake(monkeypatch, status=status)
+    saved = signed_in.post(f"{BASE}/mods/deepscan/virustotal", json={"key": KEY})
+    assert saved.status_code == code

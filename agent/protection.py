@@ -468,8 +468,8 @@ def _jar_scan(scan: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not scan["checked_at"]:
         return [_line("jar_scan_not_yet", "info")]
     found = []
-    if scan["found"]:
-        found.append(_line("jar_scan_found", "worst", count=scan["found"]))
+    if scan.get("recent", scan["found"]):
+        found.append(_line("jar_scan_found", "worst", count=scan.get("recent", scan["found"])))
     else:
         found.append(
             _line("jar_scan_done", "info", checked=scan["checked"], unknown=scan["unknown"])

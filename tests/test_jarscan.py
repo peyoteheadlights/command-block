@@ -194,6 +194,7 @@ def test_rows_say_where_each_jar_was_found(signed_in, ctx, sites):
         "checked": 3,
         "jars": 3,
         "found": 0,
+        "recent": 0,
         "unknown": 1,
         "couldnt": 0,
         "changed": 0,
@@ -542,3 +543,59 @@ def test_jar_check_wording_never_promises_too_much():
     for key in keys:
         for text in STRINGS[key]:
             assert not banned.search(text), key
+
+
+# ------------------------------------------------------------ fixes
+def test_a_jar_that_cant_be_read_keeps_its_row_and_isnt_read_every_tick(
+    signed_in, ctx, sites, monkeypatch
+):
+    path = make_jar(ctx.config.mods_dir / "a.jar", "a")
+    signed_in.post(f"{BASE}/mods/scan")
+    make_jar(path, "changed")
+    reads = []
+
+    def broken(p):
+        reads.append(p)
+        raise OSError("locked")
+
+    monkeypatch.setattr(jarscan, "check_jar", broken)
+    report = signed_in.post(f"{BASE}/mods/scan").json()
+    assert row(report, "a.jar")  # the old entry is kept
+    assert len(reads) == 1
+    signed_in.portal.call(ctx.jarscan.tick)
+    assert len(reads) == 1  # the folder didn't change again: no read
+
+
+def test_a_fixed_jar_that_cant_be_read_yet_isnt_moved_as_the_old_bad_one(
+    signed_in, ctx, sites, monkeypatch
+):
+    path = bad_jar(ctx)
+    monkeypatch.setattr(ctx.jarscan, "_busy", lambda: True)
+    signed_in.post(f"{BASE}/mods/scan")  # waits for the server to stop
+    make_jar(path, "fixed")  # the owner copied a fixed version over it
+    monkeypatch.setattr(ctx.jarscan, "_busy", lambda: False)
+
+    def broken(p):
+        raise OSError("still copying")
+
+    monkeypatch.setattr(jarscan, "check_jar", broken)
+    signed_in.portal.call(ctx.jarscan.before_start)
+    assert path.is_file()
+    assert ctx.jarscan.report()["quarantine"] == []
+
+
+def test_the_protection_line_drops_a_week_after_a_jar_went_to_quarantine(signed_in, ctx, sites):
+    bad_jar(ctx)
+    signed_in.post(f"{BASE}/mods/scan")
+    props = {"online-mode": "true", "white-list": "true"}
+
+    def jar_ids():
+        found = lines(Facts(properties=props, jar_scan=ctx.jarscan.summary()))
+        return [x["id"] for x in found if x["id"].startswith("jar_scan")]
+
+    assert jar_ids() == ["jar_scan_found"]
+    saved = ctx.jarscan.store()
+    saved["quarantine"][0]["at"] -= jarscan.WEEK + 1
+    ctx.jarscan.save(saved)
+    assert ctx.jarscan.summary()["found"] == 1  # still listed on the Mods page
+    assert jar_ids() == ["jar_scan_done"]

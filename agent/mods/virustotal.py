@@ -7,7 +7,8 @@ about a file it has seen before, or 404 when it has never seen it.
 A free key allows 4 lookups a minute and 500 a day, so lookups wait for
 a free slot, the day's count is kept on disk, and an answer is kept for a
 week (a day for a file VirusTotal didn't know). The key and the count
-belong to the whole agent, not to one server.
+belong to the whole agent, not to one server. Each key has its own count,
+so a new key isn't refused for what the old one used.
 
 3 or more engines saying malicious makes a file Known bad; 1 or 2 make it
 Worth a look. The finding always says how many of how many, and which.
@@ -16,6 +17,7 @@ Worth a look. The finding always says how many of how many, and which.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -64,6 +66,18 @@ class LimitReached(VirusTotalError):
 def read(answer: dict[str, Any]) -> dict[str, Any]:
     """What VirusTotal's file answer says: how many engines called it
     malicious, of how many gave an answer, and their names."""
+    try:
+        return _read(answer)
+    except (
+        AttributeError,
+        TypeError,
+        ValueError,
+        OverflowError,
+    ) as exc:  # not the shape VirusTotal sends
+        raise VirusTotalError("deepscan.error.vt_failed", why="odd answer") from exc
+
+
+def _read(answer: dict[str, Any]) -> dict[str, Any]:
     attributes = (answer.get("data") or {}).get("attributes") or {}
     results = attributes.get("last_analysis_results") or {}
     stats = attributes.get("last_analysis_stats") or {}
@@ -83,6 +97,26 @@ def read(answer: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _kept_ok(seen: Any) -> bool:
+    """A kept answer from the state file that can still be used as it is."""
+    if not isinstance(seen, dict) or not isinstance(seen.get("at"), (int, float)):
+        return False
+    if not seen.get("known"):
+        return True
+    engines = seen.get("engines")
+    return (
+        isinstance(seen.get("count"), int)
+        and isinstance(seen.get("total"), int)
+        and isinstance(engines, list)
+        and all(isinstance(name, str) for name in engines)
+    )
+
+
+def key_id(key: str) -> str:
+    """A short name for a key, so its count can be saved without the key."""
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
 def finding(seen: dict[str, Any]) -> tuple[dict[str, Any], bool] | None:
     """The deep scan finding for one answer, and whether it is Known bad."""
     count = seen.get("count") or 0
@@ -100,7 +134,7 @@ class VirusTotal:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = Path(data_dir)
         self.lock = asyncio.Lock()
-        self.calls: deque[float] = deque(maxlen=PER_MINUTE)
+        self.calls: dict[str, deque[float]] = {}  # each key's last lookups
 
     # ------------------------------------------------------------ key
     @property
@@ -134,9 +168,13 @@ class VirusTotal:
         if not isinstance(saved, dict):
             saved = {}
         today = time.strftime("%Y-%m-%d", time.gmtime())
-        if saved.get("day") != today:
-            saved.update(day=today, used=0)  # VirusTotal's day starts at 00:00 UTC
-        saved.setdefault("seen", {})
+        used = saved.get("used")
+        if saved.get("day") != today or not isinstance(used, dict):
+            saved.update(day=today, used={})  # VirusTotal's day starts at 00:00 UTC
+        saved["used"] = {k: n for k, n in saved["used"].items() if isinstance(n, int)}
+        seen = saved.get("seen")
+        seen = seen if isinstance(seen, dict) else {}
+        saved["seen"] = {sha: one for sha, one in seen.items() if _kept_ok(one)}
         return saved
 
     def _save(self, saved: dict[str, Any]) -> None:
@@ -171,40 +209,58 @@ class VirusTotal:
     async def _ask(
         self, sha256: str, key: str, deadline: float | None, use_kept: bool = True
     ) -> dict[str, Any]:
-        async with self.lock:  # one lookup at a time, for every server on this agent
-            kept = self._kept(sha256) if use_kept else None
-            if kept:  # another server asked about it while this one waited
-                return kept
-            if self.state()["used"] >= PER_DAY:
-                raise LimitReached("deepscan.error.vt_day", limit=PER_DAY)
-            if len(self.calls) == PER_MINUTE:
-                wait = self.calls[0] + 60 - clock()
-                if wait > 0:
-                    if deadline is not None and clock() + wait > deadline:
-                        raise LimitReached("deepscan.error.vt_time")
-                    await sleep(wait)
-            self.calls.append(clock())
-            saved = self.state()
-            saved["used"] += 1
-            self._save(saved)  # counted before the answer, as VirusTotal counts it
-            try:
-                answer = await downloads.fetch_json(
-                    API + sha256, max_bytes=MAX_ANSWER, headers={"x-apikey": key}
-                )
-                seen = read(answer)
-            except downloads.DownloadNotFound:
-                seen = {"known": False}
-            except downloads.DownloadError as exc:
-                if exc.status in (401, 403):
-                    raise VirusTotalError("deepscan.error.vt_key") from exc
-                if exc.status == 429:
-                    raise LimitReached("deepscan.error.vt_busy") from exc
-                raise VirusTotalError("deepscan.error.vt_failed", why=str(exc)) from exc
-            seen["at"] = time.time()
-            saved = self.state()
-            saved["seen"][sha256] = seen
-            self._save(saved)
-            return seen
+        me = key_id(key)
+        while True:
+            await self._take_lock(deadline)
+            try:  # one lookup at a time, for every server on this agent
+                kept = self._kept(sha256) if use_kept else None
+                if kept:  # another server asked about it while this one waited
+                    return kept
+                saved = self.state()
+                if saved["used"].get(me, 0) >= PER_DAY:
+                    raise LimitReached("deepscan.error.vt_day", limit=PER_DAY)
+                calls = self.calls.setdefault(me, deque(maxlen=PER_MINUTE))
+                wait = calls[0] + 60 - clock() if len(calls) == PER_MINUTE else 0
+                if wait <= 0:
+                    calls.append(clock())
+                    saved["used"][me] = saved["used"].get(me, 0) + 1
+                    self._save(saved)  # counted before the answer, as VirusTotal counts it
+                    return await self._fetch(sha256, key)
+            finally:
+                self.lock.release()
+            # Wait for a free slot without the lock, so a key check isn't held up.
+            if deadline is not None and clock() + wait > deadline:
+                raise LimitReached("deepscan.error.vt_time")
+            await sleep(wait)
+
+    async def _take_lock(self, deadline: float | None) -> None:
+        if deadline is None:
+            await self.lock.acquire()
+            return
+        try:
+            await asyncio.wait_for(self.lock.acquire(), max(0.0, deadline - clock()))
+        except TimeoutError:
+            raise LimitReached("deepscan.error.vt_time") from None
+
+    async def _fetch(self, sha256: str, key: str) -> dict[str, Any]:
+        try:
+            answer = await downloads.fetch_json(
+                API + sha256, max_bytes=MAX_ANSWER, headers={"x-apikey": key}
+            )
+            seen = read(answer)
+        except downloads.DownloadNotFound:
+            seen = {"known": False}
+        except downloads.DownloadError as exc:
+            if exc.status in (401, 403):
+                raise VirusTotalError("deepscan.error.vt_key") from exc
+            if exc.status == 429:
+                raise LimitReached("deepscan.error.vt_busy") from exc
+            raise VirusTotalError("deepscan.error.vt_failed", why=str(exc)) from exc
+        seen["at"] = time.time()
+        saved = self.state()
+        saved["seen"][sha256] = seen
+        self._save(saved)
+        return seen
 
 
 _agents: dict[str, VirusTotal] = {}

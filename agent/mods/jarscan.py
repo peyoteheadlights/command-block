@@ -222,8 +222,9 @@ def check_jar(path: Path) -> dict[str, Any]:
     }
 
 
-def _signature(jars: dict[str, dict[str, Any]]) -> list[list[Any]]:
-    return [[name, e["size"], e["modified"]] for name, e in sorted(jars.items())]
+def _forget(saved: dict[str, Any], names: list[str]) -> None:
+    """Take moved jars out of the stored folder signature."""
+    saved["signature"] = [s for s in saved.get("signature") or [] if s[0] not in names]
 
 
 def _sites(entry: dict[str, Any], state: str) -> str:
@@ -311,8 +312,10 @@ class JarScanner:
         old = saved["jars"]
         jars: dict[str, dict[str, Any]] = {}
         fresh = []
+        signature = []
         for path in self.files():
             st = path.stat()
+            signature.append([path.name, st.st_size, st.st_mtime])
             entry = old.get(path.name)
             if entry and entry["size"] == st.st_size and entry["modified"] == st.st_mtime:
                 jars[path.name] = entry
@@ -326,6 +329,8 @@ class JarScanner:
                 checked = check_jar(path)
             except Exception as exc:  # one broken jar must not stop the others
                 log.warning("jar check could not read %s: %s", path.name, exc)
+                if entry:  # keep what was known (and "waiting") until it reads again
+                    jars[path.name] = entry
                 continue
             if entry and entry["sha256"] == checked["sha256"]:
                 entry.update(size=st.st_size, modified=st.st_mtime)
@@ -338,7 +343,9 @@ class JarScanner:
             jars[path.name] = checked
             fresh.append(checked)
         saved["jars"] = jars
-        saved["signature"] = _signature(jars)
+        # From the folder, not the entries: a jar that couldn't be read
+        # mustn't make the folder look changed on every tick.
+        saved["signature"] = signature
         return fresh
 
     @staticmethod
@@ -644,15 +651,19 @@ class JarScanner:
             if not path.is_file():  # gone since it was checked
                 del saved["jars"][name]
                 continue
+            st = path.stat()
+            if (st.st_size, st.st_mtime) != (entry["size"], entry["modified"]):
+                continue  # a different file now: the next check reads it first
             assert_not_symlink(path)
             if not is_inside(self.mods.mods_dir, path):
                 continue
             item = await self._quarantine(path, entry["name"], entry["sha256"], entry["findings"])
+            item["by"] = user
             del saved["jars"][name]
             saved["quarantine"].append(item)
             self._record(item, user)
             moved.append(name)
-        saved["signature"] = _signature(saved["jars"])
+        _forget(saved, moved)
         self.save(saved)
         if moved:
             self.mods._cache = None
@@ -705,12 +716,12 @@ class JarScanner:
         if not path.is_file() or path.is_symlink():
             return False
         item = await self._quarantine(path, path.name, sha256, findings)
-        item.update(root=root, path=rel)
+        item.update(root=root, path=rel, by=user)
         saved = self.store()
         saved["quarantine"].append(item)
         if path.parent == self.mods.mods_dir:
             saved["jars"].pop(path.name, None)
-        saved["signature"] = _signature(saved["jars"])
+            _forget(saved, [path.name])
         self.save(saved)
         self._record(item, user)
         self.mods._cache = None
@@ -782,7 +793,7 @@ class JarScanner:
         from ..minecraft.process import ServerError
 
         checked = self.checks_before_start()
-        before = len(self.store()["quarantine"])
+        before = {item["id"] for item in self.store()["quarantine"]}
         if checked:
             await self._wait_for_checks()
         has_content = self.mods.server_type.has_content
@@ -806,7 +817,13 @@ class JarScanner:
                 ) from exc
         if moved:
             self.ctx.server._emit_console(f"[agent] moved to quarantine: {', '.join(moved)}")
-        new = [item["filename"] for item in self.store()["quarantine"][before:]]
+        # Only what the agent moved: a file a moderator moved meanwhile isn't
+        # the checks' finding.
+        new = [
+            item["filename"]
+            for item in self.store()["quarantine"]
+            if item["id"] not in before and item.get("by", "agent") == "agent"
+        ]
         if checked and new:
             raise ServerError(
                 f"The jar checks before start moved {', '.join(new)} to quarantine, so "
@@ -928,11 +945,14 @@ class JarScanner:
         saved = saved or self.store()
         jars = list(saved["jars"].values())
         kept = set(saved["kept"])
+        in_folder = sum(1 for e in jars if e["findings"] and e["sha256"] not in kept)
+        week_ago = time.time() - WEEK
         return {
             "checked": sum(1 for e in jars if e.get("sites")),
             "jars": len(jars),
-            "found": len(saved["quarantine"])
-            + sum(1 for e in jars if e["findings"] and e["sha256"] not in kept),
+            "found": len(saved["quarantine"]) + in_folder,
+            # For Protection: still in the folder, or moved in the last week.
+            "recent": in_folder + sum(1 for q in saved["quarantine"] if q["at"] > week_ago),
             "unknown": sum(
                 1 for e in jars if e.get("sites") and set(e["sites"].values()) == {"not_found"}
             ),
