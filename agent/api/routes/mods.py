@@ -39,6 +39,8 @@ from ..responses import (
     DependencyInstall,
     DependencyPlan,
     DependencyReport,
+    JarScanReport,
+    JarScanUndone,
     ModChanged,
     ModHistory,
     ModImpact,
@@ -65,6 +67,8 @@ from ..responses import (
 from .models import (
     CopyAddonsRequest,
     DependencyInstallRequest,
+    JarScanOptionsRequest,
+    JarScanUndoRequest,
     ModFileRequest,
     ModInstallRequest,
     ModLinkAddRequest,
@@ -653,6 +657,56 @@ async def mod_history(
     limit: int = 100, principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
 ):
     return {"history": ctx.mods.history(max(1, min(limit, 500)))}
+
+
+@router.get("/mods/scan", response_model=JarScanReport)
+async def jar_scan(principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)):
+    """The jar check's last results. Asks nothing."""
+    return ctx.jarscan.report()
+
+
+@router.post("/mods/scan", response_model=JarScanReport)
+async def jar_scan_again(
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """Check every jar again, looking each one up on Modrinth and CurseForge."""
+    report = await ctx.jarscan.scan(everything=True)
+    audit(ctx, request, "jar_scan")
+    return report
+
+
+@router.post("/mods/scan/undo", response_model=JarScanUndone)
+async def jar_scan_undo(
+    payload: JarScanUndoRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    with audit_failure(ctx, request, "jar_scan_undo", target=payload.id):
+        result = await ctx.mod_change(
+            f"Putting back {payload.id}",
+            lambda: ctx.jarscan.undo(payload.id, user=principal.user),
+            principal.user,
+        )
+    audit(ctx, request, "jar_scan_undo", target=payload.id)
+    return {"ok": True, **result}
+
+
+@router.post("/mods/scan/options", response_model=JarScanReport)
+async def jar_scan_options(
+    payload: JarScanOptionsRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    for key, value in (("rescan_weekly", payload.weekly), ("rescan_on_change", payload.on_change)):
+        if value is not None:
+            ctx.config.set(f"mods.{key}", value)
+    ctx.config.save()
+    audit(ctx, request, "jar_scan_options", detail=str(payload.model_dump(exclude_none=True)))
+    return ctx.jarscan.report()
 
 
 @router.get("/mods/dependencies", response_model=DependencyReport)

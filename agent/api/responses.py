@@ -1545,6 +1545,38 @@ class ModRemoved(Open):
     trash: str | None = Field(None, description="Where the file was kept")
 
 
+class JarScanRow(Open):
+    filename: str
+    name: str
+    sha256: str
+    checked_at: float | None = None
+    sites: dict[str, str] = Field(
+        {}, description="modrinth / curseforge: found, not_found or error; empty until asked"
+    )
+    findings: list[dict[str, Any]] = []
+    notes: list[dict[str, Any]] = []
+    waiting: bool = Field(False, description="Goes to quarantine before the server next starts")
+    words: str
+    values: dict[str, Any] = {}
+
+
+class JarScanReport(Open):
+    """The jar check: every jar, what was found and what is in quarantine."""
+
+    checked_at: float | None = None
+    looked_up_at: float | None = None
+    weekly: bool
+    on_change: bool
+    jars: list[JarScanRow]
+    quarantine: list[dict[str, Any]]
+    summary: dict[str, Any]
+
+
+class JarScanUndone(Open):
+    ok: bool
+    restored: str
+
+
 class ModUpdated(Open):
     ok: bool
     updated: dict[str, Any]

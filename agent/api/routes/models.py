@@ -96,6 +96,15 @@ class PlayerOnlyOptionsRequest(BaseModel):
     skip_listed: bool = False
 
 
+class JarScanUndoRequest(BaseModel):
+    id: str = Field(max_length=200)
+
+
+class JarScanOptionsRequest(BaseModel):
+    weekly: bool | None = None
+    on_change: bool | None = None
+
+
 class ModUpdateRequest(ModFileRequest):
     # Modrinth's, "hangar:<id>" or a GitHub file's "owner/repo/<id>".
     version_id: str | None = Field(default=None, max_length=200)

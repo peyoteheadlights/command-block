@@ -108,7 +108,10 @@ object Content {
     fun change(strings: Strings, old: String?, new: String?): String =
         "${old?.takeIf { it.isNotBlank() } ?: strings.t("value.unknown")} → ${new?.takeIf { it.isNotBlank() } ?: strings.t("value.unknown")}"
 
-    private val ACTIONS = setOf("install", "upload", "remove", "update", "rollback", "enable", "disable", "side", "players_add", "players_remove")
+    private val ACTIONS = setOf(
+        "install", "upload", "remove", "update", "rollback", "enable", "disable",
+        "side", "players_add", "players_remove", "quarantine", "quarantine_undo",
+    )
 
     /** What a history row did, in words; the agent's own name for an action the app doesn't know. */
     fun action(strings: Strings, row: ModHistoryRow): String =

@@ -115,6 +115,7 @@ public enum Content {
 
     private static let actions: Set<String> = [
         "install", "upload", "remove", "update", "rollback", "enable", "disable", "side", "players_add", "players_remove",
+        "quarantine", "quarantine_undo",
     ]
 
     /// What a history row did, in words; the agent's own name for an action the app doesn't know.

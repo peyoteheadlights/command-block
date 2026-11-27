@@ -68,6 +68,8 @@ ACTIONS = (
     "side",
     "players_add",
     "players_remove",
+    "quarantine",
+    "quarantine_undo",
 )
 # Server / Players / Both (agent/mods/sides.py): the mark's words, and where it came from.
 SIDES = ("server", "players", "both")
@@ -191,6 +193,12 @@ def inset_row() -> tuple[QFrame, QHBoxLayout]:
     h = QHBoxLayout(row)
     h.setContentsMargins(12, 8, 8, 8)
     return row, h
+
+
+def said(words: dict) -> str:
+    """One jar check line, led by the name of the check that said it."""
+    line = text(words["words"], **words.get("values") or {})
+    return f"{words['scanner']}: {line}" if words.get("scanner") else line
 
 
 def names(items: list[dict], key: str = "title") -> str:
@@ -453,6 +461,25 @@ class ModsPage(SharePage):
         layout.addWidget(self.checks)
         self.column.addWidget(self.checks_card)
 
+        self.scan_card, layout = card("")
+        scan_intro = label(kind="sub")
+        self.scan_summary = label(kind="sub")
+        self.scan_rows = QVBoxLayout()
+        self.quarantine = QVBoxLayout()
+        self.scan_again = push("")
+        self.scan_again.clicked.connect(self.scan_jars)
+        self.weekly = QCheckBox()
+        self.weekly.clicked.connect(lambda on: self.scan_options(weekly=on))
+        self.on_change = QCheckBox()
+        self.on_change.clicked.connect(lambda on: self.scan_options(on_change=on))
+        layout.addWidget(scan_intro)
+        layout.addWidget(self.scan_summary)
+        layout.addLayout(self.scan_rows)
+        layout.addLayout(self.quarantine)
+        for control in (self.scan_again, self.weekly, self.on_change):
+            layout.addWidget(control)
+        self.column.addWidget(self.scan_card)
+
         self.history_card, layout = card("")
         self.history = QVBoxLayout()
         layout.addLayout(self.history)
@@ -496,6 +523,11 @@ class ModsPage(SharePage):
             (title_of(self.needs_you_card).setText, "desktop.mods.needs_you"),
             (self.needs_you_words.setText, "desktop.mods.needs_you_intro"),
             (title_of(self.history_card).setText, "mods.change_history"),
+            (title_of(self.scan_card).setText, "jarscan.title"),
+            (scan_intro.setText, "jarscan.intro"),
+            (self.scan_again.setText, "jarscan.check_again"),
+            (self.weekly.setText, "jarscan.weekly"),
+            (self.on_change.setText, "jarscan.on_change"),
             (self.copy.setText, "desktop.mods.copy"),
             (title_of(self.players_card).setText, "desktop.mods.for_players"),
             (dot_of(self.players_card).say, "desktop.mods.for_players_intro"),
@@ -559,6 +591,7 @@ class ModsPage(SharePage):
         # The feed says something changed: the list, not Modrinth's names.
         self.ask("GET", "/mods", self.show_list)
         self.ask("GET", "/mods/history?limit=15", self.show_history, lambda _e: None)
+        self.ask("GET", "/mods/scan", self.show_scan, lambda _e: None)
 
     def after_change(self) -> None:
         self.changed()
@@ -763,6 +796,61 @@ class ModsPage(SharePage):
                 )
             )
         refill(self.history, rows or [label(text("mods.no_history"), "sub")])
+
+    # ------------------------------------------------------------ jar check
+    def show_scan(self, report: dict) -> None:
+        manage = self.may("mods.manage")
+        summary = report.get("summary") or {}
+        self.scan_summary.setText(
+            text("jarscan.summary", when=clock(report["checked_at"]), **summary)
+            if report.get("checked_at")
+            else text("jarscan.not_yet")
+        )
+        rows: list[QWidget] = []
+        for jar in report.get("jars") or []:
+            lines = [f"{jar['filename']}: {text(jar['words'], **jar.get('values') or {})}"]
+            lines += [said(f) for f in (jar.get("findings") or []) + (jar.get("notes") or [])]
+            rows.append(label("\n".join(lines), "sub"))
+        refill(self.scan_rows, rows)
+        rows = []
+        if report.get("quarantine"):
+            rows.append(label(text("jarscan.quarantine")))
+        for item in report.get("quarantine") or []:
+            row = QWidget()
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 0, 0, 0)
+            found = "\n".join(said(f) for f in item.get("findings") or [])
+            when = text("jarscan.quarantined", when=clock(item.get("at")))
+            h.addWidget(label(f"{item['filename']}\n{found}\n{when}", "sub"), 1)
+            if manage:
+                back = push(text("jarscan.undo"), "plain")
+                back.setAccessibleName(f"{back.text()}: {item['filename']}")
+                back.clicked.connect(lambda _=False, i=item: self.put_back(i))
+                h.addWidget(back)
+            rows.append(row)
+        refill(self.quarantine, rows)
+        self.scan_again.setVisible(manage)
+        for box, key in ((self.weekly, "weekly"), (self.on_change, "on_change")):
+            box.setChecked(bool(report.get(key)))
+            box.setVisible(manage)
+
+    def scan_jars(self) -> None:
+        self.scan_summary.setText(text("jarscan.checking"))
+        self.ask("POST", "/mods/scan", self.scanned, self.said, slow=True)
+
+    def scanned(self, report: dict) -> None:
+        self.show_scan(report)
+        self.changed()
+
+    def scan_options(self, **change: bool) -> None:
+        self.ask("POST", "/mods/scan/options", self.show_scan, self.said, body=change)
+
+    def put_back(self, item: dict) -> None:
+        def done(_r: dict) -> None:
+            self.say(text("jarscan.undone", name=item["filename"]))
+            self.changed()
+
+        self.ask("POST", "/mods/scan/undo", done, self.said, body={"id": item["id"]})
 
     # ------------------------------------------------------------ what mods need
     def show_needs(self, report: dict) -> None:

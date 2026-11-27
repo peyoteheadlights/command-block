@@ -78,6 +78,7 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "backup_failed": ("backup_failed", 0xED4245, "{server}: backup failed"),
     "mod_installed": ("mod_installed", 0x3BA55D, "{server}: mod installed"),
     "mod_removed": ("mod_removed", 0xFAA61A, "{server}: mod removed"),
+    "jar_scan_found": ("jar_scan_found", 0xED4245, "{server}: jar check found something"),
     "mod_updated": ("mod_updated", 0x3BA55D, "{server}: mod updated"),
     "mod_rolled_back": ("mod_updated", 0xFAA61A, "{server}: mod rolled back"),
     "mod_dependency_problem": (
@@ -198,6 +199,7 @@ ALERT_PAGES = {
     "backup_copy_failed": "backups",
     "mod_installed": "mods",
     "mod_removed": "mods",
+    "jar_scan_found": "mods",
     "mod_updated": "mods",
     "mod_dependency_problem": "mods",
     "player_joined": "players",

@@ -48,6 +48,7 @@ from .minecraft.playeractions import PlayerActions
 from .minecraft.process import MinecraftServer, ServerError
 from .mods import sides
 from .mods.fit import Later as FitCheck
+from .mods.jarscan import JarScanner
 from .mods.manager import ModManager
 from .monitoring.answering import AnswerWatch
 from .monitoring.metrics import MetricsMonitor
@@ -100,6 +101,7 @@ class ServerContext:
         self.mods = ModManager(self.config, self.bus, self.db, self.server)
         # The "Still fit?" check, after a mod or version change (agent/mods/fit.py).
         self.fit = FitCheck(self)
+        self.jarscan = JarScanner(self)
         self.backups = BackupManager(self.config, self.bus, self.db, self.server, jobs=core.jobs)
         self.crashes = CrashReporter(
             self.config, self.db, self.server, self.metrics, self.players, self.mods
@@ -135,12 +137,15 @@ class ServerContext:
         ]
         self.server.before_launch = self._before_launch
         self._update_task: asyncio.Task | None = None
+        self._jar_scan_task: asyncio.Task | None = None
         self._stop_backup: asyncio.Task | None = None
 
     async def _before_launch(self) -> list[str]:
         """As the server starts: a Test server's builds are copied in (a
         failed copy is said in the console, and the start goes on), then
-        Join protection picks the start arguments."""
+        the jar check moves any jar it found something in to quarantine
+        (a jar it can't move stops the start), then Join protection picks
+        the start arguments."""
         from . import testserver
 
         try:
@@ -184,6 +189,7 @@ class ServerContext:
             await asyncio.to_thread(farview.before_start, self)
         except OSError as exc:
             self.server._emit_console(f"[agent] far view setting not written: {exc}")
+        await self.jarscan.before_start()
         return await self.core.guard.before_launch(self)
 
     def _whitelist_addon(self, kind: str):
@@ -324,6 +330,9 @@ class ServerContext:
         self._update_task = asyncio.create_task(
             self._update_check_loop(), name=f"mod-updates-{self.server_id}"
         )
+        self._jar_scan_task = asyncio.create_task(
+            self._jar_scan_loop(), name=f"jar-scan-{self.server_id}"
+        )
         self.autosleep.start()
         self.night_load.start()
         self.answering.start()
@@ -353,12 +362,25 @@ class ServerContext:
                 log.debug("mod update check failed", exc_info=True)
             await asyncio.sleep(hours * 3600)
 
+    async def _jar_scan_loop(self) -> None:
+        await asyncio.sleep(90)
+        while True:
+            try:
+                await self.jarscan.tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.debug("jar check failed", exc_info=True)
+            await asyncio.sleep(300)
+
     async def stop(self) -> None:
         if self._update_task:
             self._update_task.cancel()
         if self._empty_task:
             self._empty_task.cancel()
         self.fit.stop()
+        if self._jar_scan_task:
+            self._jar_scan_task.cancel()
         await self.autosleep.stop()
         await self.night_load.stop()
         await self.answering.stop()

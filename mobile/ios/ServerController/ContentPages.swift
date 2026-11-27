@@ -61,6 +61,7 @@ final class ContentPages {
 
     private(set) var mods = PageRead<ModList>()
     private(set) var history = PageRead<ModHistory>()
+    private(set) var scan = PageRead<JarScanReport>()
     private(set) var dependencies: DependencyReport? = nil
     var removing: RemoveAsk? = nil
     var updating: Mod? = nil
@@ -93,6 +94,33 @@ final class ContentPages {
         } catch let problem as AgentError {
             history = PageRead(problem: problem)
         } catch {}
+        do {
+            scan = PageRead(value: try await client.jarScan(serverId: serverId))
+        } catch let problem as AgentError {
+            scan = PageRead(problem: problem)
+        } catch {}
+    }
+
+    func scanJars(_ strings: Strings) async {
+        await work("jar_scan", strings, reload: loadMods) { client, id in
+            _ = try await client.scanJars(serverId: id)
+            return nil
+        }
+    }
+
+    func putBack(_ id: String, _ filename: String, _ strings: Strings) async {
+        await work("put_back:\(id)", strings, reload: loadMods) { client, serverId in
+            _ = try await client.putBackJar(serverId: serverId, id: id)
+            return Said(text: strings.t("jarscan.undone", ["name": filename]), good: true)
+        }
+    }
+
+    func scanOptions(_ strings: Strings, weekly: Bool? = nil, onChange: Bool? = nil) async {
+        await work("jar_scan_options", strings) { [weak self] client, id in
+            let report = try await client.jarScanOptions(serverId: id, weekly: weekly, onChange: onChange)
+            self?.scan = PageRead(value: report)
+            return nil
+        }
     }
 
     /// The Server / Players / Both filter ("all": every mod).

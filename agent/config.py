@@ -319,6 +319,7 @@ class ModSettings(Section):
     directory: str = "mods"
     backup_directory: str = "mod-backups"
     trash_directory: str = "mod-trash"
+    quarantine_directory: str = "mod-quarantine"
     modrinth_api: str = "https://api.modrinth.com/v2"
     # CurseForge through our relay (agent/mods/curseforge.py). The web key
     # only names the Firebase project for its anonymous sign-in; it isn't a
@@ -332,6 +333,10 @@ class ModSettings(Section):
     backup_before_install: bool = True
     auto_stop_for_install: bool = False
     update_check_hours: float = 12
+    # Jar check: look every jar up again once a week, and check a jar
+    # as soon as it changes.
+    rescan_weekly: bool = True
+    rescan_on_change: bool = True
 
 
 @dataclass(frozen=True)
@@ -373,6 +378,7 @@ class NotificationSettings(Section):
             "backup_failed": True,
             "mod_installed": True,
             "mod_removed": True,
+            "jar_scan_found": True,
             "mod_updated": True,
             "mod_dependency_problem": True,
             "auth_failure": True,
@@ -1080,6 +1086,10 @@ class Config:
         return self._first.mod_trash_dir
 
     @property
+    def mod_quarantine_dir(self) -> Path:
+        return self._first.mod_quarantine_dir
+
+    @property
     def crash_dir(self) -> Path:
         return self._first.crash_dir
 
@@ -1286,6 +1296,10 @@ class ServerConfig:
         return self.resolve_data(self.mods.trash_directory)
 
     @property
+    def mod_quarantine_dir(self) -> Path:
+        return self.resolve_data(self.mods.quarantine_directory)
+
+    @property
     def crash_dir(self) -> Path:
         return self.resolve_data("crashes")
 
@@ -1295,5 +1309,6 @@ class ServerConfig:
             self.backup_dir,
             self.mod_backup_dir,
             self.mod_trash_dir,
+            self.mod_quarantine_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)

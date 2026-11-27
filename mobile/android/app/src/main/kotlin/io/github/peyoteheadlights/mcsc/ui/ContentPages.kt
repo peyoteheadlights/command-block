@@ -14,6 +14,7 @@ import io.github.peyoteheadlights.mcsc.core.GameForm
 import io.github.peyoteheadlights.mcsc.core.GameRules
 import io.github.peyoteheadlights.mcsc.core.GameSettings
 import io.github.peyoteheadlights.mcsc.core.Install
+import io.github.peyoteheadlights.mcsc.core.JarScanReport
 import io.github.peyoteheadlights.mcsc.core.Job
 import io.github.peyoteheadlights.mcsc.core.Mod
 import io.github.peyoteheadlights.mcsc.core.ModHistory
@@ -99,6 +100,8 @@ class ContentPages(
         private set
     var dependencies: DependencyReport? by mutableStateOf(null)
         private set
+    var scan: Read<JarScanReport> by mutableStateOf(Read())
+        private set
     var removing: RemoveAsk? by mutableStateOf(null)
         private set
     var updating: Mod? by mutableStateOf(null)
@@ -122,6 +125,7 @@ class ContentPages(
             // The list still shows without these.
             dependencies = try { c.dependencies(serverId) } catch (e: AgentException) { null }
             history = try { Read(c.modHistory(serverId)) } catch (e: AgentException) { Read(problem = Message.of(e)) }
+            scan = try { Read(c.jarScan(serverId)) } catch (e: AgentException) { Read(problem = Message.of(e)) }
         }
     }
 
@@ -147,6 +151,22 @@ class ContentPages(
                 Read(problem = Message.of(e))
             }
         }
+    }
+
+    /** Checks every jar again; the list reloads after, as a jar may have moved. */
+    fun scanJars(strings: Strings) = work("jar_scan", strings, reload = ::loadMods) {
+        scan = Read(it.scanJars(serverId))
+        null
+    }
+
+    fun putBack(id: String, filename: String, strings: Strings) = work("put_back:$id", strings, reload = ::loadMods) {
+        it.putBackJar(serverId, id)
+        Said(strings.t("jarscan.undone", "name" to filename), good = true)
+    }
+
+    fun scanOptions(strings: Strings, weekly: Boolean? = null, onChange: Boolean? = null) = work("jar_scan_options", strings) {
+        scan = Read(it.jarScanOptions(serverId, weekly, onChange))
+        null
     }
 
     fun setEnabled(mod: Mod, on: Boolean, strings: Strings) = work("toggle:${mod.filename}", strings, reload = ::loadMods) {

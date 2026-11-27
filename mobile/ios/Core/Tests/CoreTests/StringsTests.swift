@@ -58,7 +58,7 @@ final class StringsTests: XCTestCase {
         for theme in ["system", "light", "dark", "graphite", "contrast"] {
             built.append("theme.\(theme)")
         }
-        for action in ["install", "upload", "remove", "update", "rollback", "enable", "disable"] {
+        for action in ["install", "upload", "remove", "update", "rollback", "enable", "disable", "quarantine", "quarantine_undo"] {
             built.append("mobile.content.action_\(action)")
         }
         for side in ["required", "optional", "unsupported", "server", "client"] {

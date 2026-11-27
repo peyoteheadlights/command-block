@@ -115,6 +115,10 @@ GET /api/servers/{server_id}/world/download/{token} file
 POST /api/servers/{server_id}/mods/enable
 POST /api/servers/{server_id}/mods/rollback
 GET /api/servers/{server_id}/mods/history
+GET /api/servers/{server_id}/mods/scan
+POST /api/servers/{server_id}/mods/scan
+POST /api/servers/{server_id}/mods/scan/undo
+POST /api/servers/{server_id}/mods/scan/options
 GET /api/servers/{server_id}/mods/dependencies
 GET /api/servers/{server_id}/mods/versions/{mod_id}
 GET /api/servers/{server_id}/mods/impact

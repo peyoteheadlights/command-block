@@ -476,6 +476,56 @@ data class ModHistoryRow(
 @Serializable
 data class ModHistory(val history: List<ModHistoryRow> = emptyList())
 
+/** Something one jar check found, or noted, in a jar: a strings key and its values. */
+@Serializable
+data class JarScanWords(
+    val scanner: String? = null,
+    val words: String = "",
+    val values: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class JarScanRow(
+    val filename: String = "",
+    val name: String? = null,
+    val findings: List<JarScanWords> = emptyList(),
+    val notes: List<JarScanWords> = emptyList(),
+    val waiting: Boolean = false,
+    val words: String = "",
+    val values: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class QuarantinedJar(
+    val id: String = "",
+    val filename: String = "",
+    val at: Double = 0.0,
+    val findings: List<JarScanWords> = emptyList(),
+)
+
+@Serializable
+data class JarScanSummary(
+    val checked: Int = 0,
+    val jars: Int = 0,
+    val found: Int = 0,
+    val unknown: Int = 0,
+    val couldnt: Int = 0,
+)
+
+/** The jar check: each jar's result and the jars in quarantine. */
+@Serializable
+data class JarScanReport(
+    @SerialName("checked_at") val checkedAt: Double? = null,
+    val weekly: Boolean = true,
+    @SerialName("on_change") val onChange: Boolean = true,
+    val jars: List<JarScanRow> = emptyList(),
+    val quarantine: List<QuarantinedJar> = emptyList(),
+    val summary: JarScanSummary = JarScanSummary(),
+)
+
+@Serializable
+data class JarScanUndone(val restored: String? = null)
+
 /** A Modrinth search result. [iconUrl] is loaded straight from Modrinth. */
 @Serializable
 data class ModrinthHit(

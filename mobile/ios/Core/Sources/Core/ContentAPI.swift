@@ -88,6 +88,28 @@ extension AgentClient {
         return try await call("GET", content(serverId) + "/mods/history?limit=\(count)", as: ModHistory.self)
     }
 
+    /// The jar check's last results. Checks nothing.
+    public func jarScan(serverId: String) async throws -> JarScanReport {
+        try await call("GET", content(serverId) + "/mods/scan", as: JarScanReport.self)
+    }
+
+    /// Checks every jar again, on Modrinth and CurseForge too.
+    public func scanJars(serverId: String) async throws -> JarScanReport {
+        try await call("POST", content(serverId) + "/mods/scan", body: Data("{}".utf8), slow: true, as: JarScanReport.self)
+    }
+
+    public func putBackJar(serverId: String, id: String) async throws -> JarScanUndone {
+        let body = try AgentClient.encode(["id": id])
+        return try await call("POST", content(serverId) + "/mods/scan/undo", body: body, as: JarScanUndone.self)
+    }
+
+    public func jarScanOptions(serverId: String, weekly: Bool? = nil, onChange: Bool? = nil) async throws -> JarScanReport {
+        var change: [String: Bool] = [:]
+        if let weekly { change["weekly"] = weekly }
+        if let onChange { change["on_change"] = onChange }
+        return try await call("POST", content(serverId) + "/mods/scan/options", body: try AgentClient.encode(change), as: JarScanReport.self)
+    }
+
     /// What Update all would change, checked on Modrinth now (a mod at a
     /// time on the PC, so it can take a while with many).
     public func updateAllPlan(serverId: String) async throws -> UpdateAllPlan {

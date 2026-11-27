@@ -853,6 +853,25 @@ class AgentClient(
     suspend fun modHistory(serverId: String, limit: Int = 100): ModHistory =
         get("${server(serverId)}/mods/history?limit=${limit.coerceIn(1, 500)}", ModHistory.serializer())
 
+    /** The jar check's last results. Checks nothing. */
+    suspend fun jarScan(serverId: String): JarScanReport =
+        get("${server(serverId)}/mods/scan", JarScanReport.serializer())
+
+    /** Checks every jar again, on Modrinth and CurseForge too. */
+    suspend fun scanJars(serverId: String): JarScanReport =
+        call(post("${server(serverId)}/mods/scan", JsonObject(emptyMap())), JarScanReport.serializer(), slow = true)
+
+    suspend fun putBackJar(serverId: String, id: String): JarScanUndone =
+        call(post("${server(serverId)}/mods/scan/undo", buildJsonObject { put("id", id) }), JarScanUndone.serializer())
+
+    suspend fun jarScanOptions(serverId: String, weekly: Boolean? = null, onChange: Boolean? = null): JarScanReport {
+        val body = buildJsonObject {
+            weekly?.let { put("weekly", it) }
+            onChange?.let { put("on_change", it) }
+        }
+        return call(post("${server(serverId)}/mods/scan/options", body), JarScanReport.serializer())
+    }
+
     /** What Update all would change, checked on Modrinth now. */
     suspend fun updateAllPlan(serverId: String): UpdateAllPlan =
         get("${server(serverId)}/mods/update-all", UpdateAllPlan.serializer(), slow = true)

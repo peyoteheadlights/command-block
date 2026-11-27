@@ -87,6 +87,10 @@ POST /api/servers/{server_id}/mods/update
 GET /api/servers/{server_id}/mods/versions/{mod_id}
 POST /api/servers/{server_id}/mods/rollback
 GET /api/servers/{server_id}/mods/history
+GET /api/servers/{server_id}/mods/scan
+POST /api/servers/{server_id}/mods/scan
+POST /api/servers/{server_id}/mods/scan/undo
+POST /api/servers/{server_id}/mods/scan/options
 GET /api/servers/{server_id}/mods/update-all
 POST /api/servers/{server_id}/mods/update-all
 GET /api/servers/{server_id}/mods/search

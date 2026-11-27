@@ -79,6 +79,7 @@ import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
 import io.github.peyoteheadlights.mcsc.core.PlayerFile
 import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
 import io.github.peyoteheadlights.mcsc.core.Sides
+import io.github.peyoteheadlights.mcsc.core.JarScanWords
 import io.github.peyoteheadlights.mcsc.core.Permissions
 import io.github.peyoteheadlights.mcsc.core.States
 import io.github.peyoteheadlights.mcsc.core.StillFit
@@ -266,6 +267,8 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
         item { AddFiles(vm, content, kind) }
     }
 
+    jarScanList(vm, content, changes)
+
     item { SectionTitle(t("mods.change_history")) }
     val rows = content.history.value?.history
     when {
@@ -328,6 +331,69 @@ private fun EverywhereCard(row: ModSideRow) {
     val strings = LocalStrings.current
     Card {
         Item(row.name, subtitle = t("sides.for", "side" to t("sides.${row.side}")) + " · " + Sides.servers(strings, row))
+    }
+}
+
+@Composable
+private fun said(words: JarScanWords): String {
+    val text = t(words.words, *words.values.toList().toTypedArray())
+    return words.scanner?.let { "$it: $text" } ?: text
+}
+
+/** The jar check: what each jar's checks found, and the jars in quarantine with Put back. */
+private fun LazyListScope.jarScanList(vm: AppViewModel, content: ContentPages, changes: Changes) {
+    item { SectionTitle(t("jarscan.title")) }
+    content.scan.problem?.let { problem ->
+        item { Note(problem.text(), color = LocalColors.current.text3) }
+    }
+    val report = content.scan.value ?: return
+    val manage = vm.canDo(Permissions.MODS_MANAGE)
+    val idle = content.busy == null
+    item {
+        val now = rememberNow()
+        Card {
+            Note(t("jarscan.intro"), color = LocalColors.current.text2)
+            val checked = report.checkedAt
+            Item(
+                if (checked == null) t("jarscan.not_yet")
+                else t(
+                    "jarscan.summary",
+                    "when" to Display.ago(vm.strings, checked, now),
+                    "checked" to report.summary.checked,
+                    "jars" to report.summary.jars,
+                    "found" to report.summary.found,
+                ),
+            )
+            if (manage) {
+                Item(t("jarscan.weekly"), trailing = {
+                    Checkbox(checked = report.weekly, enabled = idle, onCheckedChange = { content.scanOptions(vm.strings, weekly = it) })
+                })
+                Item(t("jarscan.on_change"), trailing = {
+                    Checkbox(checked = report.onChange, enabled = idle, onCheckedChange = { content.scanOptions(vm.strings, onChange = it) })
+                })
+                Presses(listOf(Press(t(if (content.busy == "jar_scan") "jarscan.checking" else "jarscan.check_again"), { content.scanJars(vm.strings) }, enabled = idle)))
+            }
+        }
+    }
+    items(report.jars, key = { "scan:" + it.filename }) { jar ->
+        val colors = LocalColors.current
+        Card {
+            Item(jar.filename, subtitle = t(jar.words, *jar.values.toList().toTypedArray()))
+            for (finding in jar.findings) Note(said(finding), color = colors.danger)
+            for (note in jar.notes) Note(said(note), color = colors.text3)
+        }
+    }
+    if (report.quarantine.isNotEmpty()) item { SectionTitle(t("jarscan.quarantine")) }
+    items(report.quarantine, key = { "quarantine:" + it.id }) { jar ->
+        val colors = LocalColors.current
+        val now = rememberNow()
+        Card {
+            Item(jar.filename, subtitle = t("jarscan.quarantined", "when" to Display.ago(vm.strings, jar.at, now)))
+            for (finding in jar.findings) Note(said(finding), color = colors.danger)
+            if (changes != Changes.NOT_ALLOWED) {
+                Presses(listOf(Press(t("jarscan.undo"), { content.putBack(jar.id, jar.filename, vm.strings) }, enabled = changes == Changes.READY && idle)))
+            }
+        }
     }
 }
 

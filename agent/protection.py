@@ -187,6 +187,7 @@ class Facts:
     join_burst_seen: bool = False  # 15+ new names in one minute within 7 days
     proxy: list[dict[str, Any]] = field(default_factory=list)  # proxy add-ons for the type
     anticheat: list[str] | None = None  # anti-cheats in; None: none runs on this type
+    jar_scan: dict[str, Any] | None = None  # the jar check's summary; None: no jars here
 
     def prop(self, key: str, default: str) -> str:
         return ((self.properties or {}).get(key) or default).strip().lower()
@@ -263,6 +264,7 @@ def facts(ctx: ServerContext) -> Facts:
         join_burst_seen=_burst_seen(ctx),
         proxy=[_addon(e) for e in offered if e.get("role") == "proxy"],
         anticheat=anticheat.installed(addons) if anticheat.supported(server_type.id) else None,
+        jar_scan=ctx.jarscan.summary() if server_type.has_content else None,
     )
 
 
@@ -408,6 +410,7 @@ def lines(f: Facts) -> list[dict[str, Any]]:
     elif row:
         found.append(_line("log4shell", "worst", "log4shell", version=f.minecraft))
 
+    found += _jar_scan(f.jar_scan)
     found += _join(f)
     found += _anticheat(f)
     found.append(_line("big_attacks", "info", "stop_and_close"))
@@ -428,6 +431,24 @@ def _anticheat(f: Facts) -> list[dict[str, Any]]:
         return [_line("anticheat_on", "info", name=f.anticheat[0])]
     community = f.played_by == "community"
     return [_line("anticheat_none", "suggest" if community else "info")]
+
+
+def _jar_scan(scan: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The jar check's lines: what it found, or what it checked."""
+    if scan is None:
+        return []
+    if not scan["checked_at"]:
+        return [_line("jar_scan_not_yet", "info")]
+    found = []
+    if scan["found"]:
+        found.append(_line("jar_scan_found", "worst", count=scan["found"]))
+    else:
+        found.append(
+            _line("jar_scan_done", "info", checked=scan["checked"], unknown=scan["unknown"])
+        )
+    if scan["couldnt"]:
+        found.append(_line("jar_scan_couldnt", "info", count=scan["couldnt"]))
+    return found
 
 
 def _join(f: Facts) -> list[dict[str, Any]]:

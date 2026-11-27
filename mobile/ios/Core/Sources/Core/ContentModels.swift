@@ -761,6 +761,107 @@ public struct ModHistory: Decodable, Equatable, Sendable {
     }
 }
 
+/// Something one jar check found, or noted, in a jar: a strings key and its values.
+public struct JarScanWords: Decodable, Equatable, Sendable {
+    public var scanner: String?
+    public var words: String
+    public var values: [String: String]
+
+    enum CodingKeys: String, CodingKey { case scanner, words, values }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        scanner = c.maybe(.scanner)
+        words = c.value(.words, "")
+        values = c.value(.values, [:])
+    }
+}
+
+public struct JarScanRow: Decodable, Equatable, Identifiable, Sendable {
+    public var filename: String
+    public var findings: [JarScanWords]
+    public var notes: [JarScanWords]
+    public var words: String
+    public var values: [String: String]
+
+    public var id: String { filename }
+
+    enum CodingKeys: String, CodingKey { case filename, findings, notes, words, values }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        filename = c.value(.filename, "")
+        findings = c.each(.findings)
+        notes = c.each(.notes)
+        words = c.value(.words, "")
+        values = c.value(.values, [:])
+    }
+}
+
+public struct QuarantinedJar: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var filename: String
+    public var at: Double
+    public var findings: [JarScanWords]
+
+    enum CodingKeys: String, CodingKey { case id, filename, at, findings }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        filename = c.value(.filename, "")
+        at = c.value(.at, 0)
+        findings = c.each(.findings)
+    }
+}
+
+public struct JarScanSummary: Decodable, Equatable, Sendable {
+    public var checked = 0
+    public var jars = 0
+    public var found = 0
+
+    enum CodingKeys: String, CodingKey { case checked, jars, found }
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        checked = c.value(.checked, 0)
+        jars = c.value(.jars, 0)
+        found = c.value(.found, 0)
+    }
+}
+
+/// The jar check: each jar's result and the jars in quarantine.
+public struct JarScanReport: Decodable, Equatable, Sendable {
+    public var checkedAt: Double?
+    public var weekly: Bool
+    public var onChange: Bool
+    public var jars: [JarScanRow]
+    public var quarantine: [QuarantinedJar]
+    public var summary: JarScanSummary
+
+    enum CodingKeys: String, CodingKey {
+        case weekly, jars, quarantine, summary
+        case checkedAt = "checked_at"
+        case onChange = "on_change"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        checkedAt = c.maybe(.checkedAt)
+        weekly = c.value(.weekly, true)
+        onChange = c.value(.onChange, true)
+        jars = c.each(.jars)
+        quarantine = c.each(.quarantine)
+        summary = c.value(.summary, JarScanSummary())
+    }
+}
+
+public struct JarScanUndone: Decodable, Equatable, Sendable {
+    public var restored: String?
+}
+
 /// A Modrinth search result. `iconUrl` is loaded straight from Modrinth.
 public struct ModrinthHit: Decodable, Equatable, Identifiable, Sendable {
     public var projectId: String?

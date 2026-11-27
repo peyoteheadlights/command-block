@@ -748,6 +748,8 @@ struct ContentView: View {
                 addFiles(content, palette)
             }
 
+            jarScan(content, changes, palette, now: now)
+
             SectionTitle(text: model.t("mods.change_history"), palette: palette)
             if let problem = content.history.problem {
                 Hint(text: problem.message(strings), palette: palette)
@@ -1117,6 +1119,85 @@ struct ContentView: View {
                         }
                     }
                     .disabled(busy != nil)
+                }
+            }
+        }
+    }
+
+    private func said(_ words: JarScanWords) -> String {
+        let values: [String: CustomStringConvertible] = words.values.mapValues { $0 }
+        let text = model.strings.t(words.words, values)
+        return words.scanner.map { "\($0): \(text)" } ?? text
+    }
+
+    /// The jar check: what each jar's checks found, and the jars in quarantine with Put back.
+    @ViewBuilder
+    private func jarScan(_ content: ContentPages, _ changes: Changes, _ palette: Palette, now: Double) -> some View {
+        let strings = model.strings
+        let idle = content.busy == nil
+        SectionTitle(text: model.t("jarscan.title"), palette: palette)
+        if let problem = content.scan.problem {
+            Hint(text: problem.message(strings), palette: palette)
+        }
+        if let report = content.scan.value {
+            CardBox(palette: palette) {
+                Hint(text: model.t("jarscan.intro"), palette: palette)
+                Text(verbatim: report.checkedAt.map {
+                    strings.t("jarscan.summary", [
+                        "when": Display.ago(strings, $0, now: now),
+                        "checked": report.summary.checked,
+                        "jars": report.summary.jars,
+                        "found": report.summary.found,
+                    ])
+                } ?? strings.t("jarscan.not_yet"))
+                    .foregroundStyle(palette.textPrimary)
+                if model.can(Permissions.MODS_MANAGE) {
+                    Toggle(model.t("jarscan.weekly"), isOn: Binding(
+                        get: { report.weekly },
+                        set: { on in Task { await content.scanOptions(strings, weekly: on) } }
+                    ))
+                    .disabled(!idle)
+                    Toggle(model.t("jarscan.on_change"), isOn: Binding(
+                        get: { report.onChange },
+                        set: { on in Task { await content.scanOptions(strings, onChange: on) } }
+                    ))
+                    .disabled(!idle)
+                    Presses(presses: [
+                        Press(title: model.t(content.busy == "jar_scan" ? "jarscan.checking" : "jarscan.check_again"), enabled: idle) {
+                            Task { await content.scanJars(strings) }
+                        },
+                    ], palette: palette)
+                }
+            }
+            ForEach(report.jars) { jar in
+                CardBox(palette: palette) {
+                    Text(verbatim: jar.filename).foregroundStyle(palette.textPrimary)
+                    Hint(text: strings.t(jar.words, jar.values.mapValues { $0 as CustomStringConvertible }), palette: palette)
+                    ForEach(Array(jar.findings.enumerated()), id: \.offset) { _, finding in
+                        Text(verbatim: said(finding)).font(.footnote).foregroundStyle(palette.tone(.danger))
+                    }
+                    ForEach(Array(jar.notes.enumerated()), id: \.offset) { _, note in
+                        Hint(text: said(note), palette: palette)
+                    }
+                }
+            }
+            if !report.quarantine.isEmpty {
+                SectionTitle(text: model.t("jarscan.quarantine"), palette: palette)
+            }
+            ForEach(report.quarantine) { jar in
+                CardBox(palette: palette) {
+                    Text(verbatim: jar.filename).foregroundStyle(palette.textPrimary)
+                    Hint(text: strings.t("jarscan.quarantined", ["when": Display.ago(strings, jar.at, now: now)]), palette: palette)
+                    ForEach(Array(jar.findings.enumerated()), id: \.offset) { _, finding in
+                        Text(verbatim: said(finding)).font(.footnote).foregroundStyle(palette.tone(.danger))
+                    }
+                    if changes != .notAllowed {
+                        Presses(presses: [
+                            Press(title: model.t("jarscan.undo"), enabled: changes == .ready && idle) {
+                                Task { await content.putBack(jar.id, jar.filename, strings) }
+                            },
+                        ], palette: palette)
+                    }
                 }
             }
         }
