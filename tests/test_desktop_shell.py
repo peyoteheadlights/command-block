@@ -74,8 +74,14 @@ def test_the_heading_font_ships_with_its_license(qapp):
     assert "Archivo" in QFontDatabase.families()
     assert "SIL Open Font License" in (ROOT / "licenses" / "Archivo-OFL.txt").read_text()
     assert "licenses/Archivo-OFL.txt" in (ROOT / "THIRD-PARTY-NOTICES.md").read_text()
-    # The installed program carries the font files too.
-    assert '"desktop" / "fonts"' in (ROOT / "packaging" / "app.spec").read_text()
+    # The installed program carries the font files too: they are in shared/,
+    # which is packed whole.
+    assert sorted(f.name for f in (ROOT / "shared" / "fonts").glob("*.ttf")) == [
+        "Archivo-Bold.ttf",
+        "Archivo-Medium.ttf",
+        "Archivo-SemiBold.ttf",
+    ]
+    assert '(str(ROOT / "shared"), "shared")' in (ROOT / "packaging" / "app.spec").read_text()
 
 
 # ------------------------------------------------------------- server tabs

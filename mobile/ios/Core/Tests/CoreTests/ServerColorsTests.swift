@@ -25,6 +25,30 @@ final class ServerColorsTests: XCTestCase {
         }
     }
 
+    func testTheBinderLookMatchesTheRecordedCases() throws {
+        let cases = try XCTUnwrap(JSONSerialization.jsonObject(with: Shared.data("look-cases.json")) as? [[String: Any]])
+        XCTAssertEqual(cases.count, 52)
+        for item in cases {
+            let theme = try XCTUnwrap(item["theme"] as? String)
+            let base = item["base"] as? String
+            let expected = try XCTUnwrap(item["tokens"] as? [String: String])
+            XCTAssertEqual(ServerColors.binder(base, tokens(theme), theme), expected, "\(theme) \(base ?? "no server")")
+        }
+    }
+
+    func testABrokenServerColorGetsTheLookOfNoServer() throws {
+        XCTAssertEqual(ServerColors.binder("red", tokens("light"), "light"), ServerColors.binder(nil, tokens("light"), "light"))
+        // The words on the band read on it in every theme and color.
+        for theme in themes.keys {
+            for base in [nil, "#FFFF00", "#000000", "#FFFFFF", "#7F7F7F"] as [String?] {
+                let look = ServerColors.binder(base, tokens(theme), theme)
+                let text = try XCTUnwrap(ServerColors.rgb(look["--band-text"]))
+                let band = try XCTUnwrap(ServerColors.rgb(look["--band"]))
+                XCTAssertGreaterThanOrEqual(ServerColors.contrast(text, band), 4.5, "\(theme) \(base ?? "no server") band")
+            }
+        }
+    }
+
     func testColorsPeopleReadPassWcagAA() throws {
         XCTAssertEqual(Set(themes.keys), ["light", "dark", "graphite", "contrast"])
         for theme in themes.keys {

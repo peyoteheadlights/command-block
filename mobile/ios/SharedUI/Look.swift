@@ -1,4 +1,5 @@
 import Core
+import CoreText
 import SwiftUI
 import UIKit
 
@@ -70,6 +71,17 @@ struct Palette {
     var accentInk: Color { color("--accent-ink", .accentColor) }
     var accentEdge: Color { color("--accent-edge", .gray) }
     var danger: Color { color("--danger", .red) }
+    var success: Color { color("--success", .green) }
+    var desk: Color { color("--desk", Color(uiColor: .systemGroupedBackground)) }
+    var neutral: Color { color("--neutral", .gray) }
+    /// The line around a box: the server's color, half see-through.
+    var edge: Color { color("--accent-ring", .gray).opacity(0.5) }
+    /// The band behind the sheet (the top bar), and the words on it.
+    var band: Color { color("--band", sheet) }
+    var bandText: Color { color("--band-text", textPrimary) }
+    /// A divider's tab in the top view, and its words.
+    var tabFill: Color { color("--tab-fill", sunken) }
+    var tabText: Color { color("--tab-text", textPrimary) }
 
     func tone(_ tone: Tone) -> Color {
         switch tone {
@@ -80,36 +92,75 @@ struct Palette {
         }
     }
 
-    /// The theme as theme.json has it.
+    /// The theme in the binder look, as the desktop app draws it: plain
+    /// paper, with the copper of the app icon on the buttons.
     static func base(_ themes: [String: [String: String]], _ name: String) -> Palette {
-        var tokens: [String: String] = [:]
-        for (key, value) in themes[name] ?? [:] {
-            tokens[key.hasPrefix("--") ? key : "--" + key] = value
-        }
-        return Palette(tokens: tokens)
+        binder(nil, themes, name)
     }
 
-    /// The theme tinted with a server's color, as the desktop app tints that
-    /// server's window. A missing or broken color leaves the theme as it is.
+    /// The theme with a server's color on the band behind the sheet, the
+    /// buttons, the edges and its tab; the page stays plain paper, as in
+    /// the desktop app. A missing or broken color is the look of no server.
     static func server(_ color: String?, _ themes: [String: [String: String]], _ name: String) -> Palette {
-        let base = Palette.base(themes, name)
+        binder(color, themes, name)
+    }
+
+    private static func binder(_ color: String?, _ themes: [String: [String: String]], _ name: String) -> Palette {
+        var tokens: [String: String] = [:]
         var plain: [String: String] = [:]
         for (key, value) in themes[name] ?? [:] {
-            plain[key.hasPrefix("--") ? String(key.dropFirst(2)) : key] = value
+            let bare = key.hasPrefix("--") ? String(key.dropFirst(2)) : key
+            plain[bare] = value
+            tokens["--" + bare] = value
         }
-        guard let color = color, let derived = ServerColors.derive(color, plain, name) else {
-            return base
-        }
-        var tokens = base.tokens
-        for (key, value) in derived {
+        let look = ServerColors.binder(color, plain, name)
+        for (key, value) in look {
             tokens[key] = value
+        }
+        // The page is the paper.
+        if let paper = look["--paper"] {
+            tokens["--sheet"] = paper
         }
         return Palette(tokens: tokens)
     }
 }
 
+extension Font {
+    /// Archivo, the heading font of all three apps (shared/fonts), growing
+    /// with the phone's text size like the system's own styles.
+    static func heading(_ style: Font.TextStyle = .headline) -> Font {
+        var size: CGFloat = 17
+        var name = "Archivo-SemiBold"
+        switch style {
+        case .largeTitle:
+            size = 34
+            name = "Archivo-Bold"
+        case .title:
+            size = 28
+            name = "Archivo-Bold"
+        case .title2:
+            size = 22
+            name = "Archivo-Bold"
+        case .title3:
+            size = 20
+        default:
+            break
+        }
+        return .custom(name, size: size, relativeTo: style)
+    }
+}
+
 /// The bundled files, read once.
 enum Bundled {
+    /// Archivo, from the app's own files: nothing is downloaded.
+    static let fonts: Bool = {
+        let urls = Bundle.main.urls(forResourcesWithExtension: "ttf", subdirectory: "shared/fonts") ?? []
+        for url in urls {
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
+        return !urls.isEmpty
+    }()
+
     static let english: [String: [String]] = {
         guard let data = SharedFiles.data("strings", "json", bundle: .main) else { return [:] }
         return Strings.parse(data)
@@ -154,5 +205,64 @@ struct ColorBadge: View {
                 .frame(width: size, height: size)
                 .accessibilityHidden(true)
         }
+    }
+}
+
+/// A small (i) next to a heading or a label. A tap shows the sentence that
+/// explains it; VoiceOver reads it as the dot's hint. (The desktop app
+/// shows the same sentence on hover.)
+struct InfoDot: View {
+    let words: String
+    let palette: Palette
+    /// What VoiceOver calls the dot ("What is this?", from shared/strings.json).
+    let label: String
+
+    @State private var open = false
+
+    var body: some View {
+        Button {
+            open.toggle()
+        } label: {
+            Image(systemName: "info.circle")
+                .foregroundStyle(open ? palette.accentInk : palette.textSecondary)
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityHint(words)
+        .popover(isPresented: $open) {
+            Text(words)
+                .font(.callout)
+                .foregroundStyle(palette.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(14)
+                .frame(maxWidth: 300)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+/// A player's head. A plain grey head for everyone until the app can get
+/// real skins, as in the desktop app.
+struct Face: View {
+    let palette: Palette
+    var side: CGFloat = 28
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(palette.neutral)
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(palette.edge, lineWidth: 1.5))
+            // Two eyes, on the 8 by 8 grid a Minecraft face is drawn on.
+            let cell = side / 8
+            ForEach([1.5, 5.0], id: \.self) { column in
+                Rectangle()
+                    .fill(palette.sheet)
+                    .frame(width: 1.5 * cell, height: cell)
+                    .offset(x: column * cell, y: 4 * cell)
+            }
+        }
+        .frame(width: side, height: side)
+        .accessibilityHidden(true)
     }
 }

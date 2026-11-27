@@ -1,6 +1,7 @@
 package io.github.peyoteheadlights.mcsc.core
 
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -24,6 +25,35 @@ class ServerColorsTest {
             val expected = o.getValue("tokens").jsonObject.mapValues { it.value.jsonPrimitive.content }
             val tokens = themes.getValue(theme).mapKeys { it.key.removePrefix("--") }
             assertEquals("$theme $base", expected, ServerColors.derive(base, tokens, theme))
+        }
+    }
+
+    @Test
+    fun `the binder look matches the recorded cases`() {
+        val cases = AgentJson.parseToJsonElement(Shared.text("look-cases.json")) as JsonArray
+        assertEquals(52, cases.size)
+        for (case in cases) {
+            val o = case.jsonObject
+            val theme = o.getValue("theme").jsonPrimitive.content
+            val base = o.getValue("base").jsonPrimitive.contentOrNull
+            val expected = o.getValue("tokens").jsonObject.mapValues { it.value.jsonPrimitive.content }
+            val tokens = themes.getValue(theme).mapKeys { it.key.removePrefix("--") }
+            assertEquals("$theme $base", expected, ServerColors.binder(base, tokens, theme))
+        }
+    }
+
+    @Test
+    fun `a broken server color gets the look of no server`() {
+        val tokens = themes.getValue("light").mapKeys { it.key.removePrefix("--") }
+        assertEquals(ServerColors.binder(null, tokens, "light"), ServerColors.binder("red", tokens, "light"))
+        // The words on the band read on it in every theme and color.
+        for ((theme, raw) in themes) {
+            val k = raw.mapKeys { it.key.removePrefix("--") }
+            for (base in listOf(null, "#FFFF00", "#000000", "#FFFFFF", "#7F7F7F")) {
+                val look = ServerColors.binder(base, k, theme)
+                val c = { name: String -> ServerColors.rgb(look.getValue(name))!! }
+                assertTrue("$theme $base band", ServerColors.contrast(c("--band-text"), c("--band")) >= 4.5)
+            }
         }
     }
 

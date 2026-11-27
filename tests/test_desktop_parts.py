@@ -121,7 +121,7 @@ def test_the_tick_mark_is_a_real_file_in_both_colors():
     for hex_, name in ((BLUE, "tick-white.svg"), (AMBER, "tick-black.svg")):
         look = theme.tokens(False, hex_)
         assert f"images/{name}" in theme.style_sheet(look)
-        assert (theme.FONTS.parent / "images" / name).is_file()
+        assert (theme.IMAGES / name).is_file()
 
 
 def test_a_part_takes_the_colors_of_its_window(qapp):

@@ -214,7 +214,7 @@ struct CrashView: View {
 
     private func heading(_ text: String, _ palette: Palette) -> some View {
         Text(text)
-            .font(.headline)
+            .font(.heading())
             .foregroundStyle(palette.textPrimary)
             .padding(.top, 8)
             .accessibilityAddTraits(.isHeader)
