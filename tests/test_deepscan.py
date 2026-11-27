@@ -212,6 +212,7 @@ def test_the_status_lists_each_scan_with_what_it_does(signed_in, ctx):
         "mcantimalware",
         "jneedle",
         "clamav",
+        "virustotal",
     ]
     assert report["scanners"][0]["speed"] == "deepscan.speed.quick"
     assert report["scanners"][0]["took"] is None  # never a guessed time

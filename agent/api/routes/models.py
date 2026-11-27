@@ -106,6 +106,10 @@ class DeepScanRequest(BaseModel):
     filename: str | None = Field(default=None, max_length=180)
 
 
+class VirusTotalKeyRequest(BaseModel):
+    key: str = Field(pattern=r"^\s*[A-Za-z0-9]{32,128}\s*$")
+
+
 class DeepScanQuarantineRequest(BaseModel):
     root: Literal["server", "mods", "java"]
     path: str = Field(max_length=1000)

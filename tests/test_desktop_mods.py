@@ -1377,3 +1377,24 @@ def test_jar_check_before_start_and_ask_me_first_boxes(qapp, agent_http):
     wait_for(qapp, lambda: config.mods.check_before_start)
     page.ask_first.click()
     wait_for(qapp, lambda: config.mods.ask_before_stop)
+
+
+def test_deep_scan_the_owner_saves_and_removes_a_virustotal_key(qapp, agent_http, monkeypatch):
+    from .test_virustotal import KEY, Fake
+
+    Fake(monkeypatch)  # VirusTotal takes any key here
+    mods_folder(agent_http).mkdir(exist_ok=True)
+    _window, page = mods_page(qapp, agent_http)
+    deep = page.deep
+    wait_for(qapp, lambda: "virustotal" in deep.boxes)
+    assert not deep.boxes["virustotal"].isEnabled()  # no key yet
+    assert deep.vt_key.isVisibleTo(page) and "non-commercial" in deep.vt_note.text()
+    deep.vt_key.setText(KEY)
+    deep.vt_save.click()
+    wait_for(qapp, lambda: deep.boxes["virustotal"].isEnabled())
+    assert deep.vt_key.text() == "" and not deep.vt_key.isVisibleTo(page)
+    vt = core_of(agent_http).servers["survival"].deepscan.virustotal
+    assert vt.key() == KEY
+    deep.vt_remove.click()
+    wait_for(qapp, lambda: not deep.boxes["virustotal"].isEnabled())
+    assert vt.key() is None

@@ -135,6 +135,16 @@ extension AgentClient {
         return try await call("POST", content(serverId) + "/mods/deepscan", body: body, as: DeepScanReport.self)
     }
 
+    /// Saves the owner's own VirusTotal key once VirusTotal takes it. The key is never sent back.
+    public func saveVirusTotalKey(serverId: String, key: String) async throws -> DeepScanReport {
+        let body = try AgentClient.encode(["key": key])
+        return try await call("POST", content(serverId) + "/mods/deepscan/virustotal", body: body, as: DeepScanReport.self)
+    }
+
+    public func removeVirusTotalKey(serverId: String) async throws -> DeepScanReport {
+        try await call("DELETE", content(serverId) + "/mods/deepscan/virustotal", as: DeepScanReport.self)
+    }
+
     public func deepScanQuarantine(serverId: String, root: String, path: String) async throws -> DeepScanReport {
         let body = try AgentClient.encode(["root": root, "path": path])
         return try await call("POST", content(serverId) + "/mods/deepscan/quarantine", body: body, as: DeepScanReport.self)

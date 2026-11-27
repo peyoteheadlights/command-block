@@ -19,6 +19,10 @@ MCAntiMalware, jNeedle and ClamAV are separate programs, downloaded the
 first time someone clicks a deep scan with them (agent/mods/scanprograms.py).
 What they call known bad is Known bad here too.
 
+VirusTotal, when the owner saved their own key, is asked about each jar
+(and, for the whole folder, each program) by its SHA-256 only
+(agent/mods/virustotal.py). 3 or more engines make it Known bad.
+
 The whole-folder scope also hands every file to Windows antivirus (when it
 is on) and lists programs, scripts and jars in odd places as Worth a look.
 What Windows antivirus finds there is Known bad and goes to quarantine,
@@ -48,7 +52,7 @@ from .. import downloads
 from ..events import Event
 from ..security import antivirus
 from ..security.paths import is_inside
-from . import scanprograms
+from . import scanprograms, virustotal
 from .manager import ModError
 
 log = logging.getLogger(__name__)
@@ -71,6 +75,7 @@ MAX_FOUND = 500
 
 BEHAVIOUR = "behaviour"
 FORGE = "yara_forge"
+VIRUSTOTAL = "virustotal"
 SCANNERS = {
     BEHAVIOUR: {"name": "Command Block behaviour check", "speed": "quick"},
     FORGE: {"name": "YARA Forge rules", "speed": "slower"},
@@ -78,6 +83,7 @@ SCANNERS = {
         key: {"name": program.name, "speed": program.speed}
         for key, program in scanprograms.PROGRAMS.items()
     },
+    VIRUSTOTAL: {"name": virustotal.NAME, "speed": "limited"},
 }
 FILE_CHECK = "Command Block file check"
 SCOPES = ("jar", "mods", "folder")
@@ -291,6 +297,15 @@ class DeepScanner:
     def programs(self) -> scanprograms.ScanPrograms:
         return scanprograms.ScanPrograms(self.forge_dir)
 
+    @property
+    def virustotal(self) -> virustotal.VirusTotal:
+        return virustotal.for_agent(self.ctx.core.config.data_dir)
+
+    def available(self, key: str) -> bool:
+        if key == VIRUSTOTAL:
+            return self.virustotal.key() is not None
+        return self.programs.available(key)
+
     def store(self) -> dict[str, Any]:
         saved = self.ctx.db.get_setting(STORE) or {}
         saved.setdefault("took", {})
@@ -415,6 +430,7 @@ class DeepScanner:
                 job = self.ctx.core.jobs.get(self.job_id).to_dict()
         forge = self.forge_info()
         programs = self.programs
+        has_key = self.virustotal.key() is not None
         rows = []
         for key, value in SCANNERS.items():
             program = scanprograms.PROGRAMS.get(key)
@@ -429,7 +445,8 @@ class DeepScanner:
                     "took": saved["took"].get(key),
                     "downloaded": forge if key == FORGE else None,
                     "installed": installed,
-                    "available": programs.available(key),
+                    "available": has_key if key == VIRUSTOTAL else programs.available(key),
+                    "key": has_key if key == VIRUSTOTAL else None,
                     # Shown before the first download, so the person knows the size.
                     "size": program.size if program and not installed else None,
                 }
@@ -529,8 +546,7 @@ class DeepScanner:
 
     def start(self, scope: str, scanners: list[str], filename: str | None, user: str) -> dict:
         """Start a deep scan as a job. One at a time on a server."""
-        programs = self.programs
-        picked = [s for s in SCANNERS if s in scanners and programs.available(s)]
+        picked = [s for s in SCANNERS if s in scanners and self.available(s)]
         self._check(scope, picked, filename)
 
         async def run(handle) -> dict[str, Any]:
@@ -544,7 +560,9 @@ class DeepScanner:
 
     def installed(self) -> list[str]:
         """The scanners that need no download: our own rules, YARA Forge's
-        when a copy is on the PC already, and the programs already set up."""
+        when a copy is on the PC already, and the programs already set up.
+        VirusTotal is left out: its lookups are few a day, so it only runs
+        when someone ticks it."""
         found = [BEHAVIOUR, FORGE] if (self.forge_dir / FORGE_FILE).is_file() else [BEHAVIOUR]
         programs = self.programs
         found += [
@@ -585,7 +603,8 @@ class DeepScanner:
         started = time.time()
         errors: list[dict[str, Any]] = []
         programs = [s for s in picked if scanprograms.is_program(s)]
-        picked = [s for s in picked if not scanprograms.is_program(s)]
+        lookup = VIRUSTOTAL in picked
+        picked = [s for s in picked if not scanprograms.is_program(s) and s != VIRUSTOTAL]
         forge = None
         if FORGE in picked and not download:
             forge = self.forge_dir / FORGE_FILE
@@ -611,6 +630,8 @@ class DeepScanner:
             if stop.is_set():
                 break
             await self._program(handle, key, scope, files, result, download, limit)
+        if lookup and not stop.is_set():
+            await self._virustotal(handle, scope, files, result, limit)
         result.update(
             scope=scope,
             target=filename,
@@ -682,6 +703,51 @@ class DeepScanner:
             "files": result["files"],
         }
         result["picked"].append(key)
+        if hits:
+            await asyncio.to_thread(self._merge, result, files, hits)
+
+    async def _virustotal(self, handle, scope, files, result, limit) -> None:
+        """Ask VirusTotal about each jar (and program, for the whole folder)
+        by its SHA-256, and add what it said to ``result``."""
+        wanted = [
+            (root, path, rel)
+            for root, path, rel in files
+            if scope != "folder" or path.suffix.lower() in PROGRAMS | {".jar"}
+        ]
+        handle.step("Looking up files on VirusTotal", total=len(wanted), unit="files")
+        begun = time.monotonic()
+        deadline = virustotal.clock() + limit
+        hits = []
+        done = unknown = 0
+        for _root, path, _rel in wanted:
+            try:
+                sha256 = await asyncio.to_thread(_sha256, path)
+            except OSError:
+                done += 1  # the YARA-X pass already said it couldn't be read
+                continue
+            try:
+                seen = await self.virustotal.lookup(sha256, deadline)
+            except virustotal.VirusTotalError as exc:
+                said = exc.said()
+                said["values"]["left"] = len(wanted) - done
+                result["errors"].append(said)
+                break
+            done += 1
+            handle.advance(1)
+            if not seen.get("known"):
+                unknown += 1
+            found = virustotal.finding(seen)
+            if found:
+                hits.append((str(path), *found))
+        if unknown:
+            result["errors"].append(
+                {
+                    "words": "deepscan.vt_unknown",
+                    "values": {"name": virustotal.NAME, "count": unknown},
+                }
+            )
+        result["took"][VIRUSTOTAL] = {"seconds": round(time.monotonic() - begun, 1), "files": done}
+        result["picked"].append(VIRUSTOTAL)
         if hits:
             await asyncio.to_thread(self._merge, result, files, hits)
 

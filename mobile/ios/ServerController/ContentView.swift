@@ -2218,7 +2218,10 @@ private struct DeepScanCard: View {
                         Hint(text: about(scanner, strings), palette: palette)
                     }
                 }
-                .disabled(!allowed)
+                .disabled(!allowed || !scanner.available)
+                if let hasKey = scanner.key {
+                    VirusTotalKey(content: content, hasKey: hasKey, palette: palette)
+                }
             }
             if allowed {
                 Picker(model.t("deepscan.scope"), selection: $scope) {
@@ -2238,7 +2241,7 @@ private struct DeepScanCard: View {
             }
             status(strings)
             if allowed {
-                let chosen = picked.filter { id in report.shown.contains { $0.id == id } }
+                let chosen = picked.filter { id in report.shown.contains { $0.id == id && $0.available } }
                 let ready = report.running == nil && content.busy == nil && !chosen.isEmpty && (scope != "jar" || jars.contains(jar))
                 Presses(presses: [
                     Press(title: model.t("deepscan.run"), enabled: ready) {
@@ -2286,6 +2289,38 @@ private struct DeepScanCard: View {
             }
         } else {
             Text(verbatim: strings.t("deepscan.never_run")).foregroundStyle(palette.textPrimary)
+        }
+    }
+}
+
+/// The owner's own VirusTotal key: pasted once, never shown again.
+private struct VirusTotalKey: View {
+    let content: ContentPages
+    let hasKey: Bool
+    let palette: Palette
+
+    @Environment(AppModel.self) private var model
+    @State private var key = ""
+
+    var body: some View {
+        if model.me?.isOwner != true {
+            Hint(text: model.t(hasKey ? "deepscan.vt_key_saved" : "deepscan.vt_key_owner"), palette: palette)
+        } else if hasKey {
+            Hint(text: model.t("deepscan.vt_key_saved"), palette: palette)
+            Button(model.t("deepscan.vt_key_remove"), role: .destructive) {
+                Task { await content.removeVirusTotalKey(model.strings) }
+            }
+            .disabled(content.busy != nil)
+        } else {
+            SecureField(model.t("deepscan.vt_key"), text: Binding(get: { key }, set: { key = String($0.prefix(128)) }))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Hint(text: model.t("deepscan.vt_key_note"), palette: palette)
+            Button(model.t("deepscan.vt_key_save")) {
+                let typed = key
+                Task { if await content.saveVirusTotalKey(typed, model.strings) { key = "" } }
+            }
+            .disabled(content.busy != nil || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
 }

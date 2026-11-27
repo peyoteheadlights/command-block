@@ -311,6 +311,28 @@ this repo. `agent/mods/scanprograms.py` is the only place that starts them:
   a day, and jNeedle downloads its own list from `maven.kosmx.dev`. Both run
   as the agent's user.
 
+### Deep scan's VirusTotal lookup, with the owner's key
+
+`agent/mods/virustotal.py` asks VirusTotal what its engines said about a jar:
+
+- only the owner can save or remove the key (`POST`/`DELETE
+  /mods/deepscan/virustotal`, owner plus `deepscan.run`). The key is checked
+  with one lookup first, then kept in `virustotal-key.bin` like other secrets
+  and never sent back to the apps;
+- only a SHA-256 goes out, as `GET /api/v3/files/<sha256>`. Anything else is
+  refused before a request. `downloads.py` allows only that path on
+  `www.virustotal.com` and drops the `x-apikey` header on a redirect;
+- it runs only when someone ticks it, never in a run before a start or on
+  the schedule, so those can't use up the day's lookups;
+- a free key allows 4 lookups a minute and 500 a day, so lookups wait for a
+  free slot and the day's count is kept on disk. The key and the count are
+  shared by every server on the agent. Answers are kept for a week (a day for
+  a file VirusTotal didn't know);
+- 3 or more engines saying malicious makes a file Known bad, which is
+  quarantined like the other scanners' hits; 1 or 2 make it Worth a look.
+  The finding always says how many of how many engines, and which;
+- a free key is for non-commercial use only, and the key settings say so.
+
 ### The owner's Microsoft sign-in
 
 Online-mode Java servers and Bedrock servers can only be joined with a real

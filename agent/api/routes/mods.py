@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from ... import linkedpack, protection, suggestions
 from ...jobs import JobConflict
 from ...mods import copy as copy_module
-from ...mods import fit, sides
+from ...mods import fit, sides, virustotal
 from ...mods.addfrom import add_file, add_from_link, read_link
 from ...mods.dependencies import DependencyError
 from ...mods.sources import SourceError, split
@@ -84,6 +84,7 @@ from .models import (
     ModUpdateRequest,
     PlayerOnlyOptionsRequest,
     UpdateAllRequest,
+    VirusTotalKeyRequest,
 )
 
 router = APIRouter()
@@ -738,6 +739,51 @@ async def deep_scan_quarantine(
         )
     audit(ctx, request, "deep_scan_quarantine", target=payload.path)
     return report
+
+
+VIRUSTOTAL_SAID = {
+    "deepscan.error.vt_key": "VirusTotal didn't take that key. Copy it again from your "
+    "VirusTotal account page (API key).",
+    "deepscan.error.vt_day": "This key has used its 500 VirusTotal lookups for today. "
+    "Try again tomorrow.",
+    "deepscan.error.vt_busy": "VirusTotal says this key has reached its limit. Try again later.",
+}
+
+
+@router.post("/mods/deepscan/virustotal", response_model=DeepScanReport)
+async def virustotal_key(
+    payload: VirusTotalKeyRequest,
+    request: Request,
+    principal: Principal = Depends(require(DEEP_SCAN)),
+    ctx=Depends(get_server),
+):
+    """Save the owner's own VirusTotal key, after one lookup shows it works.
+    It is kept encrypted on the agent's PC and never sent back."""
+    if not principal.is_owner:
+        raise HTTPException(403, "Only the owner can add a VirusTotal key.")
+    with audit_failure(ctx, request, "virustotal_key"):
+        try:
+            await ctx.deepscan.virustotal.save_key(payload.key)
+        except virustotal.VirusTotalError as exc:
+            why = VIRUSTOTAL_SAID.get(exc.words) or (
+                f"Couldn't reach VirusTotal: {exc.values.get('why', '')}"
+            )
+            raise HTTPException(400, why) from exc
+    audit(ctx, request, "virustotal_key", detail="saved")
+    return ctx.deepscan.status()
+
+
+@router.delete("/mods/deepscan/virustotal", response_model=DeepScanReport)
+async def virustotal_key_remove(
+    request: Request,
+    principal: Principal = Depends(require(DEEP_SCAN)),
+    ctx=Depends(get_server),
+):
+    if not principal.is_owner:
+        raise HTTPException(403, "Only the owner can remove the VirusTotal key.")
+    ctx.deepscan.virustotal.remove_key()
+    audit(ctx, request, "virustotal_key", detail="removed")
+    return ctx.deepscan.status()
 
 
 @router.post("/mods/scan/options", response_model=JarScanReport)

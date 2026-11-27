@@ -916,6 +916,13 @@ class AgentClient(
         return call(post("${server(serverId)}/mods/deepscan/options", body), DeepScanReport.serializer())
     }
 
+    /** Saves the owner's own VirusTotal key once VirusTotal takes it. The key is never sent back. */
+    suspend fun saveVirusTotalKey(serverId: String, key: String): DeepScanReport =
+        call(post("${server(serverId)}/mods/deepscan/virustotal", buildJsonObject { put("key", key) }), DeepScanReport.serializer())
+
+    suspend fun removeVirusTotalKey(serverId: String): DeepScanReport =
+        call(request("${server(serverId)}/mods/deepscan/virustotal").delete().build(), DeepScanReport.serializer())
+
     suspend fun deepScanQuarantine(serverId: String, root: String, path: String): DeepScanReport =
         call(
             post("${server(serverId)}/mods/deepscan/quarantine", buildJsonObject { put("root", root); put("path", path) }),

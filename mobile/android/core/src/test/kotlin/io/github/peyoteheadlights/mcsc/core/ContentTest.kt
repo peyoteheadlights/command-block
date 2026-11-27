@@ -54,6 +54,17 @@ class ContentTest {
     }
 
     @Test
+    fun `virustotal stays listed without a key so the owner can add one`() {
+        val report = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(
+            DeepScanReport.serializer(),
+            """{"scanners":[{"id":"behaviour"},{"id":"virustotal","available":false,"key":false}]}""",
+        )
+        assertEquals(listOf("behaviour", "virustotal"), report.shown.map { it.id })
+        assertNull(report.scanners.first().key)
+        assertEquals(false, report.shown.last().key)
+    }
+
+    @Test
     fun `the deep scan plan and the jar check before a start are read`() {
         val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         val off = json.decodeFromString(DeepScanReport.serializer(), """{"scanners":[]}""").options

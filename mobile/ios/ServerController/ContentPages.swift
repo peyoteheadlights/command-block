@@ -136,6 +136,25 @@ final class ContentPages {
         }
     }
 
+    /// True once the key is saved, so the field can be emptied.
+    func saveVirusTotalKey(_ key: String, _ strings: Strings) async -> Bool {
+        var saved = false
+        await work("vt_key", strings) { [weak self] client, id in
+            let report = try await client.saveVirusTotalKey(serverId: id, key: key.trimmingCharacters(in: .whitespacesAndNewlines))
+            self?.showDeep(PageRead(value: report))
+            saved = true
+            return nil
+        }
+        return saved
+    }
+
+    func removeVirusTotalKey(_ strings: Strings) async {
+        await work("vt_key", strings) { [weak self] client, id in
+            self?.showDeep(PageRead(value: try await client.removeVirusTotalKey(serverId: id)))
+            return nil
+        }
+    }
+
     func deepQuarantine(_ item: DeepScanFound, _ strings: Strings) async {
         await work("deep:\(item.id)", strings, reload: loadMods) { [weak self] client, id in
             self?.deep = PageRead(value: try await client.deepScanQuarantine(serverId: id, root: item.root, path: item.path))

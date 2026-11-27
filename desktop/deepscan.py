@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QHBoxLayout,
+    QLineEdit,
     QRadioButton,
     QTimeEdit,
     QVBoxLayout,
@@ -45,6 +46,23 @@ class DeepScanCard:
         self.scanners = QVBoxLayout()
         self.boxes: dict[str, QCheckBox] = {}
         self.picked = {"behaviour"}
+        # The owner's own VirusTotal key: pasted here, never shown again.
+        self.vt = QWidget()
+        vt = QVBoxLayout(self.vt)
+        vt.setContentsMargins(0, 0, 0, 0)
+        self.vt_key = QLineEdit()
+        self.vt_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.vt_save = push("")
+        self.vt_save.clicked.connect(self.save_key)
+        self.vt_remove = push("")
+        self.vt_remove.clicked.connect(self.remove_key)
+        self.vt_note = label(kind="sub")
+        key_row = QHBoxLayout()
+        key_row.addWidget(self.vt_key, 1)
+        key_row.addWidget(self.vt_save)
+        key_row.addWidget(self.vt_remove)
+        vt.addLayout(key_row)
+        vt.addWidget(self.vt_note)
         self.scope_title = label()
         self.scopes = QButtonGroup(self.frame)
         self.scope: dict[str, QRadioButton] = {}
@@ -87,6 +105,7 @@ class DeepScanCard:
         plan.addWidget(self.next_run)
         layout.addWidget(self.intro)
         layout.addLayout(self.scanners)
+        layout.addWidget(self.vt)
         layout.addWidget(self.scope_title)
         jar_row = QHBoxLayout()
         jar_row.addWidget(self.scope["jar"])
@@ -117,6 +136,11 @@ class DeepScanCard:
             self.scope["folder"].setChecked(True)
         self.folder_note.setText(text("deepscan.folder_note"))
         self.run_button.setText(text("deepscan.run"))
+        self.vt_key.setPlaceholderText(text("deepscan.vt_key"))
+        self.vt_key.setAccessibleName(text("deepscan.vt_key"))
+        self.vt_save.setText(text("deepscan.vt_key_save"))
+        self.vt_remove.setText(text("deepscan.vt_key_remove"))
+        self.vt.setVisible(False)
         allowed = self.page.may(RUN)
         for widget in (self.scope["jar"], self.scope["mods"], self.jar):
             widget.setVisible(allowed and has_content)
@@ -154,12 +178,16 @@ class DeepScanCard:
         boxes = []
         self.boxes = {}
         for scanner in report.get("scanners") or []:
+            has_key = scanner.get("key")  # None on every row but VirusTotal's
+            if has_key is not None:
+                self.show_key(has_key)
             if not scanner.get("available", True):
                 self.picked.discard(scanner["id"])  # jNeedle while its list can't download
-                continue
+                if has_key is None:
+                    continue
             box = QCheckBox(f"{text(scanner['words'])} ({text(scanner['speed'])})")
             box.setChecked(scanner["id"] in self.picked)
-            box.setEnabled(allowed)
+            box.setEnabled(allowed and scanner.get("available", True))
             box.toggled.connect(lambda on, key=scanner["id"]: self.tick(key, on))
             self.boxes[scanner["id"]] = box
             took = scanner.get("took")
@@ -246,7 +274,41 @@ class DeepScanCard:
         self.next_run.setText("\n".join(lines))
         self.next_run.setVisible(bool(lines))
 
+    def show_key(self, has_key: bool) -> None:
+        owner = self.page.window_.role in (None, "owner")
+        self.vt.setVisible(True)
+        self.vt_key.setVisible(owner and not has_key)
+        self.vt_save.setVisible(owner and not has_key)
+        self.vt_remove.setVisible(owner and has_key)
+        if not owner:
+            note = text("deepscan.vt_key_saved" if has_key else "deepscan.vt_key_owner")
+        else:
+            note = text("deepscan.vt_key_saved") if has_key else text("deepscan.vt_key_note")
+        self.vt_note.setText(note)
+
     # ------------------------------------------------------------ actions
+    def save_key(self) -> None:
+        key = self.vt_key.text().strip()
+        if not key:
+            return
+
+        def done(report: dict) -> None:
+            self.vt_key.clear()
+            self.show(report)
+
+        self.vt_save.setEnabled(False)
+        self.page.ask(
+            "POST",
+            "/mods/deepscan/virustotal",
+            done,
+            self.page.said,
+            body={"key": key},
+            always=lambda: self.vt_save.setEnabled(True),
+        )
+
+    def remove_key(self) -> None:
+        self.page.ask("DELETE", "/mods/deepscan/virustotal", self.show, self.page.said)
+
     def set_options(self, **change: object) -> None:
         self.page.ask("POST", "/mods/deepscan/options", self.show, self.page.said, body=change)
 

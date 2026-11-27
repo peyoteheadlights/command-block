@@ -333,6 +333,13 @@ final class ContentTests: XCTestCase {
         XCTAssertNil(report.scanners[0].size)
     }
 
+    func testVirusTotalStaysListedWithoutAKeySoTheOwnerCanAddOne() throws {
+        let report = try JSONDecoder().decode(DeepScanReport.self, from: Data(#"{"scanners":[{"id":"behaviour"},{"id":"virustotal","available":false,"key":false}]}"#.utf8))
+        XCTAssertEqual(report.shown.map(\.id), ["behaviour", "virustotal"])
+        XCTAssertNil(report.scanners[0].key)
+        XCTAssertEqual(report.shown[1].key, false)
+    }
+
     func testTheDeepScanPlanAndTheJarCheckBeforeAStartAreRead() throws {
         let off = try JSONDecoder().decode(DeepScanReport.self, from: Data(#"{"scanners":[]}"#.utf8)).options
         XCTAssertEqual(off.schedule, "off")

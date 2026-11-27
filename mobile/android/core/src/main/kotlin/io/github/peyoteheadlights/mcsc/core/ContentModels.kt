@@ -549,6 +549,8 @@ data class DeepScanScanner(
     val available: Boolean = true,
     /** Download size in bytes, only for a program not downloaded yet. */
     val size: Long? = null,
+    /** VirusTotal only: whether the owner saved a key. Null on every other row. */
+    val key: Boolean? = null,
 )
 
 /** A file the deep scan listed: Known bad, or Worth a look. [root] is "server" or "java". */
@@ -581,8 +583,8 @@ data class DeepScanReport(
     val last: DeepScanLast? = null,
     val options: DeepScanOptions = DeepScanOptions(),
 ) {
-    /** The checks the person can pick from now. */
-    val shown: List<DeepScanScanner> get() = scanners.filter { it.available }
+    /** The checks to list. VirusTotal stays listed without a key, so the owner can add one. */
+    val shown: List<DeepScanScanner> get() = scanners.filter { it.available || it.key != null }
 }
 
 /** Before each start, and the daily or weekly run. [next] is null while it is off. */

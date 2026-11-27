@@ -184,6 +184,16 @@ class ContentPages(
         null
     }
 
+    fun saveVirusTotalKey(key: String, strings: Strings) = work("vt_key", strings) {
+        showDeep(Read(it.saveVirusTotalKey(serverId, key.trim())))
+        null
+    }
+
+    fun removeVirusTotalKey(strings: Strings) = work("vt_key", strings) {
+        showDeep(Read(it.removeVirusTotalKey(serverId)))
+        null
+    }
+
     fun deepQuarantine(item: DeepScanFound, strings: Strings) = work("deep:${item.root}:${item.path}", strings, reload = ::loadMods) {
         deep = Read(it.deepScanQuarantine(serverId, item.root, item.path))
         null

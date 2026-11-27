@@ -453,9 +453,10 @@ private fun DeepScanCard(vm: AppViewModel, content: ContentPages, report: DeepSc
                 scanner.size?.takeIf { !scanner.installed }?.let { t("deepscan.first_download", "size" to Math.round(it / 1e6)) },
                 scanner.downloaded?.let { t("deepscan.downloaded", "tag" to it.tag, "when" to Display.ago(vm.strings, it.at, now)) },
             ).joinToString("\n")
-            Tick("${t(scanner.words)} (${t(scanner.speed)})", scanner.id in picked, subtitle = about, enabled = allowed) { on ->
+            Tick("${t(scanner.words)} (${t(scanner.speed)})", scanner.id in picked, subtitle = about, enabled = allowed && scanner.available) { on ->
                 picked = if (on) picked + scanner.id else picked - scanner.id
             }
+            scanner.key?.let { hasKey -> VirusTotalKey(vm, content, hasKey) }
         }
         if (allowed) {
             Item(t("deepscan.scope"))
@@ -482,12 +483,33 @@ private fun DeepScanCard(vm: AppViewModel, content: ContentPages, report: DeepSc
             }
         }
         if (allowed) {
-            val chosen = picked.filter { id -> report.shown.any { it.id == id } }
+            val chosen = picked.filter { id -> report.shown.any { it.id == id && it.available } }
             val ready = running == null && content.busy == null && chosen.isNotEmpty() && (what != "jar" || jar in jars)
             Presses(listOf(Press(t("deepscan.run"), { content.runDeepScan(what, chosen.sorted(), jar.takeIf { what == "jar" }, vm.strings) }, enabled = ready)))
             DeepScanPlan(vm, content, report.options, word)
         }
     }
+}
+
+/** The owner's own VirusTotal key: pasted once, never shown again. */
+@Composable
+private fun VirusTotalKey(vm: AppViewModel, content: ContentPages, hasKey: Boolean) {
+    val colors = LocalColors.current
+    if (vm.me?.isOwner != true) {
+        Note(t(if (hasKey) "deepscan.vt_key_saved" else "deepscan.vt_key_owner"), color = colors.text3)
+        return
+    }
+    val idle = content.busy == null
+    if (hasKey) {
+        Note(t("deepscan.vt_key_saved"), color = colors.text3)
+        Presses(listOf(Press(t("deepscan.vt_key_remove"), { content.removeVirusTotalKey(vm.strings) }, enabled = idle)))
+        return
+    }
+    var key by remember { mutableStateOf("") }
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        PasswordField(key, { key = it.trim().take(128) }, t("deepscan.vt_key"), hint = t("deepscan.vt_key_note"))
+    }
+    Presses(listOf(Press(t("deepscan.vt_key_save"), { content.saveVirusTotalKey(key, vm.strings); key = "" }, enabled = idle && key.isNotBlank())))
 }
 
 private val SCHEDULES = listOf("off", "daily", "weekly")

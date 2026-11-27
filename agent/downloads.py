@@ -125,6 +125,9 @@ ALLOWED_HOSTS = frozenset(
         # jNeedle's list of known bad mods, checked before a clicked deep
         # scan with jNeedle (agent/mods/scanprograms.py). Only its path.
         "maven.kosmx.dev",
+        # VirusTotal's file lookup, with the owner's own key, for the deep
+        # scan (agent/mods/virustotal.py). Only a SHA-256 is sent.
+        "www.virustotal.com",
     }
 )
 
@@ -164,6 +167,7 @@ SHARED_HOST_PATHS = {
     "api.spiget.org": ("/v2/resources/",),
     "api.playit.gg": ("/claim/setup", "/claim/exchange"),
     "maven.kosmx.dev": ("/dev/kosmx/needles/",),
+    "www.virustotal.com": ("/api/v3/files/",),
 }
 # One more repo whose release list and release files may be read, while an
 # add-on from a GitHub link is read or updated (see allow_releases).
@@ -349,7 +353,7 @@ async def _send(
             headers = {
                 k: v
                 for k, v in (headers or {}).items()
-                if k.lower() not in ("authorization", "x-tebex-secret")
+                if k.lower() not in ("authorization", "x-tebex-secret", "x-apikey")
             }
             method, content, files = "GET", None, None
             continue

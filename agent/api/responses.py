@@ -1593,6 +1593,7 @@ class DeepScanScanner(Open):
         True, description="false for a day after jNeedle's list couldn't be downloaded"
     )
     size: int | None = Field(None, description="bytes downloaded the first time it runs")
+    key: bool | None = Field(None, description="VirusTotal only: whether a key is saved")
 
 
 class DeepScanReport(Open):

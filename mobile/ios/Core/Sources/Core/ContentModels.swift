@@ -908,8 +908,10 @@ public struct DeepScanScanner: Decodable, Equatable, Identifiable, Sendable {
     public var available: Bool
     /// Download size in bytes, only for a program not downloaded yet.
     public var size: Int?
+    /// VirusTotal only: whether the owner saved a key. Nil on every other row.
+    public var key: Bool?
 
-    enum CodingKeys: String, CodingKey { case id, words, what, speed, took, downloaded, installed, available, size }
+    enum CodingKeys: String, CodingKey { case id, words, what, speed, took, downloaded, installed, available, size, key }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -922,6 +924,7 @@ public struct DeepScanScanner: Decodable, Equatable, Identifiable, Sendable {
         installed = c.value(.installed, true)
         available = c.value(.available, true)
         size = c.maybe(.size)
+        key = c.maybe(.key)
     }
 }
 
@@ -997,7 +1000,8 @@ public struct DeepScanReport: Decodable, Equatable, Sendable {
     }
 
     /// The checks the person can pick from now.
-    public var shown: [DeepScanScanner] { scanners.filter(\.available) }
+    /// VirusTotal stays listed without a key, so the owner can add one.
+    public var shown: [DeepScanScanner] { scanners.filter { $0.available || $0.key != nil } }
 }
 
 /// Deep scan before each start, and the daily or weekly run. `next` is
