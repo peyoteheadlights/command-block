@@ -1918,7 +1918,13 @@ class ModpackMakeOptions(Open):
     )
     discord: bool
     discord_limit_bytes: int
-    required_to_join: dict[str, Any] = Field(description="available: false until the join check")
+    required_to_join: dict[str, Any] = Field(
+        description="available: the Companion mod is on the server; on: ticked last time"
+    )
+    chat_line: dict[str, Any] = Field(
+        description="on, text: the line for players without the modpack, with {name}, "
+        "{version}, {link} and {get_it} placeholders"
+    )
     made: ModpackMadeFile | None = None
 
 
