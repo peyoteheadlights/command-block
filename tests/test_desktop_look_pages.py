@@ -75,6 +75,10 @@ def test_with_no_server_all_servers_is_one_filled_add_button(qapp, agent_http):
     on_all_servers(qapp, window)
     screen = window.screens["All servers"]
     assert button(screen, "Add server").property("kind") == "plain"
+    # Let the loads from signing in finish, and stop the agent's events from
+    # loading the list again, or they fill it back with the two servers.
+    wait_for(qapp, lambda: not window._tasks and not window.soon.isActive())
+    window.feed.message.disconnect(window.feed_message)
     screen.fill([])
     wait_for(qapp, lambda: "No servers yet" in shown_text(screen))
     add = button(screen, "Add server")
