@@ -201,6 +201,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var discord = DiscordPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         private set
 
+    /** Rented servers on a host's panel (All servers). */
+    var rented = RentedPages(accountScope, { client() }, { prefs.lastProblem = it.key })
+        private set
+
     private fun newAccountScope() = CoroutineScope(viewModelScope.coroutineContext + SupervisorJob(viewModelScope.coroutineContext[Job]))
 
     /** Drops every page of the account that was signed in. */
@@ -212,6 +216,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         yourAccount = AccountPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         pcSettings = PcPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         discord = DiscordPages(accountScope, { client() }, { prefs.lastProblem = it.key })
+        rented = RentedPages(accountScope, { client() }, { prefs.lastProblem = it.key })
     }
 
     /** An invite scanned or pasted: opened once the phone is paired with its PC. */

@@ -588,6 +588,8 @@ data class UpdateAllRow(
     @SerialName("installed_version") val installedVersion: String = "",
     @SerialName("latest_version") val latestVersion: String = "",
     @SerialName("version_id") val versionId: String? = null,
+    /** How old the site's list was when it came from a saved copy; null when asked just now. */
+    val saved: String? = null,
 )
 
 /** One Modrinth couldn't be asked about, with the reason. */

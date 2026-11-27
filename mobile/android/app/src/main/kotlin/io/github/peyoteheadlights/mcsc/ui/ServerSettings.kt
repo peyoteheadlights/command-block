@@ -149,7 +149,7 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             }
         }
         for (group in ServerForm.GROUPS) {
-            if (group.technical && !vm.technical) continue
+            if (!ServerForm.shown(group, vm.technical, vm.me, vm.servers.list.firstOrNull { it.id == serverId }?.edition)) continue
             item { SectionTitle(t(group.titleKey)) }
             item {
                 Card {

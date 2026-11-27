@@ -1287,6 +1287,69 @@ class AgentClient(
     suspend fun removeServer(serverId: String): ServerRemoved =
         call(request(server(serverId)).delete().build(), ServerRemoved.serializer())
 
+    // ------------------------------------------------------- rented servers
+    /** Rented servers this account may see; panels only for the owner. */
+    suspend fun rented(): RentedList = get("/api/rented", RentedList.serializer())
+
+    private fun panelBody(address: String, key: String, servers: List<String> = emptyList()) = buildJsonObject {
+        put("address", address.trim())
+        put("key", key.trim())
+        // The owner ticked "Let Command Block talk to this panel".
+        put("allow_host", true)
+        put("servers", JsonArray(servers.map { JsonPrimitive(it) }))
+    }
+
+    /** The panel's servers for this key, before anything is saved. */
+    suspend fun checkPanel(address: String, key: String): PanelCheck =
+        call(post("/api/rented/check", panelBody(address, key)), PanelCheck.serializer(), slow = true)
+
+    suspend fun connectPanel(address: String, key: String, servers: List<String>): RentedAdded =
+        call(post("/api/rented/panels", panelBody(address, key, servers)), RentedAdded.serializer(), slow = true)
+
+    /** Remove key: the key is deleted and the panel's servers leave the list. */
+    suspend fun removePanelKey(panelId: String): JsonObject =
+        call(request("/api/rented/panels/${path(panelId)}").delete().build(), JsonObject.serializer())
+
+    suspend fun rentedStatus(id: String): RentedServer = get("/api/rented/${path(id)}/status", RentedServer.serializer())
+
+    /** start, stop, restart, or kill with [confirm] (it can damage the world). */
+    suspend fun rentedPower(id: String, signal: String, confirm: Boolean = false): RentedDone = call(
+        post("/api/rented/${path(id)}/power", buildJsonObject { put("signal", signal); put("confirm", confirm) }),
+        RentedDone.serializer(),
+    )
+
+    suspend fun rentedConsole(id: String, after: Int): RentedConsole =
+        get("/api/rented/${path(id)}/console?after=$after", RentedConsole.serializer())
+
+    suspend fun rentedCommand(id: String, command: String, confirm: Boolean = false): RentedDone = call(
+        post("/api/rented/${path(id)}/command", buildJsonObject { put("command", command.trim()); put("confirm", confirm) }),
+        RentedDone.serializer(),
+    )
+
+    suspend fun rentedBackups(id: String): RentedBackups = get("/api/rented/${path(id)}/backups", RentedBackups.serializer())
+
+    suspend fun makeRentedBackup(id: String): RentedDone =
+        call(post("/api/rented/${path(id)}/backups", JsonObject(emptyMap())), RentedDone.serializer())
+
+    /** off, status or control: what the Discord bot may do with it. */
+    suspend fun rentedDiscord(id: String, choice: String): RentedServer = call(
+        request("/api/rented/${path(id)}/discord").put(buildJsonObject { put("choice", choice) }.toBody()).build(),
+        RentedServer.serializer(),
+    )
+
+    // ---------------------------------------------------------------- store
+    suspend fun store(serverId: String): StoreView = get("${server(serverId)}/store", StoreView.serializer())
+
+    /** Checks the key with Tebex, then installs the plugin and LuckPerms (backup first, one Undo). */
+    suspend fun connectStore(serverId: String, key: String): StoreView = call(
+        post("${server(serverId)}/store/connect", buildJsonObject { put("key", key.trim()) }),
+        StoreView.serializer(),
+        slow = true,
+    )
+
+    suspend fun checkStore(serverId: String): StoreView =
+        call(post("${server(serverId)}/store/check", JsonObject(emptyMap())), StoreView.serializer(), slow = true)
+
     private fun server(id: String) = "/api/servers/${path(id)}"
 
     private fun path(id: String) = java.net.URLEncoder.encode(id, "UTF-8").replace("+", "%20")

@@ -25,6 +25,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,7 +42,13 @@ import io.github.peyoteheadlights.mcsc.core.States
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ServersScreen(vm: AppViewModel, onOpen: (String) -> Unit, onAdd: () -> Unit) {
+fun ServersScreen(
+    vm: AppViewModel,
+    onOpen: (String) -> Unit,
+    onAdd: () -> Unit,
+    onRented: (String) -> Unit = {},
+    onConnectRented: () -> Unit = {},
+) {
     val ui = vm.servers
     val colors = LocalColors.current
     val now = rememberNow()
@@ -51,6 +58,8 @@ fun ServersScreen(vm: AppViewModel, onOpen: (String) -> Unit, onAdd: () -> Unit)
     val grouped = ServerListing.grouped(ui.list, search)
     val shownIds = grouped.flatMap { (_, rows) -> rows.map { it.id } }
     val owner = vm.me?.isOwner != false
+    // Rented servers: an agent without them answers 404 and none show.
+    LaunchedEffect(vm.me?.user) { vm.rented.load() }
     Binder(vm, current = null) {
         Scaffold(
             containerColor = colors.sheet,
@@ -68,7 +77,10 @@ fun ServersScreen(vm: AppViewModel, onOpen: (String) -> Unit, onAdd: () -> Unit)
         ) { padding ->
             PullToRefreshBox(
                 isRefreshing = ui.refreshing,
-                onRefresh = { vm.refreshAll() },
+                onRefresh = {
+                    vm.refreshAll()
+                    vm.rented.load()
+                },
                 modifier = Modifier.padding(padding).fillMaxSize(),
             ) {
                 LazyColumn(contentPadding = ScreenPadding, verticalArrangement = Gap, modifier = Modifier.fillMaxSize()) {
@@ -125,6 +137,7 @@ fun ServersScreen(vm: AppViewModel, onOpen: (String) -> Unit, onAdd: () -> Unit)
                             }
                         }
                     }
+                    rentedSection(vm, onOpen = onRented, onConnect = onConnectRented)
                     ui.checkedAt?.let { at ->
                         item { Note(t("mobile.servers.checked", "when" to Display.ago(vm.strings, at, now))) }
                     }

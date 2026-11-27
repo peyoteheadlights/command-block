@@ -85,8 +85,16 @@ fun Main(vm: AppViewModel) {
         CompositionLocalProvider(LocalOpenServer provides openServer) {
             NavHost(nav, startDestination = "servers", modifier = Modifier.padding(padding)) {
                 composable("servers") {
-                    ServersScreen(vm, onOpen = { nav.navigate("server/${android.net.Uri.encode(it)}") }, onAdd = { nav.navigate("servers/add") })
+                    ServersScreen(
+                        vm,
+                        onOpen = { nav.navigate("server/${android.net.Uri.encode(it)}") },
+                        onAdd = { nav.navigate("servers/add") },
+                        onRented = { nav.navigate("rented/${Uri.encode(it)}") },
+                        onConnectRented = { nav.navigate("rented-connect") },
+                    )
                 }
+                composable("rented/{id}") { back -> RentedScreen(vm, back.serverId(), onBack = { nav.popBackStack() }) }
+                composable("rented-connect") { ConnectPanelScreen(vm, onBack = { nav.popBackStack() }) }
                 composable("servers/add") {
                     AddServerScreen(vm, onBack = { nav.popBackStack() }, onOpen = { id ->
                         // The new server opens in place of the "+" screen.
@@ -139,6 +147,10 @@ fun Main(vm: AppViewModel) {
                         // The server is gone: back to All servers, not to its page.
                         onRemoved = { nav.popBackStack("servers", inclusive = false) },
                     )
+                }
+                composable("server/{id}/store") { back ->
+                    val id = back.serverId()
+                    StoreScreen(vm, id, onBack = { nav.popBackStack() }, onSettings = { nav.navigate("server/${Uri.encode(id)}/settings") })
                 }
                 composable("server/{id}/files") { back ->
                     FilesScreen(vm, back.serverId(), onBack = { nav.popBackStack() })
