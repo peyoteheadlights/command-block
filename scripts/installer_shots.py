@@ -74,6 +74,26 @@ def main() -> int:
         snap(w, "08-done")
         w.close()
 
+        # "Agent only": the choice, setup's Tailscale step, and its last screen.
+        agent = SetupWindow(DemoWizard(), dark=dark)
+        agent.show()
+        agent.answers["agent_only"] = True
+        agent.kind_screen()
+        snap(agent, "12-agent-only")
+        agent.open_target = lambda _target: None  # type: ignore[method-assign]
+        agent.tailscale_screen(agent.options_screen)
+        snap(agent, "13-tailscale")
+        agent.wizard.connect_tailscale()
+        agent.show_tailscale()
+        snap(agent, "14-tailscale-sign-in")
+        agent.tailscale_timer.stop()
+        agent.answers["servers"] = []
+        agent.run()
+        agent.wizard.advance(20)
+        agent.poll()
+        snap(agent, "15-agent-only-done")
+        agent.close()
+
         failing = SetupWindow(
             DemoWizard(
                 found=[

@@ -172,6 +172,26 @@ def test_on_another_pc_the_second_copy_folder_is_chosen_on_the_servers_pc(qapp, 
     assert not page.choose.isVisibleTo(page)
 
 
+def test_on_another_pc_an_agent_only_pc_says_to_use_the_phone_app(
+    qapp, agent_http, monkeypatch, tmp_path
+):
+    """An Agent only PC has no app to choose the folder in: say how instead."""
+    from agent import appinfo
+
+    (tmp_path / appinfo.INSTALL_RECORD).write_text(
+        '{"data_root": "x", "agent_only": true}', encoding="utf-8"
+    )
+    monkeypatch.setattr(appinfo, "program_dir", lambda: tmp_path)
+    window = open_window(qapp, agent_http)
+    window.agent.place = "100.64.0.7"
+    sign_in(qapp, window)
+    wait_for(qapp, lambda: window.screen_name == "All servers" and window.agent_only)
+    open_server(qapp, window, "Survival")
+    page = open_page(qapp, window, "Backups")
+    wait_for(qapp, lambda: "in the Command Block phone app" in shown_text(page))
+    assert not page.choose.isVisibleTo(page)
+
+
 # ---------------------------------------------------------------- bringing a world in
 def test_a_world_zip_is_read_first_then_replaces_the_world_with_undo(qapp, agent_http, tmp_path):
     headers = owner(agent_http)

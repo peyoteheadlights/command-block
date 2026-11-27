@@ -504,3 +504,25 @@ def test_shared_mod_files_show_real_disk_use():
     assert mod_files_words({"files": 0, "on_disk": 0, "saved": 0}) == text("modfiles.none")
     words = mod_files_words({"files": 2, "on_disk": 3 * 1024**2, "saved": 5 * 1024**3})
     assert words == text("modfiles.usage", used="3.0 MB", saved="5.0 GB")
+
+
+def test_an_agent_only_pc_says_where_its_tailscale_is_changed(
+    qapp, agent_http, monkeypatch, tmp_path
+):
+    """On another PC: an Agent only PC has no app to "open there"."""
+    from agent import appinfo
+
+    (tmp_path / appinfo.INSTALL_RECORD).write_text(
+        '{"data_root": "x", "agent_only": true}', encoding="utf-8"
+    )
+    monkeypatch.setattr(appinfo, "program_dir", lambda: tmp_path)
+    window = open_window(qapp, agent_http)
+    window.agent.place = "100.64.0.7"
+    sign_in(qapp, window)
+    on_all_servers(qapp, window)
+    wait_for(qapp, lambda: window.role == "owner" and window.agent_only)
+    window.pc.set_setting("section:PC settings", "pc")
+    window.tools["gear"].click()
+    page = window.gear.sections["pc"]
+    wait_for(qapp, lambda: "Tailscale's own icon on 100.64.0.7" in shown_text(page))
+    assert "Open Command Block there" not in shown_text(page)
