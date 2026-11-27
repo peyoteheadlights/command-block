@@ -1394,6 +1394,9 @@ private struct UpdateAllSheet: View {
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
                                 }
+                                if let saved = row.saved {
+                                    Text(saved).font(.footnote).foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
