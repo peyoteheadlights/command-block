@@ -68,7 +68,9 @@ FOLDER = "modpack-exports"
 MADE = "modpack_made"  # the newest modpack: token, filename, name, version...
 TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
 NAME_RE = re.compile(r"^[^\x00-\x1f\\/:*?\"<>|]{1,64}$")
-VERSION_RE = re.compile(r"^[\w.+-]{1,32}$")
+# English letters and digits only, the same rule as the Companion (Settings.versionOk):
+# Python's \w would also let in other languages' letters, which players' Companions refuse.
+VERSION_RE = re.compile(r"[A-Za-z0-9_.+-]{1,32}")
 CONFIG_FOLDERS = ("config", "defaultconfigs")
 MAX_CONFIGS = 2000
 MAX_CONFIG_BYTES = 5 * 1024 * 1024
@@ -406,7 +408,7 @@ async def make(
         raise ModpackError(
             'Give the modpack a name of up to 64 letters, without \\ / : * ? " < > |.'
         )
-    if not VERSION_RE.match(version or ""):
+    if not VERSION_RE.fullmatch(version or ""):
         raise ModpackError("A version is up to 32 letters, numbers, dots or dashes, like 1.2.")
     chat_line = chat_line or {"on": True, "text": companion.CHAT_LINE_DEFAULT}
     if not companion.chat_line_ok(chat_line.get("text") or ""):

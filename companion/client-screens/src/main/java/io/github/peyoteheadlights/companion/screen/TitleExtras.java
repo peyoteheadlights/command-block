@@ -142,6 +142,11 @@ public final class TitleExtras {
         });
     }
 
+    /** "play.example.net" and "Play.Example.net:25565" are the same server. */
+    static boolean sameAddress(String a, String b) {
+        return a.replaceFirst(":25565$", "").equalsIgnoreCase(b.replaceFirst(":25565$", ""));
+    }
+
     /** A checked PNG from the modpack as a texture; its size, or null when there's none. */
     private static int[] texture(Path file, long maxBytes, Identifier id) {
         if (!Files.isRegularFile(file)) {
@@ -160,14 +165,19 @@ public final class TitleExtras {
 
     /**
      * The owner's address changed: friends' server list entries with the old
-     * address get the new one. Only entries that had the old address change.
+     * address get the new one. Only entries that had the old address change,
+     * and only when the update came from the server at the old address (or
+     * not through the Companion at all, from the player's own launcher):
+     * another server's update can't point a friend's entry at itself.
      */
     private static void followAddress(Path remembered) {
         String now = settings.address();
+        Path offeredBy = remembered.resolveSibling(Updates.OFFERED_BY);
         try {
             String before = Files.isRegularFile(remembered)
                     ? Files.readString(remembered, StandardCharsets.UTF_8).strip() : "";
-            if (!before.isEmpty() && !before.equals(now)) {
+            String from = Files.isRegularFile(offeredBy) ? Files.readString(offeredBy, StandardCharsets.UTF_8).strip() : null;
+            if (!before.isEmpty() && !before.equals(now) && (from == null || sameAddress(from, before))) {
                 ServerList list = new ServerList(Minecraft.getInstance());
                 list.load();
                 boolean changed = false;
@@ -185,6 +195,7 @@ public final class TitleExtras {
             if (!before.equals(now)) {
                 Files.createDirectories(remembered.getParent());
                 Files.writeString(remembered, now, StandardCharsets.UTF_8);
+                Files.deleteIfExists(offeredBy); // used up
             }
         } catch (IOException e) {
             LOG.warn("Couldn't update the server list's address: {}", e.toString());
