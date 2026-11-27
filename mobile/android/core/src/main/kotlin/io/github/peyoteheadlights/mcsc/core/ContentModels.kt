@@ -681,6 +681,8 @@ data class GameSetting(
     val min: Int? = null,
     val max: Int? = null,
     @SerialName("max_length") val maxLength: Int? = null,
+    /** How many lines the value can have (the MOTD has 2). */
+    val lines: Int = 1,
     /** "world_exists" for the seed once the world is made. */
     @SerialName("read_only") val readOnly: String? = null,
 )
@@ -694,6 +696,18 @@ data class GameSettings(
     @SerialName("restart_needed") val restartNeeded: Boolean = false,
     /** The whole file as it is now, for the Technical mode editor. */
     val text: String = "",
+    /** Whether server-icon.png is there; null on Bedrock, which shows none. */
+    val icon: Boolean? = null,
+)
+
+/** server-icon.png in base64, or null when the server has none. */
+@Serializable
+data class ServerIcon(val png: String? = null)
+
+@Serializable
+data class ServerIconSaved(
+    val icon: Boolean = false,
+    val running: Boolean = false,
 )
 
 @Serializable

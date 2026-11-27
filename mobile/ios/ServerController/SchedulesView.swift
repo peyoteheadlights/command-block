@@ -60,14 +60,14 @@ struct SchedulesView: View {
             }
             ForEach(list.schedules) { schedule in
                 CardBox(palette: palette) {
-                    Text(verbatim: schedule.name)
+                    Text(hiding: schedule.name)
                         .font(.headline)
                         .foregroundStyle(palette.textPrimary)
                     Hint(
                         text: Schedules.summary(strings, schedule, tasks: list.tasks) + " · " + Schedules.whenText(strings, schedule),
                         palette: palette
                     )
-                    Text(verbatim: model.t("schedules.col_next") + ": " + Schedules.next(strings, schedule))
+                    Text(hiding: model.t("schedules.col_next") + ": " + Schedules.next(strings, schedule))
                         .font(.footnote)
                         .foregroundStyle(palette.textPrimary)
                     Hint(text: model.t("schedules.col_result") + ": " + (schedule.lastResult ?? "—"), palette: palette)
@@ -176,7 +176,7 @@ private struct AddScheduleForm: View {
                     Task { _ = await world.answerDanger(false, strings) }
                 }
             },
-            message: { Text(verbatim: world.scheduleDanger ?? "") }
+            message: { Text(hiding: world.scheduleDanger ?? "") }
         )
     }
 

@@ -171,6 +171,17 @@ struct ServerSettingsView: View {
                         let strings = model.strings
                         Task { await setup.saveJavaOptions(RawText.args(typed), strings) }
                     }
+                    Text(model.t("memory.raw_warning"))
+                        .font(.footnote)
+                        .foregroundStyle(palette.tone(.warning))
+                    if let before = setup.argsBefore {
+                        let strings = model.strings
+                        Presses(presses: [
+                            Press(title: model.t("changes.undo"), enabled: setup.busy == nil) {
+                                Task { await setup.saveJavaOptions(before, strings, undoing: true) }
+                            },
+                        ], palette: palette)
+                    }
                 }
             }
             if Duplicate.allowed(model.me) {
@@ -220,7 +231,7 @@ extension ServerSettingsView {
             Text(CpuCores.nowLine(model.strings, cpu))
                 .foregroundStyle(palette.textSecondary)
             if let problem = cpu.status.problems.first {
-                Text(verbatim: problem).foregroundStyle(palette.danger)
+                Text(hiding: problem).foregroundStyle(palette.danger)
             }
             if canEdit {
                 HStack {
@@ -311,7 +322,7 @@ struct SettingField: View {
                     .disabled(locked)
             }
             if let problem {
-                Text(verbatim: problem)
+                Text(hiding: problem)
                     .font(.footnote)
                     .foregroundStyle(palette.danger)
             }
@@ -371,7 +382,7 @@ struct ServerColorPicker: View {
                 .foregroundStyle(bad ? palette.danger : palette.textSecondary)
             if let rgb = ServerColors.rgb(current) {
                 let fill = ServerColors.fillWithText(rgb)
-                Text(verbatim: (current ?? "").uppercased())
+                Text(hiding: (current ?? "").uppercased())
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
                     .foregroundStyle(Color.fromHex(ServerColors.hex(fill.text)) ?? palette.textPrimary)

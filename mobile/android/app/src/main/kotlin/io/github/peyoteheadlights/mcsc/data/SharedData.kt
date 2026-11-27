@@ -4,6 +4,7 @@ import android.content.res.AssetManager
 import io.github.peyoteheadlights.mcsc.core.AgentJson
 import io.github.peyoteheadlights.mcsc.core.ApiRange
 import io.github.peyoteheadlights.mcsc.core.ServerColors
+import io.github.peyoteheadlights.mcsc.core.Streamer
 import io.github.peyoteheadlights.mcsc.core.Strings
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
@@ -17,6 +18,8 @@ class SharedData(
     val feed: Map<String, String>,
     val apiRange: ApiRange,
     val appVersion: String,
+    /** Streamer mode's rules: what counts as an address, a path or a key. */
+    val streamer: Streamer,
 ) {
     /** A theme's tokens without the leading dashes ("sheet" -> "#F7F7F9"). */
     fun theme(name: String): Map<String, String> =
@@ -35,6 +38,7 @@ class SharedData(
                 feed = feed,
                 apiRange = ApiRange(api.getValue("min").jsonPrimitive.int, api.getValue("max").jsonPrimitive.int),
                 appVersion = version.getValue("app_version").jsonPrimitive.content,
+                streamer = Streamer(read("streamer.json")),
             )
         }
     }
