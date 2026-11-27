@@ -156,6 +156,18 @@ class MinecraftServer:
         self.before_launch: Callable[[], Awaitable[list[str]]] | None = None
         self.behind_guard: int | None = None
         self.launch_args: list[str] = []
+        # Less downtime (agent/downtime.py). What changed since this run
+        # started that Minecraft only reads at start ("mods", "settings"...),
+        # the command this run was started with (a memory or Java change
+        # shows as a different command), and "Restart when nobody's on".
+        # All three are about one run, so a start clears them.
+        self.waiting: set[str] = set()
+        self.launched_command: list[str] | None = None
+        self.restart_when_empty = False
+        self._slow_task: asyncio.Task | None = None
+        # server.properties as the server read it, taken at "Done"
+        # (gamesettings.waiting_for_restart compares the file with it).
+        self.properties_at_start: dict[str, str] | None = None
 
     # ------------------------------------------------------------------
     # info
@@ -443,6 +455,7 @@ class MinecraftServer:
             "restart_at": self.restart_at,
             "restart_delay": self.restart_delay,
             "restart_in": max(0.0, self.restart_at - time.time()) if self.restart_at else None,
+            "restart_when_empty": self.restart_when_empty,
             "auto_restart_cancelled": self.auto_restart_cancelled,
             "maintenance": self.maintenance,
             "stopped_for_sleep": self.stopped_for_sleep,
@@ -517,6 +530,10 @@ class MinecraftServer:
             self.online_at = None
             self.startup_confirmed = False
             self.stopped_for_sleep = False
+            self.waiting.clear()
+            self.restart_when_empty = False
+            self.properties_at_start = None
+            self.launched_command = cmd
             self.started_at = time.time()
             await self._set_state(ServerState.STARTING, "Starting Minecraft", command=cmd)
             self._emit_console(f"[agent] launching: {' '.join(cmd)}")
@@ -571,6 +588,9 @@ class MinecraftServer:
                 self.apply_priority()
             self._reader_task = asyncio.create_task(self._pump_output(), name="mc-console")
             self._waiter_task = asyncio.create_task(self._wait_exit(), name="mc-wait")
+            self._slow_task = asyncio.create_task(
+                self._watch_slow_start(self.started_at), name="mc-slow-start"
+            )
             if self.db:
                 self.db.add_event(
                     self.server_id, "server_start_requested", f"Start requested by {actor}"
@@ -614,6 +634,52 @@ class MinecraftServer:
         why = cpu.set_low_priority(self.pid, self.config.server.low_priority)
         if why:
             self._emit_console(f"[agent] couldn't change the server's priority: {why}")
+
+    def start_limit(self) -> float:
+        """How long a start may take before the "Starting too long" alert:
+        twice the last measured start, or server.start_timeout before this
+        server has ever been measured."""
+        last = self.db.get_setting("startup_seconds") if self.db else None
+        if isinstance(last, int | float) and last > 0:
+            return 2 * float(last)
+        return float(self.config.server.start_timeout)
+
+    async def _watch_slow_start(self, started_at: float | None) -> None:
+        """Only an alert: the server is never stopped for starting slowly
+        (a big modpack can take long, and stopping it would only lose more time)."""
+        limit = self.start_limit()
+        if await self.wait_online(limit):
+            return
+        if self.state != ServerState.STARTING or self.started_at != started_at:
+            return  # it stopped or crashed meanwhile; that has its own alert
+        await self.bus.publish(
+            Event(
+                type="start_slow",
+                level="warn",
+                message=f"Starting is taking longer than {limit:.0f} seconds. "
+                "It keeps trying; watch the console.",
+                data={"limit_seconds": round(limit)},
+            )
+        )
+
+    def _read_properties(self) -> dict[str, str]:
+        from .properties import FILENAME, PropertiesFile
+
+        path = self.config.server_dir / FILENAME
+        try:
+            return PropertiesFile.read(path).values() if path.is_file() else {}
+        except (OSError, ValueError):
+            return {}
+
+    def command_changed(self) -> bool:
+        """True when this run was started with a different command than the
+        settings make now (memory, Java, Java arguments)."""
+        if not self.running or self.launched_command is None:
+            return False
+        try:
+            return self.build_command() != self.launched_command
+        except Exception:  # a broken setting is the start's business, not this check's
+            return False
 
     async def wait_online(self, timeout: float | None = None) -> bool:
         timeout = timeout or self.config.server.start_timeout
@@ -709,6 +775,9 @@ class MinecraftServer:
         if sig.done_seconds is not None and self.state == ServerState.STARTING:
             self.startup_seconds = sig.done_seconds
             self.online_at = time.time()
+            if self.db:
+                self.db.set_setting("startup_seconds", sig.done_seconds)
+            self.properties_at_start = self._read_properties()
             self.startup_confirmed = True
             self._online_event.set()
             await self._set_state(
@@ -1115,8 +1184,9 @@ class MinecraftServer:
         return True
 
     async def shutdown(self) -> None:
-        """Called when the agent itself stops. Minecraft is left running."""
-        for task in (self._reader_task, self._waiter_task, self._restart_task):
+        """Called when the agent itself stops, after agent/downtime.py has
+        stopped Minecraft (a server it couldn't stop is left running)."""
+        for task in (self._reader_task, self._waiter_task, self._restart_task, self._slow_task):
             if task and not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):

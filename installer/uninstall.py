@@ -152,7 +152,7 @@ def _stop_agent(
         if token:
             try:
                 for row in system.api(port, tls, token, "GET", "/servers")["servers"]:
-                    if row.get("state") in ("running", "starting"):
+                    if row.get("state") in ("ONLINE", "STARTING"):
                         system.api(port, tls, token, "POST", f"/servers/{row['id']}/server/stop")
                         done.append(f"stopped {row['name']}")
             except Exception as exc:

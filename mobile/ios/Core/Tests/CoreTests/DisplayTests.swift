@@ -81,4 +81,18 @@ final class DisplayTests: XCTestCase {
         XCTAssertEqual(Display.clock(1_700_000_000, zone: utc), "22:13:20")
         XCTAssertEqual(Display.dateTime(1_700_000_000, zone: utc), "2023-11-14 22:13:20")
     }
+
+    func testChangesWaitingForARestartOfferRestartWhenNobodysOn() throws {
+        let json = #"{"state": "ONLINE", "restart_waiting": ["mods", "settings"], "restart_when_empty": false}"#
+        var status = try JSONDecoder().decode(ServerStatus.self, from: Data(json.utf8))
+        let waiting = try XCTUnwrap(Display.restartWaiting(s, status, canControl: true))
+        XCTAssertEqual(waiting.words, "Changes are waiting for a restart: mods, game settings.")
+        XCTAssertEqual(waiting.action?.action, "restart-when-empty")
+        XCTAssertNil(Display.restartWaiting(s, status, canControl: false)?.action)
+        status.restartWhenEmpty = true
+        XCTAssertEqual(Display.restartWaiting(s, status, canControl: true)?.action?.action, "cancel-restart-when-empty")
+        // An older agent sends neither field: nothing shows.
+        let old = try JSONDecoder().decode(ServerStatus.self, from: Data(#"{"state": "ONLINE"}"#.utf8))
+        XCTAssertNil(Display.restartWaiting(s, old, canControl: true))
+    }
 }

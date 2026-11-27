@@ -13,6 +13,8 @@ GET /api/servers/{server_id}/status
 POST /api/servers/{server_id}/server/start
 POST /api/servers/{server_id}/server/stop
 POST /api/servers/{server_id}/server/restart
+POST /api/servers/{server_id}/server/restart-when-empty
+POST /api/servers/{server_id}/server/cancel-restart-when-empty
 POST /api/servers/{server_id}/server/diagnose
 GET /api/servers/{server_id}/server/diagnose
 POST /api/servers/{server_id}/server/diagnose/changes
