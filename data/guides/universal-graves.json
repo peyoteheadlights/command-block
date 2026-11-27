@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "universal-graves",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "universal-graves"
+    ],
+    "modrinth": "universal-graves"
+  },
+  "versions": ">=3.0.0 <4",
+  "title": "Universal Graves",
+  "what": "When a player dies, their items go into a grave where they died.",
+  "steps": [
+    "The player goes back to the grave to get their things.",
+    "Players see their graves with /graves in the game.",
+    "Its settings are in config/universal-graves. Read settings again after you change them."
+  ],
+  "source": "https://github.com/Patbox/UniversalGraves",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "reload",
+      "label": "Read settings again",
+      "command": "graves reload"
+    }
+  ]
+}
