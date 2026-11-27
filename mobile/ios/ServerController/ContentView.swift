@@ -89,7 +89,7 @@ struct ContentView: View {
                     Button(ask.confirm, role: ask.danger ? .destructive : nil, action: ask.run)
                     Button(model.t("mobile.common.cancel"), role: .cancel) {}
                 },
-                message: { ask in Text(verbatim: ask.body) }
+                message: { ask in Text(hiding: ask.body) }
             )
             .confirmationDialog(
                 model.t("sides.who_title", ["name": choosingSide.map { $0.mod.name.isEmpty ? $0.mod.filename : $0.mod.name } ?? ""]),
@@ -188,12 +188,12 @@ struct ContentView: View {
         CardBox(palette: palette) {
             ForEach(list.overlaps) { overlap in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: overlap.say).foregroundStyle(palette.textPrimary)
+                    Text(hiding: overlap.say).foregroundStyle(palette.textPrimary)
                     Hint(text: overlap.why, palette: palette)
                     if manage {
                         ForEach(SameJob.turnOff(overlap)) { row in
                             if let mod = list.mods.first(where: { $0.filename == row.filename && $0.enabled }) {
-                                Text(verbatim: "\(row.name) \(row.version)").foregroundStyle(palette.textPrimary)
+                                Text(hiding: "\(row.name) \(row.version)").foregroundStyle(palette.textPrimary)
                                 Presses(presses: [
                                     Press(title: model.t("mods.turn_off"), enabled: ready) {
                                         Task { await content.setEnabled(mod, false, strings) }
@@ -216,7 +216,7 @@ struct ContentView: View {
         SectionTitle(text: model.t("linked.title"), palette: palette)
         CardBox(palette: palette) {
             ForEach(LinkedPacks.lines(strings, pack), id: \.self) { line in
-                Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                Text(hiding: line).foregroundStyle(palette.textPrimary)
             }
             if model.can(Permissions.MODS_MANAGE) {
                 Presses(presses: (pack.update != nil && model.can(Permissions.SETTINGS_SERVER) ? [
@@ -247,10 +247,10 @@ struct ContentView: View {
         let strings = model.strings
         SectionTitle(text: model.t("make.title"), palette: palette)
         CardBox(palette: palette) {
-            Text(verbatim: model.t("make.intro")).foregroundStyle(palette.textSecondary)
+            Text(hiding: model.t("make.intro")).foregroundStyle(palette.textSecondary)
             if let made = content.made {
                 ForEach(MadeModpacks.lines(strings, made), id: \.self) { line in
-                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                    Text(hiding: line).foregroundStyle(palette.textPrimary)
                 }
             }
             Presses(presses: [
@@ -267,8 +267,8 @@ struct ContentView: View {
                 },
             ] : []), palette: palette)
             if content.made != nil {
-                Text(verbatim: model.t("make.guide_title")).foregroundStyle(palette.textPrimary)
-                Text(verbatim: model.t("make.guide")).foregroundStyle(palette.textSecondary)
+                Text(hiding: model.t("make.guide_title")).foregroundStyle(palette.textPrimary)
+                Text(hiding: model.t("make.guide")).foregroundStyle(palette.textSecondary)
             }
         }
     }
@@ -283,10 +283,10 @@ struct ContentView: View {
         let game = model.can(Permissions.SETTINGS_GAME)
         SectionTitle(text: model.t("link.title"), palette: palette)
         CardBox(palette: palette) {
-            Text(verbatim: model.t("link.intro")).foregroundStyle(palette.textSecondary)
+            Text(hiding: model.t("link.intro")).foregroundStyle(palette.textSecondary)
             if let link = content.link {
                 ForEach(DownloadLinks.lines(strings, link, owner: owner), id: \.self) { line in
-                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                    Text(hiding: line).foregroundStyle(palette.textPrimary)
                 }
                 Presses(presses: [
                     Press(title: model.t(link.on ? "link.turn_off" : "link.turn_on"), enabled: ready && owner && (link.on || link.whyNot == nil)) {
@@ -302,10 +302,10 @@ struct ContentView: View {
                         content.said = Said(text: strings.t("link.copied"), good: true)
                     },
                 ] } ?? []), palette: palette)
-                Text(verbatim: model.t("pack.title")).foregroundStyle(palette.textPrimary)
-                Text(verbatim: model.t("pack.intro")).foregroundStyle(palette.textSecondary)
+                Text(hiding: model.t("pack.title")).foregroundStyle(palette.textPrimary)
+                Text(hiding: model.t("pack.intro")).foregroundStyle(palette.textSecondary)
                 ForEach(DownloadLinks.packLines(strings, link), id: \.self) { line in
-                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                    Text(hiding: line).foregroundStyle(palette.textPrimary)
                 }
                 if let pack = link.resourcePack {
                     Toggle(model.t("pack.required"), isOn: Binding(
@@ -322,7 +322,7 @@ struct ContentView: View {
                         Task { await content.removePack(strings) }
                     },
                 ]), palette: palette)
-                Text(verbatim: model.t("pack.tailscale_only")).foregroundStyle(palette.textSecondary)
+                Text(hiding: model.t("pack.tailscale_only")).foregroundStyle(palette.textSecondary)
             }
         }
         .task(id: serverId) { await content.loadLink() }
@@ -342,17 +342,17 @@ struct ContentView: View {
                 let ownJar = picker.mayInstall && picker.mayAddOwnJar
                 SectionTitle(text: model.t("anticheat.title"), palette: palette)
                 CardBox(palette: palette) {
-                    Text(verbatim: model.t("anticheat.intro")).foregroundStyle(palette.textSecondary)
-                    Text(verbatim: AntiCheats.status(strings, picker)).foregroundStyle(palette.textPrimary)
+                    Text(hiding: model.t("anticheat.intro")).foregroundStyle(palette.textSecondary)
+                    Text(hiding: AntiCheats.status(strings, picker)).foregroundStyle(palette.textPrimary)
                     if picker.supported {
-                        Text(verbatim: model.t("anticheat.cpu")).foregroundStyle(palette.textSecondary)
+                        Text(hiding: model.t("anticheat.cpu")).foregroundStyle(palette.textSecondary)
                         if !picker.mayInstall {
-                            Text(verbatim: model.t("anticheat.no_install")).foregroundStyle(palette.textSecondary)
+                            Text(hiding: model.t("anticheat.no_install")).foregroundStyle(palette.textSecondary)
                         }
-                        Text(verbatim: model.t("anticheat.free")).foregroundStyle(palette.textPrimary)
+                        Text(hiding: model.t("anticheat.free")).foregroundStyle(palette.textPrimary)
                         ForEach(picker.free) { item in
                             ForEach(AntiCheats.free(strings, item), id: \.self) { line in
-                                Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                                Text(hiding: line).foregroundStyle(palette.textPrimary)
                             }
                             if !item.on && picker.mayInstall {
                                 Presses(presses: [
@@ -363,11 +363,11 @@ struct ContentView: View {
                             }
                         }
                         if !picker.paid.isEmpty {
-                            Text(verbatim: model.t("anticheat.paid")).foregroundStyle(palette.textPrimary)
-                            Text(verbatim: model.t("anticheat.buy_note")).foregroundStyle(palette.textSecondary)
+                            Text(hiding: model.t("anticheat.paid")).foregroundStyle(palette.textPrimary)
+                            Text(hiding: model.t("anticheat.buy_note")).foregroundStyle(palette.textSecondary)
                             ForEach(picker.paid) { item in
                                 ForEach(AntiCheats.paid(strings, item), id: \.self) { line in
-                                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                                    Text(hiding: line).foregroundStyle(palette.textPrimary)
                                 }
                                 Presses(presses: [
                                     Press(title: model.t("anticheat.seller")) {
@@ -379,16 +379,16 @@ struct ContentView: View {
                                     Press(title: model.t("anticheat.from_file"), enabled: ready) { picking = .jar },
                                 ] : []), palette: palette)
                             }
-                            Text(verbatim: model.t("anticheat.prices_note")).foregroundStyle(palette.textSecondary)
+                            Text(hiding: model.t("anticheat.prices_note")).foregroundStyle(palette.textSecondary)
                         }
-                        Text(verbatim: model.t("anticheat.custom")).foregroundStyle(palette.textPrimary)
-                        Text(verbatim: model.t("anticheat.custom_about")).foregroundStyle(palette.textSecondary)
+                        Text(hiding: model.t("anticheat.custom")).foregroundStyle(palette.textPrimary)
+                        Text(hiding: model.t("anticheat.custom_about")).foregroundStyle(palette.textSecondary)
                         if ownJar {
                             Presses(presses: [
                                 Press(title: model.t("anticheat.from_file"), enabled: ready) { picking = .jar },
                             ], palette: palette)
                         } else {
-                            Text(verbatim: model.t("anticheat.no_own_jar")).foregroundStyle(palette.textSecondary)
+                            Text(hiding: model.t("anticheat.no_own_jar")).foregroundStyle(palette.textSecondary)
                         }
                     }
                 }
@@ -406,12 +406,12 @@ struct ContentView: View {
         let owner = model.can(Permissions.PC_SETTINGS)
         SectionTitle(text: model.t("modrinth.title"), palette: palette)
         CardBox(palette: palette) {
-            Text(verbatim: model.t("modrinth.intro")).foregroundStyle(palette.textSecondary)
+            Text(hiding: model.t("modrinth.intro")).foregroundStyle(palette.textSecondary)
             if let share = content.modrinth {
                 let account = share.account
                 let signedIn = account?.signedIn == true
                 ForEach(ModrinthCards.lines(strings, share, owner: owner), id: \.self) { line in
-                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                    Text(hiding: line).foregroundStyle(palette.textPrimary)
                 }
                 let waiting = share.ownJars.first(where: { $0.url == nil })
                 let upload = share.made.map { strings.t("modrinth.upload_named", ["name": $0.name, "version": $0.version]) } ?? model.t("modrinth.upload")
@@ -436,14 +436,14 @@ struct ContentView: View {
                         Task { await content.signOutModrinth(strings) }
                     },
                 ] : []), palette: palette)
-                Text(verbatim: model.t("modrinth.review_note")).foregroundStyle(palette.textSecondary)
-                Text(verbatim: model.t("modrinth.server_title")).foregroundStyle(palette.textPrimary)
-                Text(verbatim: model.t("modrinth.server_intro")).foregroundStyle(palette.textSecondary)
+                Text(hiding: model.t("modrinth.review_note")).foregroundStyle(palette.textSecondary)
+                Text(hiding: model.t("modrinth.server_title")).foregroundStyle(palette.textPrimary)
+                Text(hiding: model.t("modrinth.server_intro")).foregroundStyle(palette.textSecondary)
                 ForEach(ModrinthCards.serverLines(strings, share), id: \.self) { line in
-                    Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                    Text(hiding: line).foregroundStyle(palette.textPrimary)
                 }
                 if share.address != nil {
-                    Text(verbatim: ModrinthCards.steps(strings, share)).foregroundStyle(palette.textSecondary)
+                    Text(hiding: ModrinthCards.steps(strings, share)).foregroundStyle(palette.textSecondary)
                     Presses(presses: [
                         Press(title: model.t("modrinth.server_paste"), enabled: ready) { content.askingServerLink = true },
                     ], palette: palette)
@@ -474,20 +474,20 @@ struct ContentView: View {
         let manage = model.can(Permissions.MODS_MANAGE)
         SectionTitle(text: model.t("fit.title"), palette: palette)
         CardBox(palette: palette) {
-            Text(verbatim: StillFit.lead(strings, fit, plugins: kind == .plugins))
+            Text(hiding: StillFit.lead(strings, fit, plugins: kind == .plugins))
                 .foregroundStyle(palette.textPrimary)
             ForEach(fit.needsChange) { row in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: row.name).foregroundStyle(palette.textPrimary)
+                    Text(hiding: row.name).foregroundStyle(palette.textPrimary)
                     Hint(text: Content.change(strings, row.from, row.to) + "\n" + row.why, palette: palette)
                 }
             }
             if !fit.noFit.isEmpty {
-                Text(verbatim: model.t("fit.no_fit")).foregroundStyle(palette.textPrimary)
+                Text(hiding: model.t("fit.no_fit")).foregroundStyle(palette.textPrimary)
             }
             ForEach(fit.noFit) { row in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: row.name).foregroundStyle(palette.textPrimary)
+                    Text(hiding: row.name).foregroundStyle(palette.textPrimary)
                     Hint(text: row.why, palette: palette)
                     if manage, let mod = list.mods.first(where: { $0.filename == row.filename && $0.enabled }) {
                         Presses(presses: [
@@ -499,11 +499,11 @@ struct ContentView: View {
                 }
             }
             if !fit.cantTell.isEmpty {
-                Text(verbatim: model.t("fit.cant_tell")).foregroundStyle(palette.textPrimary)
+                Text(hiding: model.t("fit.cant_tell")).foregroundStyle(palette.textPrimary)
             }
             ForEach(fit.cantTell) { row in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: row.name).foregroundStyle(palette.textPrimary)
+                    Text(hiding: row.name).foregroundStyle(palette.textPrimary)
                     Hint(text: row.why, palette: palette)
                 }
             }
@@ -575,7 +575,7 @@ struct ContentView: View {
                 CardBox(palette: palette) {
                     ForEach(missing, id: \.modId) { dep in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(verbatim: dep.name.isEmpty ? dep.modId : dep.name)
+                            Text(hiding: dep.name.isEmpty ? dep.modId : dep.name)
                                 .foregroundStyle(palette.textPrimary)
                             if let why = dep.reason ?? dep.rangeText {
                                 Hint(text: why, palette: palette)
@@ -604,9 +604,9 @@ struct ContentView: View {
             }
             if !list.oddSetups.isEmpty {
                 CardBox(palette: palette) {
-                    Text(verbatim: model.t("sides.odd_title")).foregroundStyle(palette.tone(.warning))
+                    Text(hiding: model.t("sides.odd_title")).foregroundStyle(palette.tone(.warning))
                     ForEach(list.oddSetups, id: \.text) { odd in
-                        Text(verbatim: "• " + odd.text).font(.footnote).foregroundStyle(palette.tone(.warning))
+                        Text(hiding: "• " + odd.text).font(.footnote).foregroundStyle(palette.tone(.warning))
                     }
                 }
             }
@@ -717,29 +717,29 @@ struct ContentView: View {
             }
         }
         return CardBox(palette: palette) {
-            Text(verbatim: mod.name.isEmpty ? mod.filename : mod.name)
+            Text(hiding: mod.name.isEmpty ? mod.filename : mod.name)
                 .font(.headline)
                 .foregroundStyle(palette.textPrimary)
-            Text(verbatim: (mod.version.isEmpty ? model.t("value.unknown") : mod.version) + " · " + model.t(status.key))
+            Text(hiding: (mod.version.isEmpty ? model.t("value.unknown") : mod.version) + " · " + model.t(status.key))
                 .font(.footnote)
                 .foregroundStyle(status.tone == .neutral ? palette.textSecondary : palette.tone(status.tone))
             ForEach(Content.problems(mod), id: \.self) { problem in
-                Text(verbatim: problem)
+                Text(hiding: problem)
                     .font(.footnote)
                     .foregroundStyle(palette.tone(mod.status == "error" ? .danger : .warning))
             }
             if let newer = Content.newer(strings, mod) {
-                Text(verbatim: newer)
+                Text(hiding: newer)
                     .font(.footnote)
                     .foregroundStyle(palette.accentInk)
             }
             if mod.addedByYou == true {
-                Text(verbatim: model.t("linked.added_by_you"))
+                Text(hiding: model.t("linked.added_by_you"))
                     .font(.footnote)
                     .foregroundStyle(palette.textSecondary)
             }
             if let side = Sides.words(strings, mod) {
-                Text(verbatim: side)
+                Text(hiding: side)
                     .font(.footnote)
                     .foregroundStyle(palette.textSecondary)
             }
@@ -762,20 +762,20 @@ struct ContentView: View {
             CardBox(palette: palette) {
                 Hint(text: model.t("sides.players_intro"), palette: palette)
                 if files.isEmpty {
-                    Text(verbatim: model.t("sides.players_none")).foregroundStyle(palette.textSecondary)
+                    Text(hiding: model.t("sides.players_none")).foregroundStyle(palette.textSecondary)
                 }
                 ForEach(files) { file in
                     let name = file.name.isEmpty ? file.filename : file.name
-                    Text(verbatim: name).font(.headline).foregroundStyle(palette.textPrimary)
-                    Text(verbatim: [file.version, model.t(file.kind == "mod" ? "sides.kind_mod" : "sides.kind_pack"), file.filename]
+                    Text(hiding: name).font(.headline).foregroundStyle(palette.textPrimary)
+                    Text(hiding: [file.version, model.t(file.kind == "mod" ? "sides.kind_mod" : "sides.kind_pack"), file.filename]
                         .filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.footnote)
                         .foregroundStyle(palette.textSecondary)
                     if file.changed {
-                        Text(verbatim: model.t("sides.changed")).font(.footnote).foregroundStyle(palette.tone(.warning))
+                        Text(hiding: model.t("sides.changed")).font(.footnote).foregroundStyle(palette.tone(.warning))
                     }
                     if file.missing {
-                        Text(verbatim: model.t("sides.missing")).font(.footnote).foregroundStyle(palette.tone(.warning))
+                        Text(hiding: model.t("sides.missing")).font(.footnote).foregroundStyle(palette.tone(.warning))
                         if manage && file.site == "modrinth" {
                             Presses(presses: [
                                 Press(title: model.t("sides.get_again"), enabled: idle) {
@@ -893,7 +893,7 @@ struct ContentView: View {
             HStack(alignment: .top, spacing: 12) {
                 ModIcon(icons: model.icons, url: hit.iconUrl, palette: palette)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(verbatim: hit.title.isEmpty ? hit.slug : hit.title)
+                    Text(hiding: hit.title.isEmpty ? hit.slug : hit.title)
                         .font(.headline)
                         .foregroundStyle(palette.textPrimary)
                     ForEach(details, id: \.self) { line in
@@ -966,10 +966,10 @@ struct ContentView: View {
             result += ": " + detail
         }
         return CardBox(palette: palette) {
-            Text(verbatim: Content.action(strings, row) + ": " + Content.historyName(strings, row))
+            Text(hiding: Content.action(strings, row) + ": " + Content.historyName(strings, row))
                 .foregroundStyle(palette.textPrimary)
             Hint(text: details.joined(separator: " · "), palette: palette)
-            Text(verbatim: result)
+            Text(hiding: result)
                 .font(.footnote)
                 .foregroundStyle(palette.tone(Content.historyTone(row)))
         }
@@ -1057,12 +1057,12 @@ struct ContentView: View {
             model.t(addon.enabled ? "addons.on" : "addons.off"),
         ]
         return CardBox(palette: palette) {
-            Text(verbatim: addon.name.isEmpty ? addon.folder : addon.name)
+            Text(hiding: addon.name.isEmpty ? addon.folder : addon.name)
                 .font(.headline)
                 .foregroundStyle(palette.textPrimary)
             Hint(text: details.joined(separator: " · "), palette: palette)
             if let description = addon.description, !description.isEmpty {
-                Text(verbatim: String(description.prefix(200)))
+                Text(hiding: String(description.prefix(200)))
                     .font(.footnote)
                     .foregroundStyle(palette.textPrimary)
             }
@@ -1252,8 +1252,8 @@ private struct VersionsSheet: View {
                     }
                     ForEach(list) { version in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(verbatim: version.version ?? version.filename)
-                            Text(verbatim: details(version, strings))
+                            Text(hiding: version.version ?? version.filename)
+                            Text(hiding: details(version, strings))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             if canChange && Content.canRollBack(version) {
@@ -1320,7 +1320,7 @@ private struct UpdateAllSheet: View {
                         Text(model.t("mobile.content.update_all_none"))
                     }
                     if let blocked = blocked {
-                        Text(verbatim: blocked).foregroundStyle(.orange)
+                        Text(hiding: blocked).foregroundStyle(.orange)
                     }
                 }
                 Section {
@@ -1332,8 +1332,8 @@ private struct UpdateAllSheet: View {
                             }
                         )) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(verbatim: row.name.isEmpty ? row.filename : row.name)
-                                Text(verbatim: Content.change(strings, row.installedVersion, row.latestVersion))
+                                Text(hiding: row.name.isEmpty ? row.filename : row.name)
+                                Text(hiding: Content.change(strings, row.installedVersion, row.latestVersion))
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                                 if !row.enabled {
@@ -1394,7 +1394,7 @@ private struct InstallSheet: View {
                 if let version = version {
                     Section {
                         ForEach(Install.facts(strings, project, version), id: \.self) { fact in
-                            Text(verbatim: fact)
+                            Text(hiding: fact)
                         }
                         Text(model.t("mods.install_checked"))
                             .font(.footnote)
@@ -1456,7 +1456,7 @@ private struct MissingSheet: View {
                 if !plan.items.isEmpty {
                     Section(strings.tn("mobile.content.missing_plan", count: plan.items.count)) {
                         ForEach(Array(plan.items.enumerated()), id: \.offset) { _, item in
-                            Text(verbatim: line(item, strings))
+                            Text(hiding: line(item, strings))
                         }
                     }
                 }
@@ -1508,13 +1508,13 @@ private struct PackUpdateSheet: View {
                 if !problems.isEmpty {
                     Section(model.t("pack.cant_import")) {
                         ForEach(problems, id: \.self) { problem in
-                            Text(verbatim: problem).foregroundStyle(.red)
+                            Text(hiding: problem).foregroundStyle(.red)
                         }
                     }
                 } else {
                     Section {
                         ForEach(LinkedPacks.changes(strings, read.changes), id: \.self) { line in
-                            Text(verbatim: line)
+                            Text(hiding: line)
                         }
                         if !read.changes.configsChangedByYou.isEmpty {
                             Toggle(model.t("linked.use_pack_configs"), isOn: $usePackConfigs)
@@ -1522,7 +1522,7 @@ private struct PackUpdateSheet: View {
                     }
                     Section {
                         ForEach(LinkedPacks.steps(strings, read), id: \.self) { step in
-                            Text(verbatim: step)
+                            Text(hiding: step)
                         }
                     }
                 }
@@ -1570,20 +1570,20 @@ private struct MakeModpackSheet: View {
                     if !options.playersLoaders.isEmpty {
                         Picker(model.t("make.loader"), selection: $loader) {
                             ForEach(options.playersLoaders, id: \.id) { choice in
-                                Text(verbatim: choice.name).tag(choice.id)
+                                Text(hiding: choice.name).tag(choice.id)
                             }
                         }
                     }
                 }
                 Section {
                     Toggle(model.t("make.leave_out"), isOn: $leaveOut)
-                    Text(verbatim: model.t("make.leave_out_hint")).font(.footnote).foregroundStyle(.secondary)
+                    Text(hiding: model.t("make.leave_out_hint")).font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
                     // Greyed until the join check (the Companion mod) exists.
                     Toggle(model.t("make.required"), isOn: $required).disabled(!options.requiredToJoin)
                     if !options.requiredToJoin {
-                        Text(verbatim: model.t("make.required_later")).font(.footnote).foregroundStyle(.secondary)
+                        Text(hiding: model.t("make.required_later")).font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 Section(model.t(options.configs.isEmpty ? "make.no_configs" : "make.configs")) {
@@ -1637,7 +1637,7 @@ private struct ModrinthProjectSheet: View {
     var body: some View {
         let strings = model.strings
         Form {
-            if ask.jar != nil { Text(verbatim: model.t("modrinth.own_jar_pick")) }
+            if ask.jar != nil { Text(hiding: model.t("modrinth.own_jar_pick")) }
             TextField(model.t("modrinth.slug_prompt"), text: $slug)
                 .textInputAutocapitalization(.never)
             TextField(model.t("modrinth.summary_prompt"), text: $summary)
@@ -1739,9 +1739,9 @@ private struct ModpackSheet: View {
             let loader = [pack.typeName, pack.loaderVersion].compactMap { $0 }.joined(separator: " ")
             List {
                 Section {
-                    Text(verbatim: model.t("pack.minecraft") + ": " + (pack.minecraftVersion ?? unknown))
-                    Text(verbatim: model.t("pack.loader") + ": " + (loader.isEmpty ? unknown : loader))
-                    Text(verbatim: model.t("pack.files") + ": " + model.t("pack.files_value", [
+                    Text(hiding: model.t("pack.minecraft") + ": " + (pack.minecraftVersion ?? unknown))
+                    Text(hiding: model.t("pack.loader") + ": " + (loader.isEmpty ? unknown : loader))
+                    Text(hiding: model.t("pack.files") + ": " + model.t("pack.files_value", [
                         "count": pack.downloadCount, "size": Display.bytes(strings, pack.downloadBytes),
                     ]))
                     if inspected.versionChange {
@@ -1752,7 +1752,7 @@ private struct ModpackSheet: View {
                 if !pack.problems.isEmpty {
                     Section(model.t("pack.cant_import")) {
                         ForEach(pack.problems, id: \.self) { problem in
-                            Text(verbatim: problem).foregroundStyle(.red)
+                            Text(hiding: problem).foregroundStyle(.red)
                         }
                     }
                 }
@@ -1762,18 +1762,18 @@ private struct ModpackSheet: View {
                 if !pack.skippedOverrides.isEmpty {
                     Text(model.t("pack.skipped_extras", ["names": pack.skippedOverrides.joined(separator: ", ")]))
                 }
-                ForEach(Modpacks.notes(strings, pack), id: \.self) { Text(verbatim: $0).foregroundStyle(.orange) }
+                ForEach(Modpacks.notes(strings, pack), id: \.self) { Text(hiding: $0).foregroundStyle(.orange) }
                 if pack.canImport {
                     Section(model.t("mobile.content.modpack_failed_note")) {
                         ForEach(Modpacks.steps(strings, inspected), id: \.self) { step in
-                            Text(verbatim: step)
+                            Text(hiding: step)
                         }
                     }
                 }
                 Section(model.t("pack.all_files", ["count": pack.files.count])) {
                     ForEach(Array(pack.files.prefix(200).enumerated()), id: \.offset) { _, file in
                         let status = Modpacks.fileStatus(file)
-                        Text(verbatim: "\(file.name) · \(model.t(status.key))" + (file.reason.map { " (\($0))" } ?? ""))
+                        Text(hiding: "\(file.name) · \(model.t(status.key))" + (file.reason.map { " (\($0))" } ?? ""))
                             .font(.footnote)
                             .foregroundStyle(status.tone == .danger ? Color.red : Color.secondary)
                     }

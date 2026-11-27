@@ -46,7 +46,7 @@ struct WorldImportCards: View {
                 SectionTitle(text: model.t("import.from_saves"), palette: palette)
                 CardBox(palette: palette) {
                     ForEach(saves, id: \.path) { save in
-                        Text(verbatim: save.folder)
+                        Text(hiding: save.folder)
                             .foregroundStyle(palette.textPrimary)
                         Hint(text: Display.ago(strings, save.modified, now: now), palette: palette)
                         Presses(presses: [
@@ -119,14 +119,14 @@ struct WorldReadSheet: View {
         List {
             Section {
                 ForEach(WorldImport.facts(strings, read.world), id: \.0) { fact in
-                    LabeledContent(fact.0) { Text(verbatim: fact.1) }
+                    LabeledContent(fact.0) { Text(hiding: fact.1) }
                 }
             }
             let lines = WorldImport.lines(strings, read)
             if !lines.isEmpty {
                 Section {
                     ForEach(lines, id: \.text) { line in
-                        Text(verbatim: line.text).foregroundStyle(tone(line.tone))
+                        Text(hiding: line.text).foregroundStyle(tone(line.tone))
                     }
                 }
             }

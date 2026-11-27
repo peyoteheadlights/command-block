@@ -681,6 +681,39 @@ final class ContentPages {
         fieldProblems[key] = nil
     }
 
+    // MARK: - Server icon
+
+    /// The server icon as base64 PNG; nil while unknown or when there is none.
+    private(set) var icon: String? = nil
+
+    func loadIcon() async {
+        guard let client = client() else { return }
+        do {
+            icon = try await client.serverIcon(serverId: serverId)
+        } catch let problem as AgentError {
+            noted(problem)
+        } catch {}
+    }
+
+    /// `png` is already 64 x 64 (IconCard makes it). Undo is the server's
+    /// own Undo, like every change the agent backs up first.
+    func saveIcon(_ png: String, _ strings: Strings) async {
+        await work("icon", strings, reload: { await self.loadGame() }) { client, id in
+            let done = try await client.saveServerIcon(serverId: id, png: png)
+            self.icon = png
+            let restart = done.running ? " " + strings.t("motd.icon_restart") : ""
+            return Said(text: strings.t("motd.icon_saved") + restart, good: true)
+        }
+    }
+
+    func removeIcon(_ strings: Strings) async {
+        await work("icon", strings, reload: { await self.loadGame() }) { client, id in
+            _ = try await client.removeServerIcon(serverId: id)
+            self.icon = nil
+            return Said(text: strings.t("motd.icon_removed"), good: true)
+        }
+    }
+
     /// The value a field shows now: what was typed, else what the file says.
     func shown(_ field: GameSetting) -> String {
         edits[field.key] ?? GameForm.initial(field)

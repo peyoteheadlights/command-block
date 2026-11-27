@@ -113,7 +113,7 @@ struct AlertRowView: View {
                 HStack(spacing: 6) {
                     ColorBadge(hex: serverColor, size: 10)
                     Text(model.serverName(alert.serverId))
-                    Text(verbatim: "·")
+                    Text(hiding: "·")
                         .accessibilityHidden(true)
                     TimelineView(.periodic(from: .now, by: 60)) { context in
                         Text(Display.ago(model.strings, alert.ts, now: context.date.timeIntervalSince1970))

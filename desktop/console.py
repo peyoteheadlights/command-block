@@ -11,6 +11,7 @@ from urllib.parse import quote
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton, QWidget
 
+from . import streamer
 from .agent import AgentError
 from .ui import Page, label, push, refill
 from .words import text
@@ -126,7 +127,7 @@ class ConsolePage(Page):
 
     def show_lines(self) -> None:
         lines = self.shown()
-        self.log.setPlainText("\n".join(lines))
+        self.log.setPlainText(streamer.shown("\n".join(lines)))
         if not lines:
             needle = self.filter.text()
             self.log.setPlaceholderText(
@@ -150,7 +151,7 @@ class ConsolePage(Page):
         needle = self.filter.text().lower()
         if self.pause.isChecked() or (needle and needle not in raw.lower()):
             return
-        self.log.appendPlainText(raw)
+        self.log.appendPlainText(streamer.shown(raw))
         self.to_bottom()
 
     # ------------------------------------------------------------ the buttons

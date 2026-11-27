@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import motd
 from .agent import AgentError
 from .editor import edit_file
 from .overview import card
@@ -215,7 +216,9 @@ class SettingsPage(Page):
                     self.slots[slot] = QVBoxLayout()
                     sliders.addLayout(self.slots[slot], 1)
                 column.addLayout(sliders)
-            for slot in [key] + {"server": ["manage"], "game": ["raw", "files"]}.get(key, []):
+            for slot in [key] + {"server": ["manage"], "game": ["list", "raw", "files"]}.get(
+                key, []
+            ):
                 self.slots[slot] = QVBoxLayout()
                 self.slots[slot].setSpacing(4)
                 column.addLayout(self.slots[slot])
@@ -1018,6 +1021,7 @@ class SettingsPage(Page):
     def game_failed(self, exc: Exception) -> None:
         self.problem("game", exc)
         refill(self.slots["raw"], [])
+        refill(self.slots["list"], [])
 
     def show_banner(self, data: dict) -> None:
         banner = getattr(self, "banner", None)
@@ -1041,6 +1045,11 @@ class SettingsPage(Page):
             refill(self.slots["view"], [self.view_distance(view)])
         else:
             refill(self.slots["view"], [])
+        # The MOTD (a Bedrock server's name) has its own card, with colours.
+        shown_in_list = fields.pop("motd", None) or fields.pop("server-name", None)
+        refill(
+            self.slots["list"], [motd.list_card(self, shown_in_list, data)] if shown_in_list else []
+        )
         reads: dict[str, tuple[Callable[[], Any], Any, dict]] = {}
         errors: dict[str, QLabel] = {}
         for group, keys in GROUPS:
@@ -1356,19 +1365,44 @@ class SettingsPage(Page):
             if not current:  # the slider only shows where it starts: say nothing is set
                 layout.addWidget(label(text("memory.unset"), "sub"))
         if mode["technical"]:
-            args = QLineEdit(" ".join(data.get("jvm_args") or []))
+            before = list(data.get("jvm_args") or [])
+            args = QLineEdit(" ".join(before))
             args.setEnabled(editable)
             layout.addWidget(field(text("memory.raw_args"), args, text("memory.raw_hint")))
+            layout.addWidget(label(text("memory.raw_warning"), "notice"))
             if editable:
-                self.save_button(
-                    layout,
-                    lambda: (
-                        {"server.jvm_args": args.text().split()}
-                        if args.text().split() != (data.get("jvm_args") or [])
-                        else {}
-                    ),
-                    "memory.save_raw",
-                )
+                said = label(kind="sub")
+                row = QHBoxLayout()
+                button = push(text("memory.save_raw"), "tonal")
+                row.addWidget(button)
+                row.addWidget(said, 1)
+                layout.addLayout(row)
+
+                def put(values: list[str], words: str, undo: bool) -> None:
+                    def done(result: dict) -> None:
+                        refused = (result.get("rejected") or {}).get("server.jvm_args")
+                        if refused:
+                            said.setText(refused)
+                            return
+                        back = (lambda: put(before, "memory.raw_undone", False)) if undo else None
+                        self.done(text(words))
+                        self.say(text(words), back)
+
+                    self.ask(
+                        "PUT",
+                        "/settings",
+                        done,
+                        lambda exc: said.setText(str(exc)),
+                        body={"updates": {"server.jvm_args": values}},
+                    )
+
+                def save_args() -> None:
+                    if args.text().split() == before:
+                        said.setText(text("settings.nothing_changed"))
+                        return
+                    put(args.text().split(), "memory.raw_saved", True)
+
+                button.clicked.connect(save_args)
         refill(self.slots["memory"], [frame])
 
     # ------------------------------------------------------------ version and Bedrock players

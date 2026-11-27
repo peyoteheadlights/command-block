@@ -302,6 +302,10 @@ class GameSettingsRawRequest(BaseModel):
     text: str = Field(max_length=256 * 1024)
 
 
+class ServerIconRequest(BaseModel):
+    png: str = Field(min_length=1, max_length=360 * 1024, description="The PNG, in base64")
+
+
 class PlayerActionRequest(BaseModel):
     action: Literal["whitelist_add", "whitelist_remove", "op", "deop", "kick", "ban", "pardon"]
     name: str = Field(min_length=1, max_length=32)

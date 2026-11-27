@@ -22,7 +22,7 @@ struct Hint: View {
     let palette: Palette
 
     var body: some View {
-        Text(verbatim: text)
+        Text(hiding: text)
             .font(.footnote)
             .foregroundStyle(palette.textSecondary)
     }
@@ -341,11 +341,11 @@ struct BackupsView: View {
         }
 
         return CardBox(palette: palette) {
-            Text(verbatim: model.technical ? backup.name : when)
+            Text(hiding: model.technical ? backup.name : when)
                 .font(.headline)
                 .foregroundStyle(palette.textPrimary)
             Hint(text: details.joined(separator: " · "), palette: palette)
-            Text(verbatim: model.t("offsite.col") + ": " + copy.text)
+            Text(hiding: model.t("offsite.col") + ": " + copy.text)
                 .font(.footnote)
                 .foregroundStyle(copy.tone == .neutral ? palette.textSecondary : palette.tone(copy.tone))
             Presses(presses: presses, palette: palette)
@@ -371,7 +371,7 @@ struct BackupsView: View {
                     Hint(text: model.t("leftout.none"), palette: palette)
                 }
                 ForEach(size.excluded, id: \.path) { folder in
-                    Text(verbatim: folder.path + " · " + Display.bytes(strings, folder.sizeBytes))
+                    Text(hiding: folder.path + " · " + Display.bytes(strings, folder.sizeBytes))
                         .foregroundStyle(palette.textPrimary)
                     Presses(presses: [
                         Press(title: model.t("leftout.put_back"), enabled: busy == nil) {
@@ -380,7 +380,7 @@ struct BackupsView: View {
                     ], palette: palette)
                 }
                 ForEach(size.suggested, id: \.path) { tip in
-                    Text(verbatim: model.t("leftout.suggest", ["name": tip.name ?? "", "path": tip.path, "size": Display.bytes(strings, tip.sizeBytes)]))
+                    Text(hiding: model.t("leftout.suggest", ["name": tip.name ?? "", "path": tip.path, "size": Display.bytes(strings, tip.sizeBytes)]))
                         .foregroundStyle(palette.textPrimary)
                     Presses(presses: [
                         Press(title: model.t("leftout.leave_out"), enabled: busy == nil) {
@@ -510,7 +510,7 @@ struct BackupsView: View {
             } else if folder.isEmpty {
                 Hint(text: model.t("offsite.off"), palette: palette)
             } else if let reason = offsite?.unavailable {
-                Text(verbatim: model.t("offsite.folder_unavailable", ["folder": folder, "reason": reason]))
+                Text(hiding: model.t("offsite.folder_unavailable", ["folder": folder, "reason": reason]))
                     .font(.footnote)
                     .foregroundStyle(palette.tone(.warning))
             } else {
@@ -540,7 +540,7 @@ struct BackupsView: View {
                     let last = w.lastBackup?.createdAt.map { Display.ago(strings, $0, now: now) } ?? model.t("time.never")
                     let lastText = model.technical && w.lastBackup?.name != nil ? "\(w.lastBackup?.name ?? "") (\(last))" : last
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(verbatim: w.label)
+                        Text(hiding: w.label)
                             .foregroundStyle(palette.textPrimary)
                         Hint(
                             text: !w.exists ? model.t("backups.world_missing") : [

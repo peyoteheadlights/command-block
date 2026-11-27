@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -90,6 +91,91 @@ def view(ctx: ServerContext) -> dict[str, Any]:
         **data,
         "running": ctx.server.running,
         "restart_needed": waiting_for_restart(ctx, data["modified_at"]),
+        "icon": None if _bedrock(ctx) else (directory / ICON).is_file(),
+    }
+
+
+# ----------------------------------------------------------------- server icon
+# The picture Java servers show next to their name in the server list. The
+# apps resize the picked picture to 64 x 64 and send a PNG; Minecraft only
+# reads it when the server starts, and ignores any other size.
+ICON = "server-icon.png"
+ICON_SIZE = 64
+ICON_MAX_BYTES = 256 * 1024
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _bedrock(ctx: ServerContext) -> bool:
+    return ctx.config.server_type.edition == "bedrock"
+
+
+def check_icon(data: bytes) -> None:
+    """Raise PropertiesError unless ``data`` is a 64 x 64 PNG. Read from the
+    PNG's own header (its first chunk, IHDR, holds the width and height)."""
+    if len(data) > ICON_MAX_BYTES:
+        raise properties.PropertiesError("The picture is too big. A server icon is a few KB.")
+    if not data.startswith(PNG_SIGNATURE) or data[12:16] != b"IHDR":
+        raise properties.PropertiesError("This isn't a PNG picture.")
+    width, height = struct.unpack(">II", data[16:24])
+    if (width, height) != (ICON_SIZE, ICON_SIZE):
+        raise properties.PropertiesError(
+            f"A server icon has to be {ICON_SIZE} x {ICON_SIZE} pixels. "
+            f"This one is {width} x {height}."
+        )
+
+
+def icon_path(ctx: ServerContext) -> Path | None:
+    path = ctx.config.server_dir / ICON
+    return path if not _bedrock(ctx) and path.is_file() else None
+
+
+async def save_icon(ctx: ServerContext, data: bytes | None, user: str = "system") -> dict[str, Any]:
+    """Put ``data`` in as server-icon.png, or take the icon away (None).
+    Through the safe-change routine, so Undo puts the old icon back."""
+    if _bedrock(ctx):
+        raise properties.PropertiesError("Bedrock servers don't show a server icon.")
+    if data is not None:
+        check_icon(data)
+    path = ctx.config.server_dir / ICON
+    title = "Changing the server icon" if data is not None else "Removing the server icon"
+
+    async def change(job: JobHandle | None) -> dict[str, Any]:
+        def write() -> None:
+            if data is None:
+                path.unlink(missing_ok=True)
+                return
+            temporary = path.with_name(ICON + ".tmp")
+            temporary.write_bytes(data)
+            os.replace(temporary, path)
+
+        await asyncio.to_thread(write)
+        return {}
+
+    async def check(_result: dict[str, Any]) -> tuple[bool, str]:
+        now = path.read_bytes() if path.is_file() else None
+        return (now == data), ("Read back as saved" if now == data else "Didn't read back")
+
+    plan = SafeChange(
+        title=title,
+        change=change,
+        check=check,
+        stop_server=False,
+        take_backup=path.is_file(),
+        backup_name="pre-server-icon",
+        backup_includes=[ICON],
+    )
+
+    async def run(job: JobHandle | None) -> dict[str, Any]:
+        return await run_safe_change(ctx.server, ctx.backups, plan, job=job, user=user)
+
+    _, outcome = await ctx.core.jobs.run(
+        "server_icon", f"{title} on {ctx.name}", run, server_id=ctx.server_id, risky=True, user=user
+    )
+    return {
+        "ok": True,
+        "icon": data is not None,
+        "undo": outcome.get("undo"),
+        "running": ctx.server.running,
     }
 
 

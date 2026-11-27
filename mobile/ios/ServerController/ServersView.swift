@@ -115,7 +115,7 @@ struct ServersListView: View {
                             .foregroundStyle(model.basePalette(colorScheme).tone(.success))
                             .accessibilityHidden(true)
                         Text(model.t("mobile.servers.live"))
-                        Text(verbatim: "·")
+                        Text(hiding: "·")
                             .accessibilityHidden(true)
                     }
                     Text(model.t("mobile.servers.checked", [
@@ -175,7 +175,7 @@ struct ServerRowView: View {
                 HStack(spacing: 6) {
                     Text(model.t(words.key))
                         .foregroundStyle(model.basePalette(colorScheme).tone(words.tone))
-                    Text(verbatim: "·")
+                    Text(hiding: "·")
                         .foregroundStyle(.secondary)
                         .accessibilityHidden(true)
                     Image(systemName: "person.2")

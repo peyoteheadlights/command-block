@@ -65,7 +65,7 @@ struct ConsoleView: View {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     note(palette, shown: lines.count)
                     ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                        Text(verbatim: line.raw)
+                        Text(hiding: line.raw)
                             .font(.system(.footnote, design: .monospaced))
                             .foregroundStyle(color(ConsoleBuffer.look(line), palette))
                             .textSelection(.enabled)

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ... import serveruser
 from ...config import ConfigError
 from ...events import Event
+from ...minecraft.java import jvm_args_problem
 from ...mods import store
 from ...security.auth import Principal
 from ...security.permissions import PC_SETTINGS, require
@@ -87,6 +88,11 @@ async def update_settings(
         if not any(key == p or key.startswith(p) for p in SETTABLE_PREFIXES):
             rejected[key] = "This setting can't be changed here."
             continue
+        if key == "server.jvm_args":
+            found = jvm_args_problem(value, owner=True)
+            if found:
+                rejected[key] = found
+                continue
         previous = core.config.get(key)
         core.config.set(key, value)
         try:

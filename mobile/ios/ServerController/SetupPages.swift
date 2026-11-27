@@ -447,16 +447,22 @@ final class SetupPages {
         return false
     }
 
+    /// The Java options from before the last save, while Undo can put them back.
+    private(set) var argsBefore: [String]? = nil
+
     /// Saves the Java options typed in Technical mode, then reads the form
-    /// and the memory card again so both show them.
-    func saveJavaOptions(_ args: [String], _ strings: Strings) async {
+    /// and the memory card again so both show them. `undoing`: putting the
+    /// old ones back, which can't itself be undone.
+    func saveJavaOptions(_ args: [String], _ strings: Strings, undoing: Bool = false) async {
         guard let client = client(), busy == nil else { return }
+        let before = memory.value?.jvmArgs
         busy = "java"
         said = nil
         do {
             let done = try await client.saveServerSettings(serverId: serverId, updates: ["server.jvm_args": .array(args.map { .string($0) })])
             let refused = done.rejected["server.jvm_args"]
-            said = Said(text: refused ?? strings.t("mobile.raw.args_saved"), good: refused == nil)
+            said = Said(text: refused ?? strings.t(undoing ? "memory.raw_undone" : "mobile.raw.args_saved"), good: refused == nil)
+            argsBefore = refused == nil && !undoing ? before : nil
             busy = nil
             await loadMemory()
             await loadSettings()
