@@ -21,6 +21,8 @@ Launcher and our own "New server from a modpack" read):
     only name Fabric, Quilt, Forge or NeoForge. The players' loader is
     picked (Fabric by default)
 
+It also writes the Companion's settings from it (agent/companion.py).
+
 "Leave out server-only mods" drops every Server entry, every
 ``server-overrides/`` file and command-block.json, so players get a
 smaller file.
@@ -48,6 +50,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from . import companion
 from .discord.client import DiscordError
 from .modpack import INDEX, MAX_PACK_BYTES, SERVER_NOTE, ModpackError
 from .mods import sides
@@ -102,6 +105,7 @@ class Item:
     site: str | None = None  # a plugin's site, for command-block.json
     sha1: str = ""
     sha512: str = ""
+    sha256: str = ""  # for the Companion's check (agent/companion.py)
     size: int = 0
     url: str | None = None  # a site's own download link
     need: dict[str, Any] | None = None  # CurseForge: its author says no
@@ -130,6 +134,8 @@ def config_files(ctx: ServerContext) -> list[dict[str, Any]]:
                 suffix = path.suffix.lower()
                 if path.is_symlink() or suffix in EXECUTABLE_EXTENSIONS or suffix == ".jar":
                     continue
+                if path.relative_to(base).as_posix() == companion.MODS_FILE:
+                    continue  # the server's own check settings, not for players
                 size = path.stat().st_size
                 if size <= MAX_CONFIG_BYTES:
                     found.append({"path": path.relative_to(base).as_posix(), "size_bytes": size})
@@ -231,12 +237,14 @@ def _items(ctx: ServerContext) -> list[Item]:
 
 
 def _hash(item: Item) -> None:
-    sha1, sha512 = hashlib.sha1(), hashlib.sha512()
+    sha1, sha512, sha256 = hashlib.sha1(), hashlib.sha512(), hashlib.sha256()
     with item.source.open("rb") as handle:
         while chunk := handle.read(1024 * 1024):
             sha1.update(chunk)
             sha512.update(chunk)
+            sha256.update(chunk)
     item.sha1, item.sha512 = sha1.hexdigest(), sha512.hexdigest()
+    item.sha256 = sha256.hexdigest()
     item.size = item.source.stat().st_size
 
 
@@ -374,7 +382,8 @@ async def make(
     players_loader: str = "fabric",
     user: str = "system",
 ) -> dict[str, Any]:
-    """Make the modpack, as a job. Changes nothing on the server."""
+    """Make the modpack, as a job. On the server it only writes the
+    Companion's settings (agent/companion.py)."""
     if ctx.mods.server_type.edition == "bedrock":
         raise ModpackError("Bedrock servers can't make a modpack. Modpacks are for Java.")
     if not NAME_RE.match(name or "") or name != name.strip():
@@ -402,6 +411,7 @@ async def make(
         await asyncio.to_thread(hash_all)
         job.step("Asking Modrinth and CurseForge which files they have")
         await _look_up(ctx, items)
+        for_companion = companion.player_files(_server_dir(ctx), items)
         left_out = [i for i in items if leave_out_server_only and i.side == "server"]
         items = [i for i in items if i not in left_out]
         dependencies = await _dependencies(ctx, items, players_loader)
@@ -460,8 +470,16 @@ async def make(
         target = _folder(ctx) / f"{token}.mrpack"
         job.step("Writing the modpack", total=len(members) or None, unit="files")
         await asyncio.to_thread(_write, target, index, members, job)
+        extra = {
+            f"client-overrides/{companion.PLAYERS_FILE}": companion.players_file(name, version)
+        }
         if note:
-            await asyncio.to_thread(_add_note, target, note)
+            extra[f"server-overrides/{SERVER_NOTE}"] = json.dumps(note, indent=1)
+        await asyncio.to_thread(_add_files, target, extra)
+        link = _link_on(ctx)
+        await asyncio.to_thread(
+            companion.write, base, server_type.content, name, version, for_companion, link
+        )
         return {
             "token": token,
             "files": len(files) + len(members),
@@ -515,9 +533,10 @@ def _link_on(ctx: ServerContext) -> str | None:
     return url(ctx, MODPACK_NAME)
 
 
-def _add_note(target: Path, note: dict[str, Any]) -> None:
+def _add_files(target: Path, files: dict[str, str]) -> None:
     with zipfile.ZipFile(target, "a", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(f"server-overrides/{SERVER_NOTE}", json.dumps(note, indent=1))
+        for name, text in files.items():
+            zf.writestr(name, text)
 
 
 # ---------------------------------------------------------------- the Discord bot
