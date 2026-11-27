@@ -240,7 +240,22 @@ data class CrossplayInfo(
     /** Only from a measured Tailscale address. */
     val address: String? = null,
     @SerialName("address_unknown") val addressUnknown: String? = null,
+    @SerialName("console_friends") val consoleFriends: ConsoleFriends? = null,
 )
+
+/** "Let console friends join": the MCXboxBroadcast add-on. */
+@Serializable
+data class ConsoleFriends(
+    val available: Boolean = false,
+    val on: Boolean = false,
+    /** Owner only: Microsoft's page and the code to type there. */
+    @SerialName("sign_in") val signIn: SignInCode? = null,
+    val gamertag: String? = null,
+    val problem: String? = null,
+)
+
+@Serializable
+data class SignInCode(val url: String = "", val code: String = "")
 
 /** A suggested name and folder for a copy of this server. */
 @Serializable

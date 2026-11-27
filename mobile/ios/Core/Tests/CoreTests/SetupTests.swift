@@ -613,4 +613,14 @@ final class SetupTests: XCTestCase {
         _ = try await c.showAllAgain()
         XCTAssertEqual(method(1), "DELETE")
     }
+
+    func testConsoleFriendsShowTheCodeThenTheGamertagFromTheAgent() throws {
+        XCTAssertEqual(ConsoleFriendsText.state(s, ConsoleFriends()), s.t("console.needs_crossplay"))
+        XCTAssertNil(ConsoleFriendsText.state(s, ConsoleFriends(available: true)))
+        let json = #"{"available": true, "enabled": true, "console_friends": {"available": true, "on": true, "sign_in": {"url": "https://www.microsoft.com/link", "code": "ABCD1234"}}}"#
+        let info = try JSONDecoder().decode(CrossplayInfo.self, from: Data(json.utf8))
+        XCTAssertTrue(ConsoleFriendsText.state(s, info.consoleFriends!)!.contains("ABCD1234"))
+        let done = ConsoleFriends(available: true, on: true, gamertag: "SpareTag")
+        XCTAssertTrue(ConsoleFriendsText.state(s, done)!.contains("SpareTag"))
+    }
 }

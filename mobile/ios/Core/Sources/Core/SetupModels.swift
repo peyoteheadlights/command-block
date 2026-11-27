@@ -763,9 +763,11 @@ public struct CrossplayInfo: Decodable, Equatable, Sendable {
     public var differences: [String]
     public var address: String?
     public var addressUnknown: String?
+    public var consoleFriends: ConsoleFriends?
 
     enum CodingKeys: String, CodingKey {
         case available, enabled, port, ready, differences, address
+        case consoleFriends = "console_friends"
         case unavailableReason = "unavailable_reason"
         case defaultPort = "default_port"
         case suggestedPort = "suggested_port"
@@ -774,7 +776,8 @@ public struct CrossplayInfo: Decodable, Equatable, Sendable {
         case addressUnknown = "address_unknown"
     }
 
-    public init(available: Bool = false, unavailableReason: String? = nil, enabled: Bool = false, port: Int? = nil, defaultPort: Int = 19132, suggestedPort: Int? = nil, usernamePrefix: String = "", missingMod: String? = nil, ready: Bool = false, differences: [String] = [], address: String? = nil, addressUnknown: String? = nil) {
+    public init(available: Bool = false, unavailableReason: String? = nil, enabled: Bool = false, port: Int? = nil, defaultPort: Int = 19132, suggestedPort: Int? = nil, usernamePrefix: String = "", missingMod: String? = nil, ready: Bool = false, differences: [String] = [], address: String? = nil, addressUnknown: String? = nil, consoleFriends: ConsoleFriends? = nil) {
+        self.consoleFriends = consoleFriends
         self.available = available
         self.unavailableReason = unavailableReason
         self.enabled = enabled
@@ -803,6 +806,7 @@ public struct CrossplayInfo: Decodable, Equatable, Sendable {
         differences = c.value(.differences, [])
         address = c.maybe(.address)
         addressUnknown = c.maybe(.addressUnknown)
+        consoleFriends = c.maybe(.consoleFriends)
     }
 }
 
@@ -1150,5 +1154,38 @@ public struct NewServerRequest: Equatable, Sendable {
         self.memoryMb = memoryMb
         self.color = color
         self.eulaAccepted = eulaAccepted
+    }
+}
+
+/// "Let console friends join": the MCXboxBroadcast add-on.
+public struct ConsoleFriends: Decodable, Equatable, Sendable {
+    public var available: Bool
+    public var on: Bool
+    /// Owner only: Microsoft's page and the code to type there.
+    public var signIn: SignInCode?
+    public var gamertag: String?
+    public var problem: String?
+
+    enum CodingKeys: String, CodingKey {
+        case available, on, gamertag, problem
+        case signIn = "sign_in"
+    }
+
+    public init(available: Bool = false, on: Bool = false, signIn: SignInCode? = nil, gamertag: String? = nil, problem: String? = nil) {
+        self.available = available
+        self.on = on
+        self.signIn = signIn
+        self.gamertag = gamertag
+        self.problem = problem
+    }
+}
+
+public struct SignInCode: Decodable, Equatable, Sendable {
+    public var url: String
+    public var code: String
+
+    public init(url: String, code: String) {
+        self.url = url
+        self.code = code
     }
 }
