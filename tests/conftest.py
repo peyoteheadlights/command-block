@@ -431,6 +431,15 @@ def agent_http(tmp_path, monkeypatch):
     )
     agent = LiveAgent(config)
     agent.start()
+    # Prices read just now, so the anti-cheat card on the Mods page doesn't
+    # ask Spiget (the real site, or a test's fake one that only knows its own hosts).
+    import time
+
+    from agent import anticheat
+
+    agent.app.state.core.db.set_setting(
+        anticheat.PRICES_SETTING, {"vulcan": {"tried_at": time.time()}}
+    )
     with httpx.Client(base_url=f"http://127.0.0.1:{agent.port}", timeout=15) as client:
         client.agent = agent  # type: ignore[attr-defined]
         yield client
