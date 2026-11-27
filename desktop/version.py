@@ -299,7 +299,7 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
         # is asked for when someone wants to change, not every time.
         show = push(text("desktop.typechange.version_opener"))
         check_button = push(text("version.check"))
-        change_button = push(text("version.change"), "primary")
+        change_button = push(text("version.change"), "tonal")
         for widget in (versions, snapshots, check_button, change_button):
             widget.setEnabled(False)
 
@@ -623,7 +623,7 @@ def world_copy(page: SettingsPage, layout: QVBoxLayout, current: dict, offer: di
         )
 
     kinds.currentIndexChanged.connect(lambda _i: load_versions())
-    go = push(text("desktop.typechange.copy"), "primary")
+    go = push(text("desktop.typechange.copy"), "tonal")
     go.clicked.connect(make)
     layout.addLayout(buttons(go))
     layout.addWidget(said)
@@ -698,7 +698,7 @@ def crossplay_card(page: SettingsPage, status: dict) -> QFrame:
         layout.addWidget(field(text("cross.port"), port, text("cross.port_hint")))
     said = label(kind="sub")
     on = not status.get("enabled")
-    turn = push(text("cross.turn_on" if on else "cross.turn_off"), "primary" if on else "")
+    turn = push(text("cross.turn_on" if on else "cross.turn_off"), "tonal" if on else "")
     turn.setEnabled(page.may("settings.server"))
 
     def switch() -> None:

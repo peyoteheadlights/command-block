@@ -436,7 +436,7 @@ class Segmented(QWidget):
         self.group.buttonToggled.connect(self._toggled)
 
     def sizeHint(self) -> QSize:
-        hints = [button.sizeHint() for button in self.buttons.values()]
+        hints = [b.sizeHint() for b in self.buttons.values() if not b.isHidden()]
         wide = max((h.width() for h in hints), default=0)
         tall = max((h.height() for h in hints), default=0)
         return QSize(len(hints) * wide + 4, tall + 4)
