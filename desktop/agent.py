@@ -36,6 +36,7 @@ class AgentError(Exception):
 
     problems: dict[str, str] = {}  # a form's reasons, by field, when the agent gave them
     line: int | None = None  # a refused settings file: the line it is about
+    status: int | None = None  # the agent's HTTP status, when it answered
 
 
 class Unreachable(AgentError):
@@ -203,6 +204,7 @@ class AgentClient:
             error.problems = found if isinstance(found, dict) else {}
             line = body.get("line") if isinstance(body, dict) else None
             error.line = line if isinstance(line, int) else None
+            error.status = response.status_code
             raise error
 
     def sign_in(self, username: str, password: str, remember: bool, device: str) -> dict:

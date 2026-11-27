@@ -151,7 +151,11 @@ def no_recent_backup(f: Facts) -> Recommendation | None:
 
 
 def no_backup_schedule(f: Facts) -> Recommendation | None:
-    if any(s.get("enabled") and s.get("task") == "backup" for s in f.schedules):
+    def backs_up(s: dict[str, Any]) -> bool:  # on its own or as one of its steps
+        steps = (s.get("payload") or {}).get("steps") or [] if s.get("task") == "steps" else [s]
+        return any(step.get("task") == "backup" for step in steps)
+
+    if any(s.get("enabled") and backs_up(s) for s in f.schedules):
         return None
     return Recommendation(
         id="no_backup_schedule",

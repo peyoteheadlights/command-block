@@ -178,6 +178,8 @@ def test_a_backup_older_than_a_week():
 def test_no_backup_schedule():
     assert ids(facts(schedules=[{"task": "backup", "enabled": 0}])) == ["no_backup_schedule"]
     assert ids(facts(schedules=[{"task": "restart", "enabled": 1}])) == ["no_backup_schedule"]
+    steps = {"task": "steps", "enabled": 1, "payload": {"steps": [{"task": "backup"}]}}
+    assert ids(facts(schedules=[steps])) == []
 
 
 # ------------------------------------------------------------------ crashes

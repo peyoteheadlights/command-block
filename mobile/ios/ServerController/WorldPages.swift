@@ -407,18 +407,36 @@ final class WorldPages {
         }
     }
 
+    /// A command the console asks "are you sure?" about, in the agent's
+    /// words, while the screen asks the person; nil otherwise.
+    private(set) var scheduleDanger: String?
+    @ObservationIgnored private var pendingSchedule: ((Bool) -> ScheduleBody)?
+
     /// Adds a schedule; true once the agent took it, to empty the form.
-    func addSchedule(name: String, task: String, kind: String, expr: String, _ strings: Strings) async -> Bool {
-        let tasks = schedules.value?.tasks ?? []
+    /// `body` makes what is sent, with or without "confirm" on its commands.
+    func addSchedule(_ body: @escaping (Bool) -> ScheduleBody, _ strings: Strings, confirm: Bool = false) async -> Bool {
         var added = false
         await work("add", strings, reload: loadSchedules) { client, id in
-            _ = try await client.addSchedule(
-                serverId: id, Schedules.newBody(strings, name: name, task: task, kind: kind, expr: expr, tasks: tasks)
-            )
+            do {
+                _ = try await client.addSchedule(serverId: id, body(confirm))
+            } catch AgentError.failed(let status, let reason, _, _) where status == 409 && !confirm {
+                pendingSchedule = body
+                scheduleDanger = reason ?? strings.t("value.unknown")
+                return nil
+            }
             added = true
             return Said(text: strings.t("schedules.created"), good: true)
         }
         return added
+    }
+
+    /// The person answered the "are you sure?" about a scheduled command.
+    func answerDanger(_ yes: Bool, _ strings: Strings) async -> Bool {
+        let body = pendingSchedule
+        scheduleDanger = nil
+        pendingSchedule = nil
+        guard yes, let body else { return false }
+        return await addSchedule(body, strings, confirm: true)
     }
 
     // MARK: - Performance
