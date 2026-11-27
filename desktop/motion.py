@@ -58,6 +58,8 @@ class Turn(QWidget):
         self.setGeometry(stack.rect())
         self.move_ = glide(self, TURN_MS, self._turn_to)
         self.move_.finished.connect(self.stop)
+        # Qt deletes a turn with its window, without calling stop.
+        self.destroyed.connect(lambda: self._forget())
         self._turn_to(0.0)
         self.show()
         self.raise_()
@@ -72,10 +74,13 @@ class Turn(QWidget):
 
     def stop(self) -> None:
         self.move_.stop()
-        if Turn.running is self:
-            Turn.running = None
+        self._forget()
         self.hide()
         self.deleteLater()
+
+    def _forget(self) -> None:
+        if Turn.running is self:
+            Turn.running = None
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
