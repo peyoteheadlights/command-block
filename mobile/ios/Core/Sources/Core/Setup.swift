@@ -24,6 +24,8 @@ public enum ServerForm {
         public let titleKey: String
         public let fields: [Field]
         public let noteKey: String?
+        /// Shown only in Technical mode.
+        public var technical: Bool = false
     }
 
     public static let GROUPS: [Group] = [
@@ -51,6 +53,10 @@ public enum ServerForm {
             Field("server.stop_timeout", "number", "serverset.stop_timeout", "serverset.stop_timeout_hint"),
             Field("server.autostart_minecraft", "bool", "mobile.serverset.autostart", "mobile.serverset.autostart_hint"),
         ], noteKey: nil),
+        Group(titleKey: "serverset.technical_running", fields: [
+            Field("monitor.ignored_exit_codes", "text", "serverset.ignored_codes", "serverset.ignored_codes_hint"),
+            Field("server.low_priority", "bool", "serverset.low_priority", "serverset.low_priority_hint"),
+        ], noteKey: nil, technical: true),
     ]
 
     public static let NAME = "server.name"

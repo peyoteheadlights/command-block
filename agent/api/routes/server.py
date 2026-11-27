@@ -33,6 +33,7 @@ from ..responses import (
     DiagnoseStarted,
     Diagnosis,
     Performance,
+    PerformanceCsv,
     Requested,
     ServerAction,
     ServerHealth,
@@ -399,6 +400,44 @@ async def performance(
         "thresholds": ctx.config.thresholds.to_dict(),
         "storage": await ctx.metrics.storage() if storage else None,
     }
+
+
+CSV_COLUMNS = (
+    ("time", "ts"),
+    ("pc_cpu_percent", "cpu_percent"),
+    ("pc_memory_mb", "ram_used_mb"),
+    ("server_memory_mb", "proc_ram_mb"),
+    ("tps", "tps"),
+    ("mspt", "mspt"),
+    ("players", "players"),
+)
+
+
+@router.get("/performance/csv", response_model=PerformanceCsv)
+async def performance_csv(
+    hours: float = 6,
+    principal: Principal = Depends(require(SERVER_VIEW)),
+    ctx=Depends(get_server),
+):
+    """The graphs' points as a CSV file's text, for a spreadsheet. A value
+    nobody measured is an empty cell, never 0."""
+    import csv
+    import io
+    from datetime import datetime
+
+    hours = max(0.1, min(hours, 168))
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(name for name, _ in CSV_COLUMNS)
+    for point in ctx.metrics.series(hours=hours)["points"]:
+        row = [datetime.fromtimestamp(point["ts"]).isoformat(timespec="seconds")]
+        for _, key in CSV_COLUMNS[1:]:
+            value = point.get(key)
+            row.append("" if value is None else f"{value:.1f}")
+        writer.writerow(row)
+    stamp = datetime.now().strftime("%Y-%m-%d-%H%M")
+    safe = "".join(c if c.isalnum() else "-" for c in ctx.name).strip("-") or "server"
+    return {"filename": f"{safe}-performance-{stamp}.csv", "text": out.getvalue()}
 
 
 @router.get("/health/server", response_model=ServerHealth)

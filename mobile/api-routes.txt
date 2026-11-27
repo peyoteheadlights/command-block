@@ -244,3 +244,8 @@ PUT /api/servers/{server_id}/gamerules
 GET /api/servers/{server_id}/console/commands
 GET /api/servers/{server_id}/logs/files
 GET /api/servers/{server_id}/logs/files/{name}
+GET /api/servers/{server_id}/performance/csv
+GET /api/servers/{server_id}/files
+POST /api/servers/{server_id}/files/upload
+# Server files: a file itself, not JSON. Download it from
+# GET /api/servers/{server_id}/files/download?path=...

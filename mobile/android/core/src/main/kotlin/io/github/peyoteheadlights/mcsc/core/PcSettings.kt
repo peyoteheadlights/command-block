@@ -186,6 +186,7 @@ object PcSettings {
     val THRESHOLDS = listOf(
         "cpu_percent" to "appset.cpu_alert",
         "ram_percent" to "appset.ram_alert",
+        "high_minutes" to "appset.high_minutes",
         "disk_free_gb" to "appset.disk_alert",
         "tps_min" to "appset.tps_alert",
         "mspt_max" to "appset.mspt_alert",
