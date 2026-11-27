@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
 from agent import API_VERSION, appinfo
 from agent import __version__ as APP_VERSION
 
-from . import icons, motion, self_update, streamer, theme
+from . import icons, motion, self_update, streamer, theme, ui
 from .agent import AgentClient, AgentError, SignedOut, Unreachable
 from .alerts import KEPT, PAGES, PC_PAGES, RESTART_FOR, NotificationsScreen
 from .backups import is_world
@@ -1756,6 +1756,7 @@ class MainWindow(FramelessWindow):
         return self.role in (None, "owner") or permission in self.allowed.get(server_id, [])
 
     def me_loaded(self, me: dict) -> None:
+        self.hidden_loaded(me)
         self.allowed = me.get("server_permissions") or {}
         self.role = me.get("role")
         self.user = me.get("user")
@@ -1828,6 +1829,7 @@ class MainWindow(FramelessWindow):
         self.sync_helper()
         self.show_unread()
         self.agent.token = None
+        ui.hidden.clear()  # the next account has its own
         self.pc.forget_sign_in(self.agent.place)
         screen = self.screens["Sign-in"]
         assert isinstance(screen, SignInScreen)
@@ -1842,6 +1844,19 @@ class MainWindow(FramelessWindow):
     def signed_out_anyway(self, exc: AgentError) -> None:
         # The agent couldn't be told, but this PC still forgets the sign-in.
         self.signed_out(str(exc))
+
+    # ------------------------------------------------------------ Don't show again
+    def hidden_loaded(self, answer: dict) -> None:
+        ui.hidden.clear()
+        ui.hidden.update(answer.get("hidden") or [])
+        ui.on_hide = self.hide_warning
+
+    def hide_warning(self, key: str) -> None:
+        self.run(
+            lambda: self.agent.call("POST", "/account/hidden", {"key": key}),
+            lambda _r: None,
+            lambda _e: None,
+        )
 
     # ------------------------------------------------------------ Simple and Technical
     def mode_loaded(self, prefs: dict) -> None:

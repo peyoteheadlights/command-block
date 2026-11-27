@@ -42,7 +42,7 @@ from .gamerules import RulesCard
 from .overview import card
 from .parts import BigNumber, Box, InfoDot, Segmented, SnapSlider, Switch
 from .server_files import FilesCard
-from .ui import Page, duration, field, label, push, refill, swatches
+from .ui import Page, duration, field, label, notice, push, refill, swatches
 from .version import crossplay_card, type_card, version_card
 from .words import mode, text
 
@@ -1432,7 +1432,7 @@ class SettingsPage(Page):
             args = QLineEdit(" ".join(before))
             args.setEnabled(editable)
             layout.addWidget(field(text("memory.raw_args"), args, text("memory.raw_hint")))
-            layout.addWidget(label(text("memory.raw_warning"), "notice"))
+            layout.addWidget(notice("memory.raw_warning"))
             if editable:
                 said = label(kind="sub")
                 row = QHBoxLayout()

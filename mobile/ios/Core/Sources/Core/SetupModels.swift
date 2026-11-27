@@ -1050,6 +1050,10 @@ public struct NewServerOptions: Decodable, Equatable, Sendable {
     public var color: String?
     public var palette: [PaletteColor]
     public var eulaUrl: String
+    /// This PC's first-run answer to "Who's this server for?"; empty: not picked.
+    public var playedBy: String
+    /// Kinds whose tips to show: vanilla, mods, plugins, bedrock.
+    public var kindTips: [String]
     public var bedrock: BedrockNewOptions
 
     enum CodingKeys: String, CodingKey {
@@ -1057,9 +1061,13 @@ public struct NewServerOptions: Decodable, Equatable, Sendable {
         case memoryMb = "memory_mb"
         case totalMb = "total_mb"
         case eulaUrl = "eula_url"
+        case playedBy = "played_by"
+        case kindTips = "kind_tips"
     }
 
-    public init(types: [ServerTypeInfo] = [], recommended: String = "", memoryMb: Int? = nil, totalMb: Int? = nil, color: String? = nil, palette: [PaletteColor] = [], eulaUrl: String = "", bedrock: BedrockNewOptions = BedrockNewOptions()) {
+    public init(types: [ServerTypeInfo] = [], recommended: String = "", memoryMb: Int? = nil, totalMb: Int? = nil, color: String? = nil, palette: [PaletteColor] = [], eulaUrl: String = "", playedBy: String = "", kindTips: [String] = [], bedrock: BedrockNewOptions = BedrockNewOptions()) {
+        self.playedBy = playedBy
+        self.kindTips = kindTips
         self.types = types
         self.recommended = recommended
         self.memoryMb = memoryMb
@@ -1079,8 +1087,15 @@ public struct NewServerOptions: Decodable, Equatable, Sendable {
         color = c.maybe(.color)
         palette = c.each(.palette)
         eulaUrl = c.value(.eulaUrl, "")
+        playedBy = c.value(.playedBy, "")
+        kindTips = c.value(.kindTips, [])
         bedrock = c.value(.bedrock, BedrockNewOptions())
     }
+}
+
+/// The warnings and tips this account hid.
+public struct Hidden: Decodable, Equatable, Sendable {
+    public var hidden: [String]
 }
 
 /// A brand-new server, set up and not started.
@@ -1119,8 +1134,14 @@ public struct NewServerRequest: Equatable, Sendable {
     public var memoryMb: Int?
     public var color: String?
     public var eulaAccepted: Bool
+    /// "Who's this server for?": friends, kids, community or empty.
+    public var playedBy: String
+    /// Friends' names for the whitelist (friends or kids only), added on the first start.
+    public var players: [String]
 
-    public init(name: String, directory: String, type: String, minecraft: String, loader: String?, memoryMb: Int?, color: String?, eulaAccepted: Bool) {
+    public init(name: String, directory: String, type: String, minecraft: String, loader: String?, memoryMb: Int?, color: String?, eulaAccepted: Bool, playedBy: String = "", players: [String] = []) {
+        self.playedBy = playedBy
+        self.players = players
         self.name = name
         self.directory = directory
         self.type = type

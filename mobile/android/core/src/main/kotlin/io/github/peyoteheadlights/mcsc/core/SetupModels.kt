@@ -307,8 +307,16 @@ data class NewServerOptions(
     val color: String? = null,
     val palette: List<PaletteColor> = emptyList(),
     @SerialName("eula_url") val eulaUrl: String = "",
+    /** This PC's first-run answer to "Who's this server for?"; empty: not picked. */
+    @SerialName("played_by") val playedBy: String = "",
+    /** Kinds whose tips to show: vanilla, mods, plugins, bedrock. */
+    @SerialName("kind_tips") val kindTips: List<String> = emptyList(),
     val bedrock: BedrockNewOptions = BedrockNewOptions(),
 )
+
+/** The warnings and tips this account hid. */
+@Serializable
+data class Hidden(val hidden: List<String> = emptyList())
 
 /** A brand-new server, set up and not started. */
 @Serializable
@@ -328,5 +336,9 @@ data class NewServerRequest(
     val memoryMb: Int?,
     val color: String?,
     val eulaAccepted: Boolean,
+    /** "Who's this server for?": friends, kids, community or empty. */
+    val playedBy: String = "",
+    /** Friends' names for the whitelist (friends or kids only), added on the first start. */
+    val players: List<String> = emptyList(),
 )
 

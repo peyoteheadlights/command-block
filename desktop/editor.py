@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 
 from .agent import AgentError
 from .parts import Row
-from .ui import label, push
+from .ui import label, notice, push
 from .words import mode, text
 
 if TYPE_CHECKING:
@@ -155,7 +155,7 @@ class FileEditor(QDialog):
         column = QVBoxLayout(self)
         column.addWidget(label(data["path"], "step"))
         if not mode["technical"]:
-            column.addWidget(label(text("desktop.files.careful"), "notice"))
+            column.addWidget(notice("desktop.files.careful"))
         self.hidden_row = QWidget()
         line = QHBoxLayout(self.hidden_row)
         line.setContentsMargins(0, 0, 0, 0)

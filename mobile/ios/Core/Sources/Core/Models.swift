@@ -64,9 +64,11 @@ public struct Me: Codable, Equatable, Sendable {
     /// What this account may do on each server it can see, by server id.
     public var serverPermissions: [String: [String]]?
     public var preferences: [String: String]
+    /// Warnings and tips hidden with "Don't show again", by their words' key.
+    public var hidden: [String]
 
     enum CodingKeys: String, CodingKey {
-        case user, role, servers, permissions, preferences
+        case user, role, servers, permissions, preferences, hidden
         case accountPermissions = "account_permissions"
         case serverPermissions = "server_permissions"
     }
@@ -74,8 +76,9 @@ public struct Me: Codable, Equatable, Sendable {
     public init(
         user: String, role: String = "owner", servers: [String]? = nil, permissions: [String] = [],
         accountPermissions: [String]? = nil, serverPermissions: [String: [String]]? = nil,
-        preferences: [String: String] = [:]
+        preferences: [String: String] = [:], hidden: [String] = []
     ) {
+        self.hidden = hidden
         self.user = user
         self.role = role
         self.servers = servers
@@ -96,6 +99,7 @@ public struct Me: Codable, Equatable, Sendable {
         // The agent keeps other kinds of values here too; the apps only
         // reads text ones and never fails over the rest.
         preferences = (try? c.decodeIfPresent([String: String].self, forKey: .preferences)) ?? [:]
+        hidden = try c.decodeIfPresent([String].self, forKey: .hidden) ?? []
     }
 
     public var isOwner: Bool { role == "owner" }

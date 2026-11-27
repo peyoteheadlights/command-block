@@ -175,6 +175,10 @@ struct DiscordView: View {
         let connected = status.state == "connected"
         let busy = pages.busy != nil
         Section(model.t("discord.bot")) {
+            // Discord is 13+: said when a server is for "My kids and their friends".
+            if model.servers.contains(where: { $0.playedBy == "kids" }) {
+                HideableNote(key: "discord.kids_age", palette: palette)
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(Community.botState(model.strings, status)).foregroundStyle(palette.textPrimary)
                 if connected, let since = status.connectedAt {

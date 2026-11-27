@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 from .gear import Section, buttons, link_row
 from .moderators import Moderators
 from .overview import card
-from .ui import clock, label, push
+from .ui import clock, label, notice, push
 from .words import mode, text
 
 if TYPE_CHECKING:
@@ -92,6 +92,9 @@ class Discord(Moderators):
     # ------------------------------------------------------------ the bot
     def status_card(self, state: dict) -> QFrame:
         frame, layout = card(text("discord.bot"))
+        # Discord is 13+: said when a server is for "My kids and their friends".
+        if any(row.get("played_by") == "kids" for row in self.window_.all_servers):
+            layout.addWidget(notice("discord.kids_age"))
         now = state.get("state", "off")
         bot_pc = state.get("bot_pc") or {}
         if bot_pc and not bot_pc.get("this"):

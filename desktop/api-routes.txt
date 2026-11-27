@@ -11,6 +11,8 @@ GET /api/account/preferences
 PUT /api/account/preferences
 GET /api/account/welcome
 PUT /api/account/welcome
+POST /api/account/hidden
+DELETE /api/account/hidden
 GET /api/servers/{server_id}/changes
 POST /api/servers/{server_id}/changes/undo
 POST /api/servers/{server_id}/changes/redo
