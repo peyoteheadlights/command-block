@@ -169,6 +169,13 @@ def main() -> int:
                 window.refresh()
                 settle()
                 window.go_to_server(sid)
+                for technical in (False, True):
+                    window.set_mode(technical)
+                    settle(2)
+                    snap(window, f"03-running-{'technical' if technical else 'simple'}", dark)
+                window.show_screen("All servers")
+                snap(window, "02-all-servers-running", dark)
+                window.go_to_server(sid)
                 for page, name, technical in (
                     ("Players and chat", "07-players", False),
                     ("Console", "08-console", True),
@@ -221,6 +228,9 @@ def main() -> int:
                     window.open_page("Settings")
                     settle(2)
                     snap(window, name, dark)
+                    window.server_screen.page.jump("game")  # type: ignore[attr-defined]
+                    snap(window, f"{name}-game", dark)
+                    window.server_screen.page.jump("server")  # type: ignore[attr-defined]
                 window.set_mode(False)
                 window.show_screen("New server")
                 settle(2)
