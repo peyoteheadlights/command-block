@@ -72,6 +72,7 @@ from .models import (
     DeepScanQuarantineRequest,
     DeepScanRequest,
     DependencyInstallRequest,
+    JarChangedOkRequest,
     JarScanOptionsRequest,
     JarScanUndoRequest,
     ModFileRequest,
@@ -498,7 +499,7 @@ async def mod_updates(
     for mod in ctx.mods.scan():
         entry = ctx.db.get_setting(f"mod_update:{mod.mod_id}")
         if entry and entry.get("installed_version") == mod.version:
-            updates.append(entry)
+            updates.append({**entry, "held_until": ctx.mods.held_until(entry)})
     return {"updates": updates, "checked_at": ctx.db.get_setting("mod_updates_checked_at")}
 
 
@@ -700,6 +701,19 @@ async def jar_scan_undo(
     return {"ok": True, **result}
 
 
+@router.post("/mods/scan/changed", response_model=JarScanReport)
+async def jar_changed_ok(
+    payload: JarChangedOkRequest,
+    request: Request,
+    principal: Principal = Depends(require(MODS_MANAGE)),
+    ctx=Depends(get_server),
+):
+    """ "That was me": clear the changed-outside warning of one jar, or all."""
+    report = await ctx.jarscan.said_ok(payload.filename, principal.user)
+    audit(ctx, request, "jar_changed_ok", target=payload.filename or "all")
+    return report
+
+
 @router.get("/mods/deepscan", response_model=DeepScanReport)
 async def deep_scan(principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)):
     """The deep scan's scanners and its last results."""
@@ -795,12 +809,15 @@ async def jar_scan_options(
 ):
     if payload.ask_first is not None and not principal.is_owner:
         raise HTTPException(403, "Only the owner can change Ask me first.")
+    if payload.update_hold_days is not None and not principal.is_owner:
+        raise HTTPException(403, "Only the owner can change the update hold.")
     _set_options(
         ctx,
         rescan_weekly=payload.weekly,
         rescan_on_change=payload.on_change,
         check_before_start=payload.before_start,
         ask_before_stop=payload.ask_first,
+        update_hold_days=payload.update_hold_days,
     )
     audit(ctx, request, "jar_scan_options", detail=str(payload.model_dump(exclude_none=True)))
     return ctx.jarscan.report()

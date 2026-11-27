@@ -104,6 +104,10 @@ object Content {
     fun newer(strings: Strings, mod: Mod): String? =
         mod.updateAvailable?.let { strings.t("mods.update_to", "version" to it.latestVersion) }
 
+    /** Why Update all leaves this one for now (the update hold), or null. */
+    fun held(strings: Strings, mod: Mod, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String? =
+        mod.updateAvailable?.heldUntil?.let { strings.t("mods.update_held", "when" to Display.dateTime(strings, it, zone)) }
+
     /** "1.0 → 2.0"; Unknown for a side the agent didn't say. */
     fun change(strings: Strings, old: String?, new: String?): String =
         "${old?.takeIf { it.isNotBlank() } ?: strings.t("value.unknown")} → ${new?.takeIf { it.isNotBlank() } ?: strings.t("value.unknown")}"
@@ -215,9 +219,10 @@ object UpdateAll {
     /** Offered when the last check found a newer version of any mod. */
     fun offered(list: ModList?): Boolean = list?.mods?.any { it.updateAvailable != null } == true
 
-    /** Ticked at first: every one that is on. Turned-off ones are listed
-     * but left for the person to tick. */
-    fun ticked(plan: UpdateAllPlan): Set<String> = plan.updates.filter { it.enabled }.map { it.filename }.toSet()
+    /** Ticked at first: every one that is on and not held. Turned-off and
+     * held ones are listed but left for the person to tick. */
+    fun ticked(plan: UpdateAllPlan): Set<String> =
+        plan.updates.filter { it.enabled && it.heldUntil == null }.map { it.filename }.toSet()
 
     /** The ticked ones, in the plan's order, with the version the plan showed. */
     fun body(plan: UpdateAllPlan, ticked: Set<String>): JsonObject = buildJsonObject {
@@ -244,8 +249,11 @@ object UpdateAll {
         else -> null
     }
 
-    fun done(strings: Strings, result: UpdateAllResult): String =
-        strings.tn("mobile.content.update_all_done", result.updated.size, "backup" to (result.safetyBackup?.name ?: strings.t("value.unknown")))
+    fun done(strings: Strings, result: UpdateAllResult): String {
+        val done = strings.tn("mobile.content.update_all_done", result.updated.size, "backup" to (result.safetyBackup?.name ?: strings.t("value.unknown")))
+        if (result.held.isEmpty()) return done
+        return done + "\n" + strings.t("mobile.content.update_all_held_done", "names" to result.held.joinToString(", "))
+    }
 
     /** The step a running Update all is on, from the live feed. */
     fun progress(job: Job?, serverId: String): String? =

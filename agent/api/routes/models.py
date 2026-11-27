@@ -100,6 +100,10 @@ class JarScanUndoRequest(BaseModel):
     id: str = Field(max_length=200)
 
 
+class JarChangedOkRequest(BaseModel):
+    filename: str | None = Field(default=None, max_length=180)  # None: every jar
+
+
 class DeepScanRequest(BaseModel):
     scope: Literal["jar", "mods", "folder"]
     scanners: list[str] = Field(max_length=10)
@@ -120,6 +124,7 @@ class JarScanOptionsRequest(BaseModel):
     on_change: bool | None = None
     before_start: bool | None = None
     ask_first: bool | None = None  # owner only
+    update_hold_days: int | None = Field(default=None, ge=0, le=14)  # owner only
 
 
 class DeepScanOptionsRequest(BaseModel):

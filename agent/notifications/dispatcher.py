@@ -35,7 +35,7 @@ PUSH_TEST_TITLE = "Test alert"
 # Its own kind, so no alert list (shared or a device's own) can hold it back.
 TEST_EVENT = "test_alert"
 # Alerts the Discord bot also sends the owner as a private message.
-OWNER_DM = frozenset({"jar_scan_found"})
+OWNER_DM = frozenset({"jar_scan_found", "jar_changed"})
 
 # event type -> (settings key, colour, title). "{server}" in a title is
 # replaced with the server's name, so an alert reads "Survival crashed".
@@ -82,6 +82,7 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "mod_installed": ("mod_installed", 0x3BA55D, "{server}: mod installed"),
     "mod_removed": ("mod_removed", 0xFAA61A, "{server}: mod removed"),
     "jar_scan_found": ("jar_scan_found", 0xED4245, "{server}: jar check found something"),
+    "jar_changed": ("jar_changed", 0xFAA61A, "{server}: a jar changed outside the app"),
     "mod_updated": ("mod_updated", 0x3BA55D, "{server}: mod updated"),
     "mod_rolled_back": ("mod_updated", 0xFAA61A, "{server}: mod rolled back"),
     "mod_dependency_problem": (
@@ -203,6 +204,7 @@ ALERT_PAGES = {
     "mod_installed": "mods",
     "mod_removed": "mods",
     "jar_scan_found": "mods",
+    "jar_changed": "mods",
     "mod_updated": "mods",
     "mod_dependency_problem": "mods",
     "player_joined": "players",

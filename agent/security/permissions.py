@@ -315,8 +315,9 @@ def legacy_names(held: frozenset[str]) -> list[str]:
 
 
 # Alerts that need a permission on top of seeing the server: Known bad
-# goes to moderators who can run the deep scan.
-ALERT_NEEDS = {"jar_scan_found": DEEP_SCAN}
+# and a jar changed outside the app go to moderators who can run the
+# deep scan.
+ALERT_NEEDS = {"jar_scan_found": DEEP_SCAN, "jar_changed": DEEP_SCAN}
 
 
 def may_get_alert(principal: Principal, event_type: str | None, server_id: str | None) -> bool:

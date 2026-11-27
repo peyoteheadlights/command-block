@@ -868,19 +868,25 @@ class AgentClient(
     suspend fun putBackJar(serverId: String, id: String): JarScanUndone =
         call(post("${server(serverId)}/mods/scan/undo", buildJsonObject { put("id", id) }), JarScanUndone.serializer())
 
-    /** [askFirst] is the owner's only. */
+    /** "That was me": clears the changed-outside warning of [filename]. */
+    suspend fun jarChangedOk(serverId: String, filename: String): JarScanReport =
+        call(post("${server(serverId)}/mods/scan/changed", buildJsonObject { put("filename", filename) }), JarScanReport.serializer())
+
+    /** [askFirst] and [updateHoldDays] (0 to 14) are the owner's only. */
     suspend fun jarScanOptions(
         serverId: String,
         weekly: Boolean? = null,
         onChange: Boolean? = null,
         beforeStart: Boolean? = null,
         askFirst: Boolean? = null,
+        updateHoldDays: Int? = null,
     ): JarScanReport {
         val body = buildJsonObject {
             weekly?.let { put("weekly", it) }
             onChange?.let { put("on_change", it) }
             beforeStart?.let { put("before_start", it) }
             askFirst?.let { put("ask_first", it) }
+            updateHoldDays?.let { put("update_hold_days", it) }
         }
         return call(post("${server(serverId)}/mods/scan/options", body), JarScanReport.serializer())
     }

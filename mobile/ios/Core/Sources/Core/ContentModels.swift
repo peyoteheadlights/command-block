@@ -31,21 +31,26 @@ public struct ModIssue: Decodable, Equatable, Sendable {
 public struct ModUpdate: Decodable, Equatable, Sendable {
     public var latestVersion: String
     public var versionId: String?
+    /// Update all waits until this time, as the version is very new.
+    public var heldUntil: Double?
 
     enum CodingKeys: String, CodingKey {
         case latestVersion = "latest_version"
         case versionId = "version_id"
+        case heldUntil = "held_until"
     }
 
-    public init(latestVersion: String, versionId: String? = nil) {
+    public init(latestVersion: String, versionId: String? = nil, heldUntil: Double? = nil) {
         self.latestVersion = latestVersion
         self.versionId = versionId
+        self.heldUntil = heldUntil
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         latestVersion = c.value(.latestVersion, "")
         versionId = c.maybe(.versionId)
+        heldUntil = c.maybe(.heldUntil)
     }
 }
 
@@ -783,10 +788,15 @@ public struct JarScanRow: Decodable, Equatable, Identifiable, Sendable {
     public var notes: [JarScanWords]
     public var words: String
     public var values: [String: String]
+    /// New or different since the last check, and nothing in the app changed it.
+    public var changedOutside: Bool
 
     public var id: String { filename }
 
-    enum CodingKeys: String, CodingKey { case filename, findings, notes, words, values }
+    enum CodingKeys: String, CodingKey {
+        case filename, findings, notes, words, values
+        case changedOutside = "changed_outside"
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -795,6 +805,7 @@ public struct JarScanRow: Decodable, Equatable, Identifiable, Sendable {
         notes = c.each(.notes)
         words = c.value(.words, "")
         values = c.value(.values, [:])
+        changedOutside = c.value(.changedOutside, false)
     }
 }
 
@@ -839,6 +850,7 @@ public struct JarScanReport: Decodable, Equatable, Sendable {
     public var onChange: Bool
     public var beforeStart: Bool
     public var askFirst: Bool
+    public var updateHoldDays: Int
     public var jars: [JarScanRow]
     public var quarantine: [QuarantinedJar]
     public var summary: JarScanSummary
@@ -849,6 +861,7 @@ public struct JarScanReport: Decodable, Equatable, Sendable {
         case onChange = "on_change"
         case beforeStart = "before_start"
         case askFirst = "ask_first"
+        case updateHoldDays = "update_hold_days"
     }
 
     public init(from decoder: Decoder) throws {
@@ -858,6 +871,7 @@ public struct JarScanReport: Decodable, Equatable, Sendable {
         onChange = c.value(.onChange, true)
         beforeStart = c.value(.beforeStart, false)
         askFirst = c.value(.askFirst, false)
+        updateHoldDays = c.value(.updateHoldDays, 3)
         jars = c.each(.jars)
         quarantine = c.each(.quarantine)
         summary = c.value(.summary, JarScanSummary())
@@ -1405,6 +1419,8 @@ public struct UpdateAllRow: Decodable, Equatable, Identifiable, Sendable {
     public var versionId: String?
     /// How old the site's list was when it came from a saved copy; nil when asked just now.
     public var saved: String?
+    /// Update all leaves it out until this time; Update now skips the wait.
+    public var heldUntil: Double?
 
     public var id: String { filename }
 
@@ -1414,11 +1430,13 @@ public struct UpdateAllRow: Decodable, Equatable, Identifiable, Sendable {
         case installedVersion = "installed_version"
         case latestVersion = "latest_version"
         case versionId = "version_id"
+        case heldUntil = "held_until"
     }
 
     public init(
         modId: String = "", name: String = "", filename: String, enabled: Bool = true,
-        installedVersion: String = "", latestVersion: String = "", versionId: String? = nil, saved: String? = nil
+        installedVersion: String = "", latestVersion: String = "", versionId: String? = nil, saved: String? = nil,
+        heldUntil: Double? = nil
     ) {
         self.modId = modId
         self.name = name
@@ -1428,6 +1446,7 @@ public struct UpdateAllRow: Decodable, Equatable, Identifiable, Sendable {
         self.latestVersion = latestVersion
         self.versionId = versionId
         self.saved = saved
+        self.heldUntil = heldUntil
     }
 
     public init(from decoder: Decoder) throws {
@@ -1440,6 +1459,7 @@ public struct UpdateAllRow: Decodable, Equatable, Identifiable, Sendable {
         latestVersion = c.value(.latestVersion, "")
         versionId = c.maybe(.versionId)
         saved = c.maybe(.saved)
+        heldUntil = c.maybe(.heldUntil)
     }
 }
 
@@ -1513,16 +1533,19 @@ public struct UpdateAllResult: Decodable, Equatable, Sendable {
     public var updated: [UpdateAllDone]
     public var safetyBackup: SafetyBackup?
     public var undo: Undo?
+    /// Names Update all left out because their version is very new.
+    public var held: [String]
 
     enum CodingKeys: String, CodingKey {
-        case updated, undo
+        case updated, undo, held
         case safetyBackup = "safety_backup"
     }
 
-    public init(updated: [UpdateAllDone], safetyBackup: SafetyBackup? = nil, undo: Undo? = nil) {
+    public init(updated: [UpdateAllDone], safetyBackup: SafetyBackup? = nil, undo: Undo? = nil, held: [String] = []) {
         self.updated = updated
         self.safetyBackup = safetyBackup
         self.undo = undo
+        self.held = held
     }
 
     public init(from decoder: Decoder) throws {
@@ -1530,6 +1553,7 @@ public struct UpdateAllResult: Decodable, Equatable, Sendable {
         updated = c.each(.updated)
         safetyBackup = c.maybe(.safetyBackup)
         undo = c.maybe(.undo)
+        held = c.value(.held, [])
     }
 }
 

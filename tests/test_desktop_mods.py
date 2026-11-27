@@ -86,14 +86,18 @@ def can(page, words, mod) -> bool:
     return any(b.isEnabled() for b in row_buttons(page, words, mod))
 
 
-def ticks(window, pick=None) -> list[tuple[str, str, list]]:
+def ticks(window, pick=None, locks=None) -> list[tuple[str, str, list]]:
     """Answers the window's ticked lists (all as shown, or the ``pick``
-    indexes), and records them as (title, body, choices)."""
+    indexes; locked ones can't be ticked), and records them as (title,
+    body, choices). ``locks`` records each list's locked indexes."""
     seen: list[tuple[str, str, list]] = []
 
-    def tick(title, body, choices, yes):
+    def tick(title, body, choices, yes, locked=()):
         seen.append((title, body, choices))
-        return pick if pick is not None else [i for i, (_w, on) in enumerate(choices) if on]
+        if locks is not None:
+            locks.append(set(locked))
+        wanted = pick if pick is not None else [i for i, (_w, on) in enumerate(choices) if on]
+        return [i for i in wanted if i not in locked]
 
     window.tick = tick
     return seen
@@ -1398,3 +1402,81 @@ def test_deep_scan_the_owner_saves_and_removes_a_virustotal_key(qapp, agent_http
     deep.vt_remove.click()
     wait_for(qapp, lambda: not deep.boxes["virustotal"].isEnabled())
     assert vt.key() is None
+
+
+# ------------------------------------------------------------ update hold
+class FreshModrinth(FakeModrinth):
+    """Alpha 2.0 came out an hour ago."""
+
+    def _version(self, slug, number, deps, filename=None):
+        import time
+        from datetime import UTC, datetime
+
+        found = super()._version(slug, number, deps, filename)
+        if slug == "alpha" and number == "2.0":
+            when = datetime.fromtimestamp(time.time() - 3600, UTC)
+            found["date_published"] = when.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return found
+
+
+def test_a_held_update_says_so_and_update_all_leaves_it_out(qapp, agent_http):
+    folder = with_mods(agent_http, FreshModrinth(PROJECTS))
+    window, page = mods_page(qapp, agent_http)
+    locks: list[set[int]] = []
+    seen = ticks(window, pick=[0, 1], locks=locks)
+    wait_for(qapp, lambda: button(page, "Update all").isEnabled())
+    button(page, "Update all").click()
+    wait_for(qapp, lambda: "Updated 1." in page.note.text(), 60)
+    _title, _body, choices = seen[0]
+    assert choices[0][0].startswith("Alpha   1.0 → 2.0   (Held until ")
+    assert choices[0][1] is False  # not ticked
+    assert locks == [{0}]  # and can't be ticked
+    assert (folder / "alpha.jar").exists()
+    wait_for(qapp, lambda: "Update all waits until" in shown_text(page), 30)  # on Alpha's row
+
+
+def test_the_owner_sets_the_update_hold(qapp, agent_http):
+    mods_folder(agent_http).mkdir(exist_ok=True)
+    _window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.hold_days.isVisibleTo(page))
+    assert page.hold_days.value() == 3
+    assert not page.hold_days.keyboardTracking()  # typing "14" is one save, not two
+    config = core_of(agent_http).servers["survival"].config
+    page.hold_days.setValue(7)
+    wait_for(qapp, lambda: config.mods.update_hold_days == 7)
+
+
+# ------------------------------------------------------------ jar changed outside
+def test_that_was_me_clears_a_jar_changed_outside_the_app(qapp, agent_http):
+    folder = with_mods(agent_http)
+    _window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.scan_again.isEnabled())
+    page.scan_again.click()
+    wait_for(qapp, lambda: "gamma.jar" in shown_text(page), 30)
+    make_jar(folder / "dropped.jar", "dropped", version="1.0", name="Dropped")
+    page.scan_again.click()
+    wait_for(qapp, lambda: can(page, "That was me", "dropped.jar"), 30)
+    assert "Changed outside the app" in shown_text(page)
+    row_button(page, "That was me", "dropped.jar").click()
+    wait_for(qapp, lambda: not row_buttons(page, "That was me", "dropped.jar"), 30)
+
+
+def test_a_locked_row_in_a_ticked_list_cant_be_ticked(qapp):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QCheckBox, QWidget
+
+    from desktop.window import MainWindow
+
+    parent = QWidget()
+    parent.scale = 1  # type: ignore[attr-defined]  (all tick needs from the window)
+    found: list[tuple[bool, bool]] = []
+
+    def answer():
+        box = QApplication.activeModalWidget()
+        found.extend((t.isChecked(), t.isEnabled()) for t in box.findChildren(QCheckBox))
+        box.accept()
+
+    QTimer.singleShot(0, answer)
+    picked = MainWindow.tick(parent, "T", "B", [("held", True), ("free", True)], "Go", locked={0})
+    assert found == [(False, False), (True, True)]
+    assert picked == [1]

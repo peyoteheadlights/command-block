@@ -431,6 +431,8 @@ def test_known_bad_is_sent_to_the_owner_on_discord(multi_client):
     send(core, Event(type="jar_scan_found", level="error", message="found x", server_id="survival"))
     send(core, Event(type="server_crashed", level="error", message="boom", server_id="survival"))
     assert len(bot.told) == 1 and "found x" in bot.told[0]
+    send(core, Event(type="jar_changed", level="warn", message="dropped", server_id="survival"))
+    assert len(bot.told) == 2 and "dropped" in bot.told[1]
 
 
 def test_the_bot_finds_the_owner_of_its_application():

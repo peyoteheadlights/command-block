@@ -197,6 +197,15 @@ def every_line():
             paper={},
             anticheat=[],
         ),
+        *(
+            facts(windows_user={"on": on, "ok": ok, "running_as": running_as})
+            for on, ok, running_as in [
+                (False, True, None),
+                (True, True, True),
+                (True, True, False),
+                (True, False, None),
+            ]
+        ),
     ]
     return [line for case in cases for line in lines(case)]
 

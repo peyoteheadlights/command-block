@@ -15,6 +15,11 @@ the server next stops or starts.
 
 Before each start the owner can have the changed jars checked (and a deep
 scan run) and the start waits for it, with a Skip button.
+
+A jar that is new or different since the last check, when nothing in the
+app changed the folder in between, is marked "changed outside the app":
+the Mods page and the Protection card say so and the owner is told once,
+until someone says it was them. It doesn't stop the server from starting.
 """
 
 from __future__ import annotations
@@ -55,6 +60,19 @@ JNDI = "org/apache/logging/log4j/core/lookup/JndiLookup.class"
 NESTED_NAME = re.compile(r"(?:^|/)log4j-core-(\d[\w.\-]*)\.jar$")
 MAX_DEPTH = 3
 STOP_AFTER = 60  # seconds between the chat warning and the stop
+# Job kinds that write jars; a jar new since one of these ran isn't marked
+# "changed outside the app".
+JAR_JOBS = (
+    "mods",
+    "store",
+    "modpack",
+    "version_change",
+    "version_rollback",
+    "duplicate",
+    "custom_jar",
+    "restore",
+    "crossplay",
+)
 STOP_WARNING = (
     "say [Command Block] A security check found a bad file on this server. "
     "The server stops in 1 minute."
@@ -407,8 +425,10 @@ class JarScanner:
         now = time.time()
         async with self.lock:
             saved = self.store()
+            before = self._shas(saved)
             fresh = await asyncio.to_thread(self._refresh, saved, everything)
             new_findings = self._mark_waiting(saved, fresh)
+            changed = self._mark_outside(saved, before, now)
             self.save(saved)
             wanted = [
                 dict(e)
@@ -417,6 +437,7 @@ class JarScanner:
             ]
         for entry in new_findings:
             await self._tell(entry)
+        await self._tell_changed(changed)
         if new_findings:
             await self.found_while_running()
         # Asked without the lock held, so a server start never waits on the internet.
@@ -444,6 +465,91 @@ class JarScanner:
         for entry in found:
             entry["waiting"] = True
         return found
+
+    @staticmethod
+    def _shas(saved: dict[str, Any]) -> dict[str, tuple[str, float | None]]:
+        """Name to (SHA-256, when it was marked changed outside the app)."""
+        return {name: (e["sha256"], e.get("outside")) for name, e in saved["jars"].items()}
+
+    def _app_changed_since(self, since: float) -> bool:
+        """A job that writes jars (install, update, Undo, restore...) ran on
+        this server since ``since``, or is running now."""
+        marks = ", ".join("?" for _ in JAR_JOBS)
+        return bool(
+            self.ctx.db.query(
+                f"SELECT 1 FROM jobs WHERE server_id = ? AND kind IN ({marks}) "
+                "AND (finished_at IS NULL OR finished_at >= ?) LIMIT 1",
+                (self.ctx.server_id, *JAR_JOBS, since),
+            )
+        )
+
+    def _app_wrote(self, shas: set[str]) -> set[str]:
+        """Which of these SHA-256s the app put on this server before."""
+        if not shas:
+            return set()
+        marks = ", ".join("?" for _ in shas)
+        found = set()
+        for table in ("mod_history", "mod_versions"):
+            rows = self.ctx.db.query(
+                f"SELECT DISTINCT sha256 FROM {table} WHERE server_id = ? AND sha256 IN ({marks})",
+                (self.ctx.server_id, *shas),
+            )
+            found |= {r["sha256"] for r in rows}
+        return found
+
+    def _mark_outside(
+        self, saved: dict[str, Any], before: dict[str, tuple[str, float | None]], started: float
+    ) -> list[str]:
+        """Mark the jars that are new or different since the last check
+        while nothing in the app changed the folder. ``before``: name to
+        (SHA-256, outside mark) before this check, ``started``: when this
+        check started.
+        Returns the names marked. Lock held by the caller."""
+        last = saved.get("refreshed_at")
+        saved["refreshed_at"] = started
+        flagged = {sha: when for sha, when in before.values() if when}
+        for entry in saved["jars"].values():
+            if entry["sha256"] in flagged:  # turned off or on keeps its warning
+                entry.setdefault("outside", flagged[entry["sha256"]])
+        if last is None or self._app_changed_since(last):
+            return []  # the first check, or the app itself may have changed them
+        known = {sha for sha, _ in before.values()}  # a renamed jar is the same jar
+        new = [
+            e
+            for name, e in saved["jars"].items()
+            if before.get(name, ("", None))[0] != e["sha256"] and e["sha256"] not in known
+        ]
+        known |= self._app_wrote({e["sha256"] for e in new})
+        marked = []
+        for entry in new:
+            if entry["sha256"] not in known:
+                entry["outside"] = started
+                marked.append(entry["filename"])
+        return marked
+
+    async def _tell_changed(self, names: list[str]) -> None:
+        if not names:
+            return
+        await self.ctx.bus.publish(
+            Event(
+                type="jar_changed",
+                level="warn",
+                message=f"Changed outside Command Block: {', '.join(names)}. If that "
+                "wasn't you or another owner, remove it and check the PC.",
+                data={"filenames": names},
+            )
+        )
+
+    async def said_ok(self, filename: str | None, user: str) -> dict[str, Any]:
+        """Someone said they changed these jars themselves (all of them
+        when ``filename`` is None)."""
+        async with self.lock:
+            saved = self.store()
+            for entry in saved["jars"].values():
+                if filename is None or entry["filename"] == filename:
+                    entry.pop("outside", None)
+            self.save(saved)
+        return self.report()
 
     def _busy(self) -> bool:
         ctx = self.ctx
@@ -683,10 +789,13 @@ class JarScanner:
         async with self.lock:
             saved = self.store()
             if has_content and self.ctx.config.mods.rescan_on_change:
+                started, shas = time.time(), self._shas(saved)
                 fresh = await asyncio.to_thread(self._refresh, saved, False, False)
                 for entry in self._mark_waiting(saved, fresh):
                     await self._tell(entry)
+                changed = self._mark_outside(saved, shas, started)
                 self.save(saved)
+                await self._tell_changed(changed)
             try:
                 moved = await self._move_waiting("agent") if has_content else []
                 moved += await self.ctx.deepscan.move_waiting("agent")
@@ -795,6 +904,7 @@ class JarScanner:
                     "findings": entry["findings"],
                     "notes": entry.get("notes") or [],
                     "waiting": bool(entry.get("waiting")),
+                    "changed_outside": bool(entry.get("outside")),
                     "words": words,
                     "values": values,
                 }
@@ -807,6 +917,7 @@ class JarScanner:
             "on_change": settings.rescan_on_change,
             "before_start": settings.check_before_start,
             "ask_first": settings.ask_before_stop,
+            "update_hold_days": settings.update_hold_days,
             "checking": self._skip is not None,
             "jars": rows,
             "quarantine": sorted(saved["quarantine"], key=lambda q: -q["at"]),
@@ -826,5 +937,6 @@ class JarScanner:
                 1 for e in jars if e.get("sites") and set(e["sites"].values()) == {"not_found"}
             ),
             "couldnt": sum(1 for e in jars if "error" in (e.get("sites") or {}).values()),
+            "changed": sum(1 for e in jars if e.get("outside")),
             "checked_at": saved.get("checked_at"),
         }

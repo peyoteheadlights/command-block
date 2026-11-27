@@ -108,14 +108,22 @@ extension AgentClient {
         weekly: Bool? = nil,
         onChange: Bool? = nil,
         beforeStart: Bool? = nil,
-        askFirst: Bool? = nil
+        askFirst: Bool? = nil,
+        updateHoldDays: Int? = nil
     ) async throws -> JarScanReport {
-        var change: [String: Bool] = [:]
-        if let weekly { change["weekly"] = weekly }
-        if let onChange { change["on_change"] = onChange }
-        if let beforeStart { change["before_start"] = beforeStart }
-        if let askFirst { change["ask_first"] = askFirst }
+        var change: [String: JSONValue] = [:]
+        if let weekly { change["weekly"] = .bool(weekly) }
+        if let onChange { change["on_change"] = .bool(onChange) }
+        if let beforeStart { change["before_start"] = .bool(beforeStart) }
+        if let askFirst { change["ask_first"] = .bool(askFirst) }
+        if let updateHoldDays { change["update_hold_days"] = .number(Double(updateHoldDays)) }
         return try await call("POST", content(serverId) + "/mods/scan/options", body: try AgentClient.encode(change), as: JarScanReport.self)
+    }
+
+    /// Clears the "changed outside the app" line on one jar, or on all when `filename` is nil.
+    public func jarChangedOk(serverId: String, filename: String?) async throws -> JarScanReport {
+        let body = try AgentClient.encode(filename.map { ["filename": $0] } ?? [:])
+        return try await call("POST", content(serverId) + "/mods/scan/changed", body: body, as: JarScanReport.self)
     }
 
     /// The deep scan's checks, the scan running now and its last results. Scans nothing.

@@ -191,6 +191,9 @@ class Facts:
     jar_scan: dict[str, Any] | None = None  # the jar check's summary; None: no jars here
     antivirus: str = "off_windows"  # agent/security/antivirus.py status()
     deep_scan: dict[str, Any] | None = None  # the last deep scan's summary; None: never run
+    # The separate Windows user: on, ok, and running_as (how the running
+    # server started; None when stopped). None off Windows.
+    windows_user: dict[str, Any] | None = None
 
     def prop(self, key: str, default: str) -> str:
         return ((self.properties or {}).get(key) or default).strip().lower()
@@ -270,7 +273,23 @@ def facts(ctx: ServerContext) -> Facts:
         jar_scan=ctx.jarscan.summary() if server_type.has_content else None,
         antivirus=antivirus.status(),
         deep_scan=ctx.deepscan.summary(),
+        windows_user=_windows_user_facts(ctx),
     )
+
+
+def _windows_user_facts(ctx: ServerContext) -> dict[str, Any] | None:
+    from . import serveruser
+
+    if not serveruser.IS_WINDOWS:
+        return None
+    if not serveruser.is_on(ctx.core.config):  # no need to ask the service
+        return {"on": False, "ok": True, "running_as": None}
+    status = serveruser.status(ctx.core.config)
+    return {
+        "on": status["on"],
+        "ok": status["ok"],
+        "running_as": ctx.server.started_as_account if ctx.server.running else None,
+    }
 
 
 def _burst_seen(ctx: ServerContext) -> bool:
@@ -419,6 +438,7 @@ def lines(f: Facts) -> list[dict[str, Any]]:
     if f.jar_scan is not None:
         found.append(_antivirus(f.antivirus))
     found += _deep_scan(f.deep_scan)
+    found += _windows_user(f.windows_user)
     found += _join(f)
     found += _anticheat(f)
     found.append(_line("big_attacks", "info", "stop_and_close"))
@@ -456,6 +476,8 @@ def _jar_scan(scan: dict[str, Any] | None) -> list[dict[str, Any]]:
         )
     if scan["couldnt"]:
         found.append(_line("jar_scan_couldnt", "info", count=scan["couldnt"]))
+    if scan.get("changed"):
+        found.append(_line("jar_changed", "problem", count=scan["changed"]))
     return found
 
 
@@ -466,6 +488,19 @@ def _deep_scan(scan: dict[str, Any] | None) -> list[dict[str, Any]]:
     if scan["worth_a_look"]:
         return [_line("deep_scan_look", "problem", count=scan["worth_a_look"])]
     return [_line("deep_scan_done", "info", files=scan["files"])]
+
+
+def _windows_user(user: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Whether the server runs as its own Windows user (Windows only)."""
+    if user is None:
+        return []
+    if not user["on"]:
+        return [_line("windows_user_off", "suggest")]
+    if not user["ok"]:
+        return [_line("windows_user_broken", "problem")]
+    if user["running_as"] is False:
+        return [_line("windows_user_restart", "problem")]
+    return [_line("windows_user_on", "info")]
 
 
 def _antivirus(status: str) -> dict[str, Any]:

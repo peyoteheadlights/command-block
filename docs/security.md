@@ -976,6 +976,25 @@ off), and the chat spam rule (several new names saying the same line turn
 the whitelist on with Minecraft's own command). The failed sign-in alert
 counts the tries from the same rows the lockout reads.
 
+The jar check also notes each jar's SHA-256. A jar that is new or different
+since the last check gets a "Changed outside the app" line, one
+notification and a Protection line, unless the app wrote it: an install,
+upload, update, Undo or rename, anything written while a mod change job
+ran, or a SHA-256 already in the add-on history (`agent/mods/jarscan.py`).
+The first check never warns, and the line stays until someone with mod
+rights presses "That was me". It never blocks a start on its own.
+
+Update hold: a version its site put out less than 3 days ago (the owner
+picks 0 to 14 in the jar check's options) is left out of Update all, the
+update notices and the update recommendation, so a hijacked release has
+time to be found and pulled (`agent/mods/manager.py`, `updateall.py`).
+Update now on one mod or plugin skips the wait. A version with no published
+date is not held.
+
+On Windows the card also says whether the running server was started as
+the separate Windows user (below), and asks for a restart when the setting
+was turned on after it started.
+
 Help has a read-only fractureiser check (Technical, owner only): it looks for
 the known files, startup entries and Run key values and lists what it
 checked. It deletes nothing, and finding nothing isn't a clean bill.

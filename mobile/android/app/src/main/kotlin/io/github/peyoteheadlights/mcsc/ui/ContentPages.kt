@@ -216,8 +216,15 @@ class ContentPages(
         onChange: Boolean? = null,
         beforeStart: Boolean? = null,
         askFirst: Boolean? = null,
+        updateHoldDays: Int? = null,
     ) = work("jar_scan_options", strings) {
-        scan = Read(it.jarScanOptions(serverId, weekly, onChange, beforeStart, askFirst))
+        scan = Read(it.jarScanOptions(serverId, weekly, onChange, beforeStart, askFirst, updateHoldDays))
+        null
+    }
+
+    /** "That was me" on a jar changed outside the app. */
+    fun changedOk(filename: String, strings: Strings) = work("changed_ok:$filename", strings) {
+        scan = Read(it.jarChangedOk(serverId, filename))
         null
     }
 

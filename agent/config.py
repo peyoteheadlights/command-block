@@ -333,6 +333,9 @@ class ModSettings(Section):
     backup_before_install: bool = True
     auto_stop_for_install: bool = False
     update_check_hours: float = 12
+    # Update hold: a version out for fewer days than this is left out of
+    # Update all and the update notices (0 to 14, 0 is no hold).
+    update_hold_days: int = 3
     # Jar check: look every jar up again once a week, and check a jar
     # as soon as it changes.
     rescan_weekly: bool = True
@@ -390,6 +393,7 @@ class NotificationSettings(Section):
             "mod_installed": True,
             "mod_removed": True,
             "jar_scan_found": True,
+            "jar_changed": True,
             "mod_updated": True,
             "mod_dependency_problem": True,
             "auth_failure": True,

@@ -349,21 +349,26 @@ class ServerContext:
             try:
                 await linkedpack.check_quietly(self, relay=False)
                 await sides.catch_up(self.mods)
-                updates = await self.mods.check_updates(background=True)
-                if updates:
-                    await self.bus.publish(
-                        Event(
-                            type="mod_updates_available",
-                            level="info",
-                            message=f"{len(updates)} mod update(s) available",
-                            data={"updates": updates[:10]},
-                        )
-                    )
+                await self._tell_updates()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.debug("mod update check failed", exc_info=True)
             await asyncio.sleep(hours * 3600)
+
+    async def _tell_updates(self) -> None:
+        """Check for updates and tell about the ones out of the update hold."""
+        updates = await self.mods.check_updates(background=True)
+        ready = [u for u in updates if not u["held_until"]]
+        if ready:
+            await self.bus.publish(
+                Event(
+                    type="mod_updates_available",
+                    level="info",
+                    message=f"{len(ready)} mod update(s) available",
+                    data={"updates": ready[:10]},
+                )
+            )
 
     async def _jar_scan_loop(self) -> None:
         await asyncio.sleep(90)

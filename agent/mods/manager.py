@@ -28,6 +28,7 @@ import shutil
 import time
 import zipfile
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -114,6 +115,18 @@ def checked(source: str | None) -> dict[str, Any]:
         "checked_by": LABELS[source] if listed and source else None,
         "checked_with": CHECKED_WITH.get(source or ""),
     }
+
+
+def published_at(text: str | None) -> float | None:
+    """A site's release date ("2026-11-20T08:00:00Z") as a timestamp, or
+    None when it gave none or one that can't be read."""
+    if not text:
+        return None
+    try:
+        when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return (when if when.tzinfo else when.replace(tzinfo=UTC)).timestamp()
 
 
 def refuse_known_bad(data: bytes, filename: str) -> None:
@@ -425,7 +438,7 @@ class ModManager:
             row.update(checked(source))
             update = self.db.get_setting(f"mod_update:{mod.mod_id}")
             if update and update.get("installed_version") == mod.version:
-                row["update_available"] = update
+                row["update_available"] = {**update, "held_until": self.held_until(update)}
             else:
                 row["update_available"] = None
             result.append(row)
@@ -1325,9 +1338,22 @@ class ModManager:
             "source": self.origin(mod)[0],
             "changelog": (latest.get("changelog") or "")[:400],
             "saved": saved,
+            "published": published_at(latest.get("date_published")),
         }
         self.db.set_setting(f"mod_update:{mod.mod_id}", entry)
-        return entry
+        return {**entry, "held_until": self.held_until(entry)}
+
+    def held_until(self, update: dict[str, Any]) -> float | None:
+        """When the update hold on ``update`` ends, or None when it isn't
+        held: its site put it out more than the hold's days ago, the hold
+        is 0 days, or the site gave no date. Update all and the update
+        notices wait for it; Update now on that one doesn't."""
+        days = min(max(self.config.mods.update_hold_days, 0), 14)
+        published = update.get("published")
+        if not days or not published:
+            return None
+        until = float(published) + days * 86400
+        return until if until > time.time() else None
 
     @staticmethod
     def _is_installed_file(mod: ModInfo, version: dict[str, Any]) -> bool:
@@ -1354,7 +1380,15 @@ class ModManager:
         def row(mod: ModInfo) -> dict[str, Any]:
             return {"mod_id": mod.mod_id, "name": mod.name or mod.mod_id, "filename": mod.filename}
 
-        keys = ("installed_version", "latest_version", "version_id", "project", "source", "saved")
+        keys = (
+            "installed_version",
+            "latest_version",
+            "version_id",
+            "project",
+            "source",
+            "saved",
+            "held_until",
+        )
         return {
             "updates": [
                 {**row(mod), "enabled": mod.enabled, **{key: entry[key] for key in keys}}

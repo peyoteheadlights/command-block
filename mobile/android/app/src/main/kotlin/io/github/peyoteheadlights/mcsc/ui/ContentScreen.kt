@@ -379,10 +379,17 @@ private fun LazyListScope.jarScanList(vm: AppViewModel, content: ContentPages, c
                 Item(t("jarscan.before_start"), trailing = {
                     Checkbox(checked = report.beforeStart, enabled = idle, onCheckedChange = { content.scanOptions(vm.strings, beforeStart = it) })
                 })
-                // Only the owner can turn off the automatic stop.
+                // Only the owner can turn off the automatic stop or change the update hold.
                 if (vm.me?.isOwner == true) {
                     Item(t("jarscan.ask_first"), trailing = {
                         Checkbox(checked = report.askFirst, enabled = idle, onCheckedChange = { content.scanOptions(vm.strings, askFirst = it) })
+                    })
+                    val days = report.updateHoldDays
+                    Item(t("jarscan.hold_days"), subtitle = days.toString(), trailing = {
+                        Row {
+                            TextButton(onClick = { content.scanOptions(vm.strings, updateHoldDays = days - 1) }, enabled = idle && days > 0) { Text("−") }
+                            TextButton(onClick = { content.scanOptions(vm.strings, updateHoldDays = days + 1) }, enabled = idle && days < 14) { Text("+") }
+                        }
                     })
                 }
                 Presses(listOf(Press(t(if (content.busy == "jar_scan") "jarscan.checking" else "jarscan.check_again"), { content.scanJars(vm.strings) }, enabled = idle)))
@@ -395,6 +402,10 @@ private fun LazyListScope.jarScanList(vm: AppViewModel, content: ContentPages, c
             Item(jar.filename, subtitle = t(jar.words, *jar.values.toList().toTypedArray()))
             for (finding in jar.findings) Note(said(finding), color = colors.danger)
             for (note in jar.notes) Note(said(note), color = colors.text3)
+            if (jar.changedOutside) {
+                Note(t("jarscan.changed"), color = colors.danger)
+                if (manage) Presses(listOf(Press(t("jarscan.changed_ok"), { content.changedOk(jar.filename, vm.strings) }, enabled = idle)))
+            }
         }
     }
     if (report.quarantine.isNotEmpty()) item { SectionTitle(t("jarscan.quarantine")) }
@@ -609,6 +620,7 @@ private fun ModCard(vm: AppViewModel, content: ContentPages, mod: Mod, changes: 
         Content.newer(strings, mod)?.let { Note(it, color = colors.accentInk) }
         if (mod.addedByYou == true) Note(t("linked.added_by_you"), color = colors.text3)
         Sides.words(strings, mod)?.let { Note(it, color = colors.text3) }
+        Content.held(strings, mod)?.let { Note(it, color = colors.text3) }
         if (vm.technical) Note(Content.technical(strings, mod), color = colors.text3)
         if (changes != Changes.NOT_ALLOWED) {
             val ready = changes == Changes.READY && idle
@@ -1529,12 +1541,14 @@ private fun UpdateAllDialog(vm: AppViewModel, content: ContentPages) {
         blocked?.let { Text(it, color = LocalColors.current.warning, modifier = Modifier.padding(top = 6.dp)) }
         for (row in plan.updates) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                Checkbox(checked = row.filename in content.ticked, onCheckedChange = { on -> content.tick(row.filename, on) })
+                // A held one is listed but can't be ticked; Update now on its card skips the wait.
+                Checkbox(checked = row.filename in content.ticked, onCheckedChange = { on -> content.tick(row.filename, on) }, enabled = row.heldUntil == null)
                 Column {
                     Text(row.name.ifBlank { row.filename }, color = LocalColors.current.text)
                     Text(Content.change(strings, row.installedVersion, row.latestVersion))
                     if (!row.enabled) Text(t("mobile.content.update_all_off"), color = LocalColors.current.text3)
                     row.saved?.let { Text(it, color = LocalColors.current.text3) }
+                    row.heldUntil?.let { Text(t("mobile.content.update_all_held", "when" to Display.dateTime(strings, it)), color = LocalColors.current.text3) }
                 }
             }
         }

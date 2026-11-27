@@ -181,11 +181,13 @@ final class ContentPages {
         weekly: Bool? = nil,
         onChange: Bool? = nil,
         beforeStart: Bool? = nil,
-        askFirst: Bool? = nil
+        askFirst: Bool? = nil,
+        updateHoldDays: Int? = nil
     ) async {
         await work("jar_scan_options", strings) { [weak self] client, id in
             let report = try await client.jarScanOptions(
-                serverId: id, weekly: weekly, onChange: onChange, beforeStart: beforeStart, askFirst: askFirst
+                serverId: id, weekly: weekly, onChange: onChange, beforeStart: beforeStart, askFirst: askFirst,
+                updateHoldDays: updateHoldDays
             )
             self?.scan = PageRead(value: report)
             return nil
@@ -210,6 +212,13 @@ final class ContentPages {
             everywhere = PageRead(problem: problem)
         } catch {
             everywhere = nil
+        }
+    }
+
+    func changedOk(_ filename: String, _ strings: Strings) async {
+        await work("changed_ok:\(filename)", strings) { [weak self] client, id in
+            self?.scan = PageRead(value: try await client.jarChangedOk(serverId: id, filename: filename))
+            return nil
         }
     }
 

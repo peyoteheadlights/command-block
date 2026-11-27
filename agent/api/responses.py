@@ -1302,6 +1302,9 @@ class ModUpdate(Open):
     latest_version: str
     version_id: str
     installed_version: str | None = None
+    held_until: float | None = Field(
+        None, description="Update hold: left out of Update all and the notices until then"
+    )
 
 
 class ModUpdates(Open):
@@ -1557,6 +1560,9 @@ class JarScanRow(Open):
     findings: list[dict[str, Any]] = []
     notes: list[dict[str, Any]] = []
     waiting: bool = Field(False, description="Goes to quarantine before the server next starts")
+    changed_outside: bool = Field(
+        False, description="New or different since the last check, and not changed by the app"
+    )
     words: str
     values: dict[str, Any] = {}
 
@@ -1570,6 +1576,7 @@ class JarScanReport(Open):
     on_change: bool
     before_start: bool = False
     ask_first: bool = False
+    update_hold_days: int = 3
     checking: bool = False
     jars: list[JarScanRow]
     quarantine: list[dict[str, Any]]
@@ -1854,6 +1861,9 @@ class UpdateAllRow(Open):
     saved: str | None = Field(
         None, description="How old the site's list was, when only its saved copy could be read"
     )
+    held_until: float | None = Field(
+        None, description="Update hold: Update all leaves it out until then; Update now doesn't"
+    )
 
 
 class UpdateAllUnchecked(Open):
@@ -1887,6 +1897,7 @@ class UpdateAllResult(Open):
     ok: bool
     job_id: str
     updated: list[UpdateAllDone]
+    held: list[str] = Field([], description="Names left out because of the update hold")
     safety_backup: SafetyBackup | None = Field(None, description="The one backup made first")
     undo: Undo | None = None
 

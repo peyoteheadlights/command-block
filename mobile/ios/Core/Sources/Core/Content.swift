@@ -105,6 +105,11 @@ public enum Content {
         mod.updateAvailable.map { strings.t("mods.update_to", ["version": $0.latestVersion]) }
     }
 
+    /// Why Update all leaves this one for now, or nil when it doesn't.
+    public static func held(_ strings: Strings, _ mod: Mod, zone: TimeZone = .current) -> String? {
+        mod.updateAvailable?.heldUntil.map { strings.t("mods.update_held", ["when": Display.dateTime($0, zone: zone)]) }
+    }
+
     /// "1.0 → 2.0"; Unknown for a side the agent didn't say.
     public static func change(_ strings: Strings, _ old: String?, _ new: String?) -> String {
         let unknown = strings.t("value.unknown")
@@ -358,10 +363,10 @@ public enum UpdateAll {
         list?.mods.contains { $0.updateAvailable != nil } == true
     }
 
-    /// Ticked at first: every one that is on. Turned-off ones are listed
-    /// but left for the person to tick.
+    /// Ticked at first: every one that is on and not held. Turned-off and
+    /// held ones are listed but left for the person to tick.
     public static func ticked(_ plan: UpdateAllPlan) -> Set<String> {
-        Set(plan.updates.filter(\.enabled).map(\.filename))
+        Set(plan.updates.filter { $0.enabled && $0.heldUntil == nil }.map(\.filename))
     }
 
     /// The ticked ones, in the plan's order, with the version the plan showed.
@@ -379,7 +384,9 @@ public enum UpdateAll {
     }
 
     public static func done(_ strings: Strings, _ result: UpdateAllResult) -> String {
-        strings.tn("mobile.content.update_all_done", count: result.updated.count, ["backup": result.safetyBackup?.name ?? strings.t("value.unknown")])
+        let done = strings.tn("mobile.content.update_all_done", count: result.updated.count, ["backup": result.safetyBackup?.name ?? strings.t("value.unknown")])
+        if result.held.isEmpty { return done }
+        return done + "\n" + strings.t("mobile.content.update_all_held_done", ["names": result.held.joined(separator: ", ")])
     }
 
     /// The step a running Update all is on, from the live feed.

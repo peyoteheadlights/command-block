@@ -124,6 +124,9 @@ class ContentTest {
         val newer = mod().copy(updateAvailable = ModUpdate(latestVersion = "2.0"), minecraftRange = ">=1.21")
         assertEquals("Update: 2.0", Content.newer(strings, newer))
         assertNull(Content.newer(strings, mod()))
+        assertNull(Content.held(strings, newer))
+        val held = newer.copy(updateAvailable = ModUpdate(latestVersion = "2.0", heldUntil = 1.0))
+        assertTrue(Content.held(strings, held, java.time.ZoneOffset.UTC)!!.startsWith("Update all waits until "))
         assertEquals("a · a.jar · For Minecraft >=1.21", Content.technical(strings, newer))
         assertEquals("1.0 → 2.0", Content.change(strings, "1.0", "2.0"))
         assertEquals("Unknown → 2.0", Content.change(strings, null, "2.0"))
@@ -240,11 +243,12 @@ class ContentTest {
             UpdateAllRow(modId = "a", name = "Alpha", filename = "a.jar", enabled = true, installedVersion = "1.0", latestVersion = "2.0", versionId = "va"),
             UpdateAllRow(modId = "b", name = "Beta", filename = "b.jar.disabled", enabled = false, installedVersion = "1.0", latestVersion = "1.1", versionId = "vb"),
             UpdateAllRow(modId = "c", name = "Gamma", filename = "c.jar", enabled = true, installedVersion = "3", latestVersion = "4", versionId = null),
+            UpdateAllRow(modId = "d", name = "Delta", filename = "d.jar", enabled = true, installedVersion = "1", latestVersion = "2", versionId = "vd", heldUntil = 1.0),
         ),
     )
 
     @Test
-    fun `update all ticks the ones that are on and leaves turned-off ones for the person`() {
+    fun `update all ticks the ones that are on and leaves turned-off and held ones for the person`() {
         assertEquals(setOf("a.jar", "c.jar"), UpdateAll.ticked(plan))
         val body = UpdateAll.body(plan, setOf("c.jar", "b.jar.disabled")).toString()
         assertEquals(
@@ -366,6 +370,10 @@ class ContentTest {
         assertNull(UpdateAll.blocked(strings, plan))
         val done = UpdateAllResult(updated = listOf(UpdateAllDone("Alpha", "1.0", "2.0")), safetyBackup = SafetyBackup(4, "before-update-all.zip"))
         assertEquals("Updated 1. The backup made first is before-update-all.zip.", UpdateAll.done(strings, done))
+        assertEquals(
+            "Updated 1. The backup made first is before-update-all.zip.\nDelta came out too recently, so Update all left them for now. Press Update now on one to update it anyway.",
+            UpdateAll.done(strings, done.copy(held = listOf("Delta"))),
+        )
         val running = Job(id = "j", kind = "mods", state = "running", step = "Updating Alpha (1 of 2)", serverId = "s")
         assertEquals("Updating Alpha (1 of 2)", UpdateAll.progress(running, "s"))
         assertNull(UpdateAll.progress(running, "other"))

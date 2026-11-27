@@ -929,6 +929,9 @@ struct ContentView: View {
                     .font(.footnote)
                     .foregroundStyle(palette.textSecondary)
             }
+            if let held = Content.held(strings, mod) {
+                Hint(text: held, palette: palette)
+            }
             if model.technical {
                 Hint(text: Content.technical(strings, mod), palette: palette)
             }
@@ -1188,6 +1191,13 @@ struct ContentView: View {
                             set: { on in Task { await content.scanOptions(strings, askFirst: on) } }
                         ))
                         .disabled(!idle)
+                        Stepper(value: Binding(
+                            get: { report.updateHoldDays },
+                            set: { days in Task { await content.scanOptions(strings, updateHoldDays: days) } }
+                        ), in: 0...14) {
+                            Text(verbatim: model.t("jarscan.hold_days") + ": \(report.updateHoldDays)")
+                        }
+                        .disabled(!idle)
                     }
                     Presses(presses: [
                         Press(title: model.t(content.busy == "jar_scan" ? "jarscan.checking" : "jarscan.check_again"), enabled: idle) {
@@ -1205,6 +1215,16 @@ struct ContentView: View {
                     }
                     ForEach(Array(jar.notes.enumerated()), id: \.offset) { _, note in
                         Hint(text: said(note), palette: palette)
+                    }
+                    if jar.changedOutside {
+                        Text(model.t("jarscan.changed")).font(.footnote).foregroundStyle(palette.tone(.danger))
+                        if model.can(Permissions.MODS_MANAGE) {
+                            Presses(presses: [
+                                Press(title: model.t("jarscan.changed_ok"), enabled: idle) {
+                                    Task { await content.changedOk(jar.filename, strings) }
+                                },
+                            ], palette: palette)
+                        }
                     }
                 }
             }
@@ -1665,8 +1685,15 @@ private struct UpdateAllSheet: View {
                                 if let saved = row.saved {
                                     Text(saved).font(.footnote).foregroundStyle(.secondary)
                                 }
+                                if let until = row.heldUntil {
+                                    Text(model.t("mobile.content.update_all_held", ["when": Display.dateTime(until)]))
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
+                        // A held one is listed but can't be ticked; Update now on its card skips the wait.
+                        .disabled(row.heldUntil != nil)
                     }
                 }
                 if !plan.unchecked.isEmpty {

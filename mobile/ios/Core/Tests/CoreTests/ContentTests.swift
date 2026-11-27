@@ -90,6 +90,10 @@ final class ContentTests: XCTestCase {
         newer.minecraftRange = ">=1.21"
         XCTAssertEqual(Content.newer(s, newer), "Update: 2.0")
         XCTAssertNil(Content.newer(s, mod()))
+        XCTAssertNil(Content.held(s, newer))
+        var held = newer
+        held.updateAvailable = ModUpdate(latestVersion: "2.0", heldUntil: 1)
+        XCTAssertEqual(Content.held(s, held, zone: TimeZone(identifier: "UTC")!)?.hasPrefix("Update all waits until 1970-01-01 00:00:01"), true)
         XCTAssertEqual(Content.technical(s, newer), "a · a.jar · For Minecraft >=1.21")
         XCTAssertEqual(Content.change(s, "1.0", "2.0"), "1.0 → 2.0")
         XCTAssertEqual(Content.change(s, nil, "2.0"), "Unknown → 2.0")
@@ -200,9 +204,10 @@ final class ContentTests: XCTestCase {
         UpdateAllRow(modId: "a", name: "Alpha", filename: "a.jar", enabled: true, installedVersion: "1.0", latestVersion: "2.0", versionId: "va"),
         UpdateAllRow(modId: "b", name: "Beta", filename: "b.jar.disabled", enabled: false, installedVersion: "1.0", latestVersion: "1.1", versionId: "vb"),
         UpdateAllRow(modId: "c", name: "Gamma", filename: "c.jar", enabled: true, installedVersion: "3", latestVersion: "4", versionId: nil),
+        UpdateAllRow(modId: "d", name: "Delta", filename: "d.jar", enabled: true, installedVersion: "1", latestVersion: "2", versionId: "vd", heldUntil: 1),
     ])
 
-    func testUpdateAllTicksTheOnesThatAreOnAndLeavesTurnedOffOnesForThePerson() throws {
+    func testUpdateAllTicksTheOnesThatAreOnAndLeavesTurnedOffAndHeldOnesForThePerson() throws {
         XCTAssertEqual(UpdateAll.ticked(plan), ["a.jar", "c.jar"])
         let body = String(data: try AgentClient.encode(UpdateAll.body(plan, ticked: ["c.jar", "b.jar.disabled"])), encoding: .utf8)
         XCTAssertEqual(body, #"{"mods":[{"filename":"b.jar.disabled","version_id":"vb"},{"filename":"c.jar","version_id":null}]}"#)
@@ -302,6 +307,12 @@ final class ContentTests: XCTestCase {
         XCTAssertNil(UpdateAll.blocked(s, plan))
         let done = UpdateAllResult(updated: [UpdateAllDone(name: "Alpha", previousVersion: "1.0", version: "2.0")], safetyBackup: SafetyBackup(name: "before-update-all.zip"))
         XCTAssertEqual(UpdateAll.done(s, done), "Updated 1. The backup made first is before-update-all.zip.")
+        var withHeld = done
+        withHeld.held = ["Delta"]
+        XCTAssertEqual(
+            UpdateAll.done(s, withHeld),
+            "Updated 1. The backup made first is before-update-all.zip.\nDelta came out too recently, so Update all left them for now. Press Update now on one to update it anyway."
+        )
         let job = Job(id: "j", kind: "mods", state: "running", step: "Updating Alpha (1 of 2)", serverId: "s")
         XCTAssertEqual(UpdateAll.progress(job, serverId: "s"), "Updating Alpha (1 of 2)")
         XCTAssertNil(UpdateAll.progress(job, serverId: "other"))

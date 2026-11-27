@@ -753,7 +753,10 @@ def gather(ctx, addons: dict[str, Any] | None = None) -> Facts:
     last = ctx.metrics.last or {}
     installed = ctx.mods.list_installed(use_cache=True)
     updates = [
-        {"mod_id": m["mod_id"], "name": m["name"]} for m in installed if m.get("update_available")
+        {"mod_id": m["mod_id"], "name": m["name"]}
+        for m in installed
+        # One in the update hold isn't offered yet.
+        if m.get("update_available") and not m["update_available"]["held_until"]
     ]
     server_type = ctx.config.server_type
     spark = any(

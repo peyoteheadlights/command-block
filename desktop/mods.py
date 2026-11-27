@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -198,6 +199,10 @@ def inset_row() -> tuple[QFrame, QHBoxLayout]:
 
 def names(items: list[dict], key: str = "title") -> str:
     return ", ".join(str(i.get(key) or i.get("name") or "") for i in items)
+
+
+def held(update: dict) -> str:
+    return text("mobile.content.update_all_held", when=clock(update["held_until"]))
 
 
 class SharePage(Page):
@@ -471,6 +476,11 @@ class ModsPage(SharePage):
         self.before_start.clicked.connect(lambda on: self.scan_options(before_start=on))
         self.ask_first = QCheckBox()
         self.ask_first.clicked.connect(lambda on: self.scan_options(ask_first=on))
+        self.hold_label = label("", "sub")
+        self.hold_days = QSpinBox()
+        self.hold_days.setRange(0, 14)
+        self.hold_days.setKeyboardTracking(False)  # one save after typing, not per key
+        self.hold_days.valueChanged.connect(lambda days: self.scan_options(update_hold_days=days))
         layout.addWidget(scan_intro)
         layout.addWidget(self.scan_summary)
         layout.addLayout(self.scan_rows)
@@ -481,6 +491,8 @@ class ModsPage(SharePage):
             self.on_change,
             self.before_start,
             self.ask_first,
+            self.hold_label,
+            self.hold_days,
         ):
             layout.addWidget(control)
         self.column.addWidget(self.scan_card)
@@ -537,6 +549,7 @@ class ModsPage(SharePage):
             (self.on_change.setText, "jarscan.on_change"),
             (self.before_start.setText, "jarscan.before_start"),
             (self.ask_first.setText, "jarscan.ask_first"),
+            (self.hold_label.setText, "jarscan.hold_days"),
             (self.copy.setText, "desktop.mods.copy"),
             (title_of(self.players_card).setText, "desktop.mods.for_players"),
             (dot_of(self.players_card).say, "desktop.mods.for_players_intro"),
@@ -707,6 +720,8 @@ class ModsPage(SharePage):
             words.addWidget(
                 label(issue["detail"], "problem" if issue.get("severity") == "error" else "sub")
             )
+        if newer and newer.get("held_until"):
+            words.addWidget(label(text("mods.update_held", when=clock(newer["held_until"])), "muted"))
         h.addLayout(words, 1)
         name = mod.get("name") or mod["filename"]
         if manage:
@@ -820,7 +835,20 @@ class ModsPage(SharePage):
         for jar in report.get("jars") or []:
             lines = [f"{jar['filename']}: {text(jar['words'], **jar.get('values') or {})}"]
             lines += [said(f) for f in (jar.get("findings") or []) + (jar.get("notes") or [])]
-            rows.append(label("\n".join(lines), "sub"))
+            if not jar.get("changed_outside"):
+                rows.append(label("\n".join(lines), "sub"))
+                continue
+            row = QWidget()
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 0, 0, 0)
+            lines.append(text("jarscan.changed"))
+            h.addWidget(label("\n".join(lines), "problem"), 1)
+            if manage:
+                ok = push(text("jarscan.changed_ok"), "plain")
+                ok.setAccessibleName(f"{ok.text()}: {jar['filename']}")
+                ok.clicked.connect(lambda _=False, name=jar["filename"]: self.said_ok(name))
+                h.addWidget(ok)
+            rows.append(row)
         refill(self.scan_rows, rows)
         self.deep.jars([jar["filename"] for jar in report.get("jars") or []])
         rows = []
@@ -850,8 +878,14 @@ class ModsPage(SharePage):
         for box, key in boxes:
             box.setChecked(bool(report.get(key)))
             box.setVisible(manage)
-        # Only the owner can turn off the automatic stop.
-        self.ask_first.setVisible(manage and self.window_.role in (None, "owner"))
+        # Only the owner can turn off the automatic stop or change the update hold.
+        owner = manage and self.window_.role in (None, "owner")
+        self.ask_first.setVisible(owner)
+        self.hold_days.blockSignals(True)
+        self.hold_days.setValue(int(report.get("update_hold_days", 3)))
+        self.hold_days.blockSignals(False)
+        self.hold_label.setVisible(owner)
+        self.hold_days.setVisible(owner)
 
     def scan_jars(self) -> None:
         self.scan_summary.setText(text("jarscan.checking"))
@@ -861,7 +895,11 @@ class ModsPage(SharePage):
         self.show_scan(report)
         self.changed()
 
-    def scan_options(self, **change: bool) -> None:
+    def said_ok(self, filename: str) -> None:
+        body = {"filename": filename}
+        self.ask("POST", "/mods/scan/changed", self.show_scan, self.said, body=body)
+
+    def scan_options(self, **change: bool | int) -> None:
         self.ask("POST", "/mods/scan/options", self.show_scan, self.said, body=change)
 
     def put_back(self, item: dict) -> None:
@@ -1506,8 +1544,9 @@ class ModsPage(SharePage):
             (
                 f"{u['name']}   {u['installed_version']} → {u['latest_version']}"
                 + ("" if u["enabled"] else f"   ({text('mobile.content.update_all_off')})")
-                + (f"   ({u['saved']})" if u.get("saved") else ""),
-                bool(u["enabled"]),
+                + (f"   ({u['saved']})" if u.get("saved") else "")
+                + (f"   ({held(u)})" if u.get("held_until") else ""),
+                bool(u["enabled"]) and not u.get("held_until"),
             )
             for u in updates
         ]
@@ -1516,6 +1555,8 @@ class ModsPage(SharePage):
             "\n\n".join([text("mobile.content.update_all_lead"), *unchecked]),
             choices,
             text("mods.update"),
+            # A held one is listed but can't be ticked; Update now skips the wait.
+            locked={i for i, u in enumerate(updates) if u.get("held_until")},
         )
         if not ticked:
             self.update_all_ready()
@@ -1540,6 +1581,11 @@ class ModsPage(SharePage):
                     else "mobile.content.update_all_done.other",
                     count=count,
                     backup=backup,
+                )
+                + (
+                    "\n" + text("mobile.content.update_all_held_done", names=", ".join(left))
+                    if (left := result.get("held"))
+                    else ""
                 ),
                 (lambda: self.window_.move_change("undo")) if result.get("undo") else None,
             )

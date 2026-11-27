@@ -80,6 +80,7 @@ class MinecraftServer:
         self.pid: int | None = None
 
         self.started_at: float | None = None
+        self.started_as_account = False  # started as the separate Windows user
         self.online_at: float | None = None
         self.startup_seconds: float | None = None
         self.last_exit_code: int | None = None
@@ -551,7 +552,8 @@ class MinecraftServer:
             try:
                 # As the owner, or as the separate Windows user when that's
                 # on (agent/serveruser.py). Never the owner as a fallback.
-                if serveruser.is_on(self.config):
+                self.started_as_account = serveruser.is_on(self.config)
+                if self.started_as_account:
                     from ..mods import store
 
                     await asyncio.to_thread(store.for_config(self.db, self.config).lock_missing)

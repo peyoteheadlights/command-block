@@ -25,6 +25,8 @@ data class ModIssue(
 data class ModUpdate(
     @SerialName("latest_version") val latestVersion: String = "",
     @SerialName("version_id") val versionId: String? = null,
+    /** Update all waits until then (the update hold); null when it doesn't wait. */
+    @SerialName("held_until") val heldUntil: Double? = null,
 )
 
 /** One mod or plugin in the server's folder. */
@@ -493,6 +495,8 @@ data class JarScanRow(
     val waiting: Boolean = false,
     val words: String = "",
     val values: Map<String, String> = emptyMap(),
+    /** New or different since the last check, and nobody changed it in the app. */
+    @SerialName("changed_outside") val changedOutside: Boolean = false,
 )
 
 @Serializable
@@ -520,6 +524,7 @@ data class JarScanReport(
     @SerialName("on_change") val onChange: Boolean = true,
     @SerialName("before_start") val beforeStart: Boolean = false,
     @SerialName("ask_first") val askFirst: Boolean = false,
+    @SerialName("update_hold_days") val updateHoldDays: Int = 3,
     val jars: List<JarScanRow> = emptyList(),
     val quarantine: List<QuarantinedJar> = emptyList(),
     val summary: JarScanSummary = JarScanSummary(),
@@ -748,6 +753,7 @@ data class UpdateAllRow(
     @SerialName("version_id") val versionId: String? = null,
     /** How old the site's list was when it came from a saved copy; null when asked just now. */
     val saved: String? = null,
+    @SerialName("held_until") val heldUntil: Double? = null,
 )
 
 /** One Modrinth couldn't be asked about, with the reason. */
@@ -777,6 +783,8 @@ data class UpdateAllResult(
     val updated: List<UpdateAllDone> = emptyList(),
     @SerialName("safety_backup") val safetyBackup: SafetyBackup? = null,
     val undo: Undo? = null,
+    /** Left out because they came out too recently (the update hold). */
+    val held: List<String> = emptyList(),
 )
 
 @Serializable

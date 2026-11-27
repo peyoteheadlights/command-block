@@ -92,6 +92,7 @@ GET /api/servers/{server_id}/mods/scan
 POST /api/servers/{server_id}/mods/scan
 POST /api/servers/{server_id}/mods/scan/undo
 POST /api/servers/{server_id}/mods/scan/options
+POST /api/servers/{server_id}/mods/scan/changed
 GET /api/servers/{server_id}/mods/deepscan
 POST /api/servers/{server_id}/mods/deepscan
 POST /api/servers/{server_id}/mods/deepscan/quarantine

@@ -196,6 +196,7 @@ def test_rows_say_where_each_jar_was_found(signed_in, ctx, sites):
         "found": 0,
         "unknown": 1,
         "couldnt": 0,
+        "changed": 0,
         "checked_at": None,
     }
 
@@ -529,7 +530,13 @@ def test_protection_says_what_the_jar_check_did():
 
 def test_jar_check_wording_never_promises_too_much():
     banned = re.compile(r"\b(safe|clean|secure|protected)\b", re.IGNORECASE)
-    prefixes = ("jarscan.", "protect.jar_scan", "alert_event.jar", "protect.antivirus")
+    prefixes = (
+        "jarscan.",
+        "protect.jar",
+        "alert_event.jar",
+        "protect.antivirus",
+        "protect.windows_user",
+    )
     keys = [k for k in STRINGS if k.startswith(prefixes + ("protect.fix.antivirus",))]
     assert len(keys) > 20
     for key in keys:

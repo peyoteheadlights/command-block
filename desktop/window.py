@@ -1917,10 +1917,16 @@ class MainWindow(FramelessWindow):
         return box.textValue() if box.exec() else None
 
     def tick(
-        self, title: str, body: str, choices: list[tuple[str, bool]], yes: str
+        self,
+        title: str,
+        body: str,
+        choices: list[tuple[str, bool]],
+        yes: str,
+        locked: set[int] | tuple[()] = (),
     ) -> list[int] | None:
         """A question with a list to tick, each (words, ticked at first): the
-        ticked ones' indexes, or None when cancelled."""
+        ticked ones' indexes, or None when cancelled. ``locked``: indexes
+        shown greyed out, which can't be ticked."""
         box = QDialog(self)
         box.setWindowTitle(title)
         column = QVBoxLayout(box)
@@ -1928,9 +1934,10 @@ class MainWindow(FramelessWindow):
         rows = QWidget()
         ticks = QVBoxLayout(rows)
         boxes = []
-        for words, ticked in choices:
+        for i, (words, ticked) in enumerate(choices):
             tick = QCheckBox(words)
-            tick.setChecked(ticked)
+            tick.setChecked(ticked and i not in locked)
+            tick.setEnabled(i not in locked)
             ticks.addWidget(tick)
             boxes.append(tick)
         scroll = QScrollArea()
