@@ -1929,6 +1929,10 @@ class ModpackMakeOptions(Open):
         description="on, text: the line for players without the modpack, with {name}, "
         "{version}, {link} and {get_it} placeholders"
     )
+    title_screen: dict[str, Any] = Field(
+        description="button (on, address), flavor_text (on, text), background (on), "
+        "background_set: a picture was uploaded"
+    )
     made: ModpackMadeFile | None = None
 
 

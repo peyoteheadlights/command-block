@@ -827,9 +827,20 @@ class AgentClient(
             put("players_loader", make.playersLoader)
             put("required", make.required)
             make.chatLine?.let { put("chat_line", buildJsonObject { put("on", it.on); put("text", it.text) }) }
+            make.titleScreen?.let {
+                put("title_screen", buildJsonObject {
+                    put("button", buildJsonObject { put("on", it.button.on); put("address", it.button.address) })
+                    put("flavor_text", buildJsonObject { put("on", it.flavorText.on); put("text", it.flavorText.text) })
+                    put("background", buildJsonObject { put("on", it.background.on) })
+                })
+            }
         }
         return call(post("${server(serverId)}/modpack/make", body), ModpackMade.serializer(), slow = true)
     }
+
+    /** The title-screen background (a PNG picked on the phone) for the next modpacks. */
+    suspend fun uploadTitleBackground(serverId: String, file: PickedFile): ModpackMakeOptions =
+        call(upload("${server(serverId)}/modpack/title-background", file), ModpackMakeOptions.serializer(), slow = true)
 
     /** Streams the made modpack into [out], as [downloadBackup] does, for the share menu. */
     suspend fun downloadModpack(

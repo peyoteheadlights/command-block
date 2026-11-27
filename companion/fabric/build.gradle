@@ -1,0 +1,57 @@
+// The Fabric mod: one jar for players and servers. The check itself is in
+// common/; this module only connects it to Minecraft and Fabric API.
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+base { archivesName = 'commandblock-companion-fabric' }
+
+loom {
+    splitEnvironmentSourceSets() // src/client/ only ever runs on a player's game
+    accessWidenerPath = file('src/main/resources/commandblock-companion.accesswidener')
+    mods {
+        'commandblock_companion' {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+// The update screen, shared with the NeoForge mod (Minecraft's own classes only).
+sourceSets.client.java.srcDir '../client-screens/src/main/java'
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    implementation project(':common')
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25 // Minecraft 26.x needs Java 25
+}
+
+processResources {
+    def version = project.version
+    inputs.property 'version', version
+    filesMatching('fabric.mod.json') { expand 'version': version }
+}
+
+// The check's classes go inside our jar (common has no other dependencies:
+// Gson comes with Minecraft).
+jar {
+    dependsOn ':common:classes'
+    from(project(':common').sourceSets.main.output)
+    from(rootProject.file('../LICENSE')) { rename { "LICENSE_command-block-companion" } }
+}
+
+// A real game joins a world with the check on (gradlew :fabric:runClientGameTest).
+// Singleplayer, so no server download and no extra settings.
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = 'commandblock-companion-test'
+        enableGameTests = false
+        enableClientGameTests = true
+    }
+}

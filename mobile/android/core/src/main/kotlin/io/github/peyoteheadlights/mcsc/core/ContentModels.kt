@@ -163,6 +163,26 @@ data class RequiredToJoin(val available: Boolean = false, val on: Boolean = fals
 @Serializable
 data class ChatLine(val on: Boolean = true, val text: String = "")
 
+/** The Companion's title-screen join button and the address it joins. */
+@Serializable
+data class TitleButton(val on: Boolean = false, val address: String = "")
+
+/** The yellow flavor text, up to 60 letters. */
+@Serializable
+data class FlavorText(val on: Boolean = false, val text: String = "")
+
+@Serializable
+data class OnOff(val on: Boolean = false)
+
+/** What friends with the Companion see when Minecraft starts. [backgroundSet]: a picture was uploaded. */
+@Serializable
+data class TitleScreen(
+    val button: TitleButton = TitleButton(),
+    @SerialName("flavor_text") val flavorText: FlavorText = FlavorText(),
+    val background: OnOff = OnOff(),
+    @SerialName("background_set") val backgroundSet: Boolean = false,
+)
+
 /** What Make a modpack offers. [playersLoaders] is empty on a mod server. */
 @Serializable
 data class ModpackMakeOptions(
@@ -173,6 +193,7 @@ data class ModpackMakeOptions(
     val discord: Boolean = false,
     @SerialName("required_to_join") val requiredToJoin: RequiredToJoin = RequiredToJoin(),
     @SerialName("chat_line") val chatLine: ChatLine = ChatLine(),
+    @SerialName("title_screen") val titleScreen: TitleScreen = TitleScreen(),
 )
 
 /** The person's answers to Make a modpack. */
@@ -184,6 +205,7 @@ data class MakeModpack(
     val playersLoader: String = "fabric",
     val required: Boolean = false,
     val chatLine: ChatLine? = null,
+    val titleScreen: TitleScreen? = null,
 )
 
 /** A CurseForge mod its author keeps from other apps: never put in. */

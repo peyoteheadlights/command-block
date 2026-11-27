@@ -1,0 +1,27 @@
+modLoader = "javafml"
+loaderVersion = "[1,)"
+license = "MIT"
+
+[[accessTransformers]]
+file = "META-INF/accesstransformer.cfg"
+
+[[mods]]
+modId = "commandblock_companion"
+version = "${version}"
+displayName = "Command Block Companion"
+authors = "peyoteheadlights"
+description = '''
+Checks that players joining a Command Block server have its modpack, and tells them what to get if not. Not an anti-cheat: the whitelist stays the real gate.
+'''
+
+[[dependencies.commandblock_companion]]
+modId = "neoforge"
+type = "required"
+versionRange = "[26.3,)"
+side = "BOTH"
+
+[[dependencies.commandblock_companion]]
+modId = "minecraft"
+type = "required"
+versionRange = "[26.3,26.4)"
+side = "BOTH"

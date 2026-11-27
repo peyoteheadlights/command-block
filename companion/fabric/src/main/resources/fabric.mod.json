@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "commandblock_companion",
+  "version": "${version}",
+  "name": "Command Block Companion",
+  "description": "Checks that players joining a Command Block server have its modpack, and tells them what to get if not. Not an anti-cheat: the whitelist stays the real gate.",
+  "authors": ["peyoteheadlights"],
+  "contact": {
+    "sources": "https://github.com/peyoteheadlights/command-block"
+  },
+  "license": "MIT",
+  "accessWidener": "commandblock-companion.accesswidener",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["io.github.peyoteheadlights.companion.fabric.CompanionServer"],
+    "client": ["io.github.peyoteheadlights.companion.fabric.CompanionClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "~26.3",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
