@@ -215,6 +215,24 @@ def test_a_stat_quest_counts_from_joining_and_gives_its_rewards(agent, fake):  #
     assert board[0]["allowed_mentions"] == {"parse": []}
 
 
+@pytest.fixture
+def quick_quests(monkeypatch):
+    monkeypatch.setattr(quests, "CHECK_EVERY", 0.2)
+
+
+def test_play_while_the_bot_is_down_still_counts(quick_quests, agent, fake):  # noqa: F811
+    set_up(agent)
+    core = core_of(agent)
+    played(core, "Alex", ALEX, 0)
+    linked(core, "Alex", ALEX)
+    quest = make(agent, kind="playtime", count=2)
+    run(fake, "quest join", {"quest": quest["id"]})
+    check(agent)
+    call(agent, core.discord.stop)  # Discord or the network down
+    core.db.execute("UPDATE players SET total_seconds = 3 * 3600 WHERE uuid = ?", (ALEX,))
+    wait_for(lambda: core.db.query_one("SELECT finished_at FROM quest_progress")["finished_at"])
+
+
 def test_an_offline_player_gets_items_on_their_next_join(agent, fake):  # noqa: F811
     set_up(agent)
     core = core_of(agent)
@@ -258,6 +276,22 @@ def test_a_reward_with_no_answer_stays_sent_and_is_never_sent_again(agent, fake,
     check(agent)
     assert [r["state"] for r in rewards(core)] == ["sent"]
     assert sum("give Alex minecraft:cake 1" in line for line in lines(ctx)) == 1
+
+
+def test_a_reward_left_sending_by_a_stop_is_sent_at_start(agent, fake):  # noqa: F811
+    set_up(agent)
+    core = core_of(agent)
+    played(core, "Alex", ALEX, 0)
+    linked(core, "Alex", ALEX)
+    quest = make(agent, kind="approval", rewards=[{"kind": "item", "item": "cake", "count": 1}])
+    run(fake, "quest done", {"quest": quest["id"]})
+    claim = agent.get("/api/servers/test/quests").json()["claims"][0]
+    agent.post(f"/api/servers/test/quests/claims/{claim['id']}", json={"answer": "approve"})
+    core.db.execute("UPDATE quest_rewards SET state = 'sending'")  # the agent stopped here
+    core.quests.stop()
+    core.quests = quests.Quests(core)
+    assert [r["state"] for r in rewards(core)] == ["sent"]
+    assert "stopped" in rewards(core)[0]["answer"]
 
 
 def test_an_item_the_server_doesnt_know_is_failed_not_retried(agent, fake):  # noqa: F811

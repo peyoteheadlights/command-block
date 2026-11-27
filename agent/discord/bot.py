@@ -78,7 +78,7 @@ REFUSED = "\N{NO ENTRY SIGN}"  # the reaction on a message that didn't go into t
 STORE_SEEN_KEY = "discord_store_seen"  # guild id -> member id -> Store rank roles given
 STORE_EVERY = 3600.0  # Store rank roles are checked hourly, and soon after a player joins
 STORE_AFTER_JOIN = 120.0  # Tebex runs a purchase's commands within minutes of a join
-SEEN_KEY = "discord_levels_seen"  # member id -> the Level their roles were last set for
+SEEN_KEY = "discord_levels_seen"  # guild id -> member id -> the Level their roles were last set for
 BOARDS_KEY = "discord_leaderboards"  # guild id -> the day its leaderboard was last posted
 BOARD_HOUR = 18  # on the PC's clock
 QUEST_BOARDS_KEY = "discord_quest_boards"  # quests channel id -> {"message", "words"}
@@ -425,56 +425,67 @@ class Bot:
         """Give each member whose Level changed the Level role that goes
         with it (and take the one before), and post their level-up. Discord
         is only called for a change, and a member seen for the first time
-        gets their role without a message."""
+        gets their role without a message. Each Discord server keeps its
+        own "seen", so one that fails doesn't post again in the others."""
         async with self._levels_lock:
             db = self.core.db
             resync, self._resync = self._resync, False
-            if resync:
-                db.set_setting(SEEN_KEY, {})
-            seen: dict[str, int] = db.get_setting(SEEN_KEY, {}) or {}
-            now = {m: levels.level_of(xp) for m, xp in self.xp().items()}
-            # Every account unlinked: back to no Level role, once.
-            gone = {m for m in seen if m not in now}
-            now.update({m: 0 for m in gone})
-            changed = {m: lv for m, lv in now.items() if seen.get(m) != lv}
-            if not changed:
-                return
+            before = db.get_setting(SEEN_KEY, {}) or {}
+            saved: dict = {} if resync else dict(before)
+            if any(isinstance(v, int) for v in saved.values()):
+                saved = {gid: dict(saved) for gid in self.guilds}  # one "seen" for all before
+            levels_now = {m: levels.level_of(xp) for m, xp in self.xp().items()}
             for gid in list(self.guilds):
+                seen: dict[str, int] = saved.get(gid, {})
+                now = dict(levels_now)
+                # Every account unlinked: back to no Level role, once.
+                gone = {m for m in seen if m not in now}
+                now.update({m: 0 for m in gone})
+                changed = {m: lv for m, lv in now.items() if seen.get(m) != lv}
                 roles = layout.level_roles(db, gid)
                 retired = layout.level_settings(db, gid).get("retired") or []
-                if not roles and not retired and not self._announces(gid):
+                if not changed or (not roles and not retired and not self._announces(gid)):
                     continue
-                found = {r["id"]: r for r in await self.rest.request("GET", f"/guilds/{gid}/roles")}
-                for member, level in changed.items():
-                    try:
-                        role = await self._set_level_role(gid, member, level, roles, found, retired)
-                    except client.DiscordError as exc:
-                        if exc.status not in (403, 404):
-                            # Discord or the network: try again next minute.
-                            now[member] = seen.get(member, -1)
-                        log.info("couldn't set a Level role: %s", exc)
-                        continue
-                    if role is False:
-                        continue  # not in this Discord server
-                    old = seen.get(member)
-                    if old is not None and level > old and self._announces(gid):
-                        name = found.get(role or "", {}).get("name") if role else None
-                        channel = layout.levels_channel(db, gid)
-                        await self.rest.request(
-                            "POST",
-                            f"/channels/{channel}/messages",
-                            {
-                                "content": progress.level_up(member, level, name),
-                                "allowed_mentions": {"parse": []},
-                            },
-                        )
+                try:
+                    await self._update_guild_levels(gid, seen, now, changed, roles, retired)
+                except client.DiscordError as exc:
+                    log.info("couldn't update Levels in a Discord server: %s", exc)
+                    continue  # try again next minute
                 if resync and retired:
                     layout.set_level_settings(db, gid, retired=[])
-            # Kept: who's still linked, and (to try again) anyone Discord failed for.
-            db.set_setting(
-                SEEN_KEY,
-                {m: lv for m, lv in now.items() if lv >= 0 and not (m in gone and lv == 0)},
-            )
+                # Kept: who's still linked, and (to try again) anyone Discord failed for.
+                saved[gid] = {
+                    m: lv for m, lv in now.items() if lv >= 0 and not (m in gone and lv == 0)
+                }
+            if saved != before:
+                db.set_setting(SEEN_KEY, saved)
+
+    async def _update_guild_levels(self, gid, seen, now, changed, roles, retired) -> None:
+        db = self.core.db
+        found = {r["id"]: r for r in await self.rest.request("GET", f"/guilds/{gid}/roles")}
+        for member, level in changed.items():
+            try:
+                role = await self._set_level_role(gid, member, level, roles, found, retired)
+            except client.DiscordError as exc:
+                if exc.status not in (403, 404):
+                    # Discord or the network: try again next minute.
+                    now[member] = seen.get(member, -1)
+                log.info("couldn't set a Level role: %s", exc)
+                continue
+            if role is False:
+                continue  # not in this Discord server
+            old = seen.get(member)
+            if old is not None and level > old and self._announces(gid):
+                name = found.get(role or "", {}).get("name") if role else None
+                channel = layout.levels_channel(db, gid)
+                await self.rest.request(
+                    "POST",
+                    f"/channels/{channel}/messages",
+                    {
+                        "content": progress.level_up(member, level, name),
+                        "allowed_mentions": {"parse": []},
+                    },
+                )
 
     def _announces(self, guild_id: str) -> bool:
         return bool(

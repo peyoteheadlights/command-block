@@ -705,6 +705,7 @@ class AgentCore:
         self.pcs.start()
         await self._check_database_access()
         self.game_events.start()
+        self.quests.start()
         self.start_discord()
         # After the bot, so a request that ran out while the agent was off
         # still tells its asker.

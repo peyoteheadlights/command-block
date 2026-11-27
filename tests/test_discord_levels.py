@@ -234,6 +234,24 @@ def test_level_roles_replace_each_other_and_level_ups_are_posted(agent, fake):  
     assert fake.members[MEMBER_ID] == [] and len(bot_posts(fake)) == posts
 
 
+def test_one_failing_discord_server_doesnt_stop_level_ups_in_another(agent, fake):  # noqa: F811
+    set_up(agent)
+    core = core_of(agent)
+    broken = "999"  # a Discord server that only answers errors
+    core.discord.guilds[broken] = {"id": broken, "name": "Broken"}
+    core.db.execute(
+        "INSERT INTO discord_roles (guild_id, kind, role_id) VALUES (?, 'level_5', '1')", (broken,)
+    )
+    played(core, "Alex", ALEX, 1)
+    linked(core, "Alex", ALEX)
+    for _ in range(2):
+        call(agent, core.discord.update_levels)
+    core.db.execute("UPDATE players SET total_seconds = 20 * 3600 WHERE uuid = ?", (ALEX,))
+    for _ in range(3):
+        call(agent, core.discord.update_levels)
+    assert sum("reached **Level 5**" in m["content"] for m in bot_posts(fake)) == 1
+
+
 def test_without_a_levels_channel_level_ups_go_to_quests(agent, fake):  # noqa: F811
     """A Discord server set up before #levels was made."""
     set_up(agent)

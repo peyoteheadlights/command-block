@@ -64,6 +64,7 @@ SCREENSHOTS = "quest-screenshots"
 ID_RE = re.compile(r"^[a-z0-9_.-]+:[a-z0-9_./-]+$")
 ROLE_ID_RE = re.compile(r"^\d{5,25}$")
 WAIT = 20.0  # seconds a command waits for the console's answer
+CHECK_EVERY = 60.0  # seconds between progress checks, with or without the bot
 
 # Java's answers, as vanilla (and Paper, Fabric, Forge) print them.
 JAVA_REWARDS = {
@@ -263,7 +264,26 @@ class Quests:
         self._files: dict[tuple[str, str], tuple[Any, dict, dict, float | None]] = {}
         self._read_since: set[tuple[str, str]] = set()  # kept at the next check
         self._jobs: set[asyncio.Task] = set()
+        # A reward still "sending" was cut off by a stop: maybe given, maybe
+        # not, so it is never sent again (same as no answer below).
+        self.db.execute(
+            "UPDATE quest_rewards SET state = 'sent', answer = ? WHERE state = 'sending'",
+            ("The agent stopped before the server answered.",),
+        )
         core.bus.subscribe(self.handle)
+
+    def start(self) -> None:
+        self.spawn(self._check_loop())
+
+    async def _check_loop(self) -> None:
+        """Progress is counted here too, so play while the bot is down
+        still counts before a day or week ends."""
+        while True:
+            await asyncio.sleep(CHECK_EVERY)
+            try:
+                await self.check()
+            except Exception:
+                log.exception("couldn't check quest progress")
 
     def stop(self) -> None:
         self.core.bus.unsubscribe(self.handle)
@@ -511,7 +531,7 @@ class Quests:
         return gained // 3600 if quest["kind"] == "playtime" else gained
 
     async def check(self) -> bool:
-        """Once a minute (the bot's loop): everyone's progress on the quests
+        """Once a minute: everyone's progress on the quests
         that check themselves, finishing the ones who got there. True when
         something changed (the board is edited then)."""
         changed = False
