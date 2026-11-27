@@ -39,9 +39,9 @@ fun serverName(vm: AppViewModel, serverId: String): String =
     vm.servers.list.firstOrNull { it.id == serverId }?.name ?: vm.server[serverId]?.status?.name ?: serverId
 
 /**
- * One of a server's screens: in the server's color, pull to refresh, a
- * list of [content], and an optional [bottomBar] (the Console's and Chat's
- * box).
+ * One of a server's screens: in the binder with the server's color on the
+ * band and the edges, pull to refresh, a list of [content], and an
+ * optional [bottomBar] (the Console's and Chat's box).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,25 +62,27 @@ fun ServerFrame(
     val color = vm.servers.list.firstOrNull { it.id == serverId }?.color
     McscTheme(vm.shared, themeName(vm.theme), serverColor = color) {
         val colors = LocalColors.current
-        Scaffold(
-            containerColor = colors.sheet,
-            topBar = { Bar(title, onBack, actions) },
-            bottomBar = bottomBar,
-        ) { padding ->
-            PullToRefreshBox(
-                isRefreshing = refreshing,
-                onRefresh = onRefresh,
-                modifier = Modifier.padding(padding).fillMaxSize(),
-            ) {
-                Box(Modifier.fillMaxSize()) {
-                    LazyColumn(
-                        state = listState,
-                        contentPadding = ScreenPadding,
-                        verticalArrangement = Gap,
-                        modifier = Modifier.fillMaxSize(),
-                        content = content,
-                    )
-                    overlay()
+        Binder(vm, serverId) {
+            Scaffold(
+                containerColor = colors.sheet,
+                topBar = { Bar(title, onBack, actions) },
+                bottomBar = bottomBar,
+            ) { padding ->
+                PullToRefreshBox(
+                    isRefreshing = refreshing,
+                    onRefresh = onRefresh,
+                    modifier = Modifier.padding(padding).fillMaxSize(),
+                ) {
+                    Box(Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            state = listState,
+                            contentPadding = ScreenPadding,
+                            verticalArrangement = Gap,
+                            modifier = Modifier.fillMaxSize(),
+                            content = content,
+                        )
+                        overlay()
+                    }
                 }
             }
         }

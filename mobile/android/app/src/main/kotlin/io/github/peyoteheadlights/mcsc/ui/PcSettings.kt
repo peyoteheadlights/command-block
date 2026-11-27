@@ -367,7 +367,7 @@ fun PcSettingsScreen(vm: AppViewModel, onBack: () -> Unit, onDevices: () -> Unit
             item { SaidNote(pages.said) }
             item {
                 Card {
-                    Item(t("mobile.pc.devices"), subtitle = t("mobile.pc.devices_hint"), onClick = onDevices)
+                    Item(t("mobile.pc.devices"), info = t("mobile.pc.devices_hint"), onClick = onDevices)
                     Item(t("appset.alerts"), onClick = onAlerts)
                 }
             }

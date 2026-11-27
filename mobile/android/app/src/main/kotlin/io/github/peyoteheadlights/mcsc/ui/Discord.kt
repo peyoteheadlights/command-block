@@ -239,7 +239,7 @@ fun DiscordScreen(vm: AppViewModel, onBack: () -> Unit) {
                             Tick(
                                 t("discord.remove_on_leave"),
                                 checked = guild.removeOnLeave,
-                                subtitle = t("discord.remove_on_leave_hint"),
+                                info = t("discord.remove_on_leave_hint"),
                                 enabled = pages.busy == null,
                             ) { pages.removeOnLeave(guild.id, it, strings) }
                         }
@@ -294,7 +294,7 @@ private fun GuildSetup(pages: DiscordPages, guild: DiscordGuild, servers: List<P
         }
         Item(
             t("discord.set_up"),
-            subtitle = t("discord.set_up_hint"),
+            info = t("discord.set_up_hint"),
             onClick = if (pages.busy == null && ticked.isNotEmpty()) ({ pages.setUp(guild.id, servers.map { it.first }.filter { it in ticked }, strings) }) else null,
         )
     }

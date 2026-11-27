@@ -95,7 +95,7 @@ struct PairingFlowView: View {
                 .foregroundStyle(.tint)
                 .accessibilityHidden(true)
             Text(model.t("mobile.welcome.title"))
-                .font(.largeTitle.weight(.bold))
+                .font(.heading(.largeTitle))
             Text(model.t("mobile.welcome.lead"))
                 .font(.body)
             Text(model.t("mobile.welcome.need_tailscale"))
@@ -123,7 +123,7 @@ struct PairingFlowView: View {
     private var connect: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(model.t("mobile.welcome.scan"))
-                .font(.title.weight(.bold))
+                .font(.heading(.title))
             Text(model.t("mobile.welcome.scan_hint"))
                 .font(.body)
                 .foregroundStyle(.secondary)

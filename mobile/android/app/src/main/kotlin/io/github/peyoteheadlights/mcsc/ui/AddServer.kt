@@ -85,9 +85,9 @@ fun AddServerScreen(vm: AppViewModel, onBack: () -> Unit, onOpen: (String) -> Un
                 item { SectionTitle(t("add.ways")) }
                 item {
                     Card {
-                        Item(t("add.way_new"), subtitle = t("mobile.add.way_new_hint"), onClick = { adding.begin(AddServer.NEW) })
-                        Item(t("add.way_modpack"), subtitle = t("mobile.add.way_modpack_hint"), onClick = { adding.begin(AddServer.MODPACK) })
-                        Item(t("add.way_have"), subtitle = t("mobile.add.way_have_hint"), onClick = { adding.begin(AddServer.HAVE) })
+                        Item(t("add.way_new"), info = t("mobile.add.way_new_hint"), onClick = { adding.begin(AddServer.NEW) })
+                        Item(t("add.way_modpack"), info = t("mobile.add.way_modpack_hint"), onClick = { adding.begin(AddServer.MODPACK) })
+                        Item(t("add.way_have"), info = t("mobile.add.way_have_hint"), onClick = { adding.begin(AddServer.HAVE) })
                     }
                 }
                 return@LazyColumn
