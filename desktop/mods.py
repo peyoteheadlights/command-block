@@ -21,6 +21,7 @@ from urllib.parse import quote
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFrame,
     QHBoxLayout,
     QLineEdit,
     QMenu,
@@ -37,7 +38,8 @@ from .editor import GuideWindow, pick_file
 from .fixes import install
 from .make_modpack import MakeCard
 from .modrinth_card import ModrinthCard
-from .overview import card, title_of
+from .overview import card, dot_of, title_of
+from .parts import IconButton, InfoDot, Row, Search, Switch
 from .ui import Page, clock, label, push, refill, size
 from .words import mode, text
 
@@ -181,6 +183,15 @@ def find_pack(window: Any, query: str, server_id: str, say: Callable, read: Call
     )
 
 
+def inset_row() -> tuple[QFrame, QHBoxLayout]:
+    """One line of a card that is a box already: a tinted strip, no box."""
+    row = QFrame()  # a QFrame draws the style sheet's background, a QWidget doesn't
+    row.setProperty("kind", "row")
+    h = QHBoxLayout(row)
+    h.setContentsMargins(12, 8, 8, 8)
+    return row, h
+
+
 def names(items: list[dict], key: str = "title") -> str:
     return ", ".join(str(i.get(key) or i.get("name") or "") for i in items)
 
@@ -226,19 +237,6 @@ class ModsPage(Page):
         layout.addWidget(self.linked_words)
         layout.addWidget(self.linked_buttons)
         self.column.addWidget(self.linked_card)
-        # Make a modpack from this server and share it.
-        self.make_card = MakeCard(self)
-        self.column.addWidget(self.make_card.frame)
-        # The download link and the server resource pack.
-        self.link_card = LinkCard(self)
-        self.column.addWidget(self.link_card.frame)
-        # Sign in with Modrinth and put the modpack on it.
-        self.modrinth_card = ModrinthCard(self)
-        self.column.addWidget(self.modrinth_card.frame)
-        # The anti-cheat picker (the Protection card's anti-cheat line opens it).
-        self.anticheat_card = AntiCheatCard(self)
-        self.column.addWidget(self.anticheat_card.frame)
-
         # Still fit?: after a mod or version change, the mods that need a
         # different version (ticked, run as one Update all), the ones with
         # none and the ones nothing said about (agent/mods/fit.py).
@@ -272,7 +270,7 @@ class ModsPage(Page):
 
         # CurseForge mods whose authors keep them from other apps: their
         # page, and the window takes the file when it's dropped.
-        self.needs_you_card, layout = card("")
+        self.needs_you_card, layout = card("", box=False)
         self.needs_you_words = label(kind="sub")
         self.needs_you_rows = QVBoxLayout()
         layout.addWidget(self.needs_you_words)
@@ -292,18 +290,22 @@ class ModsPage(Page):
         layout.addLayout(line)
         self.column.addWidget(self.missing_card)
 
-        self.list_card, layout = card("")
+        # The list has no box of its own: each mod is one.
+        self.list_card, layout = card("", box=False)
         self.needs = label(kind="sub")
         buttons = QHBoxLayout()
-        self.update_all = push("")
+        self.update_all = push("", "tonal")
         self.update_all.clicked.connect(self.plan_update_all)
-        self.add_file = push("")
+        # Dashed: files can also be dropped on the window (the dot says so).
+        self.add_file = push("", "dashed")
         self.add_file.clicked.connect(self.pick_jar)
+        self.drop_hint = InfoDot("")
         self.copy = push("")
         self.copy.clicked.connect(self.copy_to)
         self.maps = QHBoxLayout()
         buttons.addWidget(self.update_all)
         buttons.addWidget(self.add_file)
+        buttons.addWidget(self.drop_hint)
         buttons.addWidget(self.copy)
         buttons.addLayout(self.maps)
         buttons.addStretch()
@@ -322,16 +324,15 @@ class ModsPage(Page):
         layout.addLayout(buttons)
         layout.addWidget(self.link_row)
         layout.addLayout(self.rows)
-        drop_hint = label(kind="sub")
-        layout.addWidget(drop_hint)
         self.column.addWidget(self.list_card)
 
         # Server / Players / Both: mods that need one on the other side, and
         # the player-only folder the server never loads (agent/mods/sides.py).
         self.odd = label(kind="problem")
         self.column.addWidget(self.odd)
-        self.player_only_card, layout = card(text("sides.players_title"))
-        layout.addWidget(label(text("sides.players_intro"), "sub"))
+        self.player_only_card, layout = card(
+            text("sides.players_title"), "sides.players_intro", box=False
+        )
         self.player_only_rows = QVBoxLayout()
         layout.addLayout(self.player_only_rows)
         self.add_for_players = push(text("sides.players_add"))
@@ -349,43 +350,36 @@ class ModsPage(Page):
         self.column.addWidget(self.player_only_card)
 
         # What friends add to their own game; never put on the server.
-        self.players_card, layout = card("")
-        players_intro = label(kind="sub")
+        self.players_card, layout = card("", "desktop.mods.for_players_intro")
         self.players_rows = QVBoxLayout()
-        layout.addWidget(players_intro)
         layout.addLayout(self.players_rows)
         self.column.addWidget(self.players_card)
 
         # Technical: the hand-checked lists, each checked against this server.
-        self.ideas_card, layout = card("")
+        self.ideas_card, layout = card("", box=False)
         self.ideas_rows = QVBoxLayout()
         layout.addLayout(self.ideas_rows)
         self.column.addWidget(self.ideas_card)
 
-        self.search_card, layout = card("")
+        # No Search button: Enter in the field searches.
+        self.search_card, layout = card("", words=" ", box=False)
+        self.search_hint = dot_of(self.search_card)
         line = QHBoxLayout()
-        self.search_box = QLineEdit()
+        self.search_box = Search("")
         self.search_box.setMaxLength(100)
         self.search_box.returnPressed.connect(self.search)
-        go = push(text("mods.search"), "primary")
-        go.clicked.connect(self.search)
         line.addWidget(self.search_box, 1)
-        line.addWidget(go)
-        self.search_hint = label(kind="sub")
         self.hits_widget = QWidget()
         self.hits = QVBoxLayout(self.hits_widget)
         self.hits.setContentsMargins(0, 0, 0, 0)
         self.more = push("", "plain")
         self.more.clicked.connect(lambda: self.search(more=True))
         layout.addLayout(line)
-        layout.addWidget(self.search_hint)
         layout.addWidget(self.hits_widget)
         layout.addWidget(self.more)
         self.column.addWidget(self.search_card)
 
-        self.pack_card, layout = card("")
-        pack_intro = label(kind="sub")
-        layout.addWidget(pack_intro)
+        self.pack_card, layout = card("", "pack.into_intro")
         choose = push("")
         choose.clicked.connect(self.pick_pack)
         layout.addWidget(choose)
@@ -399,6 +393,19 @@ class ModsPage(Page):
         line.addWidget(find)
         layout.addLayout(line)
         self.column.addWidget(self.pack_card)
+
+        # The anti-cheat picker (the Protection card's anti-cheat line opens it).
+        self.anticheat_card = AntiCheatCard(self)
+        self.column.addWidget(self.anticheat_card.frame)
+        # Make a modpack from this server and share it.
+        self.make_card = MakeCard(self)
+        self.column.addWidget(self.make_card.frame)
+        # The download link and the server resource pack.
+        self.link_card = LinkCard(self)
+        self.column.addWidget(self.link_card.frame)
+        # Sign in with Modrinth and put the modpack on it.
+        self.modrinth_card = ModrinthCard(self)
+        self.column.addWidget(self.modrinth_card.frame)
 
         self.checks_card, layout = card(text("mods.about_checks"))
         self.checks = label(kind="sub")
@@ -434,13 +441,13 @@ class ModsPage(Page):
             (self.link_box.setPlaceholderText, "desktop.mods.link_placeholder"),
             (self.link_box.setAccessibleName, "desktop.mods.link_placeholder"),
             (self.read.setText, "desktop.mods.link_read"),
-            (drop_hint.setText, "desktop.mods.drop"),
+            (self.drop_hint.say, "desktop.mods.drop"),
             (title_of(self.search_card).setText, "mobile.content.search_title"),
             (self.search_box.setPlaceholderText, "mods.search_placeholder"),
             (self.search_box.setAccessibleName, "mods.search_label"),
             (self.more.setText, "mobile.content.more"),
             (title_of(self.pack_card).setText, "pack.into_title"),
-            (pack_intro.setText, "pack.into_intro"),
+            (dot_of(self.pack_card).say, "pack.into_intro"),
             (choose.setText, "mobile.content.modpack_choose"),
             (self.pack_box.setPlaceholderText, "pack.find_placeholder"),
             (self.pack_box.setAccessibleName, "pack.find_placeholder"),
@@ -450,7 +457,8 @@ class ModsPage(Page):
             (title_of(self.history_card).setText, "mods.change_history"),
             (self.copy.setText, "desktop.mods.copy"),
             (title_of(self.players_card).setText, "desktop.mods.for_players"),
-            (players_intro.setText, "desktop.mods.for_players_intro"),
+            (dot_of(self.players_card).say, "desktop.mods.for_players_intro"),
+            (dot_of(self.player_only_card).say, "sides.players_intro"),
             (title_of(self.ideas_card).setText, "desktop.mods.good_to_have"),
         ]
 
@@ -576,7 +584,7 @@ class ModsPage(Page):
             [self.mod_row(m) for m in mods]
             or [label(text("mods.none"), "step"), label(text("mods.none_hint"), "sub")],
         )
-        self.search_hint.setText(
+        self.search_hint.say(
             text(
                 "mobile.content.search_hint",
                 type=self.row.get("type_name") or text("state.unknown"),
@@ -590,15 +598,20 @@ class ModsPage(Page):
         )
 
     def mod_row(self, mod: dict) -> QWidget:
-        row = QWidget()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
+        manage = self.may("mods.manage")
+        newer = mod.get("update_available")
         words = QVBoxLayout()
         words.addWidget(label(mod.get("name") or mod["filename"], "step"))
         status = STATUS.get(mod.get("status") or "", "state.unknown")
-        parts = [mod.get("version") or text("state.unknown")]
-        parts.append(text(status if mod.get("enabled") else "mods.status_off"))
+        version = mod.get("version") or text("state.unknown")
+        # The version it has and the one it can get: 0.12.1 → 0.13.0
+        parts = [f"{version} → {newer['latest_version']}" if newer else version]
+        if mod.get("enabled"):
+            parts.append(text(status))
+        elif not manage:  # with a switch on the row, the switch says it is off
+            parts.append(text("mods.status_off"))
         if mode["technical"]:
             parts += [mod.get("mod_id"), mod.get("minecraft_range"), mod.get("source_name")]
         words.addWidget(label("  ·  ".join(p for p in parts if p), "sub"))
@@ -615,31 +628,35 @@ class ModsPage(Page):
             words.addWidget(
                 label(issue["detail"], "problem" if issue.get("severity") == "error" else "sub")
             )
-        newer = mod.get("update_available")
-        if newer:
-            words.addWidget(label(text("mods.update_to", version=newer["latest_version"]), "ok"))
         h.addLayout(words, 1)
         name = mod.get("name") or mod["filename"]
-        if self.may("mods.manage"):
-            turn = push(text("mods.turn_off" if mod.get("enabled") else "mods.turn_on"))
-            turn.setAccessibleName(f"{turn.text()}: {name}")
-            turn.setEnabled(self.can_change)
-            turn.clicked.connect(lambda: self.turn(mod["filename"], not mod.get("enabled")))
-            h.addWidget(turn)
+        if manage:
             if newer:
-                update = push(text("mods.update"), "primary")
-                update.setAccessibleName(f"{update.text()}: {name}")
+                update = IconButton("update", text("mods.update"), "accent")
+                update.setAccessibleName(f"{text('mods.update')}: {name}")
                 update.setEnabled(self.can_change)
                 update.clicked.connect(lambda: self.update_mod(mod))
                 h.addWidget(update)
+            # The switch turns the mod on or off at once, like the button did.
+            on = bool(mod.get("enabled"))
+            turn = Switch(f"{text('mods.turn_off' if on else 'mods.turn_on')}: {name}")
+            turn.setChecked(on)
+            turn.setEnabled(self.can_change)
+            turn.toggled.connect(lambda now: self.turn(mod["filename"], now))
+            h.addWidget(turn)
         guide = self.guides.get(mod["filename"])
         if guide:
             read = push(text("desktop.guide.open"), "plain")
             read.setAccessibleName(f"{read.text()}: {name}")
             read.clicked.connect(lambda: GuideWindow(self, guide).open())
             h.addWidget(read)
-        more = QToolButton()
-        more.setText("⋯")
+        if manage:
+            remove = IconButton("remove", text("mods.remove"), "danger")
+            remove.setAccessibleName(f"{text('mods.remove')}: {name}")
+            remove.setEnabled(self.can_change)
+            remove.clicked.connect(lambda: self.remove(mod))
+            h.addWidget(remove)
+        more = IconButton("more", text("desktop.more"))
         more.setAccessibleName(f"{text('desktop.more')}: {name}")
         more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(more)
@@ -650,8 +667,6 @@ class ModsPage(Page):
             actions.append(
                 ("desktop.files.edit_settings", lambda: pick_file(self, mod["filename"], name))
             )
-        if self.may("mods.manage") and self.can_change:
-            actions.append(("mods.remove", lambda: self.remove(mod)))
         if self.may("mods.manage") and mod.get("side") and mod.get("loader") not in PLUGINS:
             for side in SIDES:
                 # Players moves the jar out of the mods folder: the server must be
@@ -666,10 +681,8 @@ class ModsPage(Page):
         return row
 
     def need_row(self, need: dict) -> QWidget:
-        row = QWidget()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
         words = QVBoxLayout()
         name = need.get("name") or need.get("filename") or ""
         words.addWidget(label(name, "step"))
@@ -779,11 +792,15 @@ class ModsPage(Page):
             )
             self.after_change()
 
+        def refused(exc: Exception) -> None:
+            self.said(exc)
+            self.changed()  # the list again, so the switch shows what is true
+
         self.ask(
             "POST",
             "/mods/enable" if on else "/mods/disable",
             done,
-            self.said,
+            refused,
             body={"filename": filename},
         )
 
@@ -917,10 +934,8 @@ class ModsPage(Page):
         )
 
     def player_only_row(self, item: dict) -> QWidget:
-        row = QWidget()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
         words = QVBoxLayout()
         name = item.get("name") or item["filename"]
         words.addWidget(label(name, "step"))
@@ -1209,10 +1224,7 @@ class ModsPage(Page):
         self.fit_change.setEnabled(self.can_change)
 
     def fit_row(self, item: dict, off: bool) -> QWidget:
-        row = QWidget()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row, h = inset_row()
         words = QVBoxLayout()
         words.addWidget(label(item["name"], "step"))
         words.addWidget(label(item["why"], "sub"))
@@ -1242,10 +1254,7 @@ class ModsPage(Page):
         refill(self.same_rows, rows)
 
     def same_row(self, mod: dict, main: bool) -> QWidget:
-        row = QWidget()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row, h = inset_row()
         h.addWidget(label(f"{mod['name']} {mod['version']}", "step"), 1)
         turn = push(text("mods.turn_off"), "primary" if main else "")
         turn.setAccessibleName(f"{turn.text()}: {mod['name']} {mod['version']}")
@@ -1376,10 +1385,8 @@ class ModsPage(Page):
         )
 
     def hit_row(self, hit: dict) -> QWidget:
-        row = QWidget()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
         words = QVBoxLayout()
         title = hit.get("title") or hit.get("slug") or ""
         words.addWidget(label(title, "step"))
@@ -1551,10 +1558,8 @@ class ModsPage(Page):
         self.ideas_card.setVisible(mode["technical"] and len(rows) > 0)
 
     def idea_row(self, item: dict) -> QWidget:
-        row = QWidget()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
         words = QVBoxLayout()
         words.addWidget(label(item["name"], "step"))
         words.addWidget(label((item.get("description") or "")[:140], "sub"))
@@ -1876,7 +1881,7 @@ class AddonsPage(Page):
         super().__init__(window)
         self.state = label(kind="sub")
         self.column.addWidget(self.state)
-        self.list_card, layout = card("")
+        self.list_card, layout = card("", box=False)
         self.rows = QVBoxLayout()
         layout.addLayout(self.rows)
         self.column.addWidget(self.list_card)
@@ -1924,34 +1929,31 @@ class AddonsPage(Page):
         )
 
     def pack_row(self, pack: dict) -> QWidget:
-        row = QWidget()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
         words = QVBoxLayout()
         words.addWidget(label(pack["name"], "step"))
         kind = text(
             "addons.kind_resource" if pack.get("kind") == "resource" else "addons.kind_behavior"
         )
-        parts = [
-            kind,
-            pack.get("version"),
-            text("addons.on" if pack.get("enabled") else "addons.off"),
-        ]
+        manage = self.window_.may(self.row["id"], "mods.manage")
+        parts = [kind, pack.get("version")]
+        if not manage:  # with a switch on the row, the switch says it
+            parts.append(text("addons.on" if pack.get("enabled") else "addons.off"))
         words.addWidget(label("  ·  ".join(p for p in parts if p), "sub"))
         if pack.get("description"):
             words.addWidget(label(pack["description"], "sub"))
         if mode["technical"]:
             words.addWidget(label(f"{pack['uuid']}  ·  {pack.get('folder')}", "muted"))
         h.addLayout(words, 1)
-        if self.window_.may(self.row["id"], "mods.manage"):
+        if manage:
             on = bool(pack.get("enabled"))
-            turn = push(text("addons.turn_off" if on else "addons.turn_on"))
-            turn.setAccessibleName(f"{turn.text()}: {pack['name']}")
+            turn = Switch(f"{text('addons.turn_off' if on else 'addons.turn_on')}: {pack['name']}")
+            turn.setChecked(on)
             turn.setEnabled(self.world)
-            turn.clicked.connect(lambda: self.turn(pack, not on))
-            remove = push(text("addons.remove"), "plain")
-            remove.setAccessibleName(f"{remove.text()}: {pack['name']}")
+            turn.toggled.connect(lambda now: self.turn(pack, now))
+            remove = IconButton("remove", text("addons.remove"), "danger")
+            remove.setAccessibleName(f"{text('addons.remove')}: {pack['name']}")
             remove.clicked.connect(lambda: self.remove(pack))
             h.addWidget(turn)
             h.addWidget(remove)
@@ -1961,6 +1963,10 @@ class AddonsPage(Page):
         self.say(f"{words} {text('addons.restart')}" if result.get("restart_needed") else words)
         self.load()
 
+    def refused(self, exc: Exception) -> None:
+        self.say(str(exc))
+        self.load()  # the list again, so the switch shows what is true
+
     def turn(self, pack: dict, on: bool) -> None:
         self.ask(
             "PUT",
@@ -1968,7 +1974,7 @@ class AddonsPage(Page):
             lambda r: self.done(
                 text("addons.turned_on" if on else "addons.turned_off", name=pack["name"]), r
             ),
-            lambda exc: self.say(str(exc)),
+            self.refused,
             body={"enabled": on},
         )
 
