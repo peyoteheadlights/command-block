@@ -84,6 +84,9 @@ ALLOWED_HOSTS = frozenset(
         "securetoken.googleapis.com",
         "edge.forgecdn.net",
         "mediafilez.forgecdn.net",
+        # Spiget (a public copy of SpigotMC's list): only paid anti-cheat
+        # prices are read (agent/anticheat.py), nothing is downloaded.
+        "api.spiget.org",
         # GeyserMC
         "download.geysermc.org",
         # Eclipse Temurin (Adoptium's Java), for the installer only
@@ -142,6 +145,7 @@ SHARED_HOST_PATHS = {
     "mediafilez.forgecdn.net": ("/files/",),
     "plugin.tebex.io": ("/information", "/packages"),
     "nodejs.org": ("/dist/",),
+    "api.spiget.org": ("/v2/resources/",),
 }
 # One more repo whose release list and release files may be read, while an
 # add-on from a GitHub link is read or updated (see allow_releases).

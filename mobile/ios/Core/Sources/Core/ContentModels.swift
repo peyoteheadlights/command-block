@@ -1757,6 +1757,76 @@ public struct ModrinthOlder: Decodable, Equatable, Sendable {
     public var newest: String
 }
 
+/// A free anti-cheat, installed from Modrinth with the normal install. `warning`: Fabric with mods players need.
+public struct AntiCheatFree: Decodable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var project: String
+    public var on: Bool
+    public var warning: Bool
+
+    enum CodingKeys: String, CodingKey { case id, name, project, on, warning }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        name = c.value(.name, "")
+        project = c.value(.project, "")
+        on = c.value(.on, false)
+        warning = c.value(.warning, false)
+    }
+}
+
+/// A paid anti-cheat, bought on the seller's `link`. `price`: nil when none was read; `checked`: the day it was.
+public struct AntiCheatPaid: Decodable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var on: Bool
+    public var link: String
+    public var setup: String?
+    public var price: String?
+    public var checked: String?
+
+    enum CodingKeys: String, CodingKey { case id, name, on, link, setup, price, checked }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        name = c.value(.name, "")
+        on = c.value(.on, false)
+        link = c.value(.link, "")
+        setup = c.maybe(.setup)
+        price = c.maybe(.price)
+        checked = c.maybe(.checked)
+    }
+}
+
+/// The anti-cheat picker. `supported`: false when none runs on this server type.
+public struct AntiCheat: Decodable, Equatable, Sendable {
+    public var supported: Bool
+    public var installed: [String]
+    public var free: [AntiCheatFree]
+    public var paid: [AntiCheatPaid]
+    public var mayInstall: Bool
+    public var mayAddOwnJar: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case supported, installed, free, paid
+        case mayInstall = "may_install"
+        case mayAddOwnJar = "may_add_own_jar"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        supported = c.value(.supported, false)
+        installed = c.value(.installed, [])
+        free = c.value(.free, [])
+        paid = c.value(.paid, [])
+        mayInstall = c.value(.mayInstall, false)
+        mayAddOwnJar = c.value(.mayAddOwnJar, false)
+    }
+}
+
 /// The "Put it on Modrinth" card. `address`: the address typed for friends.
 public struct ModrinthShare: Decodable, Equatable, Sendable {
     public var account: ModrinthAccount?
