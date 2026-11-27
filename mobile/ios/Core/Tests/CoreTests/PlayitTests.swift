@@ -32,4 +32,22 @@ final class PlayitTests: XCTestCase {
         XCTAssertEqual(step.button, "reconnect")
         XCTAssertEqual(step.lines.first?.tone, .danger)
     }
+
+    func testAPlainBedrockServerAsksForPlayitsBoxFirst() throws {
+        let bedrock = try state(#"{"on": true, "phase": "running", "plain_bedrock": true, "waterdog": null, "ways": []}"#)
+        let step = Playit.step(s, bedrock, owner: true)
+        XCTAssertEqual(step.button, "waterdog")
+        XCTAssertEqual(step.lines.map(\.text), [s.t("playit.bedrock_note")])
+        XCTAssertNil(Playit.step(s, bedrock, owner: false).button)
+    }
+
+    func testBehindWaterdogTheNetherNetTunnelAndTheAllowListShow() throws {
+        let set = try state(#"{"on": true, "phase": "running", "plain_bedrock": true, "waterdog": {"state": "registered", "server_port": 19142, "list_on": true}, "ways": [{"kind": "nethernet", "local_port": 19132, "tunnel": {"address": "a.tun.ply.gg"}}]}"#)
+        let step = Playit.step(s, set, owner: true)
+        XCTAssertNil(step.button)
+        XCTAssertEqual(step.lines[0].text, s.t("playit.join_nethernet", ["address": "a.tun.ply.gg", "port": "19132"]))
+        XCTAssertEqual(step.lines[1].text, s.t("playit.waterdog_registered", ["port": "19142"]))
+        XCTAssertEqual(step.lines[2].text, s.t("playit.waterdog_list_on"))
+        XCTAssertNil(Playit.javaAddress(set))
+    }
 }

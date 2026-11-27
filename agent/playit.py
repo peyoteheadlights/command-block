@@ -194,10 +194,19 @@ class Playit:
     # ------------------------------------------------------------ one server's part
     def ways(self, ctx: ServerContext) -> list[dict[str, Any]]:
         """The tunnels this server needs: Java on its port, Bedrock on
-        Geyser's. A plain Bedrock server goes through WaterdogPE (later)."""
+        Geyser's. A plain Bedrock server: one NetherNet tunnel to WaterdogPE
+        (agent/waterdog.py), none before it's set up."""
         out = []
-        for protocol, port in internet.router_ports(ctx):
-            kind = "java" if protocol == "TCP" else "bedrock"
+        bedrock = ctx.config.server_type.edition == "bedrock"
+        waterdog = ctx.core.waterdog.of(ctx) if bedrock else None
+        if bedrock:
+            wanted = [("nethernet", waterdog["media"])] if waterdog else []
+        else:
+            wanted = [
+                ("java" if protocol == "TCP" else "bedrock", port)
+                for protocol, port in internet.router_ports(ctx)
+            ]
+        for kind, port in wanted:
             tunnel = next(
                 (t for t in self.last.get("tunnels") or [] if local_port(t["destination"]) == port),
                 None,
@@ -206,13 +215,16 @@ class Playit:
         return out
 
     def tunnel_address(self, ctx: ServerContext) -> str | None:
-        java = next((w for w in self.ways(ctx) if w["kind"] == "java"), None)
-        tunnel = java and java["tunnel"]
+        """The Java tunnel's address; a plain Bedrock server's NetherNet one."""
+        kind = "nethernet" if ctx.config.server_type.edition == "bedrock" else "java"
+        way = next((w for w in self.ways(ctx) if w["kind"] == kind), None)
+        tunnel = way and way["tunnel"]
         return tunnel["address"] if tunnel and not tunnel["disabled"] else None
 
     def summary(self, ctx: ServerContext) -> dict[str, Any]:
         """GET /servers/{id}/playit. Never holds the program's key."""
         bedrock = ctx.config.server_type.edition == "bedrock"
+        waterdog = ctx.core.waterdog.status(ctx) if bedrock else None
         test = internet.state(ctx).playit_test
         return {
             "on": self.on,
@@ -220,10 +232,13 @@ class Playit:
             "problem": self.last.get("problem"),
             "down": self.down,
             "claim": self.claim,
-            "ways": [] if bedrock else self.ways(ctx),
-            "supported": not bedrock,
-            # Join protection reads the player's own address from the PROXY header.
-            "proxy": "v2" if ctx.config.server.join_protection else "none",
+            "ways": self.ways(ctx),
+            "supported": True,
+            # Join protection reads the player's own address from the PROXY
+            # header. NetherNet tunnels must have none (playit's guide).
+            "proxy": "v2" if ctx.config.server.join_protection and not bedrock else "none",
+            "plain_bedrock": bedrock,
+            "waterdog": waterdog,
             "new_tunnel": self.last.get("login_link") or NEW_TUNNEL,
             "site": SITE,
             "test": test,

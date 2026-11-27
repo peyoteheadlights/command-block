@@ -3544,5 +3544,21 @@
 "playit.uninstall_body": ["Its program is removed. Windows will ask for permission.", "Runs msiexec /x for the playit MSI (UAC)."],
 "playit.uninstall": ["Remove", "Uninstall"],
 "playit.keep": ["Keep it", "Keep"],
-"playit.uninstall_failed": ["playit.gg couldn't be removed (error {code}). Remove it in Windows Settings, Installed apps.", "msiexec /x exited with {code}."]
+"playit.uninstall_failed": ["playit.gg couldn't be removed (error {code}). Remove it in Windows Settings, Installed apps.", "msiexec /x exited with {code}."],
+"playit.kind_nethernet": ["Minecraft Bedrock (NetherNet)", "Minecraft Bedrock (NetherNet)"],
+"playit.join_nethernet": ["Bedrock friends join with: {address}, port 19132", "NetherNet tunnel: {address}, port 19132"],
+"playit.bedrock_note": ["Bedrock friends need one more step. On playit.gg make a \"Minecraft Bedrock (NetherNet)\" tunnel, open its Configuration help, pick the WaterdogPE tab and copy the config.yml box. Paste it below. Stop the server first: it moves to another port.", "Plain BDS can't take a NetherNet tunnel itself. Paste the WaterdogPE config.yml from the tunnel's Configuration help (holds the tunnel token). The server must be stopped."],
+"playit.bedrock_paste": ["Paste the config.yml box from playit.gg here", "WaterdogPE config.yml from playit"],
+"playit.bedrock_set_up": ["Set up WaterdogPE", "Set up WaterdogPE"],
+"playit.bedrock_confirm_title": ["Download and run WaterdogPE?", "Install WaterdogPE?"],
+"playit.bedrock_confirm_body": ["Command Block downloads WaterdogPE, a free program that lets playit.gg reach Bedrock servers, and the Companion's allow list add-on for it. WaterdogPE then runs whenever this server runs. The server moves to the port in playit's settings and stops using its router port.", "Downloads Waterdog.jar (latest build, SHA-256 from GitHub) and the Companion's WaterdogPE plugin. Runs java -jar Waterdog.jar with the server. Sets server-port/portv6 from the box, online-mode=false, allow-list=false, enable-lan-visibility=false; turns off UPnP for this server."],
+"playit.waterdog_internet_off": ["\"Let friends join from the internet\" was turned off for this server: playit.gg does that job now.", "UPnP was turned off for this server (its port would skip WaterdogPE's sign-in check)."],
+"playit.waterdog_server_off": ["WaterdogPE is set up. It starts with the server (the server now uses port {port}).", "WaterdogPE ready; starts with the server (BDS on port {port})."],
+"playit.waterdog_starting": ["WaterdogPE is starting and connecting to playit.gg.", "WaterdogPE running, not registered with playit's signaling yet."],
+"playit.waterdog_registered": ["WaterdogPE is connected to playit.gg. Bedrock friends can join.", "WaterdogPE registered with the external signaling service."],
+"playit.waterdog_stopped": ["WaterdogPE stopped, so Bedrock friends can't join through playit.gg. Restart the server to start it again.", "WaterdogPE isn't running. Restart the server."],
+"playit.waterdog_list_on": ["Only players on the allow list can join. The Companion's add-on checks it before they reach the server.", "Allow list kept by the Companion WaterdogPE plugin (allow-list=false on BDS)."],
+"playit.waterdog_list_off": ["Anyone with the address and an Xbox account can join.", "No allow list: any Xbox-signed-in player can join."],
+"playit.waterdog_stop": ["Stop using WaterdogPE", "Remove WaterdogPE"],
+"playit.waterdog_stop_body": ["The server goes back to its own port and allow list. Bedrock friends can't join through playit.gg after this. Stop the server first.", "Restores the server.properties values it changed and deletes WaterdogPE's folder (with the tunnel token)."]
 }
