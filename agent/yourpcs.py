@@ -568,7 +568,8 @@ class YourPCs:
             raise PcError("This PC's own address isn't known yet, so the new PC can't reach it.")
         body = {k: found[k] for k in ("name", "address", "port", "fingerprint", "sync_key_hash")}
         self.records.put("pc", found["pc"], body)
-        self.core.botpc.update_soon()  # the first bot of a joined account picks its PC
+        self.core.botpc.elect()
+        self.core.botpc.update_soon()
         self.db.audit("pc_joined", user=principal.user, target=found["name"])
         self.core.bus.publish_soon(
             Event(
@@ -669,6 +670,7 @@ class YourPCs:
         self._reached(other)
         self.db.set_setting("pcs_joining", None)
         self._record_me()
+        self.core.botpc.elect()
         self.core.botpc.update_soon()
         self.core.bus.publish_soon(
             Event(

@@ -165,6 +165,25 @@ def test_a_session_discord_ended_logs_in_again(agent, fake):
     assert fake.resumes == 0
 
 
+def test_a_close_retrying_cant_help_stops_the_bot(agent, fake):
+    fake.socket.drop(4011)  # sharding required: the same login would be closed again
+    wait_for(lambda: core_of(agent).discord.gateway.state == "refused")
+    import time
+
+    time.sleep(2)
+    assert len(fake.sockets) == 1
+
+
+def test_a_connection_that_was_fine_for_a_while_reconnects_at_once(agent, fake):
+    import time
+
+    gateway = core_of(agent).discord.gateway
+    gateway.failures = 7  # seven drops earlier in the agent's life: a 60 s wait
+    gateway.connected_at = time.time() - 120
+    fake.socket.drop(1006)
+    wait_for(lambda: fake.resumes == 1, 5)
+
+
 def test_a_silent_connection_is_noticed_by_the_heartbeat(fake, tmp_path, monkeypatch):
     fake.heartbeat_ms = 60
     fake.ack_heartbeats = False

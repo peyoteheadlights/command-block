@@ -292,3 +292,45 @@ def test_a_removed_bot_link_or_pc_is_out_of_discord(pcs, fake):
     assert a.call("DELETE", f"/api/pcs/{b.core.pcs.pc}", owner).status_code == 200
     assert a.core.auth.records.get("bot_link", b.core.pcs.pc) is None
     assert f"bot_link:{b.core.pcs.pc}" not in a.core.auth.records.keys
+
+
+def test_a_pc_that_hasnt_heard_of_a_bot_pc_doesnt_start_one(pcs, fake, monkeypatch):
+    """Asking which bot to run never makes this PC the Bot PC: only the PC
+    the synced pick names runs the live connection."""
+    a, b = pcs("a"), pcs("b")
+    join(b, a, a.sign_in())
+    monkeypatch.setenv("MCSC_DISCORD_BOT_TOKEN", GOOD_TOKEN)
+    assert b.core.botpc.wanted() == (None, "")
+    assert b.core.botpc.choice() is None
+
+
+def test_two_pcs_with_a_bot_each_join_and_the_pc_that_allowed_keeps_it(pcs, fake):
+    a, b = pcs("a"), pcs("b")
+    owner = a.sign_in()
+    for pc, token in ((a, owner), (b, b.sign_in())):
+        pc.config.env_path = pc.config.source.parent / ".env"
+        assert (
+            pc.call("PUT", "/api/discord/token", token, json={"token": GOOD_TOKEN}).status_code
+            == 200
+        )
+        wait_for(lambda pc=pc: pc.core.discord and pc.core.discord.connected)
+    join(b, a, owner)
+    wait_for(lambda: b.core.discord and b.core.discord.rest_only)
+    assert a.core.botpc.bot_pc() == b.core.botpc.bot_pc() == a.core.pcs.pc
+    assert a.core.discord is not None and not a.core.discord.rest_only
+
+
+def test_a_server_on_a_pc_that_went_quiet_shows_as_unknown(pcs, fake, monkeypatch):
+    from agent.discord import botpc
+
+    a, b, _owner = two_pcs(pcs)
+    ref = remote(a, b)
+    assert a.core.botpc.remote()[ref]["state"] == "OFFLINE"
+    monkeypatch.setattr(botpc, "NEWS_STALE", 1.0, raising=False)
+    monkeypatch.setattr(botpc, "NEWS_EVERY", 0.0, raising=False)
+    import time
+
+    time.sleep(1.2)
+    assert a.core.botpc.remote()[ref]["state"] == "UNKNOWN"
+    b.core.botpc.publish()  # B says it again, as it does every minute
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "OFFLINE")

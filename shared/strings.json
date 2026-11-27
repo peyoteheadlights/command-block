@@ -2294,6 +2294,7 @@
 "discord.state.connected": ["Connected as {name}.", "Gateway connected as {name}."],
 "discord.state.token_rejected": ["Discord refused the token. Make a new one (Reset Token) and paste it below.", "401 / close 4004: token rejected. Reset it in the portal and paste the new one."],
 "discord.state.intents_refused": ["Discord refused a switch the bot asked for. Turn it on in the developer portal.", "Close 4013/4014: an intent isn't enabled in the portal."],
+"discord.state.refused": ["Discord won't let the bot connect. Paste the token again to try once more.", "Close 4010/4011/4012: shard or API version refused. Not retried."],
 "discord.state.stopped": ["The bot is stopped.", "Gateway stopped."],
 "discord.state.elsewhere": ["The bot runs on {pc}. Discord reaches this PC's servers through it.", "Bot PC: {pc}. This agent posts over Discord's REST API only (no gateway)."],
 "discord.bot_offline": ["Bot offline: {pc} is off.", "Bot offline: {pc} (the Bot PC) doesn't answer."],

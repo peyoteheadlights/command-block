@@ -3287,7 +3287,7 @@ class TailscaleState(Open):
 class DiscordStatus(Open):
     token_set: bool
     state: str = Field(
-        description="off (no token), connecting, connected, token_rejected, intents_refused, "
+        description="off (no token), connecting, connected, token_rejected, intents_refused, refused, "
         "stopped, or elsewhere (another of the owner's PCs runs the bot)"
     )
     bot_pc: dict[str, Any] | None = Field(

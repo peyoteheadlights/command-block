@@ -1303,7 +1303,7 @@ class Bot:
     def problem(self) -> dict[str, Any] | None:
         """The first thing wrong, for the Recommendations card and the
         checklist; None when nothing is (or nothing is known yet)."""
-        if self.gateway.state in ("token_rejected", "intents_refused"):
+        if self.gateway.state in ("token_rejected", "intents_refused", "refused"):
             return {"id": self.gateway.state}
         for gid, report in self.reports.items():
             for problem in report.get("problems") or []:

@@ -32,11 +32,13 @@ import hashlib
 import hmac
 import logging
 import secrets
+import time
 from typing import Any
 
 import httpx
 
 from ..security.auth import AuthError
+from ..security.records import Clock
 from ..security.tls import pinned_context
 from ..yourpcs import PC_HEADER, PcError
 
@@ -45,6 +47,8 @@ log = logging.getLogger("msc.botpc")
 BOT, SETTINGS, LINK, NEWS = "bot", "bot_settings", "bot_link", "bot_news"
 LINK_HEADER = "X-Command-Block-Bot-Link"
 CALL_SECONDS = 2.0  # Discord waits 3 s for the first answer
+NEWS_EVERY = 60.0  # each PC says what it has at least this often
+NEWS_STALE = 180.0  # no word from a PC this long: its servers' states are unknown
 # The Discord settings copied to the other PCs: each table's columns.
 TABLES = {
     "discord_channels": ("guild_id", "kind", "server_id", "channel_id"),
@@ -65,6 +69,8 @@ class BotPC:
         self.records = core.auth.records
         self.records.applied[BOT] = self._applied
         self.records.applied[SETTINGS] = self._applied
+        self.records.applied[NEWS] = self._applied
+        self._heard: dict[str, float] = {}  # pc -> when its bot_news came in
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()
 
@@ -119,6 +125,14 @@ class BotPC:
         if token:
             self.make_links(fresh=True)
 
+    def elect(self) -> None:
+        """When two PCs join: the first bot of the account is this PC's, if
+        no PC runs one yet. Called by the PC that allows the join, then by
+        the new PC once it has the allowing PC's records."""
+        token = self._running_token()
+        if token and self.choice() is None:
+            self.set_token(token)
+
     def run_here(self) -> None:
         """ "Run the bot on this PC instead": same token, same settings."""
         token = self.unseal((self.choice() or {}).get("token") or "")
@@ -134,11 +148,7 @@ class BotPC:
             return ("full", token) if token else (None, "")
         choice = self.choice()
         if choice is None:
-            token = self._running_token()
-            if not token:
-                return None, ""
-            self.set_token(token)  # the first bot of a joined account: this one
-            choice = self.choice() or {}
+            return None, ""  # waits to hear which PC runs it
         token = self.unseal(choice.get("token") or "")
         if not token:
             return None, ""
@@ -175,7 +185,9 @@ class BotPC:
         task.add_done_callback(self._tasks.discard)
 
     def _applied(self, record: dict[str, Any], old: dict[str, Any] | None) -> None:
-        if record["kind"] == BOT:
+        if record["kind"] == NEWS:
+            self._heard[record["key"]] = time.time()
+        elif record["kind"] == BOT:
             self.update_soon()
         elif self.bot_pc() not in (None, self.me):
             self.restore()
@@ -201,8 +213,9 @@ class BotPC:
 
     # -- what each PC says about itself ---------------------------------------
     def publish(self) -> None:
-        """This PC's part of what the bot needs, written only when it changed
-        (once a minute at most, from the bot's own minute)."""
+        """This PC's part of what the bot needs, from the bot's own minute:
+        written when it changed, and at least once a minute so the Bot PC
+        knows this PC is still there."""
         from .. import levels
 
         if not self.core.pcs.joined():
@@ -222,7 +235,11 @@ class BotPC:
             "wake": self.core.wake.for_bot(),
         }
         old = self.records.get(NEWS, self.me)
-        if old is None or old["body"] != body:
+        if (
+            old is None
+            or old["body"] != body
+            or time.time() - Clock.parse(old["hlc"])[0] / 1000 >= NEWS_EVERY
+        ):
             self.records.put(NEWS, self.me, body)
 
     def linked(self) -> list[str]:
@@ -235,11 +252,18 @@ class BotPC:
 
     def remote(self) -> dict[str, dict[str, Any]]:
         """Servers on the other PCs the bot can reach, "sid@pc" -> what that
-        PC said (name, state) and the PC's own name."""
+        PC said (name, state) and the PC's own name. A PC not heard from in
+        NEWS_STALE seconds: its servers' state is UNKNOWN."""
         out = {}
         for pc in self.linked():
+            quiet = time.time() - self._heard.get(pc, 0) >= NEWS_STALE
             for server in self.news(pc).get("servers") or []:
-                out[f"{server['id']}@{pc}"] = {**server, "pc": pc, "pc_name": self.name_of(pc)}
+                out[f"{server['id']}@{pc}"] = {
+                    **server,
+                    **({"state": "UNKNOWN"} if quiet else {}),
+                    "pc": pc,
+                    "pc_name": self.name_of(pc),
+                }
         return out
 
     def remote_xp(self) -> dict[str, int]:

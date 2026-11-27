@@ -56,6 +56,7 @@ FRESH_CLOSES = {4007, 4009}
 
 FORBIDDEN_PAUSE = 600.0  # seconds a channel that answered 403 is left alone
 MAX_WAIT = 60.0  # the longest wait between reconnects
+HEALTHY_SECONDS = 60.0  # connected this long: the next drop waits 1 s again
 
 
 class DiscordError(Exception):
@@ -76,6 +77,11 @@ class TokenRejected(DiscordError):
 
 class IntentsRefused(DiscordError):
     """The gateway refused a switch (intent) that isn't on in the portal."""
+
+
+class Refused(DiscordError):
+    """Discord closed the connection with a code that logging in again can't
+    fix (shard or API version): the bot stops until it is started again."""
 
 
 def _route(method: str, path: str) -> str:
@@ -209,9 +215,7 @@ class Gateway:
         self.intents = intents
         self.on_event = on_event
         self.before_login = before_login  # may change the intents
-        self.state = (
-            "connecting"  # connecting | connected | token_rejected | intents_refused | stopped
-        )
+        self.state = "connecting"  # connecting | connected | token_rejected | intents_refused | refused | stopped
         self.detail = ""  # why it isn't connected, in plain words
         self.connected_at: float | None = None
         self.failures = 0
@@ -226,8 +230,7 @@ class Gateway:
         """Until stopped, the token is rejected or a switch is refused."""
         while True:
             try:
-                await self._once()
-                self.failures = 0
+                await self._once()  # only ends with an exception
             except TokenRejected:
                 self.rest.rejected = True
                 self._down("token_rejected", "Discord refused the token.")
@@ -235,17 +238,21 @@ class Gateway:
             except IntentsRefused as exc:
                 self._down("intents_refused", str(exc))
                 return
+            except Refused as exc:
+                self._down("refused", str(exc))
+                return
             except asyncio.CancelledError:
                 self._down("stopped", "")
                 raise
             except Exception as exc:  # a drop, a timeout, a bad answer: try again
+                if self.connected_at and time.time() - self.connected_at >= HEALTHY_SECONDS:
+                    self.failures = 0
                 self.failures += 1
                 self._down("connecting", _reason(exc))
                 log.info("Discord connection lost: %s", type(exc).__name__)
             # 1, 2, 4 ... seconds up to a minute, with a little jitter, so a
             # flaky night never uses up Discord's daily logins.
-            wait = min(MAX_WAIT, 2 ** max(self.failures - 1, 0)) * random.uniform(0.8, 1.2)
-            await asyncio.sleep(wait if self.failures else random.uniform(1, 5))
+            await asyncio.sleep(min(MAX_WAIT, 2 ** (self.failures - 1)) * random.uniform(0.8, 1.2))
 
     def _down(self, state: str, detail: str) -> None:
         self.state, self.detail, self.connected_at = state, detail, None
@@ -288,7 +295,9 @@ class Gateway:
                     "Discord refused a switch the bot asked for. Turn it on in the developer portal."
                 ) from None
             if code in FATAL_CLOSES:
-                raise DiscordError(f"Discord closed the connection ({code}).") from None
+                raise Refused(
+                    f"Discord closed the bot's connection ({code}) and logging in again won't help."
+                ) from None
             if code in FRESH_CLOSES:
                 self._session = None
             raise

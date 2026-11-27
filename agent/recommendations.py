@@ -437,6 +437,10 @@ DISCORD_WORDS = {
         "The Discord bot can't log in",
         "It asked for a switch that's off in Discord's developer portal.",
     ),
+    "refused": (
+        "The Discord bot can't log in",
+        "Discord closed its connection. Paste the token again to try once more.",
+    ),
     "manage_roles": (
         "The Discord bot can't give Discord roles",
         "It needs Manage Roles in {guild}.",
