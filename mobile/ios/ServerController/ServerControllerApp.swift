@@ -15,6 +15,8 @@ struct ServerControllerApp: App {
             RootView()
                 .environment(model)
                 .preferredColorScheme(model.theme.colorScheme)
+                // Section headings keep their sentence case, never ALL CAPS.
+                .textCase(nil)
         }
     }
 }
