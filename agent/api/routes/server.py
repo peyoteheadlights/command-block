@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from ... import joinguard
+from ... import downtime, joinguard
 from ...minecraft.commands import CommandError, validate
 from ...minecraft.java import memory_limit_mb
 from ...minecraft.process import ServerError
@@ -319,6 +319,39 @@ async def clear_crash_block(
     ctx.server.clear_crash_block()
     audit(ctx, request, "clear_crash_block")
     return {"ok": True, "auto_restart_blocked": ctx.server.auto_restart_blocked}
+
+
+@router.post("/server/restart-when-empty", response_model=ServerAction)
+async def restart_when_empty(
+    request: Request,
+    principal: Principal = Depends(require(SERVER_CONTROL)),
+    ctx=Depends(get_server),
+):
+    """Restart at the next moment nobody is playing, so the changes waiting
+    for a restart are used without kicking anyone (agent/downtime.py)."""
+    with audit_failure(ctx, request, "restart_when_empty", result="refused"):
+        await downtime.restart_when_empty(ctx, principal.user)
+    audit(ctx, request, "restart_when_empty")
+    return {
+        "result": "REQUESTED",
+        "state": ctx.server.state.value,
+        "detail": "The server restarts as soon as nobody is playing.",
+    }
+
+
+@router.post("/server/cancel-restart-when-empty", response_model=ServerAction)
+async def cancel_restart_when_empty(
+    request: Request,
+    principal: Principal = Depends(require(SERVER_CONTROL)),
+    ctx=Depends(get_server),
+):
+    await downtime.cancel_restart_when_empty(ctx, principal.user)
+    audit(ctx, request, "cancel_restart_when_empty")
+    return {
+        "result": "VERIFIED",
+        "state": ctx.server.state.value,
+        "detail": "It won't restart by itself. The changes are used at the next start.",
+    }
 
 
 @router.post("/server/command", response_model=CommandSent)

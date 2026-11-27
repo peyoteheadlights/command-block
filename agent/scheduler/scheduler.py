@@ -62,6 +62,12 @@ READY_MADE = {
     "clear_items": "kill @e[type=item]",
 }
 MAX_STEPS = 10
+# Players hear a stop or restart again this many seconds before it.
+LAST_WARNING = 10
+# A stop or restart more than this late (the PC was asleep or off) is
+# skipped, not run late: a restart at 4 in the morning shouldn't kick
+# players at noon. The loop looks every 20 seconds, so 5 minutes is "missed".
+MISSED_AFTER = 300
 # Commands that act on Join protection's own block list from the console
 # (agent/api/routes/server.py) and would block every player if sent as-is.
 NOT_SCHEDULED = ("ban-ip", "pardon-ip")
@@ -397,30 +403,34 @@ class Scheduler:
         from ..minecraft.process import ServerError
         from ..minecraft.state import ExitReason
 
-        warn = payload.get("warn_seconds", 60)
         try:
-            if self.server.state.value == "ONLINE" and warn:
-                await self.server.send_command(
-                    f"say Server stopping in {int(warn)} seconds", internal=True
-                )
-                await asyncio.sleep(float(warn))
+            await self._warn("stopping", payload.get("warn_seconds", 60))
             await self.server.stop(actor="scheduler", reason=ExitReason.SCHEDULED_STOP)
             return "Server stopped"
         except ServerError as exc:
             return f"Skipped: {exc}"
 
     async def _task_restart(self, payload: dict) -> str:
-        warn = payload.get("warn_seconds", 60)
-        if self.server.state.value == "ONLINE" and warn:
-            try:
-                await self.server.send_command(
-                    f"say Server restarting in {int(warn)} seconds", internal=True
-                )
-                await asyncio.sleep(float(warn))
-            except Exception:
-                pass
+        try:
+            await self._warn("restarting", payload.get("warn_seconds", 60))
+        except Exception:
+            pass
         await self.server.restart(actor="scheduler")
         return "Server restarted"
+
+    async def _warn(self, doing: str, warn: Any) -> None:
+        """Tell players, wait, and tell them again 10 seconds before."""
+        seconds = int(warn or 0)
+        if self.server.state.value != "ONLINE" or seconds <= 0:
+            return
+        await self.server.send_command(f"say Server {doing} in {seconds} seconds", internal=True)
+        if seconds > LAST_WARNING:
+            await asyncio.sleep(seconds - LAST_WARNING)
+            await self.server.send_command(
+                f"say Server {doing} in {LAST_WARNING} seconds", internal=True
+            )
+            seconds = LAST_WARNING
+        await asyncio.sleep(seconds)
 
     async def _task_backup(self, payload: dict) -> str:
         if not self.backups:
@@ -534,8 +544,26 @@ class Scheduler:
             return "Skipped: nobody is on"
         return None
 
+    @staticmethod
+    def _missed(row: dict[str, Any], now: float) -> bool:
+        """A stop or restart that should have run a while ago (the PC was
+        asleep or the agent off)."""
+        due = row.get("next_run")
+        try:
+            tasks = {task for task, _ in steps_of(row["task"], row.get("payload") or {})}
+        except ScheduleError:
+            return False  # a broken row is the run's business; it says so there
+        return bool(
+            row["kind"] != "event"
+            and due
+            and now - due > MISSED_AFTER
+            and tasks & {"stop", "restart"}
+        )
+
     async def _run_row(self, row: dict[str, Any], now: float) -> dict[str, Any]:
         """Run one schedule that is due (or whose event happened) and record it."""
+        if self._missed(row, now):
+            return self._skip_missed(row, now)
         skipped = self._skip_reason(row)
         if skipped is None:
             await self.bus.publish(
@@ -573,6 +601,18 @@ class Scheduler:
             await self.bus.publish(
                 Event(type="schedule_finished", level=level, message=f"{row['name']}: {result}")
             )
+        return {"id": row["id"], "name": row["name"], "result": result}
+
+    def _skip_missed(self, row: dict[str, Any], now: float) -> dict[str, Any]:
+        result = "Skipped: it was missed while the PC was asleep or off"
+        if row["kind"] == "once":
+            self.db.execute("DELETE FROM schedules WHERE id = ?", (row["id"],))
+        else:
+            self.db.execute(
+                "UPDATE schedules SET next_run = ?, last_result = ? WHERE id = ?",
+                (next_run(row["kind"], row["expr"], now), result, row["id"]),
+            )
+        self.db.add_event(self.server.server_id, "schedule", f"{row['name']}: {result}")
         return {"id": row["id"], "name": row["name"], "result": result}
 
     async def run_due(self, now: float | None = None) -> list[dict[str, Any]]:

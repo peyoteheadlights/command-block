@@ -175,6 +175,8 @@ class Header(QFrame):
             ("cancel-restart", "action.cancel"),
             ("restart-now", "action.restart_now"),
             ("clear-crash-block", "notice.allow_restarts"),
+            ("restart-when-empty", "action.restart_when_empty"),
+            ("cancel-restart-when-empty", "action.cancel"),
         ):
             button = push(text(words))
             button.clicked.connect(
@@ -185,6 +187,9 @@ class Header(QFrame):
         column.addLayout(notice)
         self.deadline: float | None = None
         self.paused = ""
+        # Changes waiting for a restart, and whether it restarts when nobody's on.
+        self.waiting: list[str] = []
+        self.when_empty = False
         self.ticker = QTimer(self)
         self.ticker.setInterval(1000)
         self.ticker.timeout.connect(self.show_notice)
@@ -204,6 +209,7 @@ class Header(QFrame):
         if row["id"] != self.row.get("id"):
             # another server: its own status says if a restart is waiting
             self.deadline, self.paused = None, ""
+            self.waiting, self.when_empty = [], False
             self.show_notice()
         self.row = row
         self.name.setText(row["name"])
@@ -249,11 +255,18 @@ class Header(QFrame):
         if status.get("auto_restart_blocked"):
             reason = status.get("auto_restart_block_reason") or ""
             self.paused = f"{text('notice.restart_paused')} {reason}".strip()
+        self.waiting = list(status.get("restart_waiting") or [])
+        self.when_empty = bool(status.get("restart_when_empty"))
         self.show_notice()
 
     def show_notice(self) -> None:
         control = bool(self.row) and self.window_.may(self.row["id"], "server.control")
         words, actions = self.paused, ["clear-crash-block"]
+        if not words and self.when_empty:
+            words, actions = text("restart.when_empty_set"), ["cancel-restart-when-empty"]
+        elif not words and self.waiting:
+            what = ", ".join(text(f"restart.what.{w}") for w in self.waiting)
+            words, actions = text("restart.waiting", what=what), ["restart-when-empty"]
         if self.deadline is not None:
             # Rounded first: (t + 30) - t can come out a hair over 30 in floats.
             left = math.ceil(round(self.deadline - time.monotonic(), 3))

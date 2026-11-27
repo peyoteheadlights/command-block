@@ -20,10 +20,9 @@ from .test_mods import make_jar
 
 
 async def stop_core(core):
-    """Stop Minecraft, then the agent. AgentCore.stop() leaves Minecraft
-    running on purpose (the real agent restarts without kicking players), so
-    a test that started a server stops it itself; otherwise its fake server
-    outlives the test and the event loop that was watching it."""
+    """Stop Minecraft, then the agent. AgentCore.stop() stops running
+    servers too (agent/downtime.py), but a test stops its own first so the
+    next agent in the same folder doesn't start them again."""
     for ctx in list(core.servers.values()):
         if ctx.server.running:
             await ctx.server.stop(actor="test")

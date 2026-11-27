@@ -43,6 +43,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from . import downtime
 from .minecraft.properties import FILENAME, PropertiesFile, world_folder
 from .security.paths import PathSafetyError, check_archive_member, zip_member_is_symlink
 
@@ -527,6 +528,7 @@ def remove(ctx: ServerContext, pack_uuid: str) -> dict[str, Any]:
 
 def after(ctx: ServerContext) -> dict[str, Any]:
     running = bool(ctx.server.running)
+    downtime.mark(ctx, "addons")
     return {"running": running, "restart_needed": running}
 
 

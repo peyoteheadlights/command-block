@@ -34,6 +34,8 @@ POST /api/headlessmc/sign-out
 POST /api/servers/{server_id}/server/restart-now
 POST /api/servers/{server_id}/server/cancel-restart
 POST /api/servers/{server_id}/server/clear-crash-block
+POST /api/servers/{server_id}/server/restart-when-empty
+POST /api/servers/{server_id}/server/cancel-restart-when-empty
 GET /api/servers/{server_id}/recommendations
 POST /api/servers/{server_id}/recommendations/{rec_id}
 GET /api/servers/{server_id}/getting-started
