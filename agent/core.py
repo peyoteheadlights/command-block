@@ -143,6 +143,19 @@ class ServerContext:
                     message=f"Build folder not copied: {exc}",
                 )
             )
+        if self.config.server_type.edition == "bedrock":
+            from .ports import set_udp_ports
+
+            try:
+                udp = await asyncio.to_thread(set_udp_ports, self.config.server_dir)
+            except (OSError, ValueError) as exc:  # never stops a start
+                self.server._emit_console(f"[agent] server-udp-ports not set: {exc}")
+            else:
+                if udp:
+                    self.server._emit_console(
+                        f"[agent] set server-udp-ports={udp} so Bedrock players' game traffic "
+                        f"uses one UDP port (the same number as the game port)"
+                    )
         return await self.core.guard.before_launch(self)
 
     def _whitelist_addon(self, kind: str):
