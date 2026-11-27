@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from . import gamesettings, modpackmake
+from . import companion, gamesettings, modpackmake
 from .joinguard import address_key
 from .minecraft import properties
 from .modpack import ModpackError
@@ -158,6 +158,14 @@ def pack_url(ctx: ServerContext) -> str | None:
     return None
 
 
+def _relink(ctx: ServerContext) -> None:
+    """The Companion hands players the link to update from: keep it current."""
+    last = modpackmake.made(ctx)
+    if last and ctx.config.server_dir_configured:
+        link = url(ctx, MODPACK_NAME)
+        companion.relink(ctx.config.server_dir, ctx.mods.server_type.content, last, link)
+
+
 def _audit(ctx: ServerContext, action: str, user: str, detail: str = "") -> None:
     ctx.core.db.audit(
         action, user=user, target=ctx.server_id, detail=detail, server_id=ctx.server_id
@@ -184,6 +192,7 @@ async def set_on(ctx: ServerContext, on: bool, user: str = "system") -> dict[str
         )
     _audit(ctx, "download_link_on" if on else "download_link_off", user)
     await _write_pack(ctx, user)
+    _relink(ctx)
     return state(ctx)
 
 
@@ -195,6 +204,7 @@ async def new_link(ctx: ServerContext, user: str = "system") -> dict[str, Any]:
     ctx.db.set_setting(LINK, {"on": True, "token": secrets.token_hex(16)})
     _audit(ctx, "download_link_new", user)
     await _write_pack(ctx, user)
+    _relink(ctx)
     return state(ctx)
 
 
