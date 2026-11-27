@@ -30,7 +30,81 @@ data class Backup(
     val note: String? = null,
     val exists: Boolean? = null,
     val copy: BackupCopy? = null,
+    /** "Keep this backup": the clean-up never deletes it. */
+    val kept: Boolean? = null,
+    /** Its top-level folders, comma-separated; a path with "/" is one file. */
+    val includes: String? = null,
 )
+
+@Serializable
+data class BackupKept(val id: Long, val name: String = "", val kept: Boolean = false)
+
+/** One folder a backup holds, or one left out, measured now. */
+@Serializable
+data class SizedFolder(
+    val path: String,
+    @SerialName("size_bytes") val sizeBytes: Long? = null,
+    @SerialName("left_out") val leftOut: Boolean = false,
+    @SerialName("in_backup") val inBackup: Boolean = true,
+    /** A map add-on's name, for a suggested folder. */
+    val name: String? = null,
+)
+
+/** What a manual or scheduled backup would hold, measured now. */
+@Serializable
+data class BackupSize(
+    val folders: List<SizedFolder> = emptyList(),
+    val excluded: List<SizedFolder> = emptyList(),
+    val suggested: List<SizedFolder> = emptyList(),
+    @SerialName("total_bytes") val totalBytes: Long? = null,
+    @SerialName("free_bytes") val freeBytes: Long? = null,
+)
+
+/** One thing the clean-up offers: an old log, an old crash report, a
+ * folder set aside by a restore or an unused dimension. */
+@Serializable
+data class CleanupItem(
+    val path: String,
+    val kind: String,
+    @SerialName("size_bytes") val sizeBytes: Long? = null,
+    val modified: Double? = null,
+)
+
+/** One clean-up waiting in the bin, which Undo puts back. */
+@Serializable
+data class CleanupBatch(
+    val batch: String,
+    @SerialName("created_at") val createdAt: Double? = null,
+    val items: Int = 0,
+    @SerialName("size_bytes") val sizeBytes: Long? = null,
+    @SerialName("empties_at") val emptiesAt: Double? = null,
+)
+
+@Serializable
+data class CleanupList(
+    val items: List<CleanupItem> = emptyList(),
+    @SerialName("dimensions_checked") val dimensionsChecked: Boolean = true,
+    @SerialName("free_bytes") val freeBytes: Long? = null,
+    val bin: List<CleanupBatch> = emptyList(),
+)
+
+@Serializable
+data class CleanupDone(
+    val batch: String? = null,
+    val moved: List<String> = emptyList(),
+    val skipped: List<JsonObject> = emptyList(),
+    @SerialName("size_bytes") val sizeBytes: Long? = null,
+    @SerialName("bin_days") val binDays: Int = 7,
+)
+
+@Serializable
+data class CleanupUndone(
+    @SerialName("put_back") val putBack: List<String> = emptyList(),
+    @SerialName("left_in_bin") val leftInBin: List<String> = emptyList(),
+)
+
+@Serializable
+data class CleanupEmptied(val emptied: Int = 0, @SerialName("freed_bytes") val freedBytes: Long? = null)
 
 @Serializable
 data class Retention(val daily: Int? = null, val weekly: Int? = null, val monthly: Int? = null)
