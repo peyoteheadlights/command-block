@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import motion
 from .activity import INTERNAL, ActivityPage, sentence
 from .backups import BackupsPage
 from .console import ConsolePage
@@ -375,6 +376,7 @@ class ServerScreen(QWidget):
         self.page_list = PageList(window.pc.animations)
         self.tabs = self.page_list.group
         self.pages = QStackedWidget()
+        self.pages.currentChanged.connect(lambda: motion.turn(self.pages))
         center.addWidget(self.pages, 1)
         body.addLayout(center, 1)
         self.side = QVBoxLayout()
