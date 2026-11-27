@@ -15,6 +15,10 @@ with. Files are read and never run.
 Both run in YARA-X, a library inside the agent. Their matches are
 "Worth a look", never proof: the person decides, with a Quarantine button.
 
+MCAntiMalware, jNeedle and ClamAV are separate programs, downloaded the
+first time someone clicks a deep scan with them (agent/mods/scanprograms.py).
+What they call known bad is Known bad here too.
+
 The whole-folder scope also hands every file to Windows antivirus (when it
 is on) and lists programs, scripts and jars in odd places as Worth a look.
 What Windows antivirus finds there is Known bad and goes to quarantine,
@@ -44,6 +48,7 @@ from .. import downloads
 from ..events import Event
 from ..security import antivirus
 from ..security.paths import is_inside
+from . import scanprograms
 from .manager import ModError
 
 log = logging.getLogger(__name__)
@@ -69,6 +74,10 @@ FORGE = "yara_forge"
 SCANNERS = {
     BEHAVIOUR: {"name": "Command Block behaviour check", "speed": "quick"},
     FORGE: {"name": "YARA Forge rules", "speed": "slower"},
+    **{
+        key: {"name": program.name, "speed": program.speed}
+        for key, program in scanprograms.PROGRAMS.items()
+    },
 }
 FILE_CHECK = "Command Block file check"
 SCOPES = ("jar", "mods", "folder")
@@ -278,6 +287,10 @@ class DeepScanner:
         self.ctx = ctx
         self.job_id: str | None = None
 
+    @property
+    def programs(self) -> scanprograms.ScanPrograms:
+        return scanprograms.ScanPrograms(self.forge_dir)
+
     def store(self) -> dict[str, Any]:
         saved = self.ctx.db.get_setting(STORE) or {}
         saved.setdefault("took", {})
@@ -385,9 +398,7 @@ class DeepScanner:
         home = "mods" if "mods" in roots else "server"
         if scope in ("jar", "mods"):
             return [(home, p, p.relative_to(roots[home]).as_posix()) for p in jars]
-        config = self.ctx.config
-        skip = [config.backup_dir, config.mod_quarantine_dir, config.mod_trash_dir]
-        skip.append(Path(config.data_dir))
+        skip = self._skip()
         out = [("server", p, p.relative_to(server).as_posix()) for p in walk(server, skip)]
         for name in ("mods", "java"):
             other = roots.get(name)
@@ -403,8 +414,12 @@ class DeepScanner:
             with contextlib.suppress(Exception):
                 job = self.ctx.core.jobs.get(self.job_id).to_dict()
         forge = self.forge_info()
-        return {
-            "scanners": [
+        programs = self.programs
+        rows = []
+        for key, value in SCANNERS.items():
+            program = scanprograms.PROGRAMS.get(key)
+            installed = programs.installed(key) if program else key != FORGE or bool(forge)
+            rows.append(
                 {
                     "id": key,
                     "name": value["name"],
@@ -413,9 +428,14 @@ class DeepScanner:
                     "speed": f"deepscan.speed.{value['speed']}",
                     "took": saved["took"].get(key),
                     "downloaded": forge if key == FORGE else None,
+                    "installed": installed,
+                    "available": programs.available(key),
+                    # Shown before the first download, so the person knows the size.
+                    "size": program.size if program and not installed else None,
                 }
-                for key, value in SCANNERS.items()
-            ],
+            )
+        return {
+            "scanners": rows,
             "antivirus": antivirus.is_on(),
             "running": job if job and job["state"] == "running" else None,
             "last": saved.get("last"),
@@ -509,7 +529,8 @@ class DeepScanner:
 
     def start(self, scope: str, scanners: list[str], filename: str | None, user: str) -> dict:
         """Start a deep scan as a job. One at a time on a server."""
-        picked = [s for s in SCANNERS if s in scanners]
+        programs = self.programs
+        picked = [s for s in SCANNERS if s in scanners and programs.available(s)]
         self._check(scope, picked, filename)
 
         async def run(handle) -> dict[str, Any]:
@@ -522,19 +543,29 @@ class DeepScanner:
         return self.status()
 
     def installed(self) -> list[str]:
-        """The scanners that need no download: our own rules, and YARA Forge's
-        when a copy is on the PC already."""
-        return [BEHAVIOUR, FORGE] if (self.forge_dir / FORGE_FILE).is_file() else [BEHAVIOUR]
+        """The scanners that need no download: our own rules, YARA Forge's
+        when a copy is on the PC already, and the programs already set up."""
+        found = [BEHAVIOUR, FORGE] if (self.forge_dir / FORGE_FILE).is_file() else [BEHAVIOUR]
+        programs = self.programs
+        found += [
+            key
+            for key in scanprograms.PROGRAMS
+            if programs.installed(key) and programs.available(key)
+        ]
+        return found
 
-    async def run_now(self, scope: str, user: str) -> dict[str, Any]:
+    async def run_now(
+        self, scope: str, user: str, limit: float = scanprograms.TIMEOUT
+    ) -> dict[str, Any]:
         """A deep scan with the installed scanners, waited for (before a start
-        and on the schedule). Downloads nothing."""
+        and on the schedule). Installs nothing; ClamAV still updates its
+        signatures once a day. Each outside program stops after ``limit``."""
         picked = self.installed()
         self._check(scope, picked, None)
 
         async def run(handle) -> dict[str, Any]:
             self.job_id = handle.id
-            return await self._run(handle, scope, picked, None, user, download=False)
+            return await self._run(handle, scope, picked, None, user, False, limit)
 
         _, result = await self.ctx.core.jobs.run(
             "deep_scan", "Deep scan", run, server_id=self.ctx.server_id, user=user
@@ -542,10 +573,19 @@ class DeepScanner:
         return result
 
     async def _run(
-        self, handle, scope, picked, filename, user, download: bool = True
+        self,
+        handle,
+        scope,
+        picked,
+        filename,
+        user,
+        download: bool = True,
+        limit: float = scanprograms.TIMEOUT,
     ) -> dict[str, Any]:
         started = time.time()
         errors: list[dict[str, Any]] = []
+        programs = [s for s in picked if scanprograms.is_program(s)]
+        picked = [s for s in picked if not scanprograms.is_program(s)]
         forge = None
         if FORGE in picked and not download:
             forge = self.forge_dir / FORGE_FILE
@@ -567,6 +607,10 @@ class DeepScanner:
         except asyncio.CancelledError:
             stop.set()
             raise
+        for key in programs:
+            if stop.is_set():
+                break
+            await self._program(handle, key, scope, files, result, download, limit)
         result.update(
             scope=scope,
             target=filename,
@@ -594,6 +638,101 @@ class DeepScanner:
             )
         )
         return {"files": result["files"], "found": len(result["found"])}
+
+    def _skip(self) -> list[Path]:
+        config = self.ctx.config
+        skip = [config.backup_dir, config.mod_quarantine_dir, config.mod_trash_dir]
+        return [Path(p) for p in skip] + [Path(config.data_dir)]
+
+    def _program_paths(self, scope: str, files: list[tuple[str, Path, str]]) -> list[Path]:
+        """What a program is pointed at: the jar, the mods folder, or the
+        server folder and the folders outside it."""
+        if scope == "jar":
+            return [files[0][1]] if files else []
+        roots = self.roots()
+        if scope == "mods":
+            return [Path(self.ctx.config.mods_dir)]
+        server = roots["server"]
+        return [server] + [
+            roots[name]
+            for name in ("mods", "java")
+            if name in roots and not is_inside(server, roots[name])
+        ]
+
+    async def _program(self, handle, key, scope, files, result, download, limit) -> None:
+        """Run one program and add what it found to ``result``."""
+        program = scanprograms.PROGRAMS[key]
+        handle.step(f"Running {program.name}")
+        begun = time.monotonic()
+        try:
+            hits, said = await self.programs.scan(
+                key,
+                self.ctx.config.server.java,
+                self._program_paths(scope, files),
+                self._skip(),
+                download,
+                limit,
+            )
+        except scanprograms.ProgramError as exc:
+            result["errors"].append(exc.said())
+            return
+        result["errors"] += said
+        result["took"][key] = {
+            "seconds": round(time.monotonic() - begun, 1),
+            "files": result["files"],
+        }
+        result["picked"].append(key)
+        if hits:
+            await asyncio.to_thread(self._merge, result, files, hits)
+
+    def _merge(self, result, files, hits) -> None:
+        """Put a program's hits on the listed files. A Known bad hit makes
+        the file Known bad and goes first, so its name leads the message."""
+
+        def key(path) -> str:
+            return os.path.normcase(str(Path(path).resolve()))
+
+        by_path = {key(path): (root, path, rel) for root, path, rel in files}
+        items = {(item["root"], item["path"]): item for item in result["found"]}
+        skip = self._skip()
+        for printed, finding, bad in hits:
+            target = by_path.get(key(printed))
+            if target is None:
+                # Skipped folders hold our own backups and quarantine.
+                if not any(is_inside(s, Path(printed)) for s in skip):
+                    result["errors"].append(
+                        {
+                            "words": "deepscan.error.program_path",
+                            "values": {"name": finding["scanner"], "where": printed[:300]},
+                        }
+                    )
+                continue
+            root, path, rel = target
+            if path.suffix.lower() in REGIONS:
+                continue
+            item = items.get((root, rel))
+            if item is None:
+                if len(result["found"]) >= MAX_FOUND:
+                    continue
+                try:
+                    sha256 = _sha256(path)
+                except OSError:
+                    continue
+                item = {
+                    "root": root,
+                    "path": rel,
+                    "sha256": sha256,
+                    "kind": "worth_a_look",
+                    "findings": [],
+                    "state": "found",
+                }
+                result["found"].append(item)
+                items[(root, rel)] = item
+            if bad:
+                item["kind"] = "known_bad"
+                item["findings"].insert(0, finding)
+            else:
+                item["findings"].append(finding)
 
     def _scan(self, files, picked, forge, scope, handle, stop) -> dict[str, Any]:
         """Read and check every file. Runs in a thread, below normal priority."""
@@ -699,6 +838,7 @@ class DeepScanner:
             self.save(saved)
             if not jarscan._busy():
                 await self.move_waiting(user)
+            saved = self.store()  # move_waiting saved the new states
         waiting = False
         for item in (saved.get("last") or {}).get("found", []):
             if item["state"] in ("waiting", "quarantined") and item["kind"] == "known_bad":
@@ -712,7 +852,7 @@ class DeepScanner:
                     Event(
                         type="jar_scan_found",
                         level="error",
-                        message=f"Deep scan: {antivirus.NAME} found something in "
+                        message=f"Deep scan: {item['findings'][0]['scanner']} found something in "
                         f"{item['path']}. {then}",
                         data={
                             "filename": PurePosixPath(item["path"]).name,

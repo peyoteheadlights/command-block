@@ -41,6 +41,19 @@ class ContentTest {
     }
 
     @Test
+    fun `a program not downloaded yet says its size and a hidden one is left out`() {
+        val report = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(
+            DeepScanReport.serializer(),
+            """{"scanners":[{"id":"behaviour"},{"id":"jneedle","installed":true,"available":false},{"id":"clamav","installed":false,"available":true,"size":226000000}]}""",
+        )
+        assertEquals(listOf("behaviour", "clamav"), report.shown.map { it.id })
+        assertTrue(report.scanners.first().installed)
+        assertFalse(report.shown.last().installed)
+        assertEquals(226000000L, report.shown.last().size)
+        assertNull(report.scanners.first().size)
+    }
+
+    @Test
     fun `the deep scan plan and the jar check before a start are read`() {
         val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         val off = json.decodeFromString(DeepScanReport.serializer(), """{"scanners":[]}""").options

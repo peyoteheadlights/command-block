@@ -122,6 +122,9 @@ ALLOWED_HOSTS = frozenset(
         "dynupdate.no-ip.com",
         # playit.gg's link step, only its two claim calls (agent/playit.py).
         "api.playit.gg",
+        # jNeedle's list of known bad mods, checked before a clicked deep
+        # scan with jNeedle (agent/mods/scanprograms.py). Only its path.
+        "maven.kosmx.dev",
     }
 )
 
@@ -142,7 +145,8 @@ GITHUB_PATHS = {
 # Google's sign-in and Firebase hosts and CurseForge's file servers, which
 # also serve web pages and other files: only the links list, the Bedrock
 # server zips, Tailscale's Windows setup, Hangar's API and its plugin files,
-# the relay and Sign in with Modrinth's function, the two sign-in calls, CurseForge's mod files and Tebex's two reads.
+# the relay and Sign in with Modrinth's function, the two sign-in calls, CurseForge's mod files,
+# Tebex's two reads and jNeedle's list.
 SHARED_HOST_PATHS = {
     "net-secondary.web.minecraft-services.net": ("/api/v1.0/download/links",),
     "www.minecraft.net": ("/bedrockdedicatedserver/",),
@@ -159,6 +163,7 @@ SHARED_HOST_PATHS = {
     "nodejs.org": ("/dist/",),
     "api.spiget.org": ("/v2/resources/",),
     "api.playit.gg": ("/claim/setup", "/claim/exchange"),
+    "maven.kosmx.dev": ("/dev/kosmx/needles/",),
 }
 # One more repo whose release list and release files may be read, while an
 # add-on from a GitHub link is read or updated (see allow_releases).

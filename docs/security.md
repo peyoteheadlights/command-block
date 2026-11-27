@@ -284,6 +284,33 @@ with Microsoft" the owner clicked (`microsoft.account`, owner only):
   agent's user, joins only the server's own address, and exits when the join
   is done.
 
+### Deep scan's outside scanners, after a click
+
+Deep scan can also run three separate programs: MCAntiMalware (GPL-3),
+jNeedle (MIT) and ClamAV (GPL-2). None of them is shipped or copied into
+this repo. `agent/mods/scanprograms.py` is the only place that starts them:
+
+- each is downloaded the first time someone with `deepscan.run` ticks it
+  and clicks Run, from that project's GitHub release only (one fixed URL per
+  program), and checked against the size and SHA-256 written in the code
+  before it is kept. A file that doesn't match is deleted;
+- ClamAV's zip is unpacked by the agent itself: every entry passes the
+  zip-slip check, links are refused, and the total is capped at 1 GB;
+- runs before a start and scheduled runs only use programs that are already
+  downloaded, and never download one. ClamAV is offered on Windows only,
+  since its download is a Windows build;
+- the command is a list, never through a shell, built from fixed flags and
+  paths the agent chose (the server folder, the mods folder, or one jar
+  already listed). MCAntiMalware runs with `--singleScan true
+  --disableAutoUpdate true` so it never updates itself. It runs at below
+  normal priority with no window and is stopped after 3 hours, or after
+  15 minutes in a run before a start;
+- only what it prints is read. A hit must name a file inside what was
+  scanned, or it is shown as an error, never acted on;
+- ClamAV's `freshclam` updates its signatures from `database.clamav.net` once
+  a day, and jNeedle downloads its own list from `maven.kosmx.dev`. Both run
+  as the agent's user.
+
 ### The owner's Microsoft sign-in
 
 Online-mode Java servers and Bedrock servers can only be joined with a real
@@ -882,7 +909,8 @@ says "Couldn't check for safety notes".
 
 Nothing downloaded is executed by the agent, with the documented exceptions
 under Command injection: the loader installer, Chunker (shipped with the
-app, never downloaded), Mojang's Bedrock server program, the owner's own server jar (picked by the owner, never
+app, never downloaded), Mojang's Bedrock server program, deep scan's outside scanners (MCAntiMalware,
+jNeedle and ClamAV), the owner's own server jar (picked by the owner, never
 downloaded), and an update of this app, which runs only after its signature and
 checksum check out.
 

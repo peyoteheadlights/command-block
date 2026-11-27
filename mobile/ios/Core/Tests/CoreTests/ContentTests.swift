@@ -324,6 +324,15 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(found.findings.first?.scanner, "behaviour")
     }
 
+    func testAProgramNotDownloadedYetSaysItsSizeAndAHiddenOneIsLeftOut() throws {
+        let report = try JSONDecoder().decode(DeepScanReport.self, from: Data(#"{"scanners":[{"id":"behaviour"},{"id":"jneedle","installed":true,"available":false},{"id":"clamav","installed":false,"available":true,"size":226000000}]}"#.utf8))
+        XCTAssertEqual(report.shown.map(\.id), ["behaviour", "clamav"])
+        XCTAssertTrue(report.scanners[0].installed)
+        XCTAssertFalse(report.shown[1].installed)
+        XCTAssertEqual(report.shown[1].size, 226000000)
+        XCTAssertNil(report.scanners[0].size)
+    }
+
     func testTheDeepScanPlanAndTheJarCheckBeforeAStartAreRead() throws {
         let off = try JSONDecoder().decode(DeepScanReport.self, from: Data(#"{"scanners":[]}"#.utf8)).options
         XCTAssertEqual(off.schedule, "off")

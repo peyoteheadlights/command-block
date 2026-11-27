@@ -36,6 +36,7 @@ from .. import notes
 from ..events import Event
 from ..security import antivirus
 from ..security.paths import assert_not_symlink, is_inside
+from . import scanprograms
 from .curseforge import fingerprint
 from .jarinfo import DISABLED_SUFFIX, NESTED_MAX_BYTES, read_mod_jar
 from .manager import ModError
@@ -630,7 +631,7 @@ class JarScanner:
         if settings.check_before_start:
             await self.scan()
         if settings.deep_scan_before_start:
-            await self.ctx.deepscan.run_now("mods", "agent")
+            await self.ctx.deepscan.run_now("mods", "agent", scanprograms.BEFORE_START)
 
     async def _set_checking(self, on: bool) -> None:
         self.ctx.server.checking_jars = on

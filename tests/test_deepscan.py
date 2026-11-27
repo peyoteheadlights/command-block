@@ -19,7 +19,7 @@ import httpx
 import pytest
 
 from agent import downloads
-from agent.mods import deepscan
+from agent.mods import deepscan, scanprograms
 from agent.mods.deepscan import compile_rules, file_check, walk, yara_findings
 from agent.protection import Facts, lines
 from agent.security import antivirus
@@ -152,6 +152,7 @@ def test_walk_skips_links_and_the_folders_it_is_told(tmp_path):
 def test_every_word_the_scan_says_is_in_the_strings():
     source = Path(deepscan.__file__).read_text(encoding="utf-8")
     source += Path(deepscan.RULES).read_text(encoding="utf-8")
+    source += Path(scanprograms.__file__).read_text(encoding="utf-8")
     keys = set(re.findall(r'"(deepscan\.[a-z_.]+)"', source))
     keys |= {f"deepscan.{k}.{s}" for k in ("scanner", "what") for s in deepscan.SCANNERS}
     keys |= {f"deepscan.speed.{s['speed']}" for s in deepscan.SCANNERS.values()}
@@ -205,7 +206,13 @@ def bad_mod(ctx, name="bad.jar", rule="starts_a_program") -> Path:
 
 def test_the_status_lists_each_scan_with_what_it_does(signed_in, ctx):
     report = signed_in.get(f"{BASE}/mods/deepscan").json()
-    assert [s["id"] for s in report["scanners"]] == ["behaviour", "yara_forge"]
+    assert [s["id"] for s in report["scanners"]] == [
+        "behaviour",
+        "yara_forge",
+        "mcantimalware",
+        "jneedle",
+        "clamav",
+    ]
     assert report["scanners"][0]["speed"] == "deepscan.speed.quick"
     assert report["scanners"][0]["took"] is None  # never a guessed time
     assert report["last"] is None and report["running"] is None

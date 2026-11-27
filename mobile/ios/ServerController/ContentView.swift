@@ -2207,7 +2207,7 @@ private struct DeepScanCard: View {
         let jars = content.scan.value?.jars.map(\.filename) ?? []
         CardBox(palette: palette) {
             Hint(text: model.t("deepscan.intro"), palette: palette)
-            ForEach(report.scanners) { scanner in
+            ForEach(report.shown) { scanner in
                 Toggle(isOn: Binding(
                     get: { picked.contains(scanner.id) },
                     set: { on in if on { picked.insert(scanner.id) } else { picked.remove(scanner.id) } }
@@ -2238,10 +2238,11 @@ private struct DeepScanCard: View {
             }
             status(strings)
             if allowed {
-                let ready = report.running == nil && content.busy == nil && !picked.isEmpty && (scope != "jar" || jars.contains(jar))
+                let chosen = picked.filter { id in report.shown.contains { $0.id == id } }
+                let ready = report.running == nil && content.busy == nil && !chosen.isEmpty && (scope != "jar" || jars.contains(jar))
                 Presses(presses: [
                     Press(title: model.t("deepscan.run"), enabled: ready) {
-                        Task { await content.runDeepScan(scope, picked.sorted(), scope == "jar" ? jar : nil, strings) }
+                        Task { await content.runDeepScan(scope, chosen.sorted(), scope == "jar" ? jar : nil, strings) }
                     },
                 ], palette: palette)
             }
@@ -2254,6 +2255,9 @@ private struct DeepScanCard: View {
             lines.append(strings.t("deepscan.took", ["seconds": took.seconds, "files": took.files]))
         } else {
             lines.append(strings.t("deepscan.not_timed"))
+        }
+        if !scanner.installed, let size = scanner.size {
+            lines.append(strings.t("deepscan.first_download", ["size": Int((Double(size) / 1e6).rounded())]))
         }
         if let got = scanner.downloaded {
             lines.append(strings.t("deepscan.downloaded", ["tag": got.tag, "when": Display.ago(strings, got.at, now: now)]))

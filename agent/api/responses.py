@@ -1588,6 +1588,11 @@ class DeepScanScanner(Open):
     downloaded: dict[str, Any] | None = Field(
         None, description="YARA Forge only: tag, sha256 and when it was downloaded"
     )
+    installed: bool = Field(True, description="false until a program is downloaded")
+    available: bool = Field(
+        True, description="false for a day after jNeedle's list couldn't be downloaded"
+    )
+    size: int | None = Field(None, description="bytes downloaded the first time it runs")
 
 
 class DeepScanReport(Open):

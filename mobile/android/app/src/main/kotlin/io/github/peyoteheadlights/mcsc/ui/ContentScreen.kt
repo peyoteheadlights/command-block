@@ -446,10 +446,11 @@ private fun DeepScanCard(vm: AppViewModel, content: ContentPages, report: DeepSc
     var jar by rememberSaveable { mutableStateOf<String?>(null) }
     Card {
         Note(t("deepscan.intro"), color = colors.text2)
-        for (scanner in report.scanners) {
+        for (scanner in report.shown) {
             val about = listOfNotNull(
                 t(scanner.what),
                 scanner.took?.let { t("deepscan.took", "seconds" to it.seconds, "files" to it.files) } ?: t("deepscan.not_timed"),
+                scanner.size?.takeIf { !scanner.installed }?.let { t("deepscan.first_download", "size" to Math.round(it / 1e6)) },
                 scanner.downloaded?.let { t("deepscan.downloaded", "tag" to it.tag, "when" to Display.ago(vm.strings, it.at, now)) },
             ).joinToString("\n")
             Tick("${t(scanner.words)} (${t(scanner.speed)})", scanner.id in picked, subtitle = about, enabled = allowed) { on ->
@@ -481,8 +482,9 @@ private fun DeepScanCard(vm: AppViewModel, content: ContentPages, report: DeepSc
             }
         }
         if (allowed) {
-            val ready = running == null && content.busy == null && picked.isNotEmpty() && (what != "jar" || jar in jars)
-            Presses(listOf(Press(t("deepscan.run"), { content.runDeepScan(what, picked.sorted(), jar.takeIf { what == "jar" }, vm.strings) }, enabled = ready)))
+            val chosen = picked.filter { id -> report.shown.any { it.id == id } }
+            val ready = running == null && content.busy == null && chosen.isNotEmpty() && (what != "jar" || jar in jars)
+            Presses(listOf(Press(t("deepscan.run"), { content.runDeepScan(what, chosen.sorted(), jar.takeIf { what == "jar" }, vm.strings) }, enabled = ready)))
             DeepScanPlan(vm, content, report.options, word)
         }
     }

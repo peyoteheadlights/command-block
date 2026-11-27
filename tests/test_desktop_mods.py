@@ -1328,6 +1328,28 @@ def test_deep_scan_lists_a_worth_a_look_mod_and_quarantine_moves_it(qapp, agent_
     wait_for(qapp, lambda: not row_buttons(page, "Quarantine", "mods/bad.jar"))
 
 
+def test_deep_scan_hides_jneedle_without_its_list_and_says_download_sizes(
+    qapp, agent_http, monkeypatch
+):
+    import time
+
+    from agent.mods import scanprograms
+    from agent.mods.scanprograms import PROGRAMS, ScanPrograms
+
+    monkeypatch.setattr(scanprograms, "WINDOWS", True)  # ClamAV is offered on Windows only
+
+    mods_folder(agent_http).mkdir(exist_ok=True)
+    programs = ScanPrograms(core_of(agent_http).servers["survival"].deepscan.forge_dir)
+    programs.home("jneedle").mkdir(parents=True)
+    (programs.home("jneedle") / "list-failed").write_text(str(time.time()))
+    _window, page = mods_page(qapp, agent_http)
+    deep = page.deep
+    wait_for(qapp, lambda: deep.boxes)
+    assert "jneedle" not in deep.boxes and "mcantimalware" in deep.boxes
+    size = round(PROGRAMS["clamav"].size / 1e6)
+    assert f"Downloaded the first time you run it ({size} MB)." in shown_text(page)
+
+
 def test_deep_scan_schedule_and_before_start_are_saved_on_the_agent(qapp, agent_http):
     mods_folder(agent_http).mkdir(exist_ok=True)
     _window, page = mods_page(qapp, agent_http)

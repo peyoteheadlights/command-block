@@ -902,8 +902,14 @@ public struct DeepScanScanner: Decodable, Equatable, Identifiable, Sendable {
     public var speed: String
     public var took: DeepScanTook?
     public var downloaded: DeepScanDownloaded?
+    /// False for an outside program until its first download.
+    public var installed: Bool
+    /// False while jNeedle's list can't be downloaded; the row is hidden.
+    public var available: Bool
+    /// Download size in bytes, only for a program not downloaded yet.
+    public var size: Int?
 
-    enum CodingKeys: String, CodingKey { case id, words, what, speed, took, downloaded }
+    enum CodingKeys: String, CodingKey { case id, words, what, speed, took, downloaded, installed, available, size }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -913,6 +919,9 @@ public struct DeepScanScanner: Decodable, Equatable, Identifiable, Sendable {
         speed = c.value(.speed, "")
         took = c.maybe(.took)
         downloaded = c.maybe(.downloaded)
+        installed = c.value(.installed, true)
+        available = c.value(.available, true)
+        size = c.maybe(.size)
     }
 }
 
@@ -986,6 +995,9 @@ public struct DeepScanReport: Decodable, Equatable, Sendable {
         last = c.maybe(.last)
         options = c.value(.options, DeepScanOptions())
     }
+
+    /// The checks the person can pick from now.
+    public var shown: [DeepScanScanner] { scanners.filter(\.available) }
 }
 
 /// Deep scan before each start, and the daily or weekly run. `next` is

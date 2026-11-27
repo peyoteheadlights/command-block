@@ -154,6 +154,9 @@ class DeepScanCard:
         boxes = []
         self.boxes = {}
         for scanner in report.get("scanners") or []:
+            if not scanner.get("available", True):
+                self.picked.discard(scanner["id"])  # jNeedle while its list can't download
+                continue
             box = QCheckBox(f"{text(scanner['words'])} ({text(scanner['speed'])})")
             box.setChecked(scanner["id"] in self.picked)
             box.setEnabled(allowed)
@@ -164,6 +167,8 @@ class DeepScanCard:
                 text(scanner["what"]),
                 text("deepscan.took", **took) if took else text("deepscan.not_timed"),
             ]
+            if not scanner.get("installed", True) and scanner.get("size"):
+                about.append(text("deepscan.first_download", size=round(scanner["size"] / 1e6)))
             got = scanner.get("downloaded")
             if got:
                 about.append(text("deepscan.downloaded", tag=got["tag"], when=clock(got["at"])))

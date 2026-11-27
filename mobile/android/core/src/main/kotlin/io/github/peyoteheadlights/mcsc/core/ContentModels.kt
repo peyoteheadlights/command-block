@@ -543,6 +543,12 @@ data class DeepScanScanner(
     val speed: String = "",
     val took: DeepScanTook? = null,
     val downloaded: DeepScanDownloaded? = null,
+    /** False for an outside program until its first download. */
+    val installed: Boolean = true,
+    /** False while jNeedle's list can't be downloaded; the row is hidden. */
+    val available: Boolean = true,
+    /** Download size in bytes, only for a program not downloaded yet. */
+    val size: Long? = null,
 )
 
 /** A file the deep scan listed: Known bad, or Worth a look. [root] is "server" or "java". */
@@ -574,7 +580,10 @@ data class DeepScanReport(
     val running: DeepScanRunning? = null,
     val last: DeepScanLast? = null,
     val options: DeepScanOptions = DeepScanOptions(),
-)
+) {
+    /** The checks the person can pick from now. */
+    val shown: List<DeepScanScanner> get() = scanners.filter { it.available }
+}
 
 /** Before each start, and the daily or weekly run. [next] is null while it is off. */
 @Serializable

@@ -84,3 +84,15 @@ shipped. It is downloaded from its GitHub releases, checked against the
 release's checksum, only when the owner ticks it in Deep scan. Each rule in
 it keeps the license its author gave it, which is written inside the rule.
 
+## MCAntiMalware, jNeedle and ClamAV
+
+Deep scan can run these as separate programs. They aren't shipped and none
+of their code is in this repo. Each is downloaded from its GitHub release,
+checked against a pinned checksum, only when someone ticks it in Deep scan:
+
+- MCAntiMalware 15.16 by OpticFusion1
+  (https://github.com/OpticFusion1/MCAntiMalware), GPL-3.0;
+- jNeedle 1.1.0 by KosmX (https://github.com/KosmX/jneedle), MIT;
+- ClamAV 1.5.5 by Cisco Talos (https://github.com/Cisco-Talos/clamav),
+  GPL-2.0. Its signatures are downloaded by its own `freshclam`.
+
