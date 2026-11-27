@@ -25,6 +25,7 @@ from . import (
     backups,
     changes,
     chat,
+    cleanup,
     configfiles,
     console,
     discord,
@@ -86,6 +87,7 @@ PER_SERVER = (
     configfiles,
     protection,
     store,
+    cleanup,
 )
 GLOBAL = (
     auth,

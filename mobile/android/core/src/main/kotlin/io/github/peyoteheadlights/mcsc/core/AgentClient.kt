@@ -319,6 +319,32 @@ class AgentClient(
 
     suspend fun offsite(serverId: String): Offsite = get("${server(serverId)}/backups/offsite", Offsite.serializer())
 
+    /** Keep this backup (or stop keeping it): the clean-up never deletes a kept one. */
+    suspend fun keepBackup(serverId: String, backupId: Long, keep: Boolean): BackupKept =
+        call(post("${server(serverId)}/backups/$backupId/keep", buildJsonObject { put("keep", keep) }), BackupKept.serializer())
+
+    /** How big a backup would be now; walks the world on the PC. */
+    suspend fun backupSize(serverId: String): BackupSize =
+        get("${server(serverId)}/backups/size", BackupSize.serializer(), slow = true)
+
+    /** What the clean-up offers, and what's in its bin. Nothing changes. */
+    suspend fun cleanup(serverId: String): CleanupList =
+        get("${server(serverId)}/cleanup", CleanupList.serializer(), slow = true)
+
+    /** Moves the picked items into the clean-up bin as one batch. */
+    suspend fun cleanUp(serverId: String, paths: List<String>): CleanupDone = call(
+        post("${server(serverId)}/cleanup", buildJsonObject { put("paths", JsonArray(paths.map { JsonPrimitive(it) })) }),
+        CleanupDone.serializer(),
+        slow = true,
+    )
+
+    suspend fun cleanupUndo(serverId: String, batch: String): CleanupUndone =
+        call(post("${server(serverId)}/cleanup/undo", buildJsonObject { put("batch", batch) }), CleanupUndone.serializer(), slow = true)
+
+    /** Empties the whole bin for good. */
+    suspend fun cleanupEmpty(serverId: String): CleanupEmptied =
+        call(post("${server(serverId)}/cleanup/empty", JsonObject(emptyMap())), CleanupEmptied.serializer(), slow = true)
+
     /** Turns second copies off. Choosing a folder needs the PC's folder list. */
     suspend fun turnOffsiteOff(serverId: String): Offsite = call(
         request("${server(serverId)}/backups/offsite").put(buildJsonObject { put("directory", "") }.toBody()).build(),
@@ -1029,11 +1055,13 @@ class AgentClient(
         get("${server(serverId)}/duplicate", DuplicateOptions.serializer())
 
     /** Starts the copy as a task; the new server appears once it is checked. */
-    suspend fun duplicate(serverId: String, name: String, directory: String, world: String): DuplicateStarted = call(
+    suspend fun duplicate(serverId: String, name: String, directory: String, world: String, fromBackup: Long? = null): DuplicateStarted = call(
         request("${server(serverId)}/duplicate").post(buildJsonObject {
             put("name", name)
             put("directory", directory)
             put("world", world)
+            // Restore as a new server: the backup's world, settings and add-ons.
+            if (fromBackup != null) put("from_backup", fromBackup)
         }.toBody()).build(),
         DuplicateStarted.serializer(),
     )

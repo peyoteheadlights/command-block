@@ -384,6 +384,51 @@ final class WorldTests: XCTestCase {
         XCTAssertEqual(sent?["start_after"] as? Bool, true)
     }
 
+    func testBackupsAndDiskKeepRestoreAsANewServerAndTheCleanUp() async throws {
+        let scheduled = Backup(id: 3, kind: "scheduled", createdAt: 1_763_510_400, status: "ok", includes: "world,config")
+        XCTAssertTrue(Backups.canKeep(scheduled, canDelete: true))
+        var manual = scheduled
+        manual.kind = "manual"
+        XCTAssertFalse(Backups.canKeep(manual, canDelete: true))
+        XCTAssertFalse(Backups.canKeep(scheduled, canDelete: false))
+        XCTAssertTrue(Backups.canOpenAsServer(scheduled, canManage: true))
+        var single = scheduled
+        single.includes = "config/a.yml"
+        XCTAssertFalse(Backups.canOpenAsServer(single, canManage: true))
+        XCTAssertEqual(Backups.copyName(s, serverName: "Survival", backup: scheduled, zone: utc), "Survival from 2025-11-19")
+        XCTAssertEqual(Backups.besideFolder("C:\\Servers\\Survival copy", name: "b"), "C:\\Servers\\b")
+        XCTAssertEqual(Backups.besideFolder("/srv/a", name: "b"), "/srv/b")
+
+        let log = CleanupItem(path: "logs/a.log.gz", kind: "old_log", sizeBytes: 2048)
+        XCTAssertEqual(Backups.cleanupLine(s, log, technical: false), "Old log · 2.0 KB")
+        XCTAssertEqual(Backups.cleanupLine(s, log, technical: true), "Old log · logs/a.log.gz · 2.0 KB")
+        XCTAssertTrue(Backups.ticked(log))
+        XCTAssertFalse(Backups.ticked(CleanupItem(path: "world/dimensions/x", kind: "unused_dimension")))
+        let size = BackupSize(excluded: [SizedFolder(path: "a/b")])
+        XCTAssertEqual(Backups.excludes(size, add: " c/d "), ["a/b", "c/d"])
+        XCTAssertEqual(Backups.excludes(size, remove: "a/b"), [])
+
+        StubAgent.json("{\"ok\": true, \"id\": 3, \"name\": \"s.zip\", \"kept\": true}")
+        let kept = try await client().keepBackup(serverId: "survival", backupId: 3, keep: true)
+        XCTAssertTrue(kept.kept)
+        XCTAssertEqual(path(0), "/api/servers/survival/backups/3/keep")
+        XCTAssertEqual(body(0), "{\"keep\":true}")
+
+        StubAgent.json("{\"items\": [{\"path\": \"logs/a.log.gz\", \"kind\": \"old_log\", \"size_bytes\": 5}], \"dimensions_checked\": false, \"bin\": []}")
+        let found = try await client().cleanup(serverId: "survival")
+        XCTAssertEqual(found.items.first?.kind, "old_log")
+        XCTAssertFalse(found.dimensionsChecked)
+
+        StubAgent.json("{\"ok\": true, \"batch\": \"20261119-120000\", \"moved\": [\"logs/a.log.gz\"], \"skipped\": [], \"size_bytes\": 5, \"bin_days\": 7}")
+        let done = try await client().cleanUp(serverId: "survival", paths: ["logs/a.log.gz"])
+        XCTAssertEqual(done.batch, "20261119-120000")
+        XCTAssertTrue(body(2).contains("a.log.gz"))
+
+        StubAgent.json("{\"job\": {\"id\": \"j1\", \"kind\": \"duplicate\", \"state\": \"running\"}}")
+        _ = try await client().duplicate(serverId: "survival", name: "S", directory: "C:/s2", world: "fresh", fromBackup: 3)
+        XCTAssertTrue(body(3).contains("\"from_backup\":3"), body(3))
+    }
+
     func testTheChangeListsAreReadAndUndoAndRedoSentToTheServersOwnRoutes() async throws {
         let c = client()
         StubAgent.json(

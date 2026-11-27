@@ -41,6 +41,12 @@ DELETE /api/servers/{server_id}/backups/{backup_id}
 POST /api/servers/{server_id}/backups/{backup_id}/copy
 GET /api/servers/{server_id}/backups/offsite
 PUT /api/servers/{server_id}/backups/offsite
+POST /api/servers/{server_id}/backups/{backup_id}/keep
+GET /api/servers/{server_id}/backups/size
+GET /api/servers/{server_id}/cleanup
+POST /api/servers/{server_id}/cleanup
+POST /api/servers/{server_id}/cleanup/undo
+POST /api/servers/{server_id}/cleanup/empty
 GET /api/servers/{server_id}/worlds
 POST /api/servers/{server_id}/worlds/save
 GET /api/servers/{server_id}/world/timeline

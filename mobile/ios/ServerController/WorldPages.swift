@@ -152,6 +152,97 @@ final class WorldPages {
         }
     }
 
+    /// Keep this backup (or stop keeping it): the clean-up never deletes a kept one.
+    func keep(_ backup: Backup, _ keep: Bool, _ strings: Strings) async {
+        await work("keep:\(backup.id)", strings, reload: loadBackups) { client, id in
+            _ = try await client.keepBackup(serverId: id, backupId: backup.id, keep: keep)
+            return Said(text: strings.t(keep ? "backups.kept_toast" : "backups.unkept_toast"), good: true)
+        }
+    }
+
+    /// Restore as a new server: Duplicate with the backup's world, settings
+    /// and add-ons, next to this server's folder. This server stays as it is.
+    func openAsServer(_ backup: Backup, serverName: String, _ strings: Strings) async {
+        await work("open:\(backup.id)", strings) { client, id in
+            let options = try await client.duplicateOptions(serverId: id)
+            let name = Backups.copyName(strings, serverName: serverName, backup: backup)
+            _ = try await client.duplicate(
+                serverId: id, name: name, directory: Backups.besideFolder(options.directory, name: name),
+                world: "fresh", fromBackup: backup.id
+            )
+            return Said(text: strings.t("dup.started", ["name": name]), good: true)
+        }
+    }
+
+    // MARK: - Left out of backups
+
+    /// What a backup would hold now, with what is left out. Walks the world.
+    private(set) var size = PageRead<BackupSize>()
+
+    func loadSize() async {
+        await read(\.size) { client, id in try await client.backupSize(serverId: id) }
+    }
+
+    func saveExcludes(_ paths: [String], _ strings: Strings) async {
+        await work("exclude", strings, reload: loadSize) { client, id in
+            let saved = try await client.saveServerSettings(
+                serverId: id, updates: ["backups.exclude": .array(paths.map { .string($0) })]
+            )
+            if let refused = saved.rejected["backups.exclude"] { return Said(text: refused, good: false) }
+            return Said(text: strings.t("leftout.saved"), good: true)
+        }
+    }
+
+    // MARK: - Clean-up
+
+    /// What the clean-up offers and what's in its bin; empty until looked for.
+    private(set) var cleanup = PageRead<CleanupList>()
+    /// The paths ticked to go. Logs and crash reports start ticked.
+    var picked: Set<String> = []
+    /// Undo for the clean-up just done.
+    private(set) var lastBatch: String? = nil
+
+    func loadCleanup() async {
+        let before = cleanup.value
+        await read(\.cleanup) { client, id in try await client.cleanup(serverId: id) }
+        if let found = cleanup.value, found != before {
+            picked = Set(found.items.filter(Backups.ticked).map(\.path))
+        }
+    }
+
+    func cleanUp(_ strings: Strings) async {
+        let paths = Array(picked)
+        await work("cleanup", strings, reload: loadCleanup) { [weak self] client, id in
+            let done = try await client.cleanUp(serverId: id, paths: paths)
+            self?.lastBatch = done.batch
+            var words = strings.t(
+                "cleanup.done",
+                ["count": "\(done.moved.count)", "size": Display.bytes(strings, done.sizeBytes), "days": "\(done.binDays)"]
+            )
+            if !done.skipped.isEmpty { words += " " + strings.t("cleanup.skipped", ["count": "\(done.skipped.count)"]) }
+            return Said(text: words, good: true)
+        }
+    }
+
+    func cleanupUndo(_ batch: String, _ strings: Strings) async {
+        await work("cleanup", strings, reload: loadCleanup) { [weak self] client, id in
+            let back = try await client.cleanupUndo(serverId: id, batch: batch)
+            self?.lastBatch = nil
+            if !back.leftInBin.isEmpty {
+                return Said(text: strings.t("cleanup.left", ["count": "\(back.leftInBin.count)"]), good: false)
+            }
+            return Said(text: strings.t("cleanup.undone"), good: true)
+        }
+    }
+
+    func cleanupEmpty(_ strings: Strings) async {
+        await work("cleanup", strings, reload: loadCleanup) { [weak self] client, id in
+            let emptied = try await client.cleanupEmpty(serverId: id)
+            self?.lastBatch = nil
+            return Said(text: strings.t("cleanup.emptied", ["size": Display.bytes(strings, emptied.freedBytes)]), good: true)
+        }
+    }
+
     /// A task finished on another device (or here) may have added a change:
     /// read the lists again while Backups is open.
     func onTask(_ job: Job) {

@@ -52,6 +52,55 @@ object Backups {
     /** A backup whose file is gone can't be downloaded or restored. */
     fun onDisk(backup: Backup): Boolean = backup.exists != false
 
+    /** "Keep this backup" is offered for a checked backup the clean-up
+     * could delete (manual and season backups are never deleted). */
+    fun canKeep(backup: Backup, canDelete: Boolean): Boolean =
+        canDelete && backup.status == "ok" && backup.kind !in setOf("manual", "season")
+
+    /** "Restore as a new server": a checked backup of a whole server, not
+     * of single files. */
+    fun canOpenAsServer(backup: Backup, canManage: Boolean): Boolean =
+        canManage && backup.status == "ok" && onDisk(backup) && "/" !in (backup.includes ?: "")
+
+    /** The new server's name: "Survival from 2026-11-19" ("season" for an old season). */
+    fun copyName(
+        strings: Strings,
+        serverName: String,
+        backup: Backup,
+        zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+    ): String {
+        val date = java.time.Instant.ofEpochMilli(((backup.createdAt ?: 0.0) * 1000).toLong()).atZone(zone).toLocalDate().toString()
+        val key = if (backup.kind == "season") "season.copy_name" else "backups.copy_name"
+        return strings.t(key, "name" to serverName, "date" to date).take(60)
+    }
+
+    /** A folder next to the agent's suggested one, on the PC (a Windows
+     * path, so "\\" is split here, not by the phone's own file rules). */
+    fun besideFolder(suggested: String, name: String): String {
+        val back = suggested.lastIndexOf('\\')
+        val cut = maxOf(back, suggested.lastIndexOf('/'))
+        if (cut <= 0) return suggested
+        return suggested.substring(0, cut + 1) + name
+    }
+
+    /** One clean-up line: what it is, its size and, in Technical, its path. */
+    fun cleanupLine(strings: Strings, item: CleanupItem, technical: Boolean): String =
+        listOfNotNull(
+            strings.t("cleanup.kind.${item.kind}"),
+            item.path.takeIf { technical },
+            Display.bytes(strings, item.sizeBytes),
+        ).joinToString(" · ")
+
+    /** Logs and crash reports start ticked; bigger things are the owner's pick. */
+    fun ticked(item: CleanupItem): Boolean = item.kind in setOf("old_log", "crash_report")
+
+    /** The exclusions with one added or taken away, as the setting is saved. */
+    fun excludes(size: BackupSize?, add: String? = null, remove: String? = null): List<String> {
+        val now = size?.excluded.orEmpty().map { it.path }.filter { it != remove }
+        val extra = add?.trim()?.takeIf { it.isNotEmpty() && it !in now }
+        return if (extra != null) now + extra else now
+    }
+
     /** A task's states once it is over. */
     val FINISHED = setOf("succeeded", "failed", "interrupted")
 

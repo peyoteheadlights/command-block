@@ -295,3 +295,71 @@ def test_a_failed_download_leaves_the_file_the_save_box_chose(tmp_path):
     with pytest.raises(AgentError, match="Gone."):
         agent.download_to("/servers/survival/backups/1/download", str(kept))
     assert kept.read_bytes() == b"keep me"
+
+
+# ---------------------------------------------------------------- backups and disk
+def server_dir(agent_http):
+    return agent_http.agent.app.state.core.servers["survival"].config.server_dir
+
+
+def test_a_map_tiles_folder_is_offered_then_left_out(qapp, agent_http):
+    tiles = server_dir(agent_http) / "config" / "squaremap" / "web" / "tiles"
+    tiles.mkdir(parents=True)
+    (tiles / "t.png").write_bytes(b"p" * 5000)
+    window, page = backups_page(qapp, agent_http)
+    wait_for(qapp, lambda: "squaremap map tiles" in shown_text(page))
+    assert "Nothing is left out." in shown_text(page)
+    assert "A backup now holds about" in shown_text(page)
+    buttons_named(page, "Leave out")[0].click()
+    wait_for(qapp, lambda: bool(buttons_named(page, "Back it up again")))
+    settings = agent_http.get("/api/servers/survival/settings", headers=owner(agent_http)).json()
+    assert settings["backups"]["exclude"] == ["config/squaremap/web/tiles"]
+
+
+def test_keep_and_restore_as_a_new_server_are_in_a_backups_menu(qapp, agent_http):
+    headers = owner(agent_http)
+    made = agent_http.post(
+        "/api/servers/survival/backups", json={"name": "auto"}, headers=headers, timeout=60
+    ).json()
+    core = agent_http.agent.app.state.core
+    core.db.execute("UPDATE backups SET kind = 'scheduled' WHERE id = ?", (made["id"],))
+    window, page = backups_page(qapp, agent_http)
+    wait_for(qapp, lambda: "Scheduled" in shown_text(page))
+    menu_item(page, "Keep this backup").trigger()
+    wait_for(qapp, lambda: "Kept. The clean-up won't delete it." in page.note.text())
+
+    def offered(words):
+        try:
+            return menu_item(page, words)
+        except AssertionError:
+            return None
+
+    wait_for(qapp, lambda: offered("Stop keeping this backup") is not None)
+    menu_item(page, "Restore as a new server").trigger()
+    wait_for(qapp, lambda: "Copying into Survival from" in page.note.text(), 30)
+
+
+def test_the_clean_up_shows_first_then_moves_to_the_bin_with_undo(qapp, agent_http):
+    import os
+    import time
+
+    old = server_dir(agent_http) / "logs" / "2026-01-01-1.log.gz"
+    old.write_bytes(b"old log")
+    week = time.time() - 8 * 86400
+    os.utime(old, (week, week))
+    window, page = backups_page(qapp, agent_http)
+    button(page, "Look for things to clean up").click()
+
+    def picks():
+        return [b for b in page.findChildren(QtWidgets.QCheckBox) if "Old log" in b.text()]
+
+    wait_for(qapp, lambda: bool(picks()))
+    assert picks()[0].isChecked(), "old logs are ticked to start with"
+    assert old.exists(), "only shown so far"
+    button(page, "Move to the clean-up bin").click()
+    wait_for(qapp, lambda: "Moved 1 to the clean-up bin" in page.note.text())
+    assert not old.exists()
+    wait_for(qapp, lambda: "Clean-up bin:" in shown_text(page))
+    page.note.undo.click()
+    wait_for(qapp, lambda: "Put back where it was." in page.note.text())
+    assert old.read_bytes() == b"old log"
