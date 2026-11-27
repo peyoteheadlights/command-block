@@ -14,6 +14,7 @@ Settings live in `pyproject.toml`.
 ```powershell
 python -m ruff check .            # add --fix for the safe fixes
 python -m ruff format .
+lint-imports                      # folder rules: the agent never loads Qt, the desktop app uses the API client
 python -m mypy
 ```
 
