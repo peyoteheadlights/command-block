@@ -159,7 +159,17 @@ async def sync_ping(payload: SyncPingRequest, request: Request, core=Depends(get
 
 @router.get("/sync/hello", response_model=SyncHello)
 async def sync_hello(request: Request, core=Depends(get_core)):
-    return core.pcs.hello(_peer(request, core))
+    """A new PC asks whether it was allowed in. 404 tells it to stop asking:
+    its request ran out or was refused here."""
+    try:
+        pc = _peer(request, core)
+    except HTTPException as exc:
+        if exc.status_code == 403 and not core.pcs.join_waiting(request.headers.get(PC_HEADER, "")):
+            raise HTTPException(
+                status_code=404, detail="That join request ran out or was refused."
+            ) from exc
+        raise
+    return core.pcs.hello(pc)
 
 
 @router.get("/sync/changes", response_model=SyncChanges)
