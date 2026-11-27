@@ -42,7 +42,7 @@ from ..mods.manager import ModError
 from ..mods.sources import SourceError
 from ..protection import ProtectionError
 from ..safechange import SafeChangeError
-from ..scheduler.scheduler import ScheduleError
+from ..scheduler.scheduler import NeedsConfirmation, ScheduleError
 from ..seasons import SeasonError
 from ..security.auth import AuthError
 from ..security.paths import PathSafetyError
@@ -65,6 +65,7 @@ ERROR_STATUS: dict[type[Exception], int] = {
     ModError: 400,
     DependencyError: 400,
     ScheduleError: 400,
+    NeedsConfirmation: 409,  # the apps ask "are you sure?" and save again
     PathSafetyError: 400,
     SourceError: 502,  # the add-on site failed, not the request
     UnknownServer: 404,

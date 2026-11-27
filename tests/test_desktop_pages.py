@@ -400,6 +400,43 @@ def test_delete_asks_first(qapp, agent_http):
     wait_for(qapp, lambda: "Log cleanup" not in shown_text(page))
 
 
+def test_steps_in_a_row_are_saved_as_one_schedule(qapp, agent_http):
+    window, page = schedules_page(qapp, agent_http)
+    page.name.setText("Tidy up")
+    page.task.setCurrentIndex(page.task.findData("message"))
+    page.step_rows()[0].words.setText("Clearing items")
+    page.add_step.click()
+    second = page.step_rows()[1]
+    second.task.setCurrentIndex(second.task.findData("clear_items"))
+    assert page.keep_going.isVisibleTo(page) and not second.words.isVisibleTo(page)
+    assert page.task.findData("command") < 0  # any command is Technical
+    page.options["only_if_running"].setChecked(True)
+    page.expr.setText("04:00")
+    page.save.click()
+    wait_for(qapp, lambda: "Tidy up" in shown_text(page))
+    assert "2 steps" in shown_text(row_of(page, "Tidy up"))
+    saved = agent_http.get("/api/schedules", headers=owner(agent_http)).json()["schedules"]
+    tidy = next(s for s in saved if s["name"] == "Tidy up")
+    assert tidy["task"] == "steps" and tidy["payload"]["only_if_running"] is True
+    assert [s["task"] for s in tidy["payload"]["steps"]] == ["message", "clear_items"]
+
+
+def test_a_risky_scheduled_command_is_asked_about_first(qapp, agent_http):
+    window, page = technical_page(qapp, agent_http, "Schedules")
+    wait_for(qapp, lambda: page.task.findData("command") >= 0)
+    asked = []
+    window.confirm = lambda title, body, yes: asked.append(body) or True
+    page.name.setText("Clear mobs")
+    page.task.setCurrentIndex(page.task.findData("command"))
+    page.step_rows()[0].words.setText("kill @e[type=zombie]")
+    page.kind.setCurrentIndex(page.kind.findData("cron"))
+    page.expr.setText("0 * * * *")
+    page.save.click()
+    wait_for(qapp, lambda: "Clear mobs" in shown_text(page))
+    assert asked and "kills entities" in asked[0]
+    assert "0 * * * *" in shown_text(row_of(page, "Clear mobs"))
+
+
 def test_a_moderator_without_schedules_manage_only_sees_the_list(qapp, agent_http):
     headers = owner(agent_http)
     made = agent_http.post(

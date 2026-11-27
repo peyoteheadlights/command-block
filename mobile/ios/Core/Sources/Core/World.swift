@@ -933,10 +933,40 @@ public enum Backups {
 
 /// Schedules' words and what is sent (schedules.js).
 public enum Schedules {
-    public static let KINDS = ["daily", "weekly", "interval"]
+    public static let KINDS = ["daily", "weekly", "interval", "once", "event", "cron"]
     /// The most the agent takes for a name and a time.
     public static let NAME_LENGTH = 80
     public static let EXPR_LENGTH = 32
+    /// The most steps in a row the agent takes.
+    public static let MAX_STEPS = 10
+
+    /// One step of the form: its task, its words (message, command or the
+    /// message before a backup) and the message after a backup.
+    public struct Step: Equatable, Sendable {
+        public var task: String
+        public var words = ""
+        public var after = ""
+        public init(task: String, words: String = "", after: String = "") {
+            self.task = task
+            self.words = words
+            self.after = after
+        }
+    }
+
+    /// The kinds the form offers: a cron line only in Technical.
+    public static func kinds(technical: Bool) -> [String] {
+        KINDS.filter { technical || $0 != "cron" }
+    }
+
+    /// What one step can do: "steps" is made by adding steps, any console command is Technical.
+    public static func stepTasks(_ tasks: [String], technical: Bool) -> [String] {
+        tasks.filter { $0 != "steps" && (technical || $0 != "command") }
+    }
+
+    /// The words a step's task needs, as a strings key; nil when it needs none.
+    public static func wordsKey(_ task: String) -> String? {
+        ["message": "schedules.text_message", "command": "schedules.text_command", "backup": "schedules.before"][task]
+    }
 
     public static func kindKey(_ kind: String) -> String {
         "schedules.kind_\(kind)"
@@ -954,18 +984,66 @@ public enum Schedules {
         !strings.technical && tasks.contains(task) && strings.has("task.\(task)") ? strings.t("task.\(task)") : task
     }
 
-    /// The next run's time, or Off.
-    public static func next(_ strings: Strings, _ schedule: Schedule) -> String {
-        schedule.enabled ? Display.dateTime(strings, schedule.nextRun) : strings.t("schedules.off")
+    /// What a schedule does: "3 steps", or its task with its message or command.
+    public static func summary(_ strings: Strings, _ schedule: Schedule, tasks: [String]) -> String {
+        if schedule.task == "steps" {
+            if case .array(let steps) = schedule.payload["steps"] {
+                return strings.t("schedules.steps_count", ["count": steps.count])
+            }
+            return strings.t("schedules.steps_count", ["count": 0])
+        }
+        let name = taskName(strings, schedule.task, tasks: tasks)
+        if let said = (schedule.payload["text"] ?? schedule.payload["command"])?.text, !said.isEmpty {
+            return "\(name): \(said)"
+        }
+        return name
     }
 
-    /// A new schedule; with no name it is called after its task.
-    public static func newBody(_ strings: Strings, name: String, task: String, kind: String, expr: String, tasks: [String]) -> ScheduleBody {
+    /// The next run's time, "When it happens" for an event, or Off.
+    public static func next(_ strings: Strings, _ schedule: Schedule) -> String {
+        if !schedule.enabled { return strings.t("schedules.off") }
+        if schedule.kind == "event" { return strings.t("schedules.on_event") }
+        return Display.dateTime(strings, schedule.nextRun)
+    }
+
+    /// A new schedule; with no name it is called after its task. One step is
+    /// sent as that task; more as "steps". `confirm`: the person said yes to
+    /// a command the console asks about.
+    public static func newBody(
+        _ strings: Strings, name: String, steps: [Step], kind: String, expr: String, tasks: [String],
+        keepGoing: Bool = false, onlyIfRunning: Bool = false, skipWhenEmpty: Bool = false, confirm: Bool = false
+    ) -> ScheduleBody {
+        let sent = steps.map { step($0, confirm: confirm) }
+        let options: [String: JSONValue] = ["only_if_running": .bool(onlyIfRunning), "skip_when_empty": .bool(skipWhenEmpty)]
+        let task = steps.count == 1 ? steps[0].task : "steps"
+        var payload: [String: JSONValue]
+        if steps.count == 1 {
+            payload = sent[0].filter { $0.key != "task" }
+        } else {
+            payload = ["steps": .array(sent.map { .object($0) }), "keep_going": .bool(keepGoing)]
+        }
+        payload.merge(options) { _, new in new }
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         return ScheduleBody(
             name: trimmed.isEmpty ? taskName(strings, task, tasks: tasks) : trimmed,
-            task: task, kind: kind, expr: expr.trimmingCharacters(in: .whitespaces), payload: [:], enabled: true
+            task: task, kind: kind, expr: expr.trimmingCharacters(in: .whitespaces), payload: payload, enabled: true
         )
+    }
+
+    private static func step(_ step: Step, confirm: Bool) -> [String: JSONValue] {
+        let words = JSONValue.string(step.words.trimmingCharacters(in: .whitespaces))
+        var sent: [String: JSONValue] = ["task": .string(step.task)]
+        switch step.task {
+        case "message": sent["text"] = words
+        case "command":
+            sent["command"] = words
+            sent["confirm"] = .bool(confirm)
+        case "backup":
+            sent["before"] = words
+            sent["after"] = .string(step.after.trimmingCharacters(in: .whitespaces))
+        default: break
+        }
+        return sent
     }
 
     /// The whole schedule again with only on or off changed (PUT replaces it).
