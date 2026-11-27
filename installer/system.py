@@ -273,15 +273,18 @@ class System:
                 f"firewall.ps1 exited {code}: {(err or out).strip()[:2000]}",
             )
 
-    def register_updater_task(self, program_dir: Path) -> None:
+    def register_updater_task(self, program_dir: Path, reopen: bool = True) -> None:
         """The task the in-app updater asks Windows to run. It runs one fixed
         program from the Program Files folder (which only Administrators can
         change) with one fixed argument, with the rights an update needs.
         Nothing the apps send becomes part of it. Also the task that
         opens the desktop app again after an update, in the person's own
-        session (the update itself runs where no window can show)."""
+        session (the update itself runs where no window can show). An
+        "Agent only" copy has no app to open: ``reopen`` False removes that task."""
         user = autostart.current_user()
-        for name, xml in (
+        if not reopen:
+            self.run(["schtasks.exe", "/Delete", "/TN", layout.REOPEN_TASK, "/F"])
+        tasks = (
             (
                 layout.UPDATER_TASK,
                 updater_task_xml(user, str(program_dir / appinfo.CLI_EXE), str(program_dir)),
@@ -299,7 +302,8 @@ class System:
                     run_level="LeastPrivilege",
                 ),
             ),
-        ):
+        )
+        for name, xml in tasks if reopen else tasks[:1]:
             self._create_task(name, xml)
 
     def _create_task(self, name: str, xml: str) -> None:
@@ -359,16 +363,25 @@ class System:
         return int(code) > 32  # 32 or less is an error; 5 is "No" at the prompt
 
     def create_shortcuts(
-        self, program_dir: Path, folder: Path | None = None, desktop: bool = False
+        self,
+        program_dir: Path,
+        folder: Path | None = None,
+        desktop: bool = False,
+        app_link: bool = True,
     ) -> list[str]:
         """Start Menu: open the desktop app, and the setup (repair or remove).
         ``folder``: the person's own Start menu folder, for a copy for
-        connecting only, which may also put the app on the desktop."""
+        connecting only, which may also put the app on the desktop.
+        ``app_link`` False ("Agent only"): the setup only, and an earlier
+        full copy's app shortcut is removed."""
         folder = folder or layout.start_menu_dir()
         folder.mkdir(parents=True, exist_ok=True)
         app = program_dir / appinfo.DESKTOP_EXE
+        app_lnk = folder / f"{layout.PRODUCT}.lnk"
+        if not app_link:
+            app_lnk.unlink(missing_ok=True)
         links = [
-            (_ps_quote(str(folder / f"{layout.PRODUCT}.lnk")), app, "", "Open Command Block"),
+            *([(_ps_quote(str(app_lnk)), app, "", "Open Command Block")] if app_link else []),
             (
                 _ps_quote(str(folder / f"{appinfo.SETUP_SHORTCUT}.lnk")),
                 program_dir / layout.SETUP_COPY,

@@ -58,6 +58,33 @@ TEXT = {
     "java_install_sub": "Eclipse Temurin, from Adoptium. Checked before it's installed.",
     "java_skip": "I'll install it myself",
     "java_skip_sub": "Servers won't start until Java is installed.",
+    "kind_title": "What to install on this PC",
+    "full_app": "Full app",
+    "full_app_sub": "The server panel and the Command Block app. Run your servers from this PC.",
+    "agent_only": "Agent only",
+    "agent_only_sub": "Only the server panel, for a weak PC. You run it from your phone "
+    "or from Command Block on another PC.",
+    "ts_title": "Let your phone reach this PC",
+    "ts_why": "This PC won't have the Command Block app, so your phone and other PCs reach it "
+    "through Tailscale.",
+    "ts_intro": "Tailscale is a free private network. Your devices can reach this PC from "
+    "anywhere, and nothing on this PC is opened to the internet.",
+    "ts_install": "Install Tailscale",
+    "ts_sign_in_words": "Tailscale is installed. Sign in to it and this PC joins your "
+    "private network.",
+    "ts_sign_in": "Connect Tailscale",
+    "ts_working": "Setting up Tailscale. Its setup is checked to be really from Tailscale, "
+    "and Windows may ask if it may install it.",
+    "ts_waiting": "Sign in in your browser. This moves on by itself once Tailscale says "
+    "it's connected.",
+    "ts_open_again": "Open the sign-in page again",
+    "ts_done": "Tailscale is connected, signed in as {account}.",
+    "ts_done_no_account": "Tailscale is connected.",
+    "ts_other_user": "Tailscale on this PC is used by another Windows user, so setup uses it "
+    "as it is and changes nothing. Tailscale said: {why}",
+    "ts_skip": "Skip for now",
+    "ts_skipped": "Nothing else can reach this PC until Tailscale is connected. Run Command "
+    "Block setup again to connect it.",
     "options": "A couple of choices",
     "start_with_pc": "Start the server panel when my PC turns on",
     "start_with_pc_sub": "Your servers can be managed even before anyone signs in to Windows.",
@@ -103,6 +130,11 @@ TEXT = {
     "disclaimer": "NOT AN OFFICIAL MINECRAFT PRODUCT. "
     "NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.",
     "on_phone": "On your phone, scan this code with the camera, or type:",
+    "on_other_pc": "On another PC, install Command Block, choose \"Connect to someone else's "
+    'PC" and paste this link:',
+    "copy_link": "Copy link",
+    "done_agent_only_sub": "The server panel is running. This PC has no Command Block app, so "
+    "use your phone or Command Block on another PC.",
     "no_qr": "The code for your phone isn't ready yet:",
     "players_one": "1 player is online. Update now or wait?",
     "players_many": "{count} players are online. Update now or wait?",

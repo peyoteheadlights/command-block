@@ -12,7 +12,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ... import API_VERSION, __version__, oldcopy, pairing
+from ... import API_VERSION, __version__, appinfo, oldcopy, pairing
 from ...jobs import JobConflict
 from ...security.auth import Principal
 from ...security.permissions import ACCOUNT, APP_UPDATE, SETTINGS_VIEW, require
@@ -36,7 +36,11 @@ router = APIRouter()
 async def version(principal: Principal = Depends(require(ACCOUNT))):
     """The app's version and the API version a client talks to. A client
     that knows an older API version still works; see CHANGELOG.md."""
-    return {"version": __version__, "api_version": API_VERSION}
+    return {
+        "version": __version__,
+        "api_version": API_VERSION,
+        "agent_only": bool((appinfo.install_record() or {}).get("agent_only")),
+    }
 
 
 @router.get("/pairing", response_model=PairingCode)

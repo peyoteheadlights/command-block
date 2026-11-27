@@ -671,6 +671,11 @@ class BackupsPage(Page):
         self.choose.setAccessibleName(f"{text('offsite.title')}: {self.choose.text()}")
         self.choose.setVisible(owner and self.here)
         self.turn_off.setVisible(owner and bool(folder))
+        self.offsite_elsewhere.setText(
+            text("desktop.backups.offsite_agent_only", pc=self.window_.agent.place)
+            if self.window_.agent_only
+            else text("desktop.backups.offsite_elsewhere")
+        )
         self.offsite_elsewhere.setVisible(owner and not self.here)
 
     def choose_offsite(self) -> None:

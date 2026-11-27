@@ -436,7 +436,18 @@ def test_health_and_version_name_the_api_version(multi_client):
     assert health["api_version"] == API_VERSION
     assert "version" not in health  # the app's version only after sign-in
     version = multi_client.get("/api/version").json()
-    assert version == {"version": __version__, "api_version": API_VERSION}
+    assert version == {"version": __version__, "api_version": API_VERSION, "agent_only": False}
+
+
+def test_version_says_when_the_pc_is_agent_only(multi_client, monkeypatch, tmp_path):
+    """Apps on other PCs say "run setup there" instead of "open the app there"."""
+    from agent import appinfo
+
+    (tmp_path / appinfo.INSTALL_RECORD).write_text(
+        '{"data_root": "x", "agent_only": true}', encoding="utf-8"
+    )
+    monkeypatch.setattr(appinfo, "program_dir", lambda: tmp_path)
+    assert multi_client.get("/api/version").json()["agent_only"] is True
 
 
 def test_the_pairing_code_holds_the_address_fingerprint_and_api_version(config, monkeypatch):
