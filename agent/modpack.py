@@ -72,6 +72,7 @@ from .mods.curseforge import FILE_HOSTS as CURSEFORGE_HOSTS
 from .mods.curseforge import GOOD_STATUS, LOADERS, Blocked, CurseForgeClient, version_of
 from .mods.sides import FOLDER as PLAYER_FOLDER
 from .mods.sources import SourceError
+from .security import antivirus
 from .security.paths import (
     EXECUTABLE_EXTENSIONS,
     PathSafetyError,
@@ -724,15 +725,20 @@ def _extract_overrides(
             target = check_archive_member(folder, relative, zip_member_is_symlink(member))
             target.parent.mkdir(parents=True, exist_ok=True)
             temp = target.with_name(f".{target.name}.part")
-            with zf.open(member) as source, open(temp, "wb") as out:
-                shutil.copyfileobj(source, out, 1024 * 1024)
-            if mods is not None and target.suffix.lower() == ".jar":
-                try:  # a jar the pack carries itself is shared too
-                    mods.place_jar(temp, target)
-                finally:
-                    temp.unlink(missing_ok=True)
-            else:
-                temp.replace(target)
+            try:
+                with zf.open(member) as source, open(temp, "wb") as out:
+                    shutil.copyfileobj(source, out, 1024 * 1024)
+                jar = target.suffix.lower() == ".jar"
+                if jar:
+                    found = antivirus.scan_file(temp, target.name)
+                    if found:
+                        raise ModpackError(antivirus.refusal(found, relative))
+                if mods is not None and jar:
+                    mods.place_jar(temp, target)  # a jar the pack carries itself is shared too
+                else:
+                    temp.replace(target)
+            finally:
+                temp.unlink(missing_ok=True)
             written.append(relative)
             if advance:
                 advance(1)

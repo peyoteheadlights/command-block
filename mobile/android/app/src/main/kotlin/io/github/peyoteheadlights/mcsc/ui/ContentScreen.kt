@@ -760,7 +760,7 @@ private fun AddPack(vm: AppViewModel, content: ContentPages) {
 
 // ---------------------------------------------------------------- questions
 
-/** Remove, Update, Versions, Update all, install, the missing ones and a modpack: each asks first. */
+/** Remove, Update, Versions, Update all, install, the missing ones, a modpack and a file no site lists: each asks first. */
 @Composable
 private fun ContentDialogs(vm: AppViewModel, content: ContentPages, onChangeType: () -> Unit, ask: (ContentAsk) -> Unit) {
     val strings = vm.strings
@@ -785,6 +785,11 @@ private fun ContentDialogs(vm: AppViewModel, content: ContentPages, onChangeType
     if (content.askingPackLink) PackLinkDialog(vm, content)
     content.askingModrinth?.let { ask -> ModrinthProjectDialog(vm, content, ask) }
     if (content.askingServerLink) ServerProjectDialog(vm, content)
+    content.unknown?.let { u ->
+        val body = listOfNotNull(u.file.name, u.warning, u.sha512?.let { strings.t("desktop.mods.unknown_hash", "hash" to it) }).joinToString("\n\n")
+        Confirm(strings.t("desktop.mods.unknown_title"), body, strings.t("desktop.mods.unknown_add"), danger = true,
+            onConfirm = { content.addUnknown(strings) }, onDismiss = content::cancelUnknown)
+    }
 }
 
 /** A sheet-like question: a title, scrolling words, and one button plus Cancel. */

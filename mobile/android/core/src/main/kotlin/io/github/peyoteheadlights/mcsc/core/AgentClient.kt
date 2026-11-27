@@ -910,10 +910,10 @@ class AgentClient(
     suspend fun installDependencies(serverId: String): DependencyInstall =
         call(post("${server(serverId)}/mods/dependencies/install", JsonObject(emptyMap())), DependencyInstall.serializer(), slow = true)
 
-    /** Adds a mod or plugin file (.jar) picked on the phone. Picking it counts as the
-     *  yes for a file no site lists (the phone has no "Install anyway?" screen yet). */
-    suspend fun uploadMod(serverId: String, file: PickedFile): ModUploaded =
-        call(upload("${server(serverId)}/mods/upload?confirm=true", file), ModUploaded.serializer(), slow = true)
+    /** Adds a mod or plugin file (.jar) picked on the phone. A file no site lists is
+     *  refused with a "confirm" problem (the warning) until [confirm] is true. */
+    suspend fun uploadMod(serverId: String, file: PickedFile, confirm: Boolean = false): ModUploaded =
+        call(upload("${server(serverId)}/mods/upload?confirm=$confirm", file), ModUploaded.serializer(), slow = true)
 
     /** Reads a modpack (.mrpack); with [serverId], also what importing it there would do. */
     suspend fun inspectModpack(serverId: String?, file: PickedFile): ModpackInspected = call(

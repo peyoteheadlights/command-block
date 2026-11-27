@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import anticheat, downloads, gamesettings, notes
 from .minecraft.properties import FILENAME, FormError, PropertiesFile
+from .security import antivirus
 from .security import permissions as P
 
 if TYPE_CHECKING:
@@ -188,6 +189,7 @@ class Facts:
     proxy: list[dict[str, Any]] = field(default_factory=list)  # proxy add-ons for the type
     anticheat: list[str] | None = None  # anti-cheats in; None: none runs on this type
     jar_scan: dict[str, Any] | None = None  # the jar check's summary; None: no jars here
+    antivirus: str = "off_windows"  # agent/security/antivirus.py status()
 
     def prop(self, key: str, default: str) -> str:
         return ((self.properties or {}).get(key) or default).strip().lower()
@@ -265,6 +267,7 @@ def facts(ctx: ServerContext) -> Facts:
         proxy=[_addon(e) for e in offered if e.get("role") == "proxy"],
         anticheat=anticheat.installed(addons) if anticheat.supported(server_type.id) else None,
         jar_scan=ctx.jarscan.summary() if server_type.has_content else None,
+        antivirus=antivirus.status(),
     )
 
 
@@ -411,6 +414,8 @@ def lines(f: Facts) -> list[dict[str, Any]]:
         found.append(_line("log4shell", "worst", "log4shell", version=f.minecraft))
 
     found += _jar_scan(f.jar_scan)
+    if f.jar_scan is not None:
+        found.append(_antivirus(f.antivirus))
     found += _join(f)
     found += _anticheat(f)
     found.append(_line("big_attacks", "info", "stop_and_close"))
@@ -449,6 +454,17 @@ def _jar_scan(scan: dict[str, Any] | None) -> list[dict[str, Any]]:
     if scan["couldnt"]:
         found.append(_line("jar_scan_couldnt", "info", count=scan["couldnt"]))
     return found
+
+
+def _antivirus(status: str) -> dict[str, Any]:
+    """Whether Windows antivirus checks jars here, and the test for it."""
+    if status == "off_windows":
+        return _line("antivirus_off", "info")
+    if status == "untested":
+        return _line("antivirus_untested", "suggest", "antivirus_test")
+    if status == "not_flagging":
+        return _line("antivirus_not_flagging", "suggest", "antivirus_test")
+    return _line("antivirus_on", "info", "antivirus_test")
 
 
 def _join(f: Facts) -> list[dict[str, Any]]:
@@ -603,6 +619,16 @@ async def _stop_and_close(ctx: ServerContext, user: str, body: dict[str, Any]) -
     return await stop_and_close(ctx, user)
 
 
+async def _antivirus_test(ctx: ServerContext, user: str, body: dict[str, Any]) -> dict[str, Any]:
+    result = await asyncio.to_thread(antivirus.run_test, ctx.core.db)
+    if result["status"] in ("off_windows", "couldnt"):
+        raise ProtectionError(
+            "Windows antivirus couldn't be asked on this PC, so nothing was tested."
+        )
+    ctx.db.audit("antivirus_test", user=user, target=ctx.server_id, detail=result["status"])
+    return {"changed": {"antivirus": result["status"]}, "restart_needed": False, "undo": None}
+
+
 FixFunction = Callable[["ServerContext", str, dict[str, Any]], Awaitable[dict[str, Any]]]
 # fix id -> (the permission it needs, what it does)
 FIXES: dict[str, tuple[str, FixFunction]] = {
@@ -621,6 +647,7 @@ FIXES: dict[str, tuple[str, FixFunction]] = {
     "log4shell": (P.SETTINGS_SERVER, _log4shell),
     "stop_and_close": (P.SERVER_CONTROL, _stop_and_close),
     "join_on": (P.SETTINGS_SERVER, _join_on),
+    "antivirus_test": (P.SETTINGS_SERVER, _antivirus_test),
 }
 
 

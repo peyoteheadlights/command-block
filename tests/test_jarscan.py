@@ -23,7 +23,9 @@ from agent.mods import jarscan
 from agent.mods.jarscan import check_jar, find_log4j, log4j_is_old
 from agent.mods.sources import SourceError
 from agent.protection import Facts, lines
+from agent.security import antivirus
 
+from .test_antivirus import MARK, FakeAmsi
 from .test_api import auth, token_for
 from .test_mods import make_jar
 
@@ -401,6 +403,109 @@ def test_get_scan_reports_without_checking(signed_in, ctx, sites):
     assert sites.asked == 0
 
 
+# ------------------------------------------------------------ Windows antivirus
+@pytest.fixture
+def amsi(monkeypatch):
+    fake = FakeAmsi()
+    monkeypatch.setattr(antivirus, "_engine", fake)
+    monkeypatch.setattr(antivirus, "_test", None)
+    return fake
+
+
+def test_a_jar_windows_antivirus_finds_something_in_goes_to_quarantine(signed_in, ctx, sites, amsi):
+    path = mod_with(ctx.config.mods_dir / "av.jar", {"a/B.class": b"\xca\xfe" + MARK})
+    report = signed_in.post(f"{BASE}/mods/scan").json()
+    assert not path.exists()
+    finding = report["quarantine"][0]["findings"][0]
+    assert finding["scanner"] == antivirus.NAME
+    assert finding["words"] == "jarscan.finding.antivirus"
+    assert finding["values"] == {"where": "av.jar (a/B.class)"}
+
+
+def test_the_weekly_check_asks_windows_antivirus_again_about_unchanged_jars(
+    signed_in, ctx, sites, amsi
+):
+    path = mod_with(ctx.config.mods_dir / "later.jar", {"a/B.class": b"\xca\xfe" + MARK})
+    amsi.bad = b"not there yet"
+    signed_in.post(f"{BASE}/mods/scan")
+    assert path.is_file()
+
+    amsi.bad = MARK  # the antivirus got new signatures
+    signed_in.portal.call(ctx.jarscan.tick)
+    assert path.is_file()  # nothing changed and not a week yet: not read again
+
+    saved = ctx.jarscan.store()
+    saved["looked_up_at"] -= jarscan.WEEK + 1
+    ctx.jarscan.save(saved)
+    signed_in.portal.call(ctx.jarscan.tick)
+    assert not path.exists()
+
+
+def test_a_jar_checked_while_antivirus_was_off_is_checked_when_it_is_on(
+    signed_in, ctx, sites, amsi, monkeypatch
+):
+    path = mod_with(ctx.config.mods_dir / "early.jar", {"a/B.class": MARK})
+    monkeypatch.setattr(antivirus, "_engine", False)
+    signed_in.post(f"{BASE}/mods/scan")
+    assert path.is_file()
+    monkeypatch.setattr(antivirus, "_engine", amsi)
+    signed_in.post(f"{BASE}/mods/scan")
+    assert not path.exists()
+
+
+def test_a_server_start_doesnt_wait_for_antivirus_to_catch_up(
+    signed_in, ctx, sites, amsi, monkeypatch
+):
+    path = mod_with(ctx.config.mods_dir / "early.jar", {"a/B.class": MARK})
+    monkeypatch.setattr(antivirus, "_engine", False)
+    signed_in.post(f"{BASE}/mods/scan")
+    monkeypatch.setattr(antivirus, "_engine", amsi)
+    signed_in.portal.call(ctx.jarscan.before_start)
+    assert amsi.names == [] and path.is_file()
+
+
+def test_a_jar_antivirus_couldnt_check_isnt_asked_again_every_tick(signed_in, ctx, sites, amsi):
+    mod_with(ctx.config.mods_dir / "early.jar", {"a/B.class": b"fine"})
+    amsi.broken = True
+    signed_in.post(f"{BASE}/mods/scan")
+    amsi.broken = False
+    mod_with(ctx.config.mods_dir / "later.jar", {"a/C.class": b"fine"})
+    signed_in.portal.call(ctx.jarscan.tick)
+    assert amsi.names and not any(n.startswith("early.jar") for n in amsi.names)
+
+
+def test_the_antivirus_test_button_keeps_its_result(signed_in, ctx, amsi):
+    amsi.bad = b"EICAR-STANDARD-ANTIVIRUS"
+    response = signed_in.post(f"{BASE}/protection/fix", json={"fix": "antivirus_test"})
+    assert response.status_code == 200, response.text
+    assert response.json()["changed"] == {"antivirus": "on"}
+    amsi.bad = b"never there"
+    response = signed_in.post(f"{BASE}/protection/fix", json={"fix": "antivirus_test"})
+    assert response.json()["changed"] == {"antivirus": "not_flagging"}
+
+
+def test_the_antivirus_test_button_says_when_it_couldnt_ask(signed_in, monkeypatch):
+    monkeypatch.setattr(antivirus, "_engine", False)
+    response = signed_in.post(f"{BASE}/protection/fix", json={"fix": "antivirus_test"})
+    assert response.status_code >= 400
+    assert "couldn't be asked" in response.text
+
+
+def test_protection_says_what_windows_antivirus_does():
+    summary = {"checked": 1, "jars": 1, "found": 0, "unknown": 0, "couldnt": 0, "checked_at": 1}
+    props = {"online-mode": "true", "white-list": "true"}
+
+    def av_line(status, jar_scan=summary):
+        found = lines(Facts(properties=props, jar_scan=jar_scan, antivirus=status))
+        return [(x["id"], x["level"], x["fix"]) for x in found if x["id"].startswith("antivirus")]
+
+    assert av_line("off_windows") == [("antivirus_off", "info", None)]
+    assert av_line("untested") == [("antivirus_untested", "suggest", "antivirus_test")]
+    assert av_line("not_flagging") == [("antivirus_not_flagging", "suggest", "antivirus_test")]
+    assert av_line("on") == [("antivirus_on", "info", "antivirus_test")]
+    assert av_line("on", jar_scan=None) == []  # no jars: no line
+
+
 # ------------------------------------------------------------ protection
 def test_protection_says_what_the_jar_check_did():
     summary = {"checked": 0, "jars": 0, "found": 0, "unknown": 0, "couldnt": 0}
@@ -424,7 +529,8 @@ def test_protection_says_what_the_jar_check_did():
 
 def test_jar_check_wording_never_promises_too_much():
     banned = re.compile(r"\b(safe|clean|secure|protected)\b", re.IGNORECASE)
-    keys = [k for k in STRINGS if k.startswith(("jarscan.", "protect.jar_scan", "alert_event.jar"))]
+    prefixes = ("jarscan.", "protect.jar_scan", "alert_event.jar", "protect.antivirus")
+    keys = [k for k in STRINGS if k.startswith(prefixes + ("protect.fix.antivirus",))]
     assert len(keys) > 20
     for key in keys:
         for text in STRINGS[key]:

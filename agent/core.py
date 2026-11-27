@@ -59,6 +59,7 @@ from .notifications.dispatcher import Notifier
 from .ports import PortManager
 from .quests import Quests
 from .scheduler.scheduler import Scheduler
+from .security import antivirus
 from .security.auth import AuthManager
 from .softwarecheck import SoftwareCheck
 from .startrequests import StartRequests
@@ -472,6 +473,7 @@ class AgentCore:
         self.started_at = time.time()
         self.bus = EventBus()
         self.db = Database(config.database_path)
+        antivirus.remember(self.db)
         self.events = EventWriter(self.db)
         self.auth = AuthManager(config, self.db, self.bus)
         # The owner's other PCs, sharing one account (agent/yourpcs.py).
@@ -666,6 +668,7 @@ class AgentCore:
 
     # ------------------------------------------------------------------
     async def start(self) -> None:
+        await asyncio.to_thread(antivirus.load)  # loading amsi.dll can take a moment
         for ctx in list(self.servers.values()):
             await ctx.start()
         self.rented.start()

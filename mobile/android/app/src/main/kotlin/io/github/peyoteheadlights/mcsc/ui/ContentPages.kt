@@ -404,9 +404,31 @@ class ContentPages(
     var modpack: ModpackInspected? by mutableStateOf(null)
         private set
 
-    fun uploadMod(file: PickedFile, strings: Strings) = work("upload", strings, reload = ::loadMods) {
-        val done = it.uploadMod(serverId, file)
+    /** A picked file no site lists, waiting for "Add it anyway": the agent's warning and its SHA-512. */
+    class Unknown(val file: PickedFile, val warning: String, val sha512: String?)
+
+    var unknown: Unknown? by mutableStateOf(null)
+        private set
+
+    fun uploadMod(file: PickedFile, strings: Strings, confirm: Boolean = false) = work("upload", strings, reload = ::loadMods) {
+        val done = try {
+            it.uploadMod(serverId, file, confirm)
+        } catch (e: AgentException.Failed) {
+            val warning = e.problems["confirm"] ?: throw e
+            unknown = Unknown(file, warning, e.problems["sha512"])
+            return@work null
+        }
         Said(strings.t("mobile.content.added", "name" to (done.installed?.name ?: file.name)), good = true)
+    }
+
+    fun addUnknown(strings: Strings) {
+        val file = unknown?.file ?: return
+        unknown = null
+        uploadMod(file, strings, confirm = true)
+    }
+
+    fun cancelUnknown() {
+        unknown = null
     }
 
     /** Reads the modpack on the PC; nothing changes until Import. */

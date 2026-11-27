@@ -543,8 +543,16 @@ class ContentTest {
     fun `a file picked on the phone is sent as an upload form`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)
+            agent.server.enqueue(agent.json("""{"detail": "Some values can't be used.", "problems": {"confirm": "No site lists this file.", "sha512": "abc"}}""", code = 400))
+            val e = assertThrows(AgentException.Failed::class.java) {
+                runBlocking { c.uploadMod("s", PickedFile.of("e.jar", byteArrayOf(80, 75, 3, 4))) }
+            }
+            assertEquals("No site lists this file.", e.problems["confirm"])
+            assertEquals("abc", e.problems["sha512"])
+            assertEquals("/api/servers/s/mods/upload?confirm=false", agent.server.takeRequest().path)
+
             agent.server.enqueue(agent.json("""{"ok": true, "installed": {"filename": "e.jar", "name": "Epsilon", "version": "3.0"}}"""))
-            assertEquals("Epsilon", c.uploadMod("s", PickedFile.of("e.jar", byteArrayOf(80, 75, 3, 4))).installed?.name)
+            assertEquals("Epsilon", c.uploadMod("s", PickedFile.of("e.jar", byteArrayOf(80, 75, 3, 4)), confirm = true).installed?.name)
             val sent = agent.server.takeRequest()
             assertEquals("/api/servers/s/mods/upload?confirm=true", sent.path)
             assertTrue(sent.getHeader("Content-Type")!!.startsWith("multipart/form-data"))

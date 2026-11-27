@@ -9,6 +9,7 @@ private struct ContentConfirm: Identifiable {
     let body: String
     let confirm: String
     var danger = true
+    var cancel: (() -> Void)? = nil
     let run: () -> Void
 
     var id: String { title }
@@ -83,12 +84,13 @@ struct ContentView: View {
                         asking = nil
                         content.removing = nil
                         content.updating = nil
+                        content.unknown = nil
                     }
                 }),
                 presenting: pending(content),
                 actions: { ask in
                     Button(ask.confirm, role: ask.danger ? .destructive : nil, action: ask.run)
-                    Button(model.t("mobile.common.cancel"), role: .cancel) {}
+                    Button(model.t("mobile.common.cancel"), role: .cancel) { ask.cancel?() }
                 },
                 message: { ask in Text(hiding: ask.body) }
             )
@@ -144,7 +146,7 @@ struct ContentView: View {
         }
     }
 
-    /// The question showing now: one asked here, a Remove or an Update.
+    /// The question showing now: one asked here, a Remove, an Update or a file no site lists.
     private func pending(_ content: ContentPages) -> ContentConfirm? {
         if let asking = asking { return asking }
         let strings = model.strings
@@ -172,6 +174,18 @@ struct ContentView: View {
                 danger: false
             ) {
                 Task { await content.update(mod, strings) }
+            }
+        }
+        if let ask = content.unknown {
+            var lines = [ask.file.name, ask.warning]
+            if let hash = ask.sha512 { lines.append(strings.t("desktop.mods.unknown_hash", ["hash": hash])) }
+            return ContentConfirm(
+                title: strings.t("desktop.mods.unknown_title"),
+                body: lines.joined(separator: "\n\n"),
+                confirm: strings.t("desktop.mods.unknown_add"),
+                cancel: { content.throwAway(ask) }
+            ) {
+                Task { await content.uploadMod(ask.file, strings, confirm: true) }
             }
         }
         return nil

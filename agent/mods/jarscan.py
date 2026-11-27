@@ -3,7 +3,8 @@ folder.
 
 Each jar is looked up by its hashes on Modrinth and CurseForge, compared
 with the safety notes' list of known bad files, and opened (never run) to
-look for an old log4j-core inside it. Results are kept in the database
+look for an old log4j-core inside it, and handed to Windows antivirus
+(agent/security/antivirus.py) when the PC has it. Results are kept in the database
 and reused while a jar's size, modified time and SHA-256 stay the same.
 
 A jar with a finding is moved to the quarantine folder (never deleted)
@@ -27,6 +28,7 @@ from typing import Any
 
 from .. import notes
 from ..events import Event
+from ..security import antivirus
 from ..security.paths import assert_not_symlink, is_inside
 from .curseforge import fingerprint
 from .jarinfo import DISABLED_SUFFIX, NESTED_MAX_BYTES, read_mod_jar
@@ -36,7 +38,8 @@ from .sources import SourceError
 log = logging.getLogger(__name__)
 
 STORE = "jar_scan"
-WEEK = 7 * 86400
+DAY = 86400
+WEEK = 7 * DAY
 RETRY_AFTER = 3600  # a site that couldn't answer is asked again after an hour
 NOTES = "Command Block safety notes"
 LOG4J = "log4j-core check"
@@ -136,12 +139,30 @@ def bad_file_findings(sha512: str) -> list[dict[str, Any]]:
     ]
 
 
+def antivirus_findings(data: bytes, name: str) -> list[dict[str, Any]] | None:
+    """Windows antivirus's finding for a jar, if any. None: not checked."""
+    found = antivirus.scan_jar(data, name)
+    if found is None:
+        return None
+    if not found:
+        return []
+    return [
+        {
+            "scanner": antivirus.NAME,
+            "words": "jarscan.finding.antivirus",
+            "values": {"where": antivirus.where_words(found, name)},
+        }
+    ]
+
+
 def check_jar(path: Path) -> dict[str, Any]:
     """Hashes, local findings and notes for one jar. Reads it; runs nothing."""
     data = path.read_bytes()
     mod = read_mod_jar(path)
     sha512 = hashlib.sha512(data).hexdigest()
     findings = bad_file_findings(sha512)
+    av = antivirus_findings(data, path.name)
+    findings += av or []
     jar_notes: list[dict[str, Any]] = []
     for hit in find_log4j(data):
         where = hit["where"] or path.name
@@ -166,6 +187,8 @@ def check_jar(path: Path) -> dict[str, Any]:
         "fingerprint": fingerprint(data),
         "findings": findings,
         "notes": jar_notes,
+        "antivirus": av is not None,
+        "antivirus_tried": time.time() if av is None and antivirus.is_on() else None,
     }
 
 
@@ -243,9 +266,15 @@ class JarScanner:
         return out
 
     # ------------------------------------------------------------ reading
-    def _refresh(self, saved: dict[str, Any]) -> list[dict[str, Any]]:
+    def _refresh(
+        self, saved: dict[str, Any], antivirus_again: bool = False, catch_up: bool = True
+    ) -> list[dict[str, Any]]:
         """Bring the stored entries in line with the folder. Returns the
-        entries that are new or whose SHA-256 changed. Runs in a thread."""
+        entries that are new, whose SHA-256 changed, or with a new finding.
+        ``antivirus_again``: hand every jar to Windows antivirus again (its
+        signatures update often). ``catch_up``: also hand over unchanged jars
+        it hasn't checked yet (off for a server start, so the start isn't
+        held up). Runs in a thread."""
         old = saved["jars"]
         jars: dict[str, dict[str, Any]] = {}
         fresh = []
@@ -254,7 +283,10 @@ class JarScanner:
             entry = old.get(path.name)
             if entry and entry["size"] == st.st_size and entry["modified"] == st.st_mtime:
                 jars[path.name] = entry
-                if self._notes_changed(entry):
+                new = self._notes_changed(entry)
+                if antivirus_again or (catch_up and self._antivirus_owed(entry)):
+                    new = self._antivirus_again(entry, path) or new
+                if new:
                     fresh.append(entry)
                 continue
             try:
@@ -275,6 +307,34 @@ class JarScanner:
         saved["jars"] = jars
         saved["signature"] = _signature(jars)
         return fresh
+
+    @staticmethod
+    def _antivirus_owed(entry: dict[str, Any]) -> bool:
+        """Not checked by Windows antivirus yet, and not tried in the last day."""
+        return (
+            not entry.get("antivirus") and time.time() - (entry.get("antivirus_tried") or 0) > DAY
+        )
+
+    @staticmethod
+    def _antivirus_again(entry: dict[str, Any], path: Path) -> bool:
+        """Check a kept entry with Windows antivirus again. True when it
+        found something it hadn't before."""
+        if not antivirus.is_on():
+            return False
+        try:
+            now = antivirus_findings(path.read_bytes(), path.name)
+        except OSError as exc:
+            log.warning("jar check could not read %s: %s", path.name, exc)
+            return False
+        if now is None:
+            entry["antivirus_tried"] = time.time()
+            return False
+        before = [f for f in entry["findings"] if f["scanner"] == antivirus.NAME]
+        entry["antivirus"] = True
+        entry["findings"] = [f for f in entry["findings"] if f["scanner"] != antivirus.NAME] + now
+        if not entry["findings"]:
+            entry["waiting"] = False
+        return bool(now) and not before
 
     @staticmethod
     def _notes_changed(entry: dict[str, Any]) -> bool:
@@ -332,7 +392,7 @@ class JarScanner:
         now = time.time()
         async with self.lock:
             saved = self.store()
-            fresh = await asyncio.to_thread(self._refresh, saved)
+            fresh = await asyncio.to_thread(self._refresh, saved, everything)
             new_findings = self._mark_waiting(saved, fresh)
             self.save(saved)
             wanted = [
@@ -450,7 +510,7 @@ class JarScanner:
         async with self.lock:
             saved = self.store()
             if self.ctx.config.mods.rescan_on_change:
-                fresh = await asyncio.to_thread(self._refresh, saved)
+                fresh = await asyncio.to_thread(self._refresh, saved, False, False)
                 for entry in self._mark_waiting(saved, fresh):
                     await self._tell(entry)
                 self.save(saved)

@@ -383,12 +383,35 @@ final class ContentPages {
 
     private(set) var modpack: ModpackInspected? = nil
 
-    func uploadMod(_ file: PickedFile, _ strings: Strings) async {
-        defer { try? FileManager.default.removeItem(at: file.url) }
-        await work("upload", strings, reload: loadMods) { client, id in
-            let done = try await client.uploadMod(serverId: id, file: file)
+    /// A picked file no site lists, waiting for "Add it anyway": the agent's warning and its SHA-512.
+    struct Unknown {
+        let file: PickedFile
+        let warning: String
+        let sha512: String?
+    }
+
+    var unknown: Unknown? = nil
+
+    func uploadMod(_ file: PickedFile, _ strings: Strings, confirm: Bool = false) async {
+        var waiting = false
+        defer { if !waiting { try? FileManager.default.removeItem(at: file.url) } }
+        await work("upload", strings, reload: loadMods) { [weak self] client, id in
+            let done: ModUploaded
+            do {
+                done = try await client.uploadMod(serverId: id, file: file, confirm: confirm)
+            } catch AgentError.failed(_, _, _, let problems) where problems["confirm"] != nil {
+                waiting = true
+                if let old = self?.unknown, old.file.url != file.url { self?.throwAway(old) }
+                self?.unknown = Unknown(file: file, warning: problems["confirm"] ?? "", sha512: problems["sha512"])
+                return nil
+            }
             return Said(text: strings.t("mobile.content.added", ["name": done.installed?.name ?? file.name]), good: true)
         }
+    }
+
+    /// No after all: the picked copy on the phone is thrown away.
+    func throwAway(_ ask: Unknown) {
+        try? FileManager.default.removeItem(at: ask.file.url)
     }
 
     /// Reads the modpack on the PC; nothing changes until Import.

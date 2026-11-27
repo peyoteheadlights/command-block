@@ -671,22 +671,32 @@ final class ContentTests: XCTestCase {
         let jar = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jar")
         try Data([80, 75, 3, 4]).write(to: jar)
         defer { try? FileManager.default.removeItem(at: jar) }
+        StubAgent.json(#"{"detail": "Some values can't be used.", "problems": {"confirm": "No site lists this file.", "sha512": "abc"}}"#, status: 400)
+        do {
+            _ = try await c.uploadMod(serverId: "s", file: PickedFile(name: "e.jar", url: jar))
+            XCTFail("a file no site lists needs a yes first")
+        } catch AgentError.failed(_, _, _, let problems) {
+            XCTAssertEqual(problems["confirm"], "No site lists this file.")
+            XCTAssertEqual(problems["sha512"], "abc")
+        }
+        XCTAssertEqual(path(0), "/api/servers/s/mods/upload?confirm=false")
+
         StubAgent.json(#"{"ok": true, "installed": {"filename": "e.jar", "name": "Epsilon", "version": "3.0"}}"#)
-        let added = try await c.uploadMod(serverId: "s", file: PickedFile(name: "e.jar", url: jar))
+        let added = try await c.uploadMod(serverId: "s", file: PickedFile(name: "e.jar", url: jar), confirm: true)
         XCTAssertEqual(added.installed?.name, "Epsilon")
-        XCTAssertEqual(path(0), "/api/servers/s/mods/upload?confirm=true")
-        let type = StubAgent.requests[0].request.value(forHTTPHeaderField: "Content-Type") ?? ""
+        XCTAssertEqual(path(1), "/api/servers/s/mods/upload?confirm=true")
+        let type = StubAgent.requests[1].request.value(forHTTPHeaderField: "Content-Type") ?? ""
         XCTAssertTrue(type.hasPrefix("multipart/form-data; boundary="), type)
 
         StubAgent.json(#"{"token": "tok", "pack": {"name": "Pack", "version": "1.2", "summary": null, "minecraft_version": "1.21.1", "type": "fabric", "type_name": "Fabric", "loader_version": "0.16.5", "files": [{"name": "lithium.jar", "path": "mods/lithium.jar", "size": 10, "status": "download", "reason": null, "env_server": "required"}], "download_count": 1, "download_bytes": 10, "client_only": [], "refused": [], "overrides": 0, "overrides_bytes": 0, "skipped_overrides": [], "problems": [], "can_import": true}, "into": {"version_change": false, "running": false}}"#)
         let pack = try await c.inspectModpack(serverId: "s", file: PickedFile(name: "p.mrpack", url: jar))
         XCTAssertEqual(pack.token, "tok")
         XCTAssertFalse(pack.versionChange)
-        XCTAssertEqual(path(1), "/api/modpacks/inspect?server_id=s")
+        XCTAssertEqual(path(2), "/api/modpacks/inspect?server_id=s")
         StubAgent.json(#"{"ok": true, "job_id": "j", "modpack": {"name": "Pack"}, "version_change": false, "undo": null}"#)
         let imported = try await c.importModpack(serverId: "s", token: "tok")
         XCTAssertEqual(imported.name, "Pack")
-        XCTAssertEqual(body(2), #"{"confirm":true,"own_jars":false,"token":"tok"}"#)
+        XCTAssertEqual(body(3), #"{"confirm":true,"own_jars":false,"token":"tok"}"#)
     }
 
     func testTheUploadFormHoldsTheFileUnderTheFieldTheAgentReads() throws {

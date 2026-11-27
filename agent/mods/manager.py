@@ -126,6 +126,17 @@ def refuse_known_bad(data: bytes, filename: str) -> None:
         )
 
 
+async def refuse_flagged(data: bytes, filename: str) -> None:
+    """Refuse a jar Windows antivirus finds something in. A file from a
+    site was checked as it downloaded (agent/downloads.py); this is for
+    files that arrive another way, like an upload."""
+    from ..security import antivirus
+
+    found = await asyncio.to_thread(antivirus.scan_jar, data, filename)
+    if found:
+        raise ModError(antivirus.refusal(found, filename, by_hand=True))
+
+
 def is_datapack(data: bytes) -> bool:
     """A datapack, not a mod or plugin that happens to carry pack.mcmeta."""
     if datapack_problem(data):
@@ -1018,6 +1029,7 @@ class ModManager:
         target = safe_join(self.mods_dir, filename, allowed_extensions=JAR_EXT)
         if target.exists() and not allow_replace:
             raise ModError(f"{filename} is already there, so nothing was changed.")
+        await refuse_flagged(data, filename)
         temp = self.mods_dir / f".{filename}.part"
         temp.write_bytes(data)
         try:

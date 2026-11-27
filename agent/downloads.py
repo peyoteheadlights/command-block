@@ -13,6 +13,8 @@ one release an owner added an add-on from):
     mismatch discards the file.
   * when the source publishes no checksum the file is still accepted where
     the caller allows it, but recorded as "unverified", never as checked
+  * a jar is handed to Windows antivirus (agent/security/antivirus.py)
+    and refused when it finds something
   * files are written to a temporary name and only renamed into place once
     they are complete and checked, so a failed download leaves nothing
     half-written behind
@@ -480,6 +482,8 @@ async def download(
                     "published, so it was thrown away. Try again."
                 )
             checked_with = algorithm
+        if target.suffix.lower() == ".jar":
+            await _antivirus(temp, spec.name)
         os.replace(temp, target)
     except BaseException:
         temp.unlink(missing_ok=True)
@@ -500,6 +504,15 @@ async def download(
         checked_with or "unverified",
     )
     return result
+
+
+async def _antivirus(path: Path, name: str) -> None:
+    """Refuse a jar Windows antivirus finds something in."""
+    from .security import antivirus
+
+    found = await asyncio.to_thread(antivirus.scan_file, path, name)
+    if found:
+        raise DownloadError(antivirus.refusal(found, name))
 
 
 async def download_bytes(spec: FileSpec) -> tuple[bytes, FetchedFile]:
