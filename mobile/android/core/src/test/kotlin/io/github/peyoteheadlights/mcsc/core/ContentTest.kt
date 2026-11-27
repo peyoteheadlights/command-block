@@ -248,6 +248,23 @@ class ContentTest {
     }
 
     @Test
+    fun `the side filter and on all servers`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val mods = listOf(Mod(filename = "a.jar", side = "server"), Mod(filename = "b.jar", side = "both"))
+        assertEquals(listOf("a.jar"), Sides.shown(mods, "server").map { it.filename })
+        assertEquals(2, Sides.shown(mods, "all").size)
+        assertEquals(emptyList<Mod>(), Sides.shown(mods, "players"))
+        val found = json.decodeFromString(
+            ModSides.serializer(),
+            """{"mods": [{"name": "Chunky", "mod_id": "chunky", "side": "server", "servers": [{"id": "s", "name": "Survival", "filename": "c.jar", "side_from": "file"}, {"id": "c", "name": "Creative", "filename": "c.jar", "side_from": "unknown"}]}, {"name": "Minimap", "side": "players", "servers": [{"id": "s", "name": "Survival", "filename": "m.jar", "side_from": null}]}], "not_read": [{"id": "x", "name": "Old", "detail": "Access is denied"}]}""",
+        )
+        val (chunky) = Sides.shown(found, "server")
+        assertEquals("On: Survival, Creative (not sure)", Sides.servers(strings, chunky))
+        assertEquals(listOf("Minimap"), Sides.shown(found, "players").map { it.name })
+        assertEquals("Old", found.notRead.single().name)
+    }
+
+    @Test
     fun `a linked modpack's card and modpack update's question`() {
         val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         val list = json.decodeFromString(

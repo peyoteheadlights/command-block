@@ -19,6 +19,7 @@ import io.github.peyoteheadlights.mcsc.core.Mod
 import io.github.peyoteheadlights.mcsc.core.ModHistory
 import io.github.peyoteheadlights.mcsc.core.ModImpact
 import io.github.peyoteheadlights.mcsc.core.ModList
+import io.github.peyoteheadlights.mcsc.core.ModSides
 import io.github.peyoteheadlights.mcsc.core.ModProject
 import io.github.peyoteheadlights.mcsc.core.ModVersion
 import io.github.peyoteheadlights.mcsc.core.ModVersions
@@ -119,6 +120,30 @@ class ContentPages(
             // The list still shows without these.
             dependencies = try { c.dependencies(serverId) } catch (e: AgentException) { null }
             history = try { Read(c.modHistory(serverId)) } catch (e: AgentException) { Read(problem = Message.of(e)) }
+        }
+    }
+
+    /** The Server / Players / Both filter ("all": every mod). */
+    var sideFilter by mutableStateOf("all")
+
+    /** "On all servers": every server's marks; null while it's off. */
+    var everywhere: Read<ModSides>? by mutableStateOf(null)
+        private set
+
+    fun showEverywhere(on: Boolean) {
+        if (!on) {
+            everywhere = null
+            return
+        }
+        val c = client() ?: return
+        everywhere = Read(loading = true)
+        scope.launch {
+            everywhere = try {
+                Read(c.modSides())
+            } catch (e: AgentException) {
+                noted(e)
+                Read(problem = Message.of(e))
+            }
         }
     }
 

@@ -699,6 +699,9 @@ class AgentClient(
 
     suspend fun mods(serverId: String): ModList = get("${server(serverId)}/mods", ModList.serializer())
 
+    /** "On all servers": who needs each mod on every server this account sees. */
+    suspend fun modSides(): ModSides = get("/api/mod-sides", ModSides.serializer())
+
     /** Turns a mod or plugin on or off without removing it. */
     suspend fun setModEnabled(serverId: String, filename: String, enabled: Boolean): ModChanged =
         call(post("${server(serverId)}/mods/${if (enabled) "enable" else "disable"}", fileBody(filename)), ModChanged.serializer())
