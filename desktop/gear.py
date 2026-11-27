@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import motion
 from .agent import AgentError
 from .fixes import get_help
 from .overview import card
@@ -201,6 +202,7 @@ class ListScreen(QWidget):
         self.list.setAccessibleName(text("desktop.tool.help") if name == "Help" else name)
         self.list.setFixedWidth(220)
         self.pages = QStackedWidget()
+        self.pages.currentChanged.connect(lambda: motion.turn(self.pages))
         for key, section in sections.items():
             item = QListWidgetItem(text(section.WORDS))
             item.setData(Qt.ItemDataRole.UserRole, key)
