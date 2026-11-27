@@ -456,6 +456,19 @@ def test_bot_script_is_shipped():
     assert '"build" / "tools" / "diagnose"), "tools/diagnose"' in spec
 
 
+def passed(dialog) -> list[str]:
+    """The tests the Diagnose window shows with the green tick mark."""
+    from PySide6.QtWidgets import QLabel
+
+    from desktop.parts import Steps
+
+    found = []
+    for steps in dialog.findChildren(Steps):
+        names = [w.text() for w in steps.findChildren(QLabel) if w.property("kind") == "step"]
+        found += [n for mark, n in zip(steps.marks, names, strict=True) if mark.state == "ok"]
+    return found
+
+
 def test_the_desktop_app_shows_the_list_as_it_comes(qapp, agent_http, monkeypatch, tmp_path):
     pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is in requirements-dev")
     from desktop.diagnose import DiagnoseWindow
@@ -475,7 +488,8 @@ def test_the_desktop_app_shows_the_list_as_it_comes(qapp, agent_http, monkeypatc
     dialog = next(w for w in qapp.topLevelWidgets() if isinstance(w, DiagnoseWindow))
     wait_for(qapp, lambda: "Done." in dialog.status.text(), timeout=60)
     words = shown_text(dialog)
-    assert "✓  Start the server" in words and "✓  Leave" in words
+    assert "Start the server" in words and "Leave" in words
+    assert {"Start the server", "Leave"} <= set(passed(dialog))  # each with the tick mark
     assert dialog.again.isVisible()
     dialog.close()
     window.close()
@@ -775,7 +789,7 @@ def test_the_desktop_app_offers_the_changes_and_applies_them(
     dialog.picks["all"].click()
     wait_for(qapp, lambda: "Kept: that problem is gone." in shown_text(dialog), timeout=60)
     wait_for(qapp, lambda: dialog.again.isVisible(), timeout=60)
-    assert "✓  Leave" in shown_text(dialog)
+    assert "Leave" in passed(dialog)
     assert not dialog.picks["all"].isVisible()
     # What only the owner can do (agent/waysin.py's router step) is listed too.
     step = "On your router, forward TCP port 25565 to 192.168.1.5."

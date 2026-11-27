@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from .overview import card
+from .parts import Row
 from .quests import RewardFields, reward_words, short
 from .ui import clock, label, push, refill
 from .words import mode, text
@@ -46,11 +47,11 @@ class EventsPart:
     def __init__(self, page: QuestsPage) -> None:
         self.page = page
         self.data: dict = {}
-        self.listed, layout = card(text("game_events.list"))
+        self.listed, layout = card(text("game_events.list"), box=False)
         self.rows = QVBoxLayout()
         layout.addLayout(self.rows)
         self.form = self.new_event_form()
-        self.polls, layout = card(text("game_events.polls"))
+        self.polls, layout = card(text("game_events.polls"), box=False)
         self.poll_rows = QVBoxLayout()
         layout.addLayout(self.poll_rows)
         self.poll_form = self.new_poll_form()
@@ -84,10 +85,8 @@ class EventsPart:
 
     # ------------------------------------------------------------ rows
     def event_row(self, e: dict, roles: dict[str, str]) -> QFrame:
-        row = QFrame()
-        row.setProperty("kind", "row")
-        v = QVBoxLayout(row)
-        v.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        v = row.column
         top = QHBoxLayout()
         words = QVBoxLayout()
         words.addWidget(label(e["title"], "step"))
@@ -150,10 +149,8 @@ class EventsPart:
         return box
 
     def poll_row(self, p: dict) -> QFrame:
-        row = QFrame()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
         words = QVBoxLayout()
         words.addWidget(label(p["question"], "step"))
         counts = [f"{a}: {n}" for a, n in zip(p["answers"], p["votes"], strict=True)]
