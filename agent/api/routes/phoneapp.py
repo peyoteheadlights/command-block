@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ...notifications import apns, fcm
 from ...security.auth import Principal
-from ...security.permissions import ACCOUNT, SERVER_VIEW, can_see_server, require
+from ...security.permissions import ACCOUNT, SERVER_VIEW, can_see_server, may_get_alert, require
 from ..deps import audit, get_core
 from ..responses import AlertsRead, AppAlerts, AppPhone, DeviceAlerts
 from .models import AlertsReadRequest, AppPhoneRequest, DeviceAlertsRequest
@@ -57,6 +57,8 @@ async def alerts(
                 if not principal.is_owner:
                     continue
             elif not can_see_server(principal, row["server_id"]):
+                continue
+            elif not may_get_alert(principal, row["event"], row["server_id"]):
                 continue
             rows.append(row)
         if len(found) == limit:

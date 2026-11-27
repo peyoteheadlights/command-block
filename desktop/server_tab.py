@@ -177,6 +177,7 @@ class Header(QFrame):
             ("clear-crash-block", "notice.allow_restarts"),
             ("restart-when-empty", "action.restart_when_empty"),
             ("cancel-restart-when-empty", "action.cancel"),
+            ("skip-check", "action.skip_check"),
         ):
             button = push(text(words))
             button.clicked.connect(
@@ -190,6 +191,7 @@ class Header(QFrame):
         # Changes waiting for a restart, and whether it restarts when nobody's on.
         self.waiting: list[str] = []
         self.when_empty = False
+        self.checking = False
         self.ticker = QTimer(self)
         self.ticker.setInterval(1000)
         self.ticker.timeout.connect(self.show_notice)
@@ -208,7 +210,7 @@ class Header(QFrame):
     def show_row(self, row: dict) -> None:
         if row["id"] != self.row.get("id"):
             # another server: its own status says if a restart is waiting
-            self.deadline, self.paused = None, ""
+            self.deadline, self.paused, self.checking = None, "", False
             self.waiting, self.when_empty = [], False
             self.show_notice()
         self.row = row
@@ -257,6 +259,7 @@ class Header(QFrame):
             self.paused = f"{text('notice.restart_paused')} {reason}".strip()
         self.waiting = list(status.get("restart_waiting") or [])
         self.when_empty = bool(status.get("restart_when_empty"))
+        self.checking = bool(status.get("checking_jars"))
         self.show_notice()
 
     def show_notice(self) -> None:
@@ -272,6 +275,11 @@ class Header(QFrame):
             left = math.ceil(round(self.deadline - time.monotonic(), 3))
             words = text("hero.restarting_in", s=left) if left > 0 else text("hero.starting_now")
             actions = ["cancel-restart", "restart-now"]
+        if self.checking:
+            # Only the owner can skip (agent/api/routes/server.py).
+            words, actions = text("head.checking_jars"), []
+            if self.window_.role in (None, "owner"):
+                actions = ["skip-check"]
         self.notice.setText(words)
         self.notice.setVisible(bool(words))
         for action, button in self.notice_buttons.items():

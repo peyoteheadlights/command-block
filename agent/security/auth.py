@@ -870,16 +870,23 @@ class AuthManager:
             return None, None
         return account["role"], account["access"]
 
-    def may_see_alert(self, user: str, server_id: str | None) -> bool:
+    def may_see_alert(self, user: str, server_id: str | None, event_type: str = "") -> bool:
         """Whether this account's phones are told about an alert: a moderator
-        only about the servers they can see now, and alerts about the PC
+        only about the servers they can see now (and some alerts only with a
+        permission, see permissions.ALERT_NEEDS), and alerts about the PC
         itself (failed sign-ins, the certificate) only go to the owner."""
+        from .permissions import ALERT_NEEDS
+
         role, access = self._role_of(user)
         if role is None:
             return False
         if server_id is None:
             return role == "owner"
-        return access is None or bool(access.on(server_id))
+        if access is None:
+            return True
+        held = access.on(server_id)
+        need = ALERT_NEEDS.get(event_type)
+        return bool(held) and (need is None or need in held)
 
     # -- helper accounts ---------------------------------------------------
     @staticmethod

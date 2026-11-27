@@ -68,6 +68,7 @@ from ..responses import (
 )
 from .models import (
     CopyAddonsRequest,
+    DeepScanOptionsRequest,
     DeepScanQuarantineRequest,
     DeepScanRequest,
     DependencyInstallRequest,
@@ -746,12 +747,44 @@ async def jar_scan_options(
     principal: Principal = Depends(require(MODS_MANAGE)),
     ctx=Depends(get_server),
 ):
-    for key, value in (("rescan_weekly", payload.weekly), ("rescan_on_change", payload.on_change)):
+    if payload.ask_first is not None and not principal.is_owner:
+        raise HTTPException(403, "Only the owner can change Ask me first.")
+    _set_options(
+        ctx,
+        rescan_weekly=payload.weekly,
+        rescan_on_change=payload.on_change,
+        check_before_start=payload.before_start,
+        ask_before_stop=payload.ask_first,
+    )
+    audit(ctx, request, "jar_scan_options", detail=str(payload.model_dump(exclude_none=True)))
+    return ctx.jarscan.report()
+
+
+@router.post("/mods/deepscan/options", response_model=DeepScanReport)
+async def deep_scan_options(
+    payload: DeepScanOptionsRequest,
+    request: Request,
+    principal: Principal = Depends(require(DEEP_SCAN)),
+    ctx=Depends(get_server),
+):
+    """Deep scan before each start, and the daily or weekly deep scan."""
+    _set_options(
+        ctx,
+        deep_scan_before_start=payload.before_start,
+        deep_scan_schedule=payload.schedule,
+        deep_scan_time=payload.time,
+        deep_scan_day=payload.day,
+    )
+    audit(ctx, request, "deep_scan_options", detail=str(payload.model_dump(exclude_none=True)))
+    await ctx.deepscan.replan()  # works out the next run now, so the apps can show it
+    return ctx.deepscan.status()
+
+
+def _set_options(ctx, **values) -> None:
+    for key, value in values.items():
         if value is not None:
             ctx.config.set(f"mods.{key}", value)
     ctx.config.save()
-    audit(ctx, request, "jar_scan_options", detail=str(payload.model_dump(exclude_none=True)))
-    return ctx.jarscan.report()
 
 
 @router.get("/mods/dependencies", response_model=DependencyReport)

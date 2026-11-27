@@ -29,6 +29,7 @@ import io.github.peyoteheadlights.mcsc.core.Permissions
 import io.github.peyoteheadlights.mcsc.core.QuickAction
 import io.github.peyoteheadlights.mcsc.core.States
 import io.github.peyoteheadlights.mcsc.core.Store
+import kotlinx.coroutines.delay
 
 /** One server, in its own color: what it's doing, who's playing, Start,
  * Stop and Restart (the last two ask first), its other screens, and the
@@ -45,6 +46,13 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
     var asking by rememberSaveable { mutableStateOf<String?>(null) }
     val canEdit = vm.canDo(Permissions.SETTINGS_SERVER)
     LaunchedEffect(serverId) { pages.loadCards() }
+    // Read again while the jar checks hold a start, to see when it goes on.
+    LaunchedEffect(serverId, status?.checkingJars) {
+        while (status?.checkingJars == true) {
+            delay(2000)
+            vm.refreshServer(serverId)
+        }
+    }
 
     ServerFrame(
         vm, serverId,
@@ -86,6 +94,11 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                 Display.restartWaiting(vm.strings, status, vm.canControl())?.let { (words, action) ->
                     Note(words)
                     action?.let { Actions(listOf(it), busy = ui.busyAction, onAction = { a -> vm.act(serverId, a.action) }) }
+                }
+                if (status?.checkingJars == true) {
+                    Note(t("head.checking_jars"), color = colors.warning)
+                    // Only the owner can skip (agent/api/routes/server.py).
+                    if (vm.me?.isOwner == true) Presses(listOf(Press(t("action.skip_check"), { vm.skipCheck(serverId) })))
                 }
                 listOfNotNull(status?.serverTypeName ?: row?.typeName, status?.minecraftVersion ?: row?.minecraftVersion)
                     .joinToString(" ").takeIf { it.isNotBlank() }

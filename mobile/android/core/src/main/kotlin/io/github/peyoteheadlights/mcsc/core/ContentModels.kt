@@ -518,6 +518,8 @@ data class JarScanReport(
     @SerialName("checked_at") val checkedAt: Double? = null,
     val weekly: Boolean = true,
     @SerialName("on_change") val onChange: Boolean = true,
+    @SerialName("before_start") val beforeStart: Boolean = false,
+    @SerialName("ask_first") val askFirst: Boolean = false,
     val jars: List<JarScanRow> = emptyList(),
     val quarantine: List<QuarantinedJar> = emptyList(),
     val summary: JarScanSummary = JarScanSummary(),
@@ -571,6 +573,17 @@ data class DeepScanReport(
     val scanners: List<DeepScanScanner> = emptyList(),
     val running: DeepScanRunning? = null,
     val last: DeepScanLast? = null,
+    val options: DeepScanOptions = DeepScanOptions(),
+)
+
+/** Before each start, and the daily or weekly run. [next] is null while it is off. */
+@Serializable
+data class DeepScanOptions(
+    @SerialName("before_start") val beforeStart: Boolean = false,
+    val schedule: String = "off",
+    val time: String = "04:00",
+    val day: String = "sun",
+    val next: Double? = null,
 )
 
 /** A Modrinth search result. [iconUrl] is loaded straight from Modrinth. */

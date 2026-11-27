@@ -439,6 +439,18 @@ def test_changes_waiting_offer_restart_when_nobody_is_on(qapp, agent_http):
     # A countdown after a crash says more than waiting changes.
     header.show_status({"restart_in": 30, "restart_waiting": ["mods"]})
     assert header.notice.text() == "Restarting in 30 seconds."
+
+
+def test_checking_jars_before_a_start_shows_with_skip_for_the_owner(qapp, agent_http):
+    window = signed_in_on(qapp, agent_http)
+    header = window.server_screen.header
+    header.show_status({"checking_jars": True})
+    assert header.notice.text() == "Checking jars before the start…"
+    shown = [a for a, b in header.notice_buttons.items() if b.isVisibleTo(window)]
+    assert shown == ["skip-check"]
+    window.role = "moderator"
+    header.show_notice()
+    assert not header.notice_buttons["skip-check"].isVisibleTo(window)
     header.show_status({})
     assert not header.notice.isVisibleTo(window)
 

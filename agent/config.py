@@ -337,6 +337,17 @@ class ModSettings(Section):
     # as soon as it changes.
     rescan_weekly: bool = True
     rescan_on_change: bool = True
+    # Look at changed jars before each start, and wait for it.
+    check_before_start: bool = False
+    # Known bad found while the server runs: tell the owner and keep it
+    # running instead of stopping it after a minute.
+    ask_before_stop: bool = False
+    # Deep scan with the scanners that are already there: before each
+    # start, and/or on a schedule ("off", "daily" or "weekly").
+    deep_scan_before_start: bool = False
+    deep_scan_schedule: str = "off"
+    deep_scan_time: str = "04:00"
+    deep_scan_day: str = "sun"
 
 
 @dataclass(frozen=True)

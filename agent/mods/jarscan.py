@@ -8,13 +8,19 @@ look for an old log4j-core inside it, and handed to Windows antivirus
 and reused while a jar's size, modified time and SHA-256 stay the same.
 
 A jar with a finding is moved to the quarantine folder (never deleted)
-and the owner can put it back with Undo. While the server runs, the jar
-waits and is moved before the server next starts.
+and the owner can put it back with Undo. While the server runs, players
+are told in chat and the server stops after a minute so the jar can be
+moved; with "Ask me first" on, it keeps running and the jar waits until
+the server next stops or starts.
+
+Before each start the owner can have the changed jars checked (and a deep
+scan run) and the start waits for it, with a Skip button.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import io
 import logging
@@ -47,6 +53,11 @@ POM = "META-INF/maven/org.apache.logging.log4j/log4j-core/pom.properties"
 JNDI = "org/apache/logging/log4j/core/lookup/JndiLookup.class"
 NESTED_NAME = re.compile(r"(?:^|/)log4j-core-(\d[\w.\-]*)\.jar$")
 MAX_DEPTH = 3
+STOP_AFTER = 60  # seconds between the chat warning and the stop
+STOP_WARNING = (
+    "say [Command Block] A security check found a bad file on this server. "
+    "The server stops in 1 minute."
+)
 # What reading a broken or unusual zip entry can raise.
 UNREADABLE = (
     zipfile.BadZipFile,
@@ -223,6 +234,9 @@ class JarScanner:
     def __init__(self, ctx):
         self.ctx = ctx
         self.lock = asyncio.Lock()
+        self._stop_task: asyncio.Task | None = None
+        self._stop_run: float | None = None
+        self._skip: asyncio.Event | None = None
 
     @property
     def mods(self):
@@ -402,6 +416,8 @@ class JarScanner:
             ]
         for entry in new_findings:
             await self._tell(entry)
+        if new_findings:
+            await self.found_while_running()
         # Asked without the lock held, so a server start never waits on the internet.
         await self._lookup(wanted)
         async with self.lock:
@@ -416,7 +432,8 @@ class JarScanner:
             self.save(saved)
             if not self._busy():
                 await self._move_waiting("agent")
-            return self.report()
+            report = self.report()
+        return report
 
     @staticmethod
     def _mark_waiting(saved: dict[str, Any], fresh: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -436,6 +453,23 @@ class JarScanner:
             or ctx.core.jobs.risky_job(ctx.server_id)
         )
 
+    def what_next(self) -> str:
+        """The end of a Known bad message: what happens to the file now."""
+        if not self.ctx.server.running:
+            return (
+                "The server won't be started with it: it goes to quarantine, "
+                "and you can put it back with Undo."
+            )
+        if self.ctx.config.mods.ask_before_stop:
+            return (
+                "The server keeps running because Ask me first is on. Stop it to move "
+                "the file to quarantine; you can put it back with Undo."
+            )
+        return (
+            "Players were told in chat and the server stops in 1 minute, then the file "
+            "goes to quarantine. You can put it back with Undo."
+        )
+
     async def _tell(self, entry: dict[str, Any]) -> None:
         scanners = ", ".join(sorted({f["scanner"] for f in entry["findings"]}))
         await self.ctx.bus.publish(
@@ -443,11 +477,54 @@ class JarScanner:
                 type="jar_scan_found",
                 level="error",
                 message=f"Jar check: {scanners} found something in {entry['filename']}. "
-                "The server won't be started with it: it goes to quarantine, "
-                "and you can put it back with Undo.",
+                + self.what_next(),
                 data={"filename": entry["filename"], "findings": entry["findings"]},
             )
         )
+
+    def _anything_waiting(self) -> bool:
+        jars = self.store()["jars"].values()
+        return any(e.get("waiting") for e in jars) or self.ctx.deepscan.waiting()
+
+    async def found_while_running(self) -> None:
+        """Known bad is waiting while the server runs: warn players and stop
+        it in a minute, unless the owner picked Ask me first."""
+        from ..minecraft.process import ServerError
+
+        server = self.ctx.server
+        if not server.running or self.ctx.config.mods.ask_before_stop:
+            return
+        if self._stop_task and not self._stop_task.done():
+            if self._stop_run == server.started_at:
+                return  # a stop is planned already for this run
+            self._stop_task.cancel()  # planned for a run that has ended
+        with contextlib.suppress(ServerError):
+            await server.send_command(STOP_WARNING, internal=True)
+        self._stop_run = server.started_at
+        self._stop_task = asyncio.create_task(self._stop_soon(server.started_at))
+
+    async def _stop_soon(self, run: float | None) -> None:
+        from ..minecraft.process import ServerError
+        from ..minecraft.state import ExitReason
+
+        await asyncio.sleep(STOP_AFTER)
+        server = self.ctx.server
+        if (
+            not server.running
+            or server.started_at != run  # stopped and started again since
+            or self.ctx.config.mods.ask_before_stop  # turned on during the minute
+            or not self._anything_waiting()
+        ):
+            return
+        try:
+            await self.ctx.server.stop("jar check", reason=ExitReason.USER_STOP)
+        except ServerError as exc:
+            log.warning("jar check could not stop the server: %s", exc)
+            return
+        async with self.lock:
+            if not self._busy():
+                await self._move_waiting("agent")
+                await self.ctx.deepscan.move_waiting("agent")
 
     async def _move_waiting(self, user: str) -> list[str]:
         """Move every jar waiting for quarantine. Lock held by the caller."""
@@ -532,12 +609,75 @@ class JarScanner:
         self.mods._cache = None
         return True
 
+    def checks_before_start(self) -> bool:
+        """Whether a start waits for the owner's checks before start."""
+        settings = self.ctx.config.mods
+        return bool(
+            self.mods.server_type.has_content
+            and self.ctx.config.server_dir_configured
+            and (settings.check_before_start or settings.deep_scan_before_start)
+        )
+
+    def skip(self) -> bool:
+        """The Skip button. False when no check is running."""
+        if self._skip is None or self._skip.is_set():
+            return False
+        self._skip.set()
+        return True
+
+    async def _checks(self) -> None:
+        settings = self.ctx.config.mods
+        if settings.check_before_start:
+            await self.scan()
+        if settings.deep_scan_before_start:
+            await self.ctx.deepscan.run_now("mods", "agent")
+
+    async def _set_checking(self, on: bool) -> None:
+        self.ctx.server.checking_jars = on
+        await self.ctx.bus.publish(
+            Event(
+                type="jar_check_before_start",
+                level="info",
+                message="Checking jars before the start..." if on else "Jar checks done.",
+                data={"checking": on},
+            )
+        )
+
+    async def _wait_for_checks(self) -> None:
+        """Run the checks before start and wait, until they finish or the
+        owner presses Skip. A check that fails doesn't hold the start."""
+        self._skip = asyncio.Event()
+        checks = asyncio.create_task(self._checks())
+        skip = asyncio.create_task(self._skip.wait())
+        await self._set_checking(True)
+        try:
+            await asyncio.wait({checks, skip}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            skip.cancel()
+            skipped = not checks.done()
+            if skipped:
+                checks.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await checks
+            self._skip = None
+            await self._set_checking(False)
+        say = self.ctx.server._emit_console
+        if skipped:
+            say("[agent] the jar checks before start were skipped")
+        elif not checks.cancelled() and checks.exception() is not None:
+            say(f"[agent] the jar checks before start couldn't finish: {checks.exception()}")
+
     async def before_start(self) -> None:
-        """As the server starts: check jars that changed (no lookup, so the
-        start isn't held up by the internet) and move every jar waiting for
-        quarantine. A jar that can't be moved stops the start."""
+        """As the server starts: run the owner's checks before start, check
+        jars that changed (no lookup, so the start isn't held up by the
+        internet) and move every jar waiting for quarantine. A jar that
+        can't be moved stops the start."""
         from ..minecraft.process import ServerError
 
+        checked = self.checks_before_start()
+        before = len(self.store()["quarantine"])
+        if checked:
+            await self._wait_for_checks()
         has_content = self.mods.server_type.has_content
         async with self.lock:
             saved = self.store()
@@ -556,6 +696,13 @@ class JarScanner:
                 ) from exc
         if moved:
             self.ctx.server._emit_console(f"[agent] moved to quarantine: {', '.join(moved)}")
+        new = [item["filename"] for item in self.store()["quarantine"][before:]]
+        if checked and new:
+            raise ServerError(
+                f"The jar checks before start moved {', '.join(new)} to quarantine, so "
+                "the server wasn't started. Start it again to start without them, or put "
+                "them back with Undo."
+            )
 
     async def tick(self) -> None:
         """The background check: everything again once a week, the jars
@@ -657,6 +804,9 @@ class JarScanner:
             "looked_up_at": saved.get("looked_up_at"),
             "weekly": settings.rescan_weekly,
             "on_change": settings.rescan_on_change,
+            "before_start": settings.check_before_start,
+            "ask_first": settings.ask_before_stop,
+            "checking": self._skip is not None,
             "jars": rows,
             "quarantine": sorted(saved["quarantine"], key=lambda q: -q["at"]),
             "summary": self.summary(saved),

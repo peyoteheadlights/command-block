@@ -1,4 +1,6 @@
-"""Deep scan: a slower look inside files, run when someone clicks it.
+"""Deep scan: a slower look inside files, run when someone clicks it, before
+each start, or on a daily or weekly schedule (the last two only use the
+scanners already on the PC and never download anything).
 
 The person picks the scanners and what to look at: one jar, the server's
 mods or plugins folder, or the whole server folder and the Java it runs
@@ -70,6 +72,7 @@ SCANNERS = {
 }
 FILE_CHECK = "Command Block file check"
 SCOPES = ("jar", "mods", "folder")
+PLANS = ("off", "daily", "weekly")
 # Programs and scripts in the server folder are Worth a look.
 PROGRAMS = {".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".sh", ".scr", ".com", ".msi"}
 # Forge and NeoForge's installer writes these two.
@@ -416,23 +419,98 @@ class DeepScanner:
             "antivirus": antivirus.is_on(),
             "running": job if job and job["state"] == "running" else None,
             "last": saved.get("last"),
+            "options": self.options(saved),
         }
 
-    def start(self, scope: str, scanners: list[str], filename: str | None, user: str) -> dict:
-        """Start a deep scan as a job. One at a time on a server."""
+    # ------------------------------------------------------------ schedule
+    def options(self, saved: dict[str, Any] | None = None) -> dict[str, Any]:
+        settings = self.ctx.config.mods
+        saved = saved or self.store()
+        plan = saved.get("plan")
+        wanted = self.plan()
+        return {
+            "before_start": settings.deep_scan_before_start,
+            "schedule": settings.deep_scan_schedule,
+            "time": settings.deep_scan_time,
+            "day": settings.deep_scan_day,
+            # Only when it was worked out for the schedule as it is now.
+            "next": saved.get("next") if wanted and plan == list(wanted) else None,
+        }
+
+    def plan(self) -> tuple[str, str] | None:
+        """(kind, expression) for next_run, or None when the schedule is off."""
+        settings = self.ctx.config.mods
+        if settings.deep_scan_schedule == "daily":
+            return "daily", settings.deep_scan_time
+        if settings.deep_scan_schedule == "weekly":
+            return "weekly", f"{settings.deep_scan_day} {settings.deep_scan_time}"
+        return None
+
+    def _scheduled_scope(self) -> str:
+        return "mods" if self.ctx.mods.server_type.has_content else "folder"
+
+    async def replan(self, ran: bool = False) -> bool:
+        """Work out the next scheduled run when the schedule changed (or,
+        with ``ran``, when it was due). True when a run is due now."""
+        from ..scheduler.scheduler import ScheduleError, next_run
+
+        wanted = self.plan()
+        if wanted is None:
+            return False
+        async with self.ctx.jarscan.lock:
+            saved = self.store()
+            changed = saved.get("plan") != list(wanted) or not saved.get("next")
+            due = not changed and time.time() >= saved["next"]
+            if changed or (due and ran):
+                try:
+                    saved["next"] = next_run(*wanted)
+                except ScheduleError as exc:
+                    log.warning("deep scan schedule: %s", exc)
+                    return False
+                saved["plan"] = list(wanted)
+                self.save(saved)
+            return due
+
+    def _running(self) -> bool:
+        from ..jobs import JobNotFound
+
+        if not self.job_id:
+            return False
+        try:
+            return self.ctx.core.jobs.get(self.job_id).state == "running"
+        except JobNotFound:
+            return False
+
+    async def tick(self) -> None:
+        """Run the scheduled deep scan when it is due."""
+        if not self.ctx.config.server_dir_configured or self._running():
+            return  # a running scan keeps a due run waiting for the next turn
+        if not await self.replan(ran=True):
+            return
+        try:
+            await self.run_now(self._scheduled_scope(), "schedule")
+        except DeepScanError as exc:
+            log.warning("scheduled deep scan didn't run: %s", exc)
+
+    def _check(self, scope: str, picked: list[str], filename: str | None) -> None:
+        """Say now why a scan can't run."""
         if scope not in SCOPES:
             raise DeepScanError("Pick what to scan.")
-        picked = [s for s in SCANNERS if s in scanners]
         if not picked:
             raise DeepScanError("Pick at least one scan to run.")
         if not self.ctx.mods.server_type.has_content and scope != "folder":
             raise DeepScanError("This server type has no mods or plugins folder.")
         if not self.ctx.config.server_dir_configured:
             raise DeepScanError("This server has no folder yet.")
-        if self.job_id and self.ctx.core.jobs.get(self.job_id).state == "running":
+        if self._running():
             raise DeepScanError("A deep scan is running on this server already.")
         if scope == "jar":
             self.targets(scope, filename)  # says now when the jar isn't there
+
+    def start(self, scope: str, scanners: list[str], filename: str | None, user: str) -> dict:
+        """Start a deep scan as a job. One at a time on a server."""
+        picked = [s for s in SCANNERS if s in scanners]
+        self._check(scope, picked, filename)
 
         async def run(handle) -> dict[str, Any]:
             return await self._run(handle, scope, picked, filename, user)
@@ -443,11 +521,35 @@ class DeepScanner:
         self.job_id = job.id
         return self.status()
 
-    async def _run(self, handle, scope, picked, filename, user) -> dict[str, Any]:
+    def installed(self) -> list[str]:
+        """The scanners that need no download: our own rules, and YARA Forge's
+        when a copy is on the PC already."""
+        return [BEHAVIOUR, FORGE] if (self.forge_dir / FORGE_FILE).is_file() else [BEHAVIOUR]
+
+    async def run_now(self, scope: str, user: str) -> dict[str, Any]:
+        """A deep scan with the installed scanners, waited for (before a start
+        and on the schedule). Downloads nothing."""
+        picked = self.installed()
+        self._check(scope, picked, None)
+
+        async def run(handle) -> dict[str, Any]:
+            self.job_id = handle.id
+            return await self._run(handle, scope, picked, None, user, download=False)
+
+        _, result = await self.ctx.core.jobs.run(
+            "deep_scan", "Deep scan", run, server_id=self.ctx.server_id, user=user
+        )
+        return result
+
+    async def _run(
+        self, handle, scope, picked, filename, user, download: bool = True
+    ) -> dict[str, Any]:
         started = time.time()
         errors: list[dict[str, Any]] = []
         forge = None
-        if FORGE in picked:
+        if FORGE in picked and not download:
+            forge = self.forge_dir / FORGE_FILE
+        elif FORGE in picked:
             handle.step("Downloading YARA Forge rules")
             try:
                 info = await self.get_forge()
@@ -597,15 +699,21 @@ class DeepScanner:
             self.save(saved)
             if not jarscan._busy():
                 await self.move_waiting(user)
+        waiting = False
         for item in (saved.get("last") or {}).get("found", []):
             if item["state"] in ("waiting", "quarantined") and item["kind"] == "known_bad":
+                waiting = waiting or item["state"] == "waiting"
+                then = (
+                    jarscan.what_next()
+                    if item["state"] == "waiting"
+                    else "It was moved to quarantine, and you can put it back with Undo."
+                )
                 await self.ctx.bus.publish(
                     Event(
                         type="jar_scan_found",
                         level="error",
                         message=f"Deep scan: {antivirus.NAME} found something in "
-                        f"{item['path']}. It goes to quarantine, and you can put it "
-                        "back with Undo.",
+                        f"{item['path']}. {then}",
                         data={
                             "filename": PurePosixPath(item["path"]).name,
                             "root": item["root"],
@@ -614,6 +722,8 @@ class DeepScanner:
                         },
                     )
                 )
+        if waiting:
+            await jarscan.found_while_running()
 
     def waiting(self) -> bool:
         return any(

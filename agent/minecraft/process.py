@@ -154,6 +154,8 @@ class MinecraftServer:
         # behind_guard is then the public port the guard holds, and
         # launch_args what this run was started with.
         self.before_launch: Callable[[], Awaitable[list[str]]] | None = None
+        # True while a start waits for the jar checks before start.
+        self.checking_jars = False
         self.behind_guard: int | None = None
         self.launch_args: list[str] = []
         # Less downtime (agent/downtime.py). What changed since this run
@@ -462,6 +464,7 @@ class MinecraftServer:
             "autosleep": self.config.server.autosleep,
             "autosleep_minutes": self.config.server.autosleep_minutes,
             "recent_crashes": self.recent_crash_count(),
+            "checking_jars": self.checking_jars,
         }
 
     # ------------------------------------------------------------------

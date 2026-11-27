@@ -374,6 +374,12 @@ class ServerContext:
                 raise
             except Exception:
                 log.debug("jar check failed", exc_info=True)
+            try:
+                await self.deepscan.tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.warning("scheduled deep scan failed", exc_info=True)
             await asyncio.sleep(300)
 
     async def stop(self) -> None:

@@ -21,6 +21,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Switch
@@ -79,6 +81,7 @@ import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
 import io.github.peyoteheadlights.mcsc.core.PlayerFile
 import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
 import io.github.peyoteheadlights.mcsc.core.Sides
+import io.github.peyoteheadlights.mcsc.core.DeepScanOptions
 import io.github.peyoteheadlights.mcsc.core.DeepScanReport
 import io.github.peyoteheadlights.mcsc.core.JarScanWords
 import io.github.peyoteheadlights.mcsc.core.Permissions
@@ -373,6 +376,15 @@ private fun LazyListScope.jarScanList(vm: AppViewModel, content: ContentPages, c
                 Item(t("jarscan.on_change"), trailing = {
                     Checkbox(checked = report.onChange, enabled = idle, onCheckedChange = { content.scanOptions(vm.strings, onChange = it) })
                 })
+                Item(t("jarscan.before_start"), trailing = {
+                    Checkbox(checked = report.beforeStart, enabled = idle, onCheckedChange = { content.scanOptions(vm.strings, beforeStart = it) })
+                })
+                // Only the owner can turn off the automatic stop.
+                if (vm.me?.isOwner == true) {
+                    Item(t("jarscan.ask_first"), trailing = {
+                        Checkbox(checked = report.askFirst, enabled = idle, onCheckedChange = { content.scanOptions(vm.strings, askFirst = it) })
+                    })
+                }
                 Presses(listOf(Press(t(if (content.busy == "jar_scan") "jarscan.checking" else "jarscan.check_again"), { content.scanJars(vm.strings) }, enabled = idle)))
             }
         }
@@ -471,6 +483,46 @@ private fun DeepScanCard(vm: AppViewModel, content: ContentPages, report: DeepSc
         if (allowed) {
             val ready = running == null && content.busy == null && picked.isNotEmpty() && (what != "jar" || jar in jars)
             Presses(listOf(Press(t("deepscan.run"), { content.runDeepScan(what, picked.sorted(), jar.takeIf { what == "jar" }, vm.strings) }, enabled = ready)))
+            DeepScanPlan(vm, content, report.options, word)
+        }
+    }
+}
+
+private val SCHEDULES = listOf("off", "daily", "weekly")
+private val DAYS = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+private val HOURS = (0..23).map { "%02d:00".format(it) }
+
+/** Deep scan before each start, and the daily or weekly run. */
+@Composable
+private fun DeepScanPlan(vm: AppViewModel, content: ContentPages, options: DeepScanOptions, word: String) {
+    val colors = LocalColors.current
+    val idle = content.busy == null
+    Tick(t("deepscan.before_start", "word" to word), options.beforeStart, enabled = idle) { content.deepOptions(vm.strings, beforeStart = it) }
+    Item(t("deepscan.schedule"))
+    for (option in SCHEDULES) {
+        Item(t("deepscan.schedule.$option"), onClick = { if (idle) content.deepOptions(vm.strings, schedule = option) }, trailing = {
+            RadioButton(selected = options.schedule == option, onClick = null)
+        })
+    }
+    if (options.schedule == "off") return
+    if (options.schedule == "weekly") {
+        Choice(t("deepscan.schedule_day"), DAYS.map { it to t("deepscan.day.$it") }, options.day, idle) { content.deepOptions(vm.strings, day = it) }
+    }
+    // Whole hours here; a time set on the desktop app with minutes is kept and shown.
+    val hours = if (options.time in HOURS) HOURS else HOURS + options.time
+    Choice(t("deepscan.schedule_time"), hours.map { it to it }, options.time, idle) { content.deepOptions(vm.strings, time = it) }
+    options.next?.let { Note(t("deepscan.next", "when" to Display.dateTime(vm.strings, it)), color = colors.text2) }
+    Note(t("deepscan.schedule_note"), color = colors.text3)
+}
+
+/** A row that opens a short list to pick one from. */
+@Composable
+private fun Choice(title: String, choices: List<Pair<String, String>>, picked: String, enabled: Boolean, onPick: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Item(title, subtitle = choices.firstOrNull { it.first == picked }?.second ?: picked, onClick = { if (enabled) open = true })
+    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        for ((value, words) in choices) {
+            DropdownMenuItem(text = { Text(words) }, onClick = { open = false; onPick(value) })
         }
     }
 }

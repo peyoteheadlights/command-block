@@ -200,8 +200,25 @@ class ContentPages(
         Said(strings.t("jarscan.undone", "name" to filename), good = true)
     }
 
-    fun scanOptions(strings: Strings, weekly: Boolean? = null, onChange: Boolean? = null) = work("jar_scan_options", strings) {
-        scan = Read(it.jarScanOptions(serverId, weekly, onChange))
+    fun scanOptions(
+        strings: Strings,
+        weekly: Boolean? = null,
+        onChange: Boolean? = null,
+        beforeStart: Boolean? = null,
+        askFirst: Boolean? = null,
+    ) = work("jar_scan_options", strings) {
+        scan = Read(it.jarScanOptions(serverId, weekly, onChange, beforeStart, askFirst))
+        null
+    }
+
+    fun deepOptions(
+        strings: Strings,
+        beforeStart: Boolean? = null,
+        schedule: String? = null,
+        time: String? = null,
+        day: String? = null,
+    ) = work("deep_scan_options", strings) {
+        showDeep(Read(it.deepScanOptions(serverId, beforeStart, schedule, time, day)))
         null
     }
 

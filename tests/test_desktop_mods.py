@@ -1326,3 +1326,32 @@ def test_deep_scan_lists_a_worth_a_look_mod_and_quarantine_moves_it(qapp, agent_
     row_button(page, "Quarantine", "mods/bad.jar").click()
     wait_for(qapp, lambda: not (folder / "bad.jar").exists())
     wait_for(qapp, lambda: not row_buttons(page, "Quarantine", "mods/bad.jar"))
+
+
+def test_deep_scan_schedule_and_before_start_are_saved_on_the_agent(qapp, agent_http):
+    mods_folder(agent_http).mkdir(exist_ok=True)
+    _window, page = mods_page(qapp, agent_http)
+    deep = page.deep
+    wait_for(qapp, lambda: deep.boxes)
+    assert deep.schedule.currentText() == "Never on its own" and not deep.day.isVisibleTo(page)
+    deep.schedule.setCurrentIndex(2)
+    deep.schedule.activated.emit(2)
+    config = core_of(agent_http).servers["survival"].config
+    wait_for(qapp, lambda: config.mods.deep_scan_schedule == "weekly")
+    wait_for(qapp, lambda: "Next run:" in deep.next_run.text())
+    assert deep.day.isVisibleTo(page) and deep.day.currentText() == "Sunday"
+    assert deep.time.time().toString("HH:mm") == "04:00"
+    deep.before_start.click()
+    wait_for(qapp, lambda: config.mods.deep_scan_before_start)
+
+
+def test_jar_check_before_start_and_ask_me_first_boxes(qapp, agent_http):
+    mods_folder(agent_http).mkdir(exist_ok=True)
+    _window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.before_start.isVisibleTo(page))
+    assert page.ask_first.isVisibleTo(page)  # signed in as the owner
+    config = core_of(agent_http).servers["survival"].config
+    page.before_start.click()
+    wait_for(qapp, lambda: config.mods.check_before_start)
+    page.ask_first.click()
+    wait_for(qapp, lambda: config.mods.ask_before_stop)

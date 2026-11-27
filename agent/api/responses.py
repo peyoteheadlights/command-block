@@ -148,6 +148,7 @@ class ServerStatus(Open):
     # "settings", "memory", "files", "addons", "join", "icon").
     restart_waiting: list[str] = []
     restart_when_empty: bool = False
+    checking_jars: bool | None = None
 
 
 class ServerAction(Open):
@@ -1567,6 +1568,9 @@ class JarScanReport(Open):
     looked_up_at: float | None = None
     weekly: bool
     on_change: bool
+    before_start: bool = False
+    ask_first: bool = False
+    checking: bool = False
     jars: list[JarScanRow]
     quarantine: list[dict[str, Any]]
     summary: dict[str, Any]
@@ -1593,6 +1597,9 @@ class DeepScanReport(Open):
     antivirus: bool
     running: dict[str, Any] | None = None
     last: dict[str, Any] | None = None
+    options: dict[str, Any] | None = Field(
+        None, description="before_start, schedule (off/daily/weekly), time, day, next"
+    )
 
 
 class JarScanUndone(Open):

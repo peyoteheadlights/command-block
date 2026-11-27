@@ -204,6 +204,8 @@ data class ServerStatus(
     /** What changed since it started that it only reads at start ("mods", "settings"...). */
     @SerialName("restart_waiting") val restartWaiting: List<String> = emptyList(),
     @SerialName("restart_when_empty") val restartWhenEmpty: Boolean = false,
+    // The jar checks before start are running; the start waits for them.
+    @SerialName("checking_jars") val checkingJars: Boolean = false,
 )
 
 @Serializable

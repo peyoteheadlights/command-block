@@ -103,10 +103,18 @@ extension AgentClient {
         return try await call("POST", content(serverId) + "/mods/scan/undo", body: body, as: JarScanUndone.self)
     }
 
-    public func jarScanOptions(serverId: String, weekly: Bool? = nil, onChange: Bool? = nil) async throws -> JarScanReport {
+    public func jarScanOptions(
+        serverId: String,
+        weekly: Bool? = nil,
+        onChange: Bool? = nil,
+        beforeStart: Bool? = nil,
+        askFirst: Bool? = nil
+    ) async throws -> JarScanReport {
         var change: [String: Bool] = [:]
         if let weekly { change["weekly"] = weekly }
         if let onChange { change["on_change"] = onChange }
+        if let beforeStart { change["before_start"] = beforeStart }
+        if let askFirst { change["ask_first"] = askFirst }
         return try await call("POST", content(serverId) + "/mods/scan/options", body: try AgentClient.encode(change), as: JarScanReport.self)
     }
 
@@ -130,6 +138,30 @@ extension AgentClient {
     public func deepScanQuarantine(serverId: String, root: String, path: String) async throws -> DeepScanReport {
         let body = try AgentClient.encode(["root": root, "path": path])
         return try await call("POST", content(serverId) + "/mods/deepscan/quarantine", body: body, as: DeepScanReport.self)
+    }
+
+    private struct DeepScanChange: Encodable {
+        var beforeStart: Bool?
+        var schedule: String?
+        var time: String?
+        var day: String?
+
+        enum CodingKeys: String, CodingKey {
+            case schedule, time, day
+            case beforeStart = "before_start"
+        }
+    }
+
+    /// Deep scan before each start, and the schedule (off, daily or weekly at `time`).
+    public func deepScanOptions(
+        serverId: String,
+        beforeStart: Bool? = nil,
+        schedule: String? = nil,
+        time: String? = nil,
+        day: String? = nil
+    ) async throws -> DeepScanReport {
+        let body = try AgentClient.encode(DeepScanChange(beforeStart: beforeStart, schedule: schedule, time: time, day: day))
+        return try await call("POST", content(serverId) + "/mods/deepscan/options", body: body, as: DeepScanReport.self)
     }
 
     /// What Update all would change, checked on Modrinth now (a mod at a

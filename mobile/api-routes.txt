@@ -17,6 +17,7 @@ POST /api/servers/{server_id}/server/stop
 POST /api/servers/{server_id}/server/restart
 POST /api/servers/{server_id}/server/restart-when-empty
 POST /api/servers/{server_id}/server/cancel-restart-when-empty
+POST /api/servers/{server_id}/server/skip-check
 POST /api/servers/{server_id}/server/diagnose
 GET /api/servers/{server_id}/server/diagnose
 POST /api/servers/{server_id}/server/diagnose/changes
@@ -94,6 +95,7 @@ POST /api/servers/{server_id}/mods/scan/options
 GET /api/servers/{server_id}/mods/deepscan
 POST /api/servers/{server_id}/mods/deepscan
 POST /api/servers/{server_id}/mods/deepscan/quarantine
+POST /api/servers/{server_id}/mods/deepscan/options
 GET /api/servers/{server_id}/mods/update-all
 POST /api/servers/{server_id}/mods/update-all
 GET /api/servers/{server_id}/mods/search

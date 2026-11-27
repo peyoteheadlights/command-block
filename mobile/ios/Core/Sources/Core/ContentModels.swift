@@ -837,6 +837,8 @@ public struct JarScanReport: Decodable, Equatable, Sendable {
     public var checkedAt: Double?
     public var weekly: Bool
     public var onChange: Bool
+    public var beforeStart: Bool
+    public var askFirst: Bool
     public var jars: [JarScanRow]
     public var quarantine: [QuarantinedJar]
     public var summary: JarScanSummary
@@ -845,6 +847,8 @@ public struct JarScanReport: Decodable, Equatable, Sendable {
         case weekly, jars, quarantine, summary
         case checkedAt = "checked_at"
         case onChange = "on_change"
+        case beforeStart = "before_start"
+        case askFirst = "ask_first"
     }
 
     public init(from decoder: Decoder) throws {
@@ -852,6 +856,8 @@ public struct JarScanReport: Decodable, Equatable, Sendable {
         checkedAt = c.maybe(.checkedAt)
         weekly = c.value(.weekly, true)
         onChange = c.value(.onChange, true)
+        beforeStart = c.value(.beforeStart, false)
+        askFirst = c.value(.askFirst, false)
         jars = c.each(.jars)
         quarantine = c.each(.quarantine)
         summary = c.value(.summary, JarScanSummary())
@@ -969,14 +975,42 @@ public struct DeepScanReport: Decodable, Equatable, Sendable {
     public var scanners: [DeepScanScanner]
     public var running: DeepScanRunning?
     public var last: DeepScanLast?
+    public var options: DeepScanOptions
 
-    enum CodingKeys: String, CodingKey { case scanners, running, last }
+    enum CodingKeys: String, CodingKey { case scanners, running, last, options }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         scanners = c.each(.scanners)
         running = c.maybe(.running)
         last = c.maybe(.last)
+        options = c.value(.options, DeepScanOptions())
+    }
+}
+
+/// Deep scan before each start, and the daily or weekly run. `next` is
+/// when the next run starts (nil when the schedule is off).
+public struct DeepScanOptions: Decodable, Equatable, Sendable {
+    public var beforeStart = false
+    public var schedule = "off"
+    public var time = "04:00"
+    public var day = "sun"
+    public var next: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case schedule, time, day, next
+        case beforeStart = "before_start"
+    }
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        beforeStart = c.value(.beforeStart, false)
+        schedule = c.value(.schedule, "off")
+        time = c.value(.time, "04:00")
+        day = c.value(.day, "sun")
+        next = c.maybe(.next)
     }
 }
 

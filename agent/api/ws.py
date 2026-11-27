@@ -29,7 +29,14 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..events import OWNER_ONLY_EVENTS
 from ..security.auth import AuthError
-from ..security.permissions import CONSOLE_READ, WS_ACTIONS, can_see_server, check, on_server
+from ..security.permissions import (
+    CONSOLE_READ,
+    WS_ACTIONS,
+    can_see_server,
+    check,
+    may_get_alert,
+    on_server,
+)
 
 log = logging.getLogger("msc.ws")
 
@@ -122,6 +129,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             return False
         if event.type == "alert" and event.server_id is None and not who["principal"].is_owner:
             return False  # alerts about the PC itself are the owner's, as in /api/alerts
+        if event.type == "alert" and not may_get_alert(
+            who["principal"], (event.data or {}).get("event"), event.server_id
+        ):
+            return False  # this alert needs a permission they don't have there
         if event.type == "alert" and not core.notifier.device_wants(
             who["principal"].token_hash, str((event.data or {}).get("event"))
         ):

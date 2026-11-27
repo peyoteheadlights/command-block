@@ -157,6 +157,16 @@ public final class AgentClient: @unchecked Sendable {
         try await call("GET", "/api/auth/me", as: Me.self)
     }
 
+    /// Owner only: starts the server now without waiting for the jar checks.
+    public func skipCheck(serverId: String) async throws -> Ok {
+        try await call(
+            "POST",
+            "/api/servers/\(AgentClient.pathSegment(serverId))/server/skip-check",
+            body: Data("{}".utf8),
+            as: Ok.self
+        )
+    }
+
     public func servers() async throws -> ServerList {
         try await call("GET", "/api/servers", as: ServerList.self)
     }

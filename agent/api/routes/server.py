@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ... import downtime, joinguard
+from ...events import Event
 from ...minecraft.commands import CommandError, validate
 from ...minecraft.java import memory_limit_mb
 from ...minecraft.process import ServerError
@@ -32,6 +33,7 @@ from ..responses import (
     CrashBlockCleared,
     DiagnoseStarted,
     Diagnosis,
+    Ok,
     Performance,
     PerformanceCsv,
     Requested,
@@ -94,6 +96,9 @@ async def server_start(
     principal: Principal = Depends(require(SERVER_CONTROL)),
     ctx=Depends(get_server),
 ):
+    if ctx.jarscan.checks_before_start() and not ctx.server.running:
+        _can_start(ctx)
+        return _start_after_checks(ctx, request, "server_start", ctx.server.start(principal.user))
     with audit_failure(ctx, request, "server_start"):
         result = await ctx.server.start(actor=principal.user)
     audit(ctx, request, "server_start", detail=f"pid={result['pid']}")
@@ -109,6 +114,77 @@ async def server_start(
         "state": ctx.server.state.value,
         "startup_confirmed": ctx.server.startup_confirmed,
     }
+
+
+def _can_start(ctx) -> None:
+    """What would stop a start, said now and not after the jar checks."""
+    state = ctx.server.state.value
+    if state in ("STARTING", "ONLINE", "STOPPING"):
+        raise HTTPException(409, f"The server is already {state.lower()}; start ignored")
+    if state == "RESTART_PENDING":
+        raise HTTPException(
+            409,
+            "An automatic restart is already scheduled. "
+            "Use Restart Now to start immediately, or Cancel to stay stopped.",
+        )
+    pre = ctx.server.preflight()
+    if not pre.ok:
+        raise HTTPException(409, "; ".join(pre.problems))
+
+
+def _start_after_checks(ctx, request: Request, action: str, starting) -> dict:
+    """The start waits for the jar checks before start, which can take
+    minutes, so the answer comes now and the start goes on in the background.
+    A start that then fails says so as a start_failed event."""
+    if ctx.server.checking_jars:
+        starting.close()
+        raise HTTPException(409, "The jars are being checked before a start already.")
+
+    # Set now, so a second tap before the checks begin gets the 409 above.
+    ctx.server.checking_jars = True
+
+    async def run() -> None:
+        try:
+            result = await starting
+            if isinstance(result, dict) and result.get("restarted") is False:
+                raise ServerError("it didn't come back up in time")
+            audit(ctx, request, action)
+        except Exception as exc:
+            audit(ctx, request, action, result="failed", detail=str(exc))
+            await ctx.bus.publish(
+                Event(type="start_failed", level="error", message=f"The server didn't start: {exc}")
+            )
+        finally:
+            ctx.server.checking_jars = False
+
+    task = asyncio.create_task(run())
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+    return {
+        "result": "CHECKING",
+        "detail": "The jars are checked first, then the server starts. Watch for the "
+        "server_started or start_failed event.",
+        "state": ctx.server.state.value,
+        "startup_confirmed": False,
+    }
+
+
+_background: set[asyncio.Task] = set()
+
+
+@router.post("/server/skip-check", response_model=Ok)
+async def skip_check(
+    request: Request,
+    principal: Principal = Depends(require(SERVER_CONTROL)),
+    ctx=Depends(get_server),
+):
+    """Skip on "Checking jars...": the start goes on without waiting."""
+    if not principal.is_owner:
+        raise HTTPException(403, "Only the owner can skip the jar checks.")
+    if not ctx.jarscan.skip():
+        raise HTTPException(409, "No jar check is running before a start.")
+    audit(ctx, request, "skip_jar_check")
+    return {"ok": True}
 
 
 @router.get("/start-request", response_model=StartRequestOpen)
@@ -175,6 +251,10 @@ async def server_restart(
     principal: Principal = Depends(require(SERVER_CONTROL)),
     ctx=Depends(get_server),
 ):
+    if ctx.jarscan.checks_before_start():
+        return _start_after_checks(
+            ctx, request, "server_restart", ctx.server.restart(actor=principal.user)
+        )
     with audit_failure(ctx, request, "server_restart"):
         result = await ctx.server.restart(actor=principal.user)
     audit(ctx, request, "server_restart")

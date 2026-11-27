@@ -174,6 +174,10 @@ class AgentClient(
         )
     }
 
+    /** Skip on "Checking jars...": the start goes on without waiting. Owner only. */
+    suspend fun skipCheck(serverId: String): Ok =
+        call(post("/api/servers/${path(serverId)}/server/skip-check", JsonObject(emptyMap())), Ok.serializer())
+
     suspend fun alerts(after: Long?, limit: Int = 50): AppAlerts {
         val query = buildString {
             append("?limit=").append(limit)
@@ -864,10 +868,19 @@ class AgentClient(
     suspend fun putBackJar(serverId: String, id: String): JarScanUndone =
         call(post("${server(serverId)}/mods/scan/undo", buildJsonObject { put("id", id) }), JarScanUndone.serializer())
 
-    suspend fun jarScanOptions(serverId: String, weekly: Boolean? = null, onChange: Boolean? = null): JarScanReport {
+    /** [askFirst] is the owner's only. */
+    suspend fun jarScanOptions(
+        serverId: String,
+        weekly: Boolean? = null,
+        onChange: Boolean? = null,
+        beforeStart: Boolean? = null,
+        askFirst: Boolean? = null,
+    ): JarScanReport {
         val body = buildJsonObject {
             weekly?.let { put("weekly", it) }
             onChange?.let { put("on_change", it) }
+            beforeStart?.let { put("before_start", it) }
+            askFirst?.let { put("ask_first", it) }
         }
         return call(post("${server(serverId)}/mods/scan/options", body), JarScanReport.serializer())
     }
@@ -884,6 +897,23 @@ class AgentClient(
             filename?.let { put("filename", it) }
         }
         return call(post("${server(serverId)}/mods/deepscan", body), DeepScanReport.serializer())
+    }
+
+    /** [schedule] is "off", "daily" or "weekly", [time] "HH:MM", [day] "mon" to "sun". */
+    suspend fun deepScanOptions(
+        serverId: String,
+        beforeStart: Boolean? = null,
+        schedule: String? = null,
+        time: String? = null,
+        day: String? = null,
+    ): DeepScanReport {
+        val body = buildJsonObject {
+            beforeStart?.let { put("before_start", it) }
+            schedule?.let { put("schedule", it) }
+            time?.let { put("time", it) }
+            day?.let { put("day", it) }
+        }
+        return call(post("${server(serverId)}/mods/deepscan/options", body), DeepScanReport.serializer())
     }
 
     suspend fun deepScanQuarantine(serverId: String, root: String, path: String): DeepScanReport =

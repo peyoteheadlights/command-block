@@ -34,6 +34,8 @@ log = logging.getLogger("msc.notify")
 PUSH_TEST_TITLE = "Test alert"
 # Its own kind, so no alert list (shared or a device's own) can hold it back.
 TEST_EVENT = "test_alert"
+# Alerts the Discord bot also sends the owner as a private message.
+OWNER_DM = frozenset({"jar_scan_found"})
 
 # event type -> (settings key, colour, title). "{server}" in a title is
 # replaced with the server's name, so an alert reads "Survival crashed".
@@ -45,6 +47,7 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "rented_started": ("server_started", 0x3BA55D, "{server} is online"),
     "rented_stopped": ("server_stopped", 0x9AA0A6, "{server} stopped"),
     "rented_unreachable": ("server_crashed", 0xED4245, "{server}: the host's panel didn't answer"),
+    "start_failed": ("server_crashed", 0xED4245, "{server} didn't start"),
     "server_restarted": ("server_restarted", 0x5865F2, "{server} restarted"),
     "server_recovered": ("server_recovered", 0x3BA55D, "{server} recovered"),
     "crash_loop": ("server_crashed", 0xED4245, "{server}: automatic restart disabled"),
@@ -294,7 +297,7 @@ class Notifier:
         self.apns = apns.Sender(config)
         # Whether an account may see a server's alerts (user, server id);
         # set by AgentCore from the accounts. None: everyone sees everything.
-        self.can_see: Callable[[str, str | None], bool] | None = None
+        self.can_see: Callable[[str, str | None, str], bool] | None = None
         # This PC's name once it shares its accounts (agent/yourpcs.py).
         self.pc_label: Callable[[], str | None] = lambda: None
         # The Discord bot, when there is one (set by AgentCore).
@@ -508,6 +511,17 @@ class Notifier:
             await self._report_failure("Discord", str(exc))
             return False
 
+    async def dm_owner(self, bot: Any, event: Event) -> bool:
+        """A private Discord message to the owner, for the alerts in OWNER_DM."""
+        title = self.title(event)[1]
+        try:
+            sent = await bot.tell_owner(f"**{title}**\n{event.message}")
+        except Exception as exc:
+            sent = False
+            log.info("owner DM failed: %s", exc)
+        self._log("discord_dm", event.type, "sent" if sent else "failed")
+        return sent
+
     async def send_bot(self, bot: Any, event: Event) -> bool:
         try:
             sent = await bot.post_alert(event, self.embed(event))
@@ -652,7 +666,7 @@ class Notifier:
         targets: dict[str, list[str]] = {"android": [], "ios": []}
         for phone in fcm.phones(self.db):
             if (
-                self.can_see is None or self.can_see(phone["user"], event.server_id)
+                self.can_see is None or self.can_see(phone["user"], event.server_id, event.type)
             ) and self.device_wants(phone["session"], event.type):
                 targets[phone["platform"]].append(phone["token"])
         results: dict[str, fcm.SendResult] = {}
@@ -758,6 +772,8 @@ class Notifier:
                 tasks.append(self.send_discord(event))
             if shared and self.config.notifications.email_enabled:
                 tasks.append(self.send_email(event))
+            if shared and bot is not None and event.type in OWNER_DM:
+                tasks.append(self.dm_owner(bot, event))
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
         except Exception:

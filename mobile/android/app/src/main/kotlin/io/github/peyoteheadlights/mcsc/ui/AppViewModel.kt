@@ -628,6 +628,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun skipCheck(serverId: String) {
+        val client = client() ?: return
+        viewModelScope.launch {
+            try {
+                client.skipCheck(serverId)
+            } catch (e: AgentException) {
+                prefs.lastProblem = e.key
+                update(serverId) { it.copy(problem = Message.of(e)) }
+            }
+            refreshServer(serverId)
+        }
+    }
+
     private fun update(serverId: String, change: (ServerUi) -> ServerUi) {
         server = server + (serverId to change(server[serverId] ?: ServerUi()))
     }

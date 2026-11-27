@@ -157,9 +157,17 @@ final class ContentPages {
         }
     }
 
-    func scanOptions(_ strings: Strings, weekly: Bool? = nil, onChange: Bool? = nil) async {
+    func scanOptions(
+        _ strings: Strings,
+        weekly: Bool? = nil,
+        onChange: Bool? = nil,
+        beforeStart: Bool? = nil,
+        askFirst: Bool? = nil
+    ) async {
         await work("jar_scan_options", strings) { [weak self] client, id in
-            let report = try await client.jarScanOptions(serverId: id, weekly: weekly, onChange: onChange)
+            let report = try await client.jarScanOptions(
+                serverId: id, weekly: weekly, onChange: onChange, beforeStart: beforeStart, askFirst: askFirst
+            )
             self?.scan = PageRead(value: report)
             return nil
         }
@@ -183,6 +191,22 @@ final class ContentPages {
             everywhere = PageRead(problem: problem)
         } catch {
             everywhere = nil
+        }
+    }
+
+    func deepOptions(
+        _ strings: Strings,
+        beforeStart: Bool? = nil,
+        schedule: String? = nil,
+        time: String? = nil,
+        day: String? = nil
+    ) async {
+        await work("deep_scan_options", strings) { [weak self] client, id in
+            let report = try await client.deepScanOptions(
+                serverId: id, beforeStart: beforeStart, schedule: schedule, time: time, day: day
+            )
+            self?.showDeep(PageRead(value: report))
+            return nil
         }
     }
 

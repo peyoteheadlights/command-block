@@ -909,6 +909,22 @@ class Bot:
         raise Refused("The screenshot has to be a PNG or JPEG picture.")
 
     # -- alerts ------------------------------------------------------------------
+    def owner_id(self) -> str | None:
+        """The Discord account that made the bot's application: the owner,
+        who set the bot up. A team's owner when a team holds it."""
+        team = self.app.get("team") or {}
+        if team.get("owner_user_id"):
+            return str(team["owner_user_id"])
+        owner = (self.app.get("owner") or {}).get("id")
+        return str(owner) if owner else None
+
+    async def tell_owner(self, words: str) -> bool:
+        """A private message to the owner. False when it couldn't be sent."""
+        owner = self.owner_id()
+        if not self.connected or owner is None:
+            return False
+        return await self._private(owner, words)
+
     def posts_alert(self, event: Event) -> bool:
         """Whether this alert goes to an alerts channel: only a Minecraft
         server's own alerts, never the ones about the PC (owner only)."""

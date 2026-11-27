@@ -314,6 +314,17 @@ def legacy_names(held: frozenset[str]) -> list[str]:
     return sorted(names)
 
 
+# Alerts that need a permission on top of seeing the server: Known bad
+# goes to moderators who can run the deep scan.
+ALERT_NEEDS = {"jar_scan_found": DEEP_SCAN}
+
+
+def may_get_alert(principal: Principal, event_type: str | None, server_id: str | None) -> bool:
+    """Whether this account is told about this kind of alert on that server."""
+    need = ALERT_NEEDS.get(str(event_type))
+    return need is None or need in on_server(principal, server_id)
+
+
 def can_see_server(principal: Principal, server_id: str | None) -> bool:
     """Whether this account may see (and act on) that server at all: a
     moderator sees the servers where the owner ticked something."""

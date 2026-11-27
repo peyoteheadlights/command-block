@@ -324,11 +324,14 @@ public struct ServerStatus: Codable, Equatable, Sendable {
     /// What changed since it started that it only reads at start ("mods", "settings"...).
     public var restartWaiting: [String]
     public var restartWhenEmpty: Bool
+    /// The jar check or deep scan runs before a start; the start waits for it.
+    public var checkingJars: Bool
 
     enum CodingKeys: String, CodingKey {
         case name, state, uptime, players, answering
         case restartWaiting = "restart_waiting"
         case restartWhenEmpty = "restart_when_empty"
+        case checkingJars = "checking_jars"
         case serverId = "server_id"
         case stateVerified = "state_verified"
         case minecraftVersion = "minecraft_version"
@@ -352,7 +355,8 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         maxPlayers: Int? = nil,
         answering: Answering? = nil,
         restartWaiting: [String] = [],
-        restartWhenEmpty: Bool = false
+        restartWhenEmpty: Bool = false,
+        checkingJars: Bool = false
     ) {
         self.restartWaiting = restartWaiting
         self.restartWhenEmpty = restartWhenEmpty
@@ -368,6 +372,7 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         self.players = players
         self.maxPlayers = maxPlayers
         self.answering = answering
+        self.checkingJars = checkingJars
     }
 
     public init(from decoder: Decoder) throws {
@@ -386,6 +391,7 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         answering = try? c.decodeIfPresent(Answering.self, forKey: .answering)
         restartWaiting = try c.decodeIfPresent([String].self, forKey: .restartWaiting) ?? []
         restartWhenEmpty = try c.decodeIfPresent(Bool.self, forKey: .restartWhenEmpty) ?? false
+        checkingJars = try c.decodeIfPresent(Bool.self, forKey: .checkingJars) ?? false
     }
 }
 

@@ -56,6 +56,14 @@ struct ServerView: View {
         .task(id: serverId) {
             await pages.loadCards()
         }
+        .task(id: status?.checkingJars == true) {
+            // The start waits for the jar checks; read again until they finish.
+            while status?.checkingJars == true {
+                try? await Task.sleep(for: .seconds(2))
+                if Task.isCancelled { return }
+                await load()
+            }
+        }
         .onAppear { model.watch(serverId) }
         .onDisappear { model.unwatch(serverId) }
         .alert(confirmTitle, isPresented: confirming, presenting: pending) { action in
@@ -110,6 +118,14 @@ struct ServerView: View {
                 if let action = waiting.action {
                     Button(model.t(action.labelKey)) { run(action) }
                         .frame(minHeight: 44)
+                        .disabled(working)
+                }
+            }
+            if status?.checkingJars == true {
+                Text(model.t("head.checking_jars"))
+                    .foregroundStyle(palette.tone(.warning))
+                if model.me?.isOwner == true {
+                    Button(model.t("action.skip_check")) { skipCheck() }
                         .disabled(working)
                 }
             }
@@ -304,6 +320,21 @@ struct ServerView: View {
             return
         }
         loaded = true
+    }
+
+    /// Owner only: start now without waiting for the jar checks.
+    private func skipCheck() {
+        guard let client = model.client else { return }
+        working = true
+        Task {
+            do {
+                _ = try await client.skipCheck(serverId: serverId)
+            } catch let error as AgentError {
+                result = error.message(model.strings)
+            } catch {}
+            working = false
+            await load()
+        }
     }
 
     private func run(_ action: QuickAction) {

@@ -6,13 +6,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTime, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
     QHBoxLayout,
     QRadioButton,
+    QTimeEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
 
 RUN = "deepscan.run"
 POLL_MS = 2000
+SCHEDULES = ("off", "daily", "weekly")
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
 def said(words: dict) -> str:
@@ -56,6 +59,32 @@ class DeepScanCard:
         self.run_button.clicked.connect(self.run)
         self.status = label(kind="sub")
         self.rows = QVBoxLayout()
+        # Before each start, and the daily or weekly run.
+        self.before_start = QCheckBox()
+        self.before_start.clicked.connect(lambda on: self.set_options(before_start=on))
+        self.schedule = QComboBox()
+        self.day = QComboBox()
+        for combo in (self.schedule, self.day):
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.time = QTimeEdit()
+        self.time.setDisplayFormat("HH:mm")
+        self.schedule.activated.connect(lambda i: self.set_options(schedule=SCHEDULES[i]))
+        self.day.activated.connect(lambda i: self.set_options(day=DAYS[i]))
+        self.time.editingFinished.connect(
+            lambda: self.set_options(time=self.time.time().toString("HH:mm"))
+        )
+        self.next_run = label(kind="sub")
+        self.plan = QWidget()
+        plan = QVBoxLayout(self.plan)
+        plan.setContentsMargins(0, 0, 0, 0)
+        self.schedule_title = label()
+        when = QHBoxLayout()
+        for part in (self.schedule_title, self.schedule, self.day, self.time):
+            when.addWidget(part)
+        when.addStretch()
+        plan.addWidget(self.before_start)
+        plan.addLayout(when)
+        plan.addWidget(self.next_run)
         layout.addWidget(self.intro)
         layout.addLayout(self.scanners)
         layout.addWidget(self.scope_title)
@@ -68,6 +97,7 @@ class DeepScanCard:
         layout.addWidget(self.run_button)
         layout.addWidget(self.status)
         layout.addLayout(self.rows)
+        layout.addWidget(self.plan)
         self.timer = QTimer(self.frame)
         self.timer.setInterval(POLL_MS)
         self.timer.timeout.connect(self.ask)
@@ -92,6 +122,17 @@ class DeepScanCard:
             widget.setVisible(allowed and has_content)
         for shown in (self.scope["folder"], self.scope_title, self.folder_note, self.run_button):
             shown.setVisible(allowed)
+        self.before_start.setText(text("deepscan.before_start", word=word))
+        self.before_start.setVisible(has_content)  # the check before start reads that folder
+        self.schedule.clear()
+        self.schedule.addItems([text(f"deepscan.schedule.{key}") for key in SCHEDULES])
+        self.schedule.setAccessibleName(text("deepscan.schedule"))
+        self.schedule_title.setText(text("deepscan.schedule"))
+        self.day.clear()
+        self.day.addItems([text(f"deepscan.day.{key}") for key in DAYS])
+        self.day.setAccessibleName(text("deepscan.schedule_day"))
+        self.time.setAccessibleName(text("deepscan.schedule_time"))
+        self.plan.setVisible(allowed)
         self.status.setText("")
         refill(self.rows, [])
         self.ask()
@@ -128,6 +169,7 @@ class DeepScanCard:
                 about.append(text("deepscan.downloaded", tag=got["tag"], when=clock(got["at"])))
             boxes += [box, label("\n".join(about), "sub")]
         refill(self.scanners, boxes)
+        self.show_options(report.get("options") or {})
         running = report.get("running")
         self.run_button.setEnabled(allowed and not running)
         if running:
@@ -183,7 +225,26 @@ class DeepScanCard:
             rows.append(row)
         refill(self.rows, rows)
 
+    def show_options(self, options: dict) -> None:
+        self.before_start.setChecked(bool(options.get("before_start")))
+        schedule = options.get("schedule") or "off"
+        self.schedule.setCurrentIndex(SCHEDULES.index(schedule))
+        self.day.setCurrentIndex(DAYS.index(options.get("day") or "sun"))
+        self.time.setTime(QTime.fromString(options.get("time") or "04:00", "HH:mm"))
+        self.day.setVisible(schedule == "weekly")
+        self.time.setVisible(schedule != "off")
+        lines = []
+        if schedule != "off":
+            if options.get("next"):
+                lines.append(text("deepscan.next", when=clock(options["next"])))
+            lines.append(text("deepscan.schedule_note"))
+        self.next_run.setText("\n".join(lines))
+        self.next_run.setVisible(bool(lines))
+
     # ------------------------------------------------------------ actions
+    def set_options(self, **change: object) -> None:
+        self.page.ask("POST", "/mods/deepscan/options", self.show, self.page.said, body=change)
+
     def tick(self, key: str, on: bool) -> None:
         if on:
             self.picked.add(key)

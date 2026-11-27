@@ -1177,6 +1177,18 @@ struct ContentView: View {
                         set: { on in Task { await content.scanOptions(strings, onChange: on) } }
                     ))
                     .disabled(!idle)
+                    Toggle(model.t("jarscan.before_start"), isOn: Binding(
+                        get: { report.beforeStart },
+                        set: { on in Task { await content.scanOptions(strings, beforeStart: on) } }
+                    ))
+                    .disabled(!idle)
+                    if model.me?.isOwner == true {
+                        Toggle(model.t("jarscan.ask_first"), isOn: Binding(
+                            get: { report.askFirst },
+                            set: { on in Task { await content.scanOptions(strings, askFirst: on) } }
+                        ))
+                        .disabled(!idle)
+                    }
                     Presses(presses: [
                         Press(title: model.t(content.busy == "jar_scan" ? "jarscan.checking" : "jarscan.check_again"), enabled: idle) {
                             Task { await content.scanJars(strings) }
@@ -1229,6 +1241,9 @@ struct ContentView: View {
         }
         if let report = content.deep.value {
             DeepScanCard(content: content, report: report, word: word, palette: palette, now: now)
+            if allowed {
+                DeepScanPlan(content: content, options: report.options, word: word, palette: palette)
+            }
             ForEach(report.last?.found ?? []) { item in
                 CardBox(palette: palette) {
                     let where_ = item.root == "java" ? strings.t("deepscan.in_java", ["where": item.path]) : item.path
@@ -2267,6 +2282,63 @@ private struct DeepScanCard: View {
             }
         } else {
             Text(verbatim: strings.t("deepscan.never_run")).foregroundStyle(palette.textPrimary)
+        }
+    }
+}
+
+/// Deep scan before each start, and the daily or weekly run.
+private struct DeepScanPlan: View {
+    let content: ContentPages
+    let options: DeepScanOptions
+    let word: String
+    let palette: Palette
+    @Environment(AppModel.self) private var model
+
+    private static let schedules = ["off", "daily", "weekly"]
+    private static let days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    private static let hours = (0..<24).map { String(format: "%02d:00", $0) }
+
+    var body: some View {
+        let strings = model.strings
+        let idle = content.busy == nil
+        // Whole hours here; a time set on the desktop app with minutes is kept and shown.
+        let times = Self.hours.contains(options.time) ? Self.hours : Self.hours + [options.time]
+        CardBox(palette: palette) {
+            Toggle(strings.t("deepscan.before_start", ["word": word]), isOn: Binding(
+                get: { options.beforeStart },
+                set: { on in Task { await content.deepOptions(strings, beforeStart: on) } }
+            ))
+            .disabled(!idle)
+            Picker(model.t("deepscan.schedule"), selection: Binding(
+                get: { options.schedule },
+                set: { pick in Task { await content.deepOptions(strings, schedule: pick) } }
+            )) {
+                ForEach(Self.schedules, id: \.self) { Text(model.t("deepscan.schedule." + $0)).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .disabled(!idle)
+            if options.schedule == "weekly" {
+                Picker(model.t("deepscan.schedule_day"), selection: Binding(
+                    get: { options.day },
+                    set: { pick in Task { await content.deepOptions(strings, day: pick) } }
+                )) {
+                    ForEach(Self.days, id: \.self) { Text(model.t("deepscan.day." + $0)).tag($0) }
+                }
+                .disabled(!idle)
+            }
+            if options.schedule != "off" {
+                Picker(model.t("deepscan.schedule_time"), selection: Binding(
+                    get: { options.time },
+                    set: { pick in Task { await content.deepOptions(strings, time: pick) } }
+                )) {
+                    ForEach(times, id: \.self) { Text(verbatim: $0).tag($0) }
+                }
+                .disabled(!idle)
+                if let next = options.next {
+                    Hint(text: strings.t("deepscan.next", ["when": Display.dateTime(strings, next)]), palette: palette)
+                }
+                Hint(text: model.t("deepscan.schedule_note"), palette: palette)
+            }
         }
     }
 }

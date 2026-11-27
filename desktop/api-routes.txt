@@ -36,6 +36,7 @@ GET /api/headlessmc
 POST /api/headlessmc/sign-in
 POST /api/headlessmc/sign-out
 POST /api/servers/{server_id}/server/restart-now
+POST /api/servers/{server_id}/server/skip-check
 POST /api/servers/{server_id}/server/cancel-restart
 POST /api/servers/{server_id}/server/clear-crash-block
 POST /api/servers/{server_id}/server/restart-when-empty
@@ -119,6 +120,10 @@ GET /api/servers/{server_id}/mods/scan
 POST /api/servers/{server_id}/mods/scan
 POST /api/servers/{server_id}/mods/scan/undo
 POST /api/servers/{server_id}/mods/scan/options
+GET /api/servers/{server_id}/mods/deepscan
+POST /api/servers/{server_id}/mods/deepscan
+POST /api/servers/{server_id}/mods/deepscan/quarantine
+POST /api/servers/{server_id}/mods/deepscan/options
 GET /api/servers/{server_id}/mods/dependencies
 GET /api/servers/{server_id}/mods/versions/{mod_id}
 GET /api/servers/{server_id}/mods/impact

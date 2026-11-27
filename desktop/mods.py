@@ -467,11 +467,21 @@ class ModsPage(SharePage):
         self.weekly.clicked.connect(lambda on: self.scan_options(weekly=on))
         self.on_change = QCheckBox()
         self.on_change.clicked.connect(lambda on: self.scan_options(on_change=on))
+        self.before_start = QCheckBox()
+        self.before_start.clicked.connect(lambda on: self.scan_options(before_start=on))
+        self.ask_first = QCheckBox()
+        self.ask_first.clicked.connect(lambda on: self.scan_options(ask_first=on))
         layout.addWidget(scan_intro)
         layout.addWidget(self.scan_summary)
         layout.addLayout(self.scan_rows)
         layout.addLayout(self.quarantine)
-        for control in (self.scan_again, self.weekly, self.on_change):
+        for control in (
+            self.scan_again,
+            self.weekly,
+            self.on_change,
+            self.before_start,
+            self.ask_first,
+        ):
             layout.addWidget(control)
         self.column.addWidget(self.scan_card)
         self.deep = DeepScanCard(self)
@@ -525,6 +535,8 @@ class ModsPage(SharePage):
             (self.scan_again.setText, "jarscan.check_again"),
             (self.weekly.setText, "jarscan.weekly"),
             (self.on_change.setText, "jarscan.on_change"),
+            (self.before_start.setText, "jarscan.before_start"),
+            (self.ask_first.setText, "jarscan.ask_first"),
             (self.copy.setText, "desktop.mods.copy"),
             (title_of(self.players_card).setText, "desktop.mods.for_players"),
             (dot_of(self.players_card).say, "desktop.mods.for_players_intro"),
@@ -829,9 +841,17 @@ class ModsPage(SharePage):
             rows.append(row)
         refill(self.quarantine, rows)
         self.scan_again.setVisible(manage)
-        for box, key in ((self.weekly, "weekly"), (self.on_change, "on_change")):
+        boxes = (
+            (self.weekly, "weekly"),
+            (self.on_change, "on_change"),
+            (self.before_start, "before_start"),
+            (self.ask_first, "ask_first"),
+        )
+        for box, key in boxes:
             box.setChecked(bool(report.get(key)))
             box.setVisible(manage)
+        # Only the owner can turn off the automatic stop.
+        self.ask_first.setVisible(manage and self.window_.role in (None, "owner"))
 
     def scan_jars(self) -> None:
         self.scan_summary.setText(text("jarscan.checking"))

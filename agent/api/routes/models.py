@@ -114,6 +114,15 @@ class DeepScanQuarantineRequest(BaseModel):
 class JarScanOptionsRequest(BaseModel):
     weekly: bool | None = None
     on_change: bool | None = None
+    before_start: bool | None = None
+    ask_first: bool | None = None  # owner only
+
+
+class DeepScanOptionsRequest(BaseModel):
+    before_start: bool | None = None
+    schedule: Literal["off", "daily", "weekly"] | None = None
+    time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    day: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"] | None = None
 
 
 class ModUpdateRequest(ModFileRequest):

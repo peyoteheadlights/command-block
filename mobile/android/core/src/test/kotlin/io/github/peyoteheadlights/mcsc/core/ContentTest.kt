@@ -40,6 +40,25 @@ class ContentTest {
         assertEquals("behaviour", found.findings.single().scanner)
     }
 
+    @Test
+    fun `the deep scan plan and the jar check before a start are read`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val off = json.decodeFromString(DeepScanReport.serializer(), """{"scanners":[]}""").options
+        assertEquals("off", off.schedule)
+        assertFalse(off.beforeStart)
+        assertNull(off.next)
+        val plan = json.decodeFromString(
+            DeepScanReport.serializer(),
+            """{"scanners":[],"options":{"before_start":true,"schedule":"weekly","time":"04:00","day":"sun","next":200.0}}""",
+        ).options
+        assertTrue(plan.beforeStart)
+        assertEquals("weekly", plan.schedule)
+        assertEquals("sun", plan.day)
+        assertEquals(200.0, plan.next)
+        val status = json.decodeFromString(ServerStatus.serializer(), """{"state":"offline","checking_jars":true}""")
+        assertTrue(status.checkingJars)
+    }
+
     // ------------------------------------------------------------ the screen's words
     @Test
     fun `the screen is named for what the server type takes`() {

@@ -324,6 +324,20 @@ final class ContentTests: XCTestCase {
         XCTAssertEqual(found.findings.first?.scanner, "behaviour")
     }
 
+    func testTheDeepScanPlanAndTheJarCheckBeforeAStartAreRead() throws {
+        let off = try JSONDecoder().decode(DeepScanReport.self, from: Data(#"{"scanners":[]}"#.utf8)).options
+        XCTAssertEqual(off.schedule, "off")
+        XCTAssertFalse(off.beforeStart)
+        XCTAssertNil(off.next)
+        let plan = try JSONDecoder().decode(DeepScanReport.self, from: Data(#"{"scanners":[],"options":{"before_start":true,"schedule":"weekly","time":"04:00","day":"sun","next":200.0}}"#.utf8)).options
+        XCTAssertTrue(plan.beforeStart)
+        XCTAssertEqual(plan.schedule, "weekly")
+        XCTAssertEqual(plan.day, "sun")
+        XCTAssertEqual(plan.next, 200)
+        let status = try JSONDecoder().decode(ServerStatus.self, from: Data(#"{"state":"offline","checking_jars":true}"#.utf8))
+        XCTAssertTrue(status.checkingJars)
+    }
+
     // MARK: - Modpacks
 
     func testAModpackImportListsItsStepsWithTheVersionChangeOnlyWhenNeeded() {
