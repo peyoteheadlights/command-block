@@ -91,6 +91,9 @@ GET /api/servers/{server_id}/mods/scan
 POST /api/servers/{server_id}/mods/scan
 POST /api/servers/{server_id}/mods/scan/undo
 POST /api/servers/{server_id}/mods/scan/options
+GET /api/servers/{server_id}/mods/deepscan
+POST /api/servers/{server_id}/mods/deepscan
+POST /api/servers/{server_id}/mods/deepscan/quarantine
 GET /api/servers/{server_id}/mods/update-all
 POST /api/servers/{server_id}/mods/update-all
 GET /api/servers/{server_id}/mods/search

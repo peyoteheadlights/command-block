@@ -110,6 +110,28 @@ extension AgentClient {
         return try await call("POST", content(serverId) + "/mods/scan/options", body: try AgentClient.encode(change), as: JarScanReport.self)
     }
 
+    /// The deep scan's checks, the scan running now and its last results. Scans nothing.
+    public func deepScan(serverId: String) async throws -> DeepScanReport {
+        try await call("GET", content(serverId) + "/mods/deepscan", as: DeepScanReport.self)
+    }
+
+    private struct DeepScanAsk: Encodable {
+        var scope: String
+        var scanners: [String]
+        var filename: String?
+    }
+
+    /// Starts a deep scan: `scope` is "jar" (with `filename`), "mods" or "folder".
+    public func runDeepScan(serverId: String, scope: String, scanners: [String], filename: String? = nil) async throws -> DeepScanReport {
+        let body = try AgentClient.encode(DeepScanAsk(scope: scope, scanners: scanners, filename: filename))
+        return try await call("POST", content(serverId) + "/mods/deepscan", body: body, as: DeepScanReport.self)
+    }
+
+    public func deepScanQuarantine(serverId: String, root: String, path: String) async throws -> DeepScanReport {
+        let body = try AgentClient.encode(["root": root, "path": path])
+        return try await call("POST", content(serverId) + "/mods/deepscan/quarantine", body: body, as: DeepScanReport.self)
+    }
+
     /// What Update all would change, checked on Modrinth now (a mod at a
     /// time on the PC, so it can take a while with many).
     public func updateAllPlan(serverId: String) async throws -> UpdateAllPlan {

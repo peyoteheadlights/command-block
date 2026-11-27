@@ -463,35 +463,10 @@ class JarScanner:
             assert_not_symlink(path)
             if not is_inside(self.mods.mods_dir, path):
                 continue
-            stamp = time.strftime("%Y%m%d-%H%M%S")
-            target = self.quarantine_dir / f"{stamp}-{name}"
-            count = 1
-            while target.exists():  # never write over a jar already there
-                target = self.quarantine_dir / f"{stamp}-{count}-{name}"
-                count += 1
-            await asyncio.to_thread(shutil.move, str(path), str(target))
+            item = await self._quarantine(path, entry["name"], entry["sha256"], entry["findings"])
             del saved["jars"][name]
-            saved["quarantine"].append(
-                {
-                    "id": target.name,
-                    "filename": name,
-                    "name": entry["name"],
-                    "sha256": entry["sha256"],
-                    "at": time.time(),
-                    "findings": entry["findings"],
-                }
-            )
-            scanners = ", ".join(sorted({f["scanner"] for f in entry["findings"]}))
-            self.mods.record(
-                "quarantine",
-                user,
-                mod_id=None,
-                mod_name=entry["name"],
-                source="local",
-                sha256=entry["sha256"],
-                result="moved",
-                detail=f"{scanners}: moved to {target.name}",
-            )
+            saved["quarantine"].append(item)
+            self._record(item, user)
             moved.append(name)
         saved["signature"] = _signature(saved["jars"])
         self.save(saved)
@@ -499,23 +474,81 @@ class JarScanner:
             self.mods._cache = None
         return moved
 
+    async def _quarantine(
+        self, path: Path, name: str, sha256: str, findings: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Move one file into the quarantine folder, never over another."""
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        target = self.quarantine_dir / f"{stamp}-{path.name}"
+        count = 1
+        while target.exists():
+            target = self.quarantine_dir / f"{stamp}-{count}-{path.name}"
+            count += 1
+        await asyncio.to_thread(shutil.move, str(path), str(target))
+        return {
+            "id": target.name,
+            "filename": path.name,
+            "name": name,
+            "sha256": sha256,
+            "at": time.time(),
+            "findings": findings,
+        }
+
+    def _record(self, item: dict[str, Any], user: str) -> None:
+        scanners = ", ".join(sorted({f["scanner"] for f in item["findings"]}))
+        self.mods.record(
+            "quarantine",
+            user,
+            mod_id=None,
+            mod_name=item["name"],
+            source="local",
+            sha256=item["sha256"],
+            result="moved",
+            detail=f"{scanners}: moved to {item['id']}",
+        )
+
+    async def quarantine_file(
+        self,
+        path: Path,
+        root: str,
+        rel: str,
+        sha256: str,
+        findings: list[dict[str, Any]],
+        user: str,
+    ) -> bool:
+        """Move a file the deep scan found into quarantine. ``root`` and
+        ``rel`` say where Undo puts it back. Lock held by the caller."""
+        if not path.is_file() or path.is_symlink():
+            return False
+        item = await self._quarantine(path, path.name, sha256, findings)
+        item.update(root=root, path=rel)
+        saved = self.store()
+        saved["quarantine"].append(item)
+        if path.parent == self.mods.mods_dir:
+            saved["jars"].pop(path.name, None)
+        saved["signature"] = _signature(saved["jars"])
+        self.save(saved)
+        self._record(item, user)
+        self.mods._cache = None
+        return True
+
     async def before_start(self) -> None:
         """As the server starts: check jars that changed (no lookup, so the
         start isn't held up by the internet) and move every jar waiting for
         quarantine. A jar that can't be moved stops the start."""
         from ..minecraft.process import ServerError
 
-        if not self.mods.server_type.has_content:
-            return
+        has_content = self.mods.server_type.has_content
         async with self.lock:
             saved = self.store()
-            if self.ctx.config.mods.rescan_on_change:
+            if has_content and self.ctx.config.mods.rescan_on_change:
                 fresh = await asyncio.to_thread(self._refresh, saved, False, False)
                 for entry in self._mark_waiting(saved, fresh):
                     await self._tell(entry)
                 self.save(saved)
             try:
-                moved = await self._move_waiting("agent")
+                moved = await self._move_waiting("agent") if has_content else []
+                moved += await self.ctx.deepscan.move_waiting("agent")
             except OSError as exc:
                 raise ServerError(
                     f"A jar the jar check found something in couldn't be moved to "
@@ -527,7 +560,11 @@ class JarScanner:
     async def tick(self) -> None:
         """The background check: everything again once a week, the jars
         that changed as soon as they change, and a site that couldn't
-        answer again after an hour."""
+        answer again after an hour. Files the deep scan found waiting for
+        quarantine move once the server has stopped."""
+        if self.ctx.deepscan.waiting() and not self._busy():
+            async with self.lock:
+                await self.ctx.deepscan.move_waiting("agent")
         if not self.mods.server_type.has_content:
             return
         settings = self.ctx.config.mods
@@ -557,15 +594,18 @@ class JarScanner:
             if item is None:
                 raise ModError("That jar isn't in quarantine.")
             source = self.quarantine_dir / item["id"]
-            target = self.mods.mods_dir / item["filename"]
-            if not is_inside(self.quarantine_dir, source) or not is_inside(
-                self.mods.mods_dir, target
-            ):
+            home = self.mods.mods_dir
+            target = home / item["filename"]
+            if "root" in item:  # moved by the deep scan
+                home = self.ctx.deepscan.roots().get(item["root"], Path("/nonexistent"))
+                target = home / item["path"]
+            if not is_inside(self.quarantine_dir, source) or not is_inside(home, target):
                 raise ModError("That jar isn't in quarantine.")
             if not source.is_file():
                 raise ModError("The quarantined file is gone from the quarantine folder.")
             if target.exists():
                 raise ModError(f"{item['filename']} is in the folder already. Remove it first.")
+            target.parent.mkdir(parents=True, exist_ok=True)
             await asyncio.to_thread(shutil.move, str(source), str(target))
             saved["quarantine"].remove(item)
             if item["sha256"] not in saved["kept"]:

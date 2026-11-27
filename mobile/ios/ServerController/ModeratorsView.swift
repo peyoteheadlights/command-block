@@ -551,6 +551,11 @@ struct ModeratorServerView: View {
                     let shown = Moderators.shown(group, technical: model.technical, catalogue)
                     if !shown.isEmpty {
                         Section(model.t("mobile.mod.group_\(group.id)")) {
+                            Toggle(model.t("mobile.mod.all_in_group"), isOn: Binding(
+                                get: { current.isSuperset(of: shown) },
+                                set: { on in perms = Moderators.toggleAll(current, shown, on: on, catalogue) }
+                            ))
+                            .frame(minHeight: 44)
                             ForEach(shown, id: \.self) { permission in
                                 Toggle(model.t(Moderators.switchKey(permission)), isOn: Binding(
                                     get: { current.contains(permission) },

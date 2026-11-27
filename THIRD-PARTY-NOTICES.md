@@ -71,3 +71,16 @@ Copyright Steven Looman, under the Apache License 2.0
 (`licenses/Apache-2.0.txt`). It brings aiohttp and its helpers (Apache 2.0),
 voluptuous (BSD), python-didl-lite (Apache 2.0) and defusedxml (PSF), with the
 versions in `requirements-build.lock`.
+
+## YARA-X and YARA Forge
+
+Deep scan checks files with YARA-X 1.25 by VirusTotal
+(https://github.com/VirusTotal/yara-x), Copyright (c) 2024 The YARA-X
+Authors, under the BSD 3-Clause License (`licenses/YARA-X-BSD-3-Clause.txt`).
+It ships as the `yara_x` Python package, not changed.
+
+The YARA Forge rule set (https://github.com/YARAHQ/yara-forge) isn't
+shipped. It is downloaded from its GitHub releases, checked against the
+release's checksum, only when the owner ticks it in Deep scan. Each rule in
+it keeps the license its author gave it, which is written inside the rule.
+

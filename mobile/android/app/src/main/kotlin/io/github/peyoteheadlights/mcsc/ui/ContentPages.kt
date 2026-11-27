@@ -8,6 +8,8 @@ import io.github.peyoteheadlights.mcsc.core.Addon
 import io.github.peyoteheadlights.mcsc.core.AgentClient
 import io.github.peyoteheadlights.mcsc.core.AgentException
 import io.github.peyoteheadlights.mcsc.core.Content
+import io.github.peyoteheadlights.mcsc.core.DeepScanFound
+import io.github.peyoteheadlights.mcsc.core.DeepScanReport
 import io.github.peyoteheadlights.mcsc.core.DependencyPlan
 import io.github.peyoteheadlights.mcsc.core.DependencyReport
 import io.github.peyoteheadlights.mcsc.core.GameForm
@@ -48,6 +50,7 @@ import io.github.peyoteheadlights.mcsc.core.UpdateAllPlan
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -102,6 +105,9 @@ class ContentPages(
         private set
     var scan: Read<JarScanReport> by mutableStateOf(Read())
         private set
+    var deep: Read<DeepScanReport> by mutableStateOf(Read())
+        private set
+    private var watchingDeep = false
     var removing: RemoveAsk? by mutableStateOf(null)
         private set
     var updating: Mod? by mutableStateOf(null)
@@ -126,6 +132,7 @@ class ContentPages(
             dependencies = try { c.dependencies(serverId) } catch (e: AgentException) { null }
             history = try { Read(c.modHistory(serverId)) } catch (e: AgentException) { Read(problem = Message.of(e)) }
             scan = try { Read(c.jarScan(serverId)) } catch (e: AgentException) { Read(problem = Message.of(e)) }
+            showDeep(try { Read(c.deepScan(serverId)) } catch (e: AgentException) { Read(problem = Message.of(e)) })
         }
     }
 
@@ -151,6 +158,35 @@ class ContentPages(
                 Read(problem = Message.of(e))
             }
         }
+    }
+
+    /** Shows the deep scan, and asks again every 2 s while one is running. */
+    private fun showDeep(read: Read<DeepScanReport>) {
+        deep = read
+        if (read.value?.running == null || watchingDeep) return
+        val c = client() ?: return
+        watchingDeep = true
+        scope.launch {
+            try {
+                while (deep.value?.running != null) {
+                    delay(2000)
+                    deep = try { Read(c.deepScan(serverId)) } catch (e: AgentException) { Read(problem = Message.of(e)) }
+                }
+            } finally {
+                watchingDeep = false
+            }
+            loadMods() // a Known bad file may have gone to quarantine
+        }
+    }
+
+    fun runDeepScan(what: String, scanners: List<String>, filename: String?, strings: Strings) = work("deep_scan", strings) {
+        showDeep(Read(it.runDeepScan(serverId, what, scanners, filename)))
+        null
+    }
+
+    fun deepQuarantine(item: DeepScanFound, strings: Strings) = work("deep:${item.root}:${item.path}", strings, reload = ::loadMods) {
+        deep = Read(it.deepScanQuarantine(serverId, item.root, item.path))
+        null
     }
 
     /** Checks every jar again; the list reloads after, as a jar may have moved. */

@@ -23,6 +23,23 @@ class ContentTest {
     private fun mod(filename: String = "a.jar", enabled: Boolean = true, status: String = "ok", vararg issues: ModIssue) =
         Mod(filename = filename, modId = "a", name = "Alpha", version = "1.0", enabled = enabled, status = status, issues = issues.toList())
 
+    // ------------------------------------------------------------ deep scan
+    @Test
+    fun `the deep scan answer reads its checks, the running scan and what it listed`() {
+        val report = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(
+            DeepScanReport.serializer(),
+            """{"scanners":[{"id":"behaviour","name":"Behaviour","words":"deepscan.scanner.behaviour","what":"deepscan.what.behaviour","speed":"deepscan.speed.quick","took":{"seconds":1.5,"files":3},"downloaded":null,"extra":1}],"antivirus":{},"running":{"id":"j1","done":2.0,"total":5.0,"progress":0.4},"last":{"finished":100.0,"files":3,"skipped":1,"found":[{"root":"java","path":"bin/x.exe","sha256":"aa","kind":"worth_a_look","findings":[{"scanner":"behaviour","words":"deepscan.rule.starts_program","values":{}}],"state":"found"}],"errors":[],"took":1.5}}""",
+        )
+        assertEquals("behaviour", report.scanners.single().id)
+        assertEquals(3, report.scanners.single().took?.files)
+        assertNull(report.scanners.single().downloaded)
+        assertEquals(2.0, report.running?.done)
+        val found = report.last!!.found.single()
+        assertEquals("java", found.root)
+        assertEquals("worth_a_look", found.kind)
+        assertEquals("behaviour", found.findings.single().scanner)
+    }
+
     // ------------------------------------------------------------ the screen's words
     @Test
     fun `the screen is named for what the server type takes`() {

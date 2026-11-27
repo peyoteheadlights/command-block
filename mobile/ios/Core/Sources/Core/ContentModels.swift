@@ -862,6 +862,124 @@ public struct JarScanUndone: Decodable, Equatable, Sendable {
     public var restored: String?
 }
 
+public struct DeepScanTook: Decodable, Equatable, Sendable {
+    public var seconds: Double
+    public var files: Int
+
+    enum CodingKeys: String, CodingKey { case seconds, files }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        seconds = c.value(.seconds, 0)
+        files = c.value(.files, 0)
+    }
+}
+
+public struct DeepScanDownloaded: Decodable, Equatable, Sendable {
+    public var tag: String
+    public var at: Double
+
+    enum CodingKeys: String, CodingKey { case tag, at }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tag = c.value(.tag, "")
+        at = c.value(.at, 0)
+    }
+}
+
+/// One check the deep scan can run, with how long it took last time.
+public struct DeepScanScanner: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var words: String
+    public var what: String
+    public var speed: String
+    public var took: DeepScanTook?
+    public var downloaded: DeepScanDownloaded?
+
+    enum CodingKeys: String, CodingKey { case id, words, what, speed, took, downloaded }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.value(.id, "")
+        words = c.value(.words, "")
+        what = c.value(.what, "")
+        speed = c.value(.speed, "")
+        took = c.maybe(.took)
+        downloaded = c.maybe(.downloaded)
+    }
+}
+
+/// A file the deep scan listed: Known bad, or Worth a look. `root` is "server" or "java".
+public struct DeepScanFound: Decodable, Equatable, Identifiable, Sendable {
+    public var root: String
+    public var path: String
+    public var kind: String
+    public var findings: [JarScanWords]
+    public var state: String
+
+    public var id: String { root + ":" + path }
+
+    enum CodingKeys: String, CodingKey { case root, path, kind, findings, state }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        root = c.value(.root, "server")
+        path = c.value(.path, "")
+        kind = c.value(.kind, "")
+        findings = c.each(.findings)
+        state = c.value(.state, "")
+    }
+}
+
+public struct DeepScanLast: Decodable, Equatable, Sendable {
+    public var finished: Double
+    public var files: Int
+    public var skipped: Int
+    public var found: [DeepScanFound]
+    public var errors: [JarScanWords]
+
+    enum CodingKeys: String, CodingKey { case finished, files, skipped, found, errors }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        finished = c.value(.finished, 0)
+        files = c.value(.files, 0)
+        skipped = c.value(.skipped, 0)
+        found = c.each(.found)
+        errors = c.each(.errors)
+    }
+}
+
+public struct DeepScanRunning: Decodable, Equatable, Sendable {
+    public var done: Double?
+    public var total: Double?
+
+    enum CodingKeys: String, CodingKey { case done, total }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        done = c.maybe(.done)
+        total = c.maybe(.total)
+    }
+}
+
+/// The deep scan: its checks, the scan running now and the last results.
+public struct DeepScanReport: Decodable, Equatable, Sendable {
+    public var scanners: [DeepScanScanner]
+    public var running: DeepScanRunning?
+    public var last: DeepScanLast?
+
+    enum CodingKeys: String, CodingKey { case scanners, running, last }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        scanners = c.each(.scanners)
+        running = c.maybe(.running)
+        last = c.maybe(.last)
+    }
+}
+
 /// A Modrinth search result. `iconUrl` is loaded straight from Modrinth.
 public struct ModrinthHit: Decodable, Equatable, Identifiable, Sendable {
     public var projectId: String?

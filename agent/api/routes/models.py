@@ -100,6 +100,17 @@ class JarScanUndoRequest(BaseModel):
     id: str = Field(max_length=200)
 
 
+class DeepScanRequest(BaseModel):
+    scope: Literal["jar", "mods", "folder"]
+    scanners: list[str] = Field(max_length=10)
+    filename: str | None = Field(default=None, max_length=180)
+
+
+class DeepScanQuarantineRequest(BaseModel):
+    root: Literal["server", "mods", "java"]
+    path: str = Field(max_length=1000)
+
+
 class JarScanOptionsRequest(BaseModel):
     weekly: bool | None = None
     on_change: bool | None = None

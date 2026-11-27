@@ -48,6 +48,7 @@ from .minecraft.playeractions import PlayerActions
 from .minecraft.process import MinecraftServer, ServerError
 from .mods import sides
 from .mods.fit import Later as FitCheck
+from .mods.deepscan import DeepScanner
 from .mods.jarscan import JarScanner
 from .mods.manager import ModManager
 from .monitoring.answering import AnswerWatch
@@ -103,6 +104,7 @@ class ServerContext:
         # The "Still fit?" check, after a mod or version change (agent/mods/fit.py).
         self.fit = FitCheck(self)
         self.jarscan = JarScanner(self)
+        self.deepscan = DeepScanner(self)
         self.backups = BackupManager(self.config, self.bus, self.db, self.server, jobs=core.jobs)
         self.crashes = CrashReporter(
             self.config, self.db, self.server, self.metrics, self.players, self.mods

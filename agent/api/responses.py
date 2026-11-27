@@ -1572,6 +1572,29 @@ class JarScanReport(Open):
     summary: dict[str, Any]
 
 
+class DeepScanScanner(Open):
+    id: str
+    name: str
+    words: str
+    what: str
+    speed: str
+    took: dict[str, Any] | None = Field(
+        None, description="seconds and files of its last run, or none before the first"
+    )
+    downloaded: dict[str, Any] | None = Field(
+        None, description="YARA Forge only: tag, sha256 and when it was downloaded"
+    )
+
+
+class DeepScanReport(Open):
+    """The deep scan: its scanners, the running scan and the last results."""
+
+    scanners: list[DeepScanScanner]
+    antivirus: bool
+    running: dict[str, Any] | None = None
+    last: dict[str, Any] | None = None
+
+
 class JarScanUndone(Open):
     ok: bool
     restored: str

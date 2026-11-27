@@ -23,6 +23,7 @@ dependencies = [
     "websockets>=12.0",
     "segno>=1.6",               # QR codes for the phone pairing code (pure Python)
     "async-upnp-client>=0.49",  # "Let friends join from the internet": the router port (agent/upnp.py)
+    "yara-x>=1.25",             # Deep scan: our behaviour rules and YARA Forge rules (BSD-3-Clause)
 ]
 
 [project.optional-dependencies]

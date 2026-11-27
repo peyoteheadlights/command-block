@@ -21,6 +21,7 @@ from ...mods.sources import SourceError, split
 from ...mods.updateall import update_all
 from ...security.auth import AuthError, Principal
 from ...security.permissions import (
+    DEEP_SCAN,
     MODS_MANAGE,
     SERVER_VIEW,
     SETTINGS_SERVER,
@@ -36,6 +37,7 @@ from ..responses import (
     CopyCheck,
     CopyDone,
     CopyTargets,
+    DeepScanReport,
     DependencyInstall,
     DependencyPlan,
     DependencyReport,
@@ -66,6 +68,8 @@ from ..responses import (
 )
 from .models import (
     CopyAddonsRequest,
+    DeepScanQuarantineRequest,
+    DeepScanRequest,
     DependencyInstallRequest,
     JarScanOptionsRequest,
     JarScanUndoRequest,
@@ -692,6 +696,47 @@ async def jar_scan_undo(
         )
     audit(ctx, request, "jar_scan_undo", target=payload.id)
     return {"ok": True, **result}
+
+
+@router.get("/mods/deepscan", response_model=DeepScanReport)
+async def deep_scan(principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)):
+    """The deep scan's scanners and its last results."""
+    return ctx.deepscan.status()
+
+
+@router.post("/mods/deepscan", response_model=DeepScanReport)
+async def deep_scan_start(
+    payload: DeepScanRequest,
+    request: Request,
+    principal: Principal = Depends(require(DEEP_SCAN)),
+    ctx=Depends(get_server),
+):
+    """Start a deep scan. It runs as a job; poll GET for the results."""
+    target = payload.filename or payload.scope
+    with audit_failure(ctx, request, "deep_scan", target=target):
+        report = ctx.deepscan.start(
+            payload.scope, payload.scanners, payload.filename, user=principal.user
+        )
+    audit(ctx, request, "deep_scan", target=target, detail=",".join(payload.scanners))
+    return report
+
+
+@router.post("/mods/deepscan/quarantine", response_model=DeepScanReport)
+async def deep_scan_quarantine(
+    payload: DeepScanQuarantineRequest,
+    request: Request,
+    principal: Principal = Depends(require(DEEP_SCAN)),
+    ctx=Depends(get_server),
+):
+    """Move a file the deep scan listed into quarantine."""
+    with audit_failure(ctx, request, "deep_scan_quarantine", target=payload.path):
+        report = await ctx.mod_change(
+            f"Moving {payload.path} to quarantine",
+            lambda: ctx.deepscan.quarantine(payload.root, payload.path, user=principal.user),
+            principal.user,
+        )
+    audit(ctx, request, "deep_scan_quarantine", target=payload.path)
+    return report
 
 
 @router.post("/mods/scan/options", response_model=JarScanReport)

@@ -61,6 +61,15 @@ class ModeratorsTest {
     }
 
     @Test
+    fun `a whole group ticks and unticks together`() {
+        val players = catalogue.groups.first { it.id == "players" }.permissions
+        val all = Moderators.toggleAll(emptySet(), players, true, catalogue)
+        assertTrue(all.containsAll(players))
+        assertTrue(Permissions.SERVER_VIEW in all)
+        assertEquals(emptySet<String>(), Moderators.toggleAll(all, players, false, catalogue))
+    }
+
+    @Test
     fun `anything ticked sees the server, nothing ticked hides it`() {
         val one = Moderators.toggle(emptySet(), Permissions.CHAT_SEND, true, catalogue)
         assertEquals(setOf(Permissions.CHAT_SEND, Permissions.SERVER_VIEW), one)

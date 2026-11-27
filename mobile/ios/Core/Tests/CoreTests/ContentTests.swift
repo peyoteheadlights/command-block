@@ -310,6 +310,20 @@ final class ContentTests: XCTestCase {
         XCTAssertNil(UpdateAll.progress(finished, serverId: "s"))
     }
 
+    // MARK: - Deep scan
+
+    func testTheDeepScanAnswerReadsItsChecksTheRunningScanAndWhatItListed() throws {
+        let report = try JSONDecoder().decode(DeepScanReport.self, from: Data(#"{"scanners":[{"id":"behaviour","name":"Behaviour","words":"deepscan.scanner.behaviour","what":"deepscan.what.behaviour","speed":"deepscan.speed.quick","took":{"seconds":1.5,"files":3},"downloaded":null,"extra":1}],"antivirus":{},"running":{"id":"j1","done":2.0,"total":5.0,"progress":0.4},"last":{"finished":100.0,"files":3,"skipped":1,"found":[{"root":"java","path":"bin/x.exe","sha256":"aa","kind":"worth_a_look","findings":[{"scanner":"behaviour","words":"deepscan.rule.starts_program","values":{}}],"state":"found"}],"errors":[],"took":1.5}}"#.utf8))
+        XCTAssertEqual(report.scanners.first?.id, "behaviour")
+        XCTAssertEqual(report.scanners.first?.took?.files, 3)
+        XCTAssertNil(report.scanners.first?.downloaded)
+        XCTAssertEqual(report.running?.done, 2)
+        let found = try XCTUnwrap(report.last?.found.first)
+        XCTAssertEqual(found.root, "java")
+        XCTAssertEqual(found.kind, "worth_a_look")
+        XCTAssertEqual(found.findings.first?.scanner, "behaviour")
+    }
+
     // MARK: - Modpacks
 
     func testAModpackImportListsItsStepsWithTheVersionChangeOnlyWhenNeeded() {

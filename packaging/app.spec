@@ -21,6 +21,8 @@ datas = [
     (str(ROOT / "data" / "catalog.json"), "data"),
     # The add-on guides, one file each (agent/guides.py).
     (str(ROOT / "data" / "guides"), "data/guides"),
+    # Our Deep scan behaviour rules (agent/mods/deepscan.py).
+    (str(ROOT / "data" / "deepscan"), "data/deepscan"),
     (str(ROOT / "installer" / "firewall.ps1"), "installer"),
     (str(ROOT / "config" / "config.example.yaml"), "config"),
     (str(ROOT / "LICENSE"), "."),
@@ -40,7 +42,7 @@ hidden = (
     + collect_submodules("desktop")
     + collect_submodules("installer")
     + collect_submodules("uvicorn")
-    + ["websockets", "multipart", "segno"]
+    + ["websockets", "multipart", "segno", "yara_x"]
 )
 
 a = Analysis(  # noqa: F821

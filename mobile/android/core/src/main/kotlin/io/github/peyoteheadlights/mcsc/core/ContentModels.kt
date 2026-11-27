@@ -526,6 +526,53 @@ data class JarScanReport(
 @Serializable
 data class JarScanUndone(val restored: String? = null)
 
+@Serializable
+data class DeepScanTook(val seconds: Double = 0.0, val files: Int = 0)
+
+@Serializable
+data class DeepScanDownloaded(val tag: String = "", val at: Double = 0.0)
+
+/** One check the deep scan can run, with how long it took last time. */
+@Serializable
+data class DeepScanScanner(
+    val id: String = "",
+    val words: String = "",
+    val what: String = "",
+    val speed: String = "",
+    val took: DeepScanTook? = null,
+    val downloaded: DeepScanDownloaded? = null,
+)
+
+/** A file the deep scan listed: Known bad, or Worth a look. [root] is "server" or "java". */
+@Serializable
+data class DeepScanFound(
+    val root: String = "server",
+    val path: String = "",
+    val kind: String = "",
+    val findings: List<JarScanWords> = emptyList(),
+    val state: String = "",
+)
+
+@Serializable
+data class DeepScanLast(
+    val finished: Double = 0.0,
+    val files: Int = 0,
+    val skipped: Int = 0,
+    val found: List<DeepScanFound> = emptyList(),
+    val errors: List<JarScanWords> = emptyList(),
+)
+
+@Serializable
+data class DeepScanRunning(val id: String = "", val done: Double? = null, val total: Double? = null)
+
+/** The deep scan: its checks, the scan running now and the last results. */
+@Serializable
+data class DeepScanReport(
+    val scanners: List<DeepScanScanner> = emptyList(),
+    val running: DeepScanRunning? = null,
+    val last: DeepScanLast? = null,
+)
+
 /** A Modrinth search result. [iconUrl] is loaded straight from Modrinth. */
 @Serializable
 data class ModrinthHit(

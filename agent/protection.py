@@ -190,6 +190,7 @@ class Facts:
     anticheat: list[str] | None = None  # anti-cheats in; None: none runs on this type
     jar_scan: dict[str, Any] | None = None  # the jar check's summary; None: no jars here
     antivirus: str = "off_windows"  # agent/security/antivirus.py status()
+    deep_scan: dict[str, Any] | None = None  # the last deep scan's summary; None: never run
 
     def prop(self, key: str, default: str) -> str:
         return ((self.properties or {}).get(key) or default).strip().lower()
@@ -268,6 +269,7 @@ def facts(ctx: ServerContext) -> Facts:
         anticheat=anticheat.installed(addons) if anticheat.supported(server_type.id) else None,
         jar_scan=ctx.jarscan.summary() if server_type.has_content else None,
         antivirus=antivirus.status(),
+        deep_scan=ctx.deepscan.summary(),
     )
 
 
@@ -416,6 +418,7 @@ def lines(f: Facts) -> list[dict[str, Any]]:
     found += _jar_scan(f.jar_scan)
     if f.jar_scan is not None:
         found.append(_antivirus(f.antivirus))
+    found += _deep_scan(f.deep_scan)
     found += _join(f)
     found += _anticheat(f)
     found.append(_line("big_attacks", "info", "stop_and_close"))
@@ -454,6 +457,15 @@ def _jar_scan(scan: dict[str, Any] | None) -> list[dict[str, Any]]:
     if scan["couldnt"]:
         found.append(_line("jar_scan_couldnt", "info", count=scan["couldnt"]))
     return found
+
+
+def _deep_scan(scan: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The last deep scan's line, once one has run."""
+    if scan is None:
+        return []
+    if scan["worth_a_look"]:
+        return [_line("deep_scan_look", "problem", count=scan["worth_a_look"])]
+    return [_line("deep_scan_done", "info", files=scan["files"])]
 
 
 def _antivirus(status: str) -> dict[str, Any]:

@@ -252,6 +252,11 @@ public enum Moderators {
         return next.isEmpty ? [] : next.union([Permissions.SERVER_VIEW])
     }
 
+    /// Ticks or unticks every switch of a group at once, with what each needs.
+    public static func toggleAll(_ permissions: Set<String>, _ group: [String], on: Bool, _ catalogue: PermissionCatalogue) -> Set<String> {
+        group.reduce(permissions) { next, permission in toggle(next, permission, on: on, catalogue) }
+    }
+
     /// The switches a group shows: the Technical-only ones only in Technical mode.
     public static func shown(_ group: PermissionGroup, technical: Bool, _ catalogue: PermissionCatalogue) -> [String] {
         group.permissions.filter { technical || !catalogue.technical.contains($0) }

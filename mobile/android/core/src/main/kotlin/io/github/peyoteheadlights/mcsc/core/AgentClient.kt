@@ -872,6 +872,26 @@ class AgentClient(
         return call(post("${server(serverId)}/mods/scan/options", body), JarScanReport.serializer())
     }
 
+    /** The deep scan's checks, the scan running now and its last results. Scans nothing. */
+    suspend fun deepScan(serverId: String): DeepScanReport =
+        get("${server(serverId)}/mods/deepscan", DeepScanReport.serializer())
+
+    /** Starts a deep scan: [scope] is "jar" (with [filename]), "mods" or "folder". */
+    suspend fun runDeepScan(serverId: String, scope: String, scanners: List<String>, filename: String? = null): DeepScanReport {
+        val body = buildJsonObject {
+            put("scope", scope)
+            put("scanners", JsonArray(scanners.map { JsonPrimitive(it) }))
+            filename?.let { put("filename", it) }
+        }
+        return call(post("${server(serverId)}/mods/deepscan", body), DeepScanReport.serializer())
+    }
+
+    suspend fun deepScanQuarantine(serverId: String, root: String, path: String): DeepScanReport =
+        call(
+            post("${server(serverId)}/mods/deepscan/quarantine", buildJsonObject { put("root", root); put("path", path) }),
+            DeepScanReport.serializer(),
+        )
+
     /** What Update all would change, checked on Modrinth now. */
     suspend fun updateAllPlan(serverId: String): UpdateAllPlan =
         get("${server(serverId)}/mods/update-all", UpdateAllPlan.serializer(), slow = true)

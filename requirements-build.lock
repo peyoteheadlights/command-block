@@ -1616,6 +1616,20 @@ winrt-windows-ui-notifications==3.2.1 ; sys_platform == 'win32' \
     --hash=sha256:e7eda8cb11a1e82d2da87b2b98cbf73ce153417cb93debe95c739534c6dbde7c \
     --hash=sha256:eb29bf1c3306f3ceabd71d092b5505d5fe73fbc0660347dcc63ebc4204d34d21
     # via windows-toasts
+yara-x==1.25.0 \
+    --hash=sha256:22c581e935b1114ad0c55f6dc2f5e4e57ea3afa549f54c47151509fee17dfb1c \
+    --hash=sha256:52eb13f9368a22e0611afe2b6ed99a5366f7cba30be062c63db704f55273ba92 \
+    --hash=sha256:6115a02649c251f445802a0ea3ea6056fc63cad62fc9e829e3a0bdaf01c950a5 \
+    --hash=sha256:6a111a202e669ec274ebcf59b13ed6e005cefb2c695dd40e304a78a8dd87d606 \
+    --hash=sha256:84f1b547f1a97703ac766af3679ced51fca13cd7dfaf376f171de9f589cfb7be \
+    --hash=sha256:89f2f7c4f2bf58808226d268a84272a24e29e53e87390512826b40a1fd5398a6 \
+    --hash=sha256:bfcabc91ed2a49edfb96299fd4474426d062067a0886f0d53e59c4a256886b77 \
+    --hash=sha256:c4368dc19e9efcf91050c5e9c56f20309bcc2c34cbaff531f7381d0e680018eb \
+    --hash=sha256:c59dacd706439b3b252c71210bc892f0c534bce285ae5b4a25df32c1ce3cee35 \
+    --hash=sha256:ea767c96818eb9357f046b48c3b7fb276ca8bbb7c033cbd3f0f15cdd27b433df \
+    --hash=sha256:ec41aa9861800d73aa02b45d97909ad40c73cdc35f280ed47e0b59c33fc16a56 \
+    --hash=sha256:fd3c7e8582910313f2a652422805cc76e0bb6af1d7aa22d4c27ed175c63fce17
+    # via command-block (pyproject.toml)
 yarl==1.25.1 \
     --hash=sha256:0136d640dfa9b0523853e411430a99f8a91eca85774c6420285a33b755bc6de3 \
     --hash=sha256:03dd38de09bc213e9a8b29761eec33ee1d5318dac0e49d8af36e4d27830e23a7 \

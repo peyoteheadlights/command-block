@@ -489,6 +489,9 @@ fun ModeratorServerScreen(vm: AppViewModel, name: String, serverId: String, onBa
                     item { SectionTitle(t("mobile.mod.group_${group.id}")) }
                     item {
                         Card {
+                            Tick(t("mobile.mod.all_in_group"), perms.containsAll(shown)) { on ->
+                                perms = Moderators.toggleAll(perms, shown, on, catalogue)
+                            }
                             for (permission in shown) {
                                 Tick(t(Moderators.switchKey(permission)), permission in perms) { on ->
                                     perms = Moderators.toggle(perms, permission, on, catalogue)

@@ -58,6 +58,14 @@ final class ModeratorsTests: XCTestCase {
         XCTAssertTrue(Moderators.toggle(start, Permissions.CONSOLE_SEND, on: true, catalogue).contains(Permissions.CONSOLE_READ))
     }
 
+    func testAWholeGroupTicksAndUnticksTogether() {
+        let players = catalogue.groups.first { $0.id == "players" }!.permissions
+        let all = Moderators.toggleAll([], players, on: true, catalogue)
+        XCTAssertTrue(all.isSuperset(of: players))
+        XCTAssertTrue(all.contains(Permissions.SERVER_VIEW))
+        XCTAssertEqual(Moderators.toggleAll(all, players, on: false, catalogue), [])
+    }
+
     func testAnythingTickedSeesTheServerNothingTickedHidesIt() {
         let one = Moderators.toggle([], Permissions.CHAT_SEND, on: true, catalogue)
         XCTAssertEqual(one, [Permissions.CHAT_SEND, Permissions.SERVER_VIEW])

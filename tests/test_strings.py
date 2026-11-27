@@ -53,6 +53,9 @@ def families() -> dict[str, set[str]]:
         "new.ease_": {t.ease for t in servertypes.TYPES.values()},
         # what can still put the PC to sleep while it is kept awake
         "awake.still_": set(keepawake.STILL_SLEEPS),
+        # what Deep scan made of each file it listed, and where that file is now
+        "deepscan.kind.": {"known_bad", "worth_a_look"},
+        "deepscan.state.": {"found", "waiting", "quarantined", "kept", "gone"},
     }
 
 

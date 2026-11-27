@@ -53,6 +53,9 @@ MODS_MANAGE = "mods.manage"  # install, remove, enable, update, roll back mods
 # the server's rights on the PC and nothing can tell what it does, so it is
 # in no level: the owner ticks it on purpose.
 MODS_OWN_JAR = "mods.own_jar"
+# Run a deep scan and move what it lists to quarantine. In no level: the
+# owner ticks it on purpose, since a whole-folder scan reads every file.
+DEEP_SCAN = "deepscan.run"
 BACKUPS_CREATE = "backups.create"
 BACKUPS_DOWNLOAD = "backups.download"
 BACKUPS_RESTORE = "backups.restore"  # also Undo and Redo, which restore
@@ -101,6 +104,7 @@ ALL = frozenset(
         CHAT_SEND,
         MODS_MANAGE,
         MODS_OWN_JAR,
+        DEEP_SCAN,
         BACKUPS_CREATE,
         BACKUPS_DOWNLOAD,
         BACKUPS_RESTORE,
@@ -143,6 +147,7 @@ SERVER_PERMISSIONS = frozenset(
         CHAT_SEND,
         MODS_MANAGE,
         MODS_OWN_JAR,
+        DEEP_SCAN,
         BACKUPS_CREATE,
         BACKUPS_DOWNLOAD,
         BACKUPS_RESTORE,
@@ -169,6 +174,8 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("server", (SERVER_CONTROL, SERVER_DIAGNOSE, CONSOLE_READ, CONSOLE_SEND)),
     ("players", (PLAYERS_MANAGE, CHAT_SEND, PLAYERS_OP)),
     ("addons", (MODS_MANAGE, MODS_OWN_JAR)),
+    # In no level: the owner ticks it on purpose.
+    ("protection", (DEEP_SCAN,)),
     ("backups", (BACKUPS_CREATE, BACKUPS_RESTORE, BACKUPS_DOWNLOAD, BACKUPS_DELETE, WORLD_REPLACE)),
     ("settings", (SETTINGS_GAME, SETTINGS_SERVER, SCHEDULES_MANAGE)),
     # In no level: the owner ticks it on purpose (Phase 11).

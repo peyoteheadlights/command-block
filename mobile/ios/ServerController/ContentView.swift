@@ -763,6 +763,7 @@ struct ContentView: View {
             }
 
             jarScan(content, changes, palette, now: now)
+            deepScan(content, palette, word: kind == .plugins ? "plugins" : "mods", now: now)
 
             SectionTitle(text: model.t("mods.change_history"), palette: palette)
             if let problem = content.history.problem {
@@ -1209,6 +1210,39 @@ struct ContentView: View {
                         Presses(presses: [
                             Press(title: model.t("jarscan.undo"), enabled: changes == .ready && idle) {
                                 Task { await content.putBack(jar.id, jar.filename, strings) }
+                            },
+                        ], palette: palette)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The deep scan: pick the checks and what to look at, run it, and see what it listed.
+    @ViewBuilder
+    private func deepScan(_ content: ContentPages, _ palette: Palette, word: String, now: Double) -> some View {
+        let strings = model.strings
+        let allowed = model.can(Permissions.DEEP_SCAN)
+        SectionTitle(text: model.t("deepscan.title"), palette: palette)
+        if let problem = content.deep.problem {
+            Hint(text: problem.message(strings), palette: palette)
+        }
+        if let report = content.deep.value {
+            DeepScanCard(content: content, report: report, word: word, palette: palette, now: now)
+            ForEach(report.last?.found ?? []) { item in
+                CardBox(palette: palette) {
+                    let where_ = item.root == "java" ? strings.t("deepscan.in_java", ["where": item.path]) : item.path
+                    Text(verbatim: where_).foregroundStyle(palette.textPrimary)
+                    Hint(text: model.t("deepscan.kind." + item.kind), palette: palette)
+                    ForEach(Array(item.findings.enumerated()), id: \.offset) { _, finding in
+                        Text(verbatim: said(finding)).font(.footnote)
+                            .foregroundStyle(palette.tone(item.kind == "known_bad" ? .danger : .warning))
+                    }
+                    Hint(text: model.t("deepscan.state." + item.state), palette: palette)
+                    if allowed && item.kind == "worth_a_look" && item.state == "found" {
+                        Presses(presses: [
+                            Press(title: model.t("deepscan.quarantine"), enabled: content.busy == nil) {
+                                Task { await content.deepQuarantine(item, strings) }
                             },
                         ], palette: palette)
                     }
@@ -2135,6 +2169,104 @@ private struct ModpackSheet: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// The deep scan's checks, what to look at, the Run press and the last result.
+private struct DeepScanCard: View {
+    let content: ContentPages
+    let report: DeepScanReport
+    let word: String
+    let palette: Palette
+    let now: Double
+
+    @Environment(AppModel.self) private var model
+    @State private var picked: Set<String> = ["behaviour"]
+    @State private var scope = "mods"
+    @State private var jar = ""
+
+    var body: some View {
+        let strings = model.strings
+        let allowed = model.can(Permissions.DEEP_SCAN)
+        let jars = content.scan.value?.jars.map(\.filename) ?? []
+        CardBox(palette: palette) {
+            Hint(text: model.t("deepscan.intro"), palette: palette)
+            ForEach(report.scanners) { scanner in
+                Toggle(isOn: Binding(
+                    get: { picked.contains(scanner.id) },
+                    set: { on in if on { picked.insert(scanner.id) } else { picked.remove(scanner.id) } }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: "\(model.t(scanner.words)) (\(model.t(scanner.speed)))")
+                            .foregroundStyle(palette.textPrimary)
+                        Hint(text: about(scanner, strings), palette: palette)
+                    }
+                }
+                .disabled(!allowed)
+            }
+            if allowed {
+                Picker(model.t("deepscan.scope"), selection: $scope) {
+                    ForEach(["jar", "mods", "folder"], id: \.self) { option in
+                        Text(verbatim: strings.t("deepscan.scope." + option, ["word": word])).tag(option)
+                    }
+                }
+                .pickerStyle(.inline)
+                if scope == "jar" {
+                    Picker(model.t("deepscan.pick_jar"), selection: $jar) {
+                        ForEach(jars, id: \.self) { Text(verbatim: $0).tag($0) }
+                    }
+                }
+                if scope == "folder" {
+                    Hint(text: model.t("deepscan.folder_note"), palette: palette)
+                }
+            }
+            status(strings)
+            if allowed {
+                let ready = report.running == nil && content.busy == nil && !picked.isEmpty && (scope != "jar" || jars.contains(jar))
+                Presses(presses: [
+                    Press(title: model.t("deepscan.run"), enabled: ready) {
+                        Task { await content.runDeepScan(scope, picked.sorted(), scope == "jar" ? jar : nil, strings) }
+                    },
+                ], palette: palette)
+            }
+        }
+    }
+
+    private func about(_ scanner: DeepScanScanner, _ strings: Strings) -> String {
+        var lines = [strings.t(scanner.what)]
+        if let took = scanner.took {
+            lines.append(strings.t("deepscan.took", ["seconds": took.seconds, "files": took.files]))
+        } else {
+            lines.append(strings.t("deepscan.not_timed"))
+        }
+        if let got = scanner.downloaded {
+            lines.append(strings.t("deepscan.downloaded", ["tag": got.tag, "when": Display.ago(strings, got.at, now: now)]))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    @ViewBuilder
+    private func status(_ strings: Strings) -> some View {
+        if let running = report.running {
+            Text(verbatim: strings.t("deepscan.running", ["done": Int(running.done ?? 0), "total": Int(running.total ?? 0)]))
+                .foregroundStyle(palette.textPrimary)
+        } else if let last = report.last {
+            Text(verbatim: strings.t("deepscan.result", [
+                "when": Display.ago(strings, last.finished, now: now), "files": last.files, "count": last.found.count,
+            ]))
+                .foregroundStyle(palette.textPrimary)
+            if last.skipped > 0 {
+                Hint(text: strings.t("deepscan.result_skipped", ["count": last.skipped]), palette: palette)
+            }
+            ForEach(Array(last.errors.enumerated()), id: \.offset) { _, error in
+                let values: [String: CustomStringConvertible] = error.values.mapValues { $0 }
+                let text = strings.t(error.words, values)
+                Text(verbatim: error.scanner.map { "\($0): \(text)" } ?? text)
+                    .font(.footnote).foregroundStyle(palette.tone(.warning))
+            }
+        } else {
+            Text(verbatim: strings.t("deepscan.never_run")).foregroundStyle(palette.textPrimary)
         }
     }
 }

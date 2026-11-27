@@ -62,6 +62,8 @@ final class ContentPages {
     private(set) var mods = PageRead<ModList>()
     private(set) var history = PageRead<ModHistory>()
     private(set) var scan = PageRead<JarScanReport>()
+    private(set) var deep = PageRead<DeepScanReport>()
+    private var watchingDeep = false
     private(set) var dependencies: DependencyReport? = nil
     var removing: RemoveAsk? = nil
     var updating: Mod? = nil
@@ -99,6 +101,46 @@ final class ContentPages {
         } catch let problem as AgentError {
             scan = PageRead(problem: problem)
         } catch {}
+        do {
+            showDeep(PageRead(value: try await client.deepScan(serverId: serverId)))
+        } catch let problem as AgentError {
+            deep = PageRead(problem: problem)
+        } catch {}
+    }
+
+    /// Shows the deep scan, and asks again every 2 s while one is running.
+    private func showDeep(_ read: PageRead<DeepScanReport>) {
+        deep = read
+        guard read.value?.running != nil, !watchingDeep, let client = client() else { return }
+        watchingDeep = true
+        Task { [weak self] in
+            while let self, self.deep.value?.running != nil {
+                try? await Task.sleep(for: .seconds(2))
+                do {
+                    self.deep = PageRead(value: try await client.deepScan(serverId: self.serverId))
+                } catch let problem as AgentError {
+                    self.deep = PageRead(problem: problem)
+                } catch {}
+            }
+            self?.watchingDeep = false
+            // A Known bad file may have gone to quarantine.
+            await self?.loadMods()
+        }
+    }
+
+    func runDeepScan(_ scope: String, _ scanners: [String], _ filename: String?, _ strings: Strings) async {
+        await work("deep_scan", strings) { [weak self] client, id in
+            let report = try await client.runDeepScan(serverId: id, scope: scope, scanners: scanners, filename: filename)
+            self?.showDeep(PageRead(value: report))
+            return nil
+        }
+    }
+
+    func deepQuarantine(_ item: DeepScanFound, _ strings: Strings) async {
+        await work("deep:\(item.id)", strings, reload: loadMods) { [weak self] client, id in
+            self?.deep = PageRead(value: try await client.deepScanQuarantine(serverId: id, root: item.root, path: item.path))
+            return nil
+        }
     }
 
     func scanJars(_ strings: Strings) async {

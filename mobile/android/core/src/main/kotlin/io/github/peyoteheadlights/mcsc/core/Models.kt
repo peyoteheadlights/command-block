@@ -303,6 +303,7 @@ object Permissions {
     const val BACKUPS_DELETE = "backups.delete"
     const val SCHEDULES_MANAGE = "schedules.manage"
     const val MODS_MANAGE = "mods.manage"
+    const val DEEP_SCAN = "deepscan.run"
     const val SERVERS_MANAGE = "servers.manage"
     const val FILES_BROWSE = "files.browse"
     const val WORLD_REPLACE = "world.replace"

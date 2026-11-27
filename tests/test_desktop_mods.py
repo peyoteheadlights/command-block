@@ -1307,3 +1307,22 @@ def test_make_dialog_sets_the_title_screen(qapp):
         "flavor_text": {"on": True, "text": "Dragons!"},
         "background": {"on": True},
     }
+
+
+# ---------------------------------------------------------------- deep scan
+def test_deep_scan_lists_a_worth_a_look_mod_and_quarantine_moves_it(qapp, agent_http):
+    from .test_deepscan import BAD_CLASSES, CLASS
+    from .test_jarscan import mod_with
+
+    folder = mods_folder(agent_http)
+    folder.mkdir(exist_ok=True)
+    mod_with(folder / "bad.jar", {"a/B.class": CLASS + BAD_CLASSES["starts_a_program"]})
+    _window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.deep.boxes and page.deep.run_button.isEnabled())
+    page.deep.run_button.click()
+    wait_for(
+        qapp, lambda: "Worth a look" in shown_text(page) and can(page, "Quarantine", "mods/bad.jar")
+    )
+    row_button(page, "Quarantine", "mods/bad.jar").click()
+    wait_for(qapp, lambda: not (folder / "bad.jar").exists())
+    wait_for(qapp, lambda: not row_buttons(page, "Quarantine", "mods/bad.jar"))

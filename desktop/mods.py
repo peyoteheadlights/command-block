@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from .agent import AgentError
 from .anticheat_card import AntiCheatCard
+from .deepscan import DeepScanCard, said
 from .download_link import LinkCard
 from .editor import GuideWindow, pick_file
 from .farview_card import FarViewCard
@@ -193,12 +194,6 @@ def inset_row() -> tuple[QFrame, QHBoxLayout]:
     h = QHBoxLayout(row)
     h.setContentsMargins(12, 8, 8, 8)
     return row, h
-
-
-def said(words: dict) -> str:
-    """One jar check line, led by the name of the check that said it."""
-    line = text(words["words"], **words.get("values") or {})
-    return f"{words['scanner']}: {line}" if words.get("scanner") else line
 
 
 def names(items: list[dict], key: str = "title") -> str:
@@ -479,6 +474,8 @@ class ModsPage(SharePage):
         for control in (self.scan_again, self.weekly, self.on_change):
             layout.addWidget(control)
         self.column.addWidget(self.scan_card)
+        self.deep = DeepScanCard(self)
+        self.column.addWidget(self.deep.frame)
 
         self.history_card, layout = card("")
         self.history = QVBoxLayout()
@@ -577,6 +574,7 @@ class ModsPage(SharePage):
         )
         self.guides = {}
         self.ask("GET", "/guides", self.show_guides, lambda _e: None)
+        self.deep.load()
         self.targets: list[dict] = []
         self.copy.hide()
         if manage:
@@ -812,6 +810,7 @@ class ModsPage(SharePage):
             lines += [said(f) for f in (jar.get("findings") or []) + (jar.get("notes") or [])]
             rows.append(label("\n".join(lines), "sub"))
         refill(self.scan_rows, rows)
+        self.deep.jars([jar["filename"] for jar in report.get("jars") or []])
         rows = []
         if report.get("quarantine"):
             rows.append(label(text("jarscan.quarantine")))

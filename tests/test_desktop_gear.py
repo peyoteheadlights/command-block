@@ -226,6 +226,41 @@ def test_a_level_and_a_switch_are_saved_for_one_server(qapp, agent_http):
     assert "players.manage" in held()
 
 
+def test_a_whole_group_of_switches_ticks_together(qapp, agent_http):
+    add_moderator(agent_http)
+    window, page = gear(qapp, agent_http, "moderators")
+    window.set_mode(True)  # the switches by their permission names
+    window.open_list("PC settings", "moderators")
+    wait_for(qapp, lambda: "sam" in shown_text(page))
+    shows(qapp, page, "Edit permissions")
+    button(page, "Edit permissions").click()
+
+    def tick(words):
+        return next(
+            b
+            for b in page.findChildren(QtWidgets.QCheckBox)
+            if b.text() == words and b.isVisibleTo(page)
+        )
+
+    tick("Backups").click()
+    backups = ["backups.create", "backups.restore", "backups.download", "backups.delete"]
+    assert all(tick(p).isChecked() for p in backups)
+    tick("backups.delete").click()
+    assert not tick("Backups").isChecked()
+    tick("Backups").click()
+    tick("Backups").click()
+    assert not any(tick(p).isChecked() for p in backups)
+    tick("Protection").click()
+    assert tick("deepscan.run").isChecked()
+    button(page, "Save for this server").click()
+
+    def held() -> list[str]:
+        sam = agent_http.get("/api/accounts", headers=owner(agent_http)).json()["helpers"][0]
+        return next(a for a in sam["access"] if a["id"] == "survival")["permissions"]
+
+    wait_for(qapp, lambda: "deepscan.run" in held(), 20)
+
+
 def test_removing_a_moderator_asks_first(qapp, agent_http):
     add_moderator(agent_http)
     window, page = gear(qapp, agent_http, "moderators")

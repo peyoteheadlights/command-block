@@ -79,6 +79,7 @@ import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
 import io.github.peyoteheadlights.mcsc.core.PlayerFile
 import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
 import io.github.peyoteheadlights.mcsc.core.Sides
+import io.github.peyoteheadlights.mcsc.core.DeepScanReport
 import io.github.peyoteheadlights.mcsc.core.JarScanWords
 import io.github.peyoteheadlights.mcsc.core.Permissions
 import io.github.peyoteheadlights.mcsc.core.States
@@ -268,6 +269,7 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
     }
 
     jarScanList(vm, content, changes)
+    deepScanList(vm, content, if (kind == ContentKind.PLUGINS) "plugins" else "mods")
 
     item { SectionTitle(t("mods.change_history")) }
     val rows = content.history.value?.history
@@ -393,6 +395,82 @@ private fun LazyListScope.jarScanList(vm: AppViewModel, content: ContentPages, c
             if (changes != Changes.NOT_ALLOWED) {
                 Presses(listOf(Press(t("jarscan.undo"), { content.putBack(jar.id, jar.filename, vm.strings) }, enabled = changes == Changes.READY && idle)))
             }
+        }
+    }
+}
+
+/** The deep scan: pick the checks and what to look at, run it, and see what it listed. */
+private fun LazyListScope.deepScanList(vm: AppViewModel, content: ContentPages, word: String) {
+    item { SectionTitle(t("deepscan.title")) }
+    content.deep.problem?.let { problem ->
+        item { Note(problem.text(), color = LocalColors.current.text3) }
+    }
+    val report = content.deep.value ?: return
+    item { DeepScanCard(vm, content, report, word) }
+    val last = report.last ?: return
+    val allowed = vm.canDo(Permissions.DEEP_SCAN)
+    items(last.found, key = { "deep:" + it.root + ":" + it.path }) { item ->
+        val colors = LocalColors.current
+        Card {
+            val where = if (item.root == "java") t("deepscan.in_java", "where" to item.path) else item.path
+            Item(where, subtitle = t("deepscan.kind." + item.kind))
+            for (finding in item.findings) Note(said(finding), color = if (item.kind == "known_bad") colors.danger else colors.warning)
+            Note(t("deepscan.state." + item.state), color = colors.text3)
+            if (allowed && item.kind == "worth_a_look" && item.state == "found") {
+                Presses(listOf(Press(t("deepscan.quarantine"), { content.deepQuarantine(item, vm.strings) }, enabled = content.busy == null)))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeepScanCard(vm: AppViewModel, content: ContentPages, report: DeepScanReport, word: String) {
+    val colors = LocalColors.current
+    val now = rememberNow()
+    val allowed = vm.canDo(Permissions.DEEP_SCAN)
+    val jars = content.scan.value?.jars.orEmpty().map { it.filename }
+    var picked by remember { mutableStateOf(setOf("behaviour")) }
+    var what by rememberSaveable { mutableStateOf("mods") }
+    var jar by rememberSaveable { mutableStateOf<String?>(null) }
+    Card {
+        Note(t("deepscan.intro"), color = colors.text2)
+        for (scanner in report.scanners) {
+            val about = listOfNotNull(
+                t(scanner.what),
+                scanner.took?.let { t("deepscan.took", "seconds" to it.seconds, "files" to it.files) } ?: t("deepscan.not_timed"),
+                scanner.downloaded?.let { t("deepscan.downloaded", "tag" to it.tag, "when" to Display.ago(vm.strings, it.at, now)) },
+            ).joinToString("\n")
+            Tick("${t(scanner.words)} (${t(scanner.speed)})", scanner.id in picked, subtitle = about, enabled = allowed) { on ->
+                picked = if (on) picked + scanner.id else picked - scanner.id
+            }
+        }
+        if (allowed) {
+            Item(t("deepscan.scope"))
+            for (option in listOf("jar", "mods", "folder")) {
+                val words = t("deepscan.scope.$option", "word" to word)
+                Item(words, onClick = { what = option }, trailing = { RadioButton(selected = what == option, onClick = null) })
+            }
+            if (what == "jar") {
+                for (name in jars) {
+                    Item(name, onClick = { jar = name }, trailing = { RadioButton(selected = jar == name, onClick = null) })
+                }
+            }
+            if (what == "folder") Note(t("deepscan.folder_note"), color = colors.text3)
+        }
+        val running = report.running
+        val last = report.last
+        when {
+            running != null -> Item(t("deepscan.running", "done" to (running.done ?: 0.0).toInt(), "total" to (running.total ?: 0.0).toInt()))
+            last == null -> Item(t("deepscan.never_run"))
+            else -> {
+                Item(t("deepscan.result", "when" to Display.ago(vm.strings, last.finished, now), "files" to last.files, "count" to last.found.size))
+                if (last.skipped > 0) Note(t("deepscan.result_skipped", "count" to last.skipped), color = colors.text3)
+                for (error in last.errors) Note(said(error), color = colors.warning)
+            }
+        }
+        if (allowed) {
+            val ready = running == null && content.busy == null && picked.isNotEmpty() && (what != "jar" || jar in jars)
+            Presses(listOf(Press(t("deepscan.run"), { content.runDeepScan(what, picked.sorted(), jar.takeIf { what == "jar" }, vm.strings) }, enabled = ready)))
         }
     }
 }
