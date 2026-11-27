@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from . import motd
 from .agent import AgentError
 from .editor import edit_file
+from .gamerules import RulesCard
 from .overview import card
 from .parts import BigNumber, Box, InfoDot, Segmented, SnapSlider, Switch
 from .ui import Page, duration, field, label, push, refill, swatches
@@ -216,15 +217,18 @@ class SettingsPage(Page):
                     self.slots[slot] = QVBoxLayout()
                     sliders.addLayout(self.slots[slot], 1)
                 column.addLayout(sliders)
-            for slot in [key] + {"server": ["manage"], "game": ["list", "raw", "files"]}.get(
-                key, []
-            ):
+            for slot in [key] + {
+                "server": ["manage"],
+                "game": ["list", "rules", "raw", "files"],
+            }.get(key, []):
                 self.slots[slot] = QVBoxLayout()
                 self.slots[slot].setSpacing(4)
                 column.addLayout(self.slots[slot])
             holder.setVisible(key == "server")
             self.column.addWidget(holder)
         self.column.addStretch()
+        self.rules = RulesCard(self)
+        self.slots["rules"].addWidget(self.rules)
 
     def jump(self, key: str) -> None:
         """Shows one of the four sections."""
@@ -232,6 +236,8 @@ class SettingsPage(Page):
         for name, holder in self.section.items():
             holder.setVisible(name == key)
         self.verticalScrollBar().setValue(0)
+        if key == "game" and self.row:
+            self.rules.load()  # asks the server one question per rule, so only when shown
 
     def may(self, permission: str) -> bool:
         return self.window_.may(self.row["id"], permission)
@@ -258,6 +264,8 @@ class SettingsPage(Page):
             self.ask("GET", "/duplicate", self.show_manage, lambda exc: self.show_manage(None, exc))
         else:
             refill(self.slots["manage"], [])
+        if self.sections.key() == "game":
+            self.rules.load()
         refill(self.slots["files"], [])
         if self.may("mods.manage"):
             self.ask("GET", "/config-files", self.show_files, lambda e: self.problem("files", e))

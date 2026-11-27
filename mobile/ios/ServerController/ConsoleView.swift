@@ -35,7 +35,10 @@ struct ConsoleView: View {
                 message: { step in Text(step.reason) }
             )
         }
-        .task(id: serverId) { await pages.loadConsole() }
+        .task(id: serverId) {
+            await pages.loadConsole()
+            if model.can(Permissions.CONSOLE_SEND) { await pages.loadCommands() }
+        }
     }
 
     // MARK: - Parts
@@ -136,7 +139,20 @@ struct ConsoleView: View {
     private func commandBox(_ palette: Palette) -> some View {
         let pages = self.pages
         let busy = pages.sending
+        let completions = ServerListing.completions(pages.commands, typed: command)
         return InputBar(palette: palette, problem: pages.commandProblem, notes: [model.t("console.hint")]) {
+            if !completions.isEmpty {
+                // The server's own command names: a tap finishes the first word.
+                Menu {
+                    ForEach(completions, id: \.self) { name in
+                        Button(name) { command = name + " " }
+                    }
+                } label: {
+                    Image(systemName: "text.badge.plus")
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .accessibilityLabel(model.t("console.keys_hint"))
+            }
             if !pages.history.isEmpty {
                 Menu {
                     // Newest first.
@@ -169,7 +185,8 @@ struct ConsoleView: View {
     }
 
     private var clearButton: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            NavigationLink(model.t("console.older_logs")) { OlderLogsView(serverId: serverId) }
             if model.can(Permissions.CONSOLE_SEND) {
                 Button(model.t("console.clear")) {
                     let pages = self.pages
@@ -218,5 +235,66 @@ struct ConsoleView: View {
         case .command: return palette.accentInk
         case .plain: return palette.textPrimary
         }
+    }
+}
+
+/// Older logs: Minecraft's own log files in the server's logs folder
+/// (latest.log and the zipped older ones), read-only.
+struct OlderLogsView: View {
+    let serverId: String
+
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let pages = model.pages(serverId)
+        ServerFrame(serverId: serverId, title: model.t("console.older_title")) { palette in
+            List {
+                if let problem = pages.logFiles.problem {
+                    ProblemCard(problem: problem, palette: palette) { await pages.loadLogFiles() }
+                } else if let files = pages.logFiles.value {
+                    if files.isEmpty { Text(model.t("console.older_none")).foregroundStyle(.secondary) }
+                    ForEach(files) { file in
+                        NavigationLink(file.name) { LogFileView(serverId: serverId, name: file.name) }
+                    }
+                } else {
+                    ProgressView().frame(maxWidth: .infinity)
+                }
+            }
+            .refreshable { await pages.loadLogFiles() }
+        }
+        .task(id: serverId) { await pages.loadLogFiles() }
+    }
+}
+
+/// One log file's lines, read-only.
+struct LogFileView: View {
+    let serverId: String
+    let name: String
+
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let pages = model.pages(serverId)
+        ServerFrame(serverId: serverId, title: name) { palette in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    if let problem = pages.logText.problem {
+                        ProblemCard(problem: problem, palette: palette) { await pages.openLog(name) }
+                    } else if let text = pages.logText.value {
+                        if text.cut { Text(model.t("console.older_cut")).foregroundStyle(.secondary) }
+                        ForEach(Array(text.lines.enumerated()), id: \.offset) { _, line in
+                            Text(hiding: line)
+                                .font(.system(.footnote, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    } else {
+                        ProgressView().frame(maxWidth: .infinity)
+                    }
+                }
+                .padding(16)
+            }
+        }
+        .task(id: name) { await pages.openLog(name) }
     }
 }

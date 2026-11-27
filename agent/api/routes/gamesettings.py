@@ -8,12 +8,19 @@ import binascii
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ... import gamesettings
+from ... import gamerules, gamesettings
 from ...security.auth import Principal
 from ...security.permissions import SETTINGS_GAME, SETTINGS_VIEW, require
 from ..deps import audit, get_server
-from ..responses import GameSettings, GameSettingsSaved, ServerIcon, ServerIconSaved
-from .models import GameSettingsRawRequest, GameSettingsRequest, ServerIconRequest
+from ..responses import (
+    GameRules,
+    GameRulesSaved,
+    GameSettings,
+    GameSettingsSaved,
+    ServerIcon,
+    ServerIconSaved,
+)
+from .models import GameRulesRequest, GameSettingsRawRequest, GameSettingsRequest, ServerIconRequest
 
 router = APIRouter()
 
@@ -88,4 +95,38 @@ async def remove_server_icon(
 ):
     result = await gamesettings.save_icon(ctx, None, user=principal.user)
     audit(ctx, request, "server_icon", detail="removed")
+    return result
+
+
+@router.get("/gamerules", response_model=GameRules)
+async def get_game_rules(
+    principal: Principal = Depends(require(SETTINGS_VIEW)), ctx=Depends(get_server)
+):
+    """Every game rule as the running server says it is. Stopped: none."""
+    running = ctx.server.state.value == "ONLINE"
+    rules = await gamerules.read(ctx) if running else []
+    return {"running": running, "rules": rules, "presets": list(gamerules.PRESETS)}
+
+
+@router.put("/gamerules", response_model=GameRulesSaved)
+async def save_game_rules(
+    payload: GameRulesRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_GAME)),
+    ctx=Depends(get_server),
+):
+    """Change rules (or apply a preset) on the running server. They change
+    at once; the answer is read back from the server."""
+    wanted = dict(payload.rules)
+    if payload.preset is not None:
+        if payload.preset not in gamerules.PRESETS:
+            raise HTTPException(status_code=404, detail="There's no preset with that name.")
+        wanted = {**gamerules.PRESETS[payload.preset], **wanted}
+    if not wanted:
+        raise HTTPException(status_code=400, detail="Pick a rule to change first.")
+    try:
+        result = await gamerules.change(ctx, wanted)
+    except gamerules.GameRuleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    audit(ctx, request, "game_rules", detail=", ".join(result["before"])[:300] or "no change")
     return result
