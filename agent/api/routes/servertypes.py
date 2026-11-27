@@ -139,6 +139,8 @@ async def create_server(
         vanilla_spawns=payload.vanilla_spawns,
         user=principal.user,
         test=payload.test,
+        played_by=payload.played_by,
+        players=payload.players,
     )
     return {"ok": True, **result}
 

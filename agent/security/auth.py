@@ -159,6 +159,10 @@ def write_one_time_sign_in(data_dir: Path) -> str:
     return code
 
 
+# This PC's answer to "Who's this server for?": the default for new servers.
+PLAYED_BY_DEFAULT = "played_by_default"
+
+
 # ----------------------------------------------------------------------
 @dataclass(frozen=True)
 class Access:
@@ -1462,8 +1466,9 @@ class AuthManager:
     PREFERENCE_CHOICES: dict[str, tuple[str, ...]] = {
         "mode": ("simple", "technical"),
         "theme": ("system", "light", "dark", "graphite", "contrast"),
+        "tips": ("on", "off"),
     }
-    PREFERENCE_DEFAULTS: dict[str, str] = {"mode": "simple", "theme": "system"}
+    PREFERENCE_DEFAULTS: dict[str, str] = {"mode": "simple", "theme": "system", "tips": "on"}
 
     def preferences(self, user: str) -> dict[str, str]:
         saved = self.db.get_setting(f"user:{user}:preferences", {}) or {}
@@ -1481,6 +1486,48 @@ class AuthManager:
             prefs[key] = value
         self.db.set_setting(f"user:{user}:preferences", prefs)
         return prefs
+
+    # -- first-run questions ---------------------------------------------
+    # "Is this your first time making a Minecraft server?" and, for "No",
+    # the kinds made before. first_time None: "I know what I'm doing".
+    WELCOME_KINDS = ("vanilla", "mods", "plugins", "bedrock")
+
+    def welcome(self, user: str) -> dict[str, Any]:
+        saved = self.db.get_setting(f"user:{user}:welcome", None)
+        if not isinstance(saved, dict):
+            return {"answered": False, "first_time": None, "kinds": []}
+        kinds = [k for k in saved.get("kinds") or [] if k in self.WELCOME_KINDS]
+        first = saved.get("first_time")
+        return {
+            "answered": True,
+            "first_time": first if first in (True, False) else None,
+            "kinds": kinds,
+        }
+
+    def set_welcome(
+        self, user: str, first_time: bool | None, kinds: list[str], defaults: bool = True
+    ) -> dict[str, Any]:
+        """Saves the answers. On first run (``defaults``) they also pick the
+        mode and tips: Yes is Simple mode with tips, No and "I know what I'm
+        doing" Technical without. PC settings changes only the kinds."""
+        if any(k not in self.WELCOME_KINDS for k in kinds):
+            raise ValueError("Unknown kind of server.")
+        if not defaults:
+            first_time = self.welcome(user)["first_time"]
+        if first_time is not False and defaults:
+            kinds = []  # only "No" asks which kinds
+        kinds = [k for k in self.WELCOME_KINDS if k in kinds]
+        self.db.set_setting(f"user:{user}:welcome", {"first_time": first_time, "kinds": kinds})
+        if not defaults:
+            return self.welcome(user)
+        self.set_preferences(
+            user,
+            {
+                "mode": "simple" if first_time else "technical",
+                "tips": "on" if first_time else "off",
+            },
+        )
+        return self.welcome(user)
 
     # -- alerts read -----------------------------------------------------
     # The newest alert each account has read, like a chat app's read marker:

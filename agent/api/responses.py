@@ -789,6 +789,16 @@ class LoginResult(Open):
 class Preferences(Open):
     mode: str = Field(description="simple or technical")
     theme: str = Field(description="system, light, dark, graphite or contrast")
+    tips: str = Field(default="on", description="on or off")
+
+
+class Welcome(Open):
+    answered: bool = Field(description="The first-run questions were answered or skipped")
+    first_time: bool | None = Field(description='null: "I know what I\'m doing"')
+    kinds: list[str] = Field(description="Kinds made before: vanilla, mods, plugins, bedrock")
+    played_by: str = Field(
+        description="This PC's default for new servers: friends, kids, community or empty"
+    )
 
 
 class Me(Open):
@@ -2743,6 +2753,9 @@ class NewServerOptions(Open):
     color: str
     palette: list[PaletteColor]
     eula_url: str
+    played_by: str = Field(
+        "", description="This PC's first-run answer to \"Who's this server for?\""
+    )
     bedrock: BedrockNewOptions
 
 
