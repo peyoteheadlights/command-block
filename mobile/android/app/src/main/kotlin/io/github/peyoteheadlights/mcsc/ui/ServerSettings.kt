@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -376,7 +377,7 @@ internal fun ColorPicker(palette: List<Pair<String, String>>, current: String?, 
         ServerColors.rgb(current)?.let { rgb ->
             val fill = ServerColors.fillWithText(rgb)
             Box(
-                Modifier.padding(top = 8.dp).background(hexColor(ServerColors.hex(fill.fill)) ?: colors.neutral, CircleShape)
+                Modifier.padding(top = 8.dp).background(hexColor(ServerColors.hex(fill.fill)) ?: colors.neutral, RoundedCornerShape(8.dp))
                     .padding(horizontal = 12.dp, vertical = 4.dp),
             ) { Text(current.orEmpty().uppercase(), color = hexColor(ServerColors.hex(fill.text)) ?: colors.text) }
         }

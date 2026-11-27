@@ -309,7 +309,9 @@ def test_speed_readings_say_how_tps_is_read_and_can_change_it(qapp, agent_http):
 
 def test_the_health_checks_show_with_their_overall_result(qapp, agent_http):
     window, page = technical_page(qapp, agent_http, "Performance")
-    wait_for(qapp, lambda: "VERIFIED" in shown_text(page) or "ATTENTION" in shown_text(page))
+    results = ("All checks verified", "Partially verified", "Attention needed")
+    wait_for(qapp, lambda: any(r in shown_text(page) for r in results))
+    assert "VERIFIED" not in shown_text(page)  # sentence case, never capitals
 
 
 # ---------------------------------------------------------------- Schedules
