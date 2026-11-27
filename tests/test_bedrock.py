@@ -694,7 +694,8 @@ async def test_a_bedrock_server_and_geyser_on_one_port_cant_both_run(tmp_path):
     try:
         bedrock_ctx, java_ctx = core.servers["bedrock"], core.servers["java"]
         claimed = {(p.protocol, p.port) for p in core.ports.claimed(bedrock_ctx)}
-        assert claimed == {("udp", 19132), ("udp", 19133)}
+        # UDP for RakNet (IPv4 and IPv6), TCP for NetherNet's join page
+        assert claimed == {("udp", 19132), ("udp", 19133), ("tcp", 19132)}
         assert ("udp", 19133) in {(p.protocol, p.port) for p in core.ports.claimed(java_ctx)}
         taken = core.ports.used(exclude="bedrock")
         assert taken[("udp", 19133)] == "java"
