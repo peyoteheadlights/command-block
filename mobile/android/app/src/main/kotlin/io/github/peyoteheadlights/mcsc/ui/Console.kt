@@ -22,6 +22,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,9 +42,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.ConsoleBuffer
 import io.github.peyoteheadlights.mcsc.core.ConsoleCommands
+import io.github.peyoteheadlights.mcsc.core.Display
 import io.github.peyoteheadlights.mcsc.core.LevelChip
 import io.github.peyoteheadlights.mcsc.core.LineLook
 import io.github.peyoteheadlights.mcsc.core.Permissions
+import io.github.peyoteheadlights.mcsc.core.ServerListing
 
 /**
  * The server's console: the newest lines, live, with a filter and level
@@ -51,7 +54,7 @@ import io.github.peyoteheadlights.mcsc.core.Permissions
  * never Windows; risky ones ask first) and Clear. Helpers read only.
  */
 @Composable
-fun ConsoleScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
+fun ConsoleScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOlderLogs: () -> Unit) {
     val pages = vm.pages(serverId)
     val canSend = vm.canDo(Permissions.CONSOLE_SEND)
     var filter by rememberSaveable { mutableStateOf("") }
@@ -63,7 +66,10 @@ fun ConsoleScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
         command = ""
         back = 0
     }
-    LaunchedEffect(serverId) { pages.loadConsole() }
+    LaunchedEffect(serverId) {
+        pages.loadConsole()
+        if (canSend) pages.loadCommands()
+    }
 
     val all = pages.console.value
     val lines = ConsoleBuffer.shown(all.orEmpty(), filter, chip)
@@ -97,6 +103,7 @@ fun ConsoleScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
         onRefresh = pages::loadConsole,
         listState = list,
         actions = {
+            TextButton(onClick = onOlderLogs) { Text(t("console.older_logs")) }
             if (canSend) TextButton(onClick = pages::clearConsole) { Text(t("console.clear")) }
         },
         bottomBar = {
@@ -107,6 +114,7 @@ fun ConsoleScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
                     busy = pages.sending,
                     problem = pages.commandProblem,
                     hasHistory = pages.history.isNotEmpty(),
+                    completions = ServerListing.completions(pages.commands, command),
                     onPrevious = {
                         val history = pages.history
                         if (history.isNotEmpty()) {
@@ -196,6 +204,7 @@ private fun CommandBox(
     busy: Boolean,
     problem: Message?,
     hasHistory: Boolean,
+    completions: List<String>,
     onPrevious: () -> Unit,
     onSend: () -> Unit,
 ) {
@@ -203,6 +212,17 @@ private fun CommandBox(
     Surface(color = colors.surface) {
         Column(Modifier.navigationBarsPadding().imePadding().padding(vertical = 6.dp)) {
             problem?.let { Note(it.text(), color = colors.danger) }
+            if (completions.isNotEmpty()) {
+                // The server's own command names: a tap finishes the first word.
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    for (name in completions) {
+                        SuggestionChip(onClick = { onChange("$name ") }, label = { Text(name) })
+                    }
+                }
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -230,6 +250,56 @@ private fun CommandBox(
                 ) { Text(t(if (busy) "console.sending" else "console.send")) }
             }
             Note(t("console.hint"), color = colors.text3)
+        }
+    }
+}
+
+/**
+ * Older logs: Minecraft's own log files in the server's logs folder
+ * (latest.log and the zipped older ones), read-only. The list first; a
+ * tapped file shows its lines, and Back goes back to the list.
+ */
+@Composable
+fun OlderLogsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
+    val pages = vm.pages(serverId)
+    var open by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(serverId) { pages.loadLogFiles() }
+    LaunchedEffect(open) { pages.openLog(open) }
+    val back: () -> Unit = {
+        val reading = open != null
+        open = null
+        if (!reading) onBack()
+    }
+    ServerFrame(
+        vm, serverId,
+        title = open ?: t("console.older_title"),
+        onBack = back,
+        refreshing = pages.logFiles.loading,
+        onRefresh = pages::loadLogFiles,
+    ) {
+        val name = open
+        if (name == null) {
+            val files = pages.logFiles
+            when {
+                files.problem != null -> item { ProblemNote(files.problem, pages::loadLogFiles) }
+                files.value == null -> item { Note(t("console.older_loading")) }
+                files.value.isEmpty() -> item { Note(t("console.older_none")) }
+            }
+            items(files.value.orEmpty()) { file ->
+                Card { Item(file.name, subtitle = Display.bytes(LocalStrings.current, file.size), onClick = { open = file.name }) }
+            }
+        } else {
+            val text = pages.logText
+            text.problem?.let { problem -> item { ProblemNote(problem) { pages.openLog(name) } } }
+            if (text.value?.cut == true) item { Note(t("console.older_cut")) }
+            items(text.value?.lines.orEmpty()) { line ->
+                Text(
+                    line,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                )
+            }
         }
     }
 }

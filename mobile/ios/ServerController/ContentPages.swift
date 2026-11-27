@@ -681,6 +681,59 @@ final class ContentPages {
         fieldProblems[key] = nil
     }
 
+    // MARK: - Game rules
+
+    /// Read from the running server only when the screen asks (one question per rule).
+    private(set) var rules = PageRead<GameRules>()
+    /// Changed values by rule name, waiting for Save rules.
+    var ruleEdits: [String: JSONValue] = [:]
+    /// What the last change was before, for Undo; empty: nothing to undo.
+    private(set) var rulesBefore: [String: JSONValue] = [:]
+    private(set) var rulesSaid: String? = nil
+    /// Rules of a preset this server doesn't have, from the last change.
+    private(set) var rulesSkipped: [String] = []
+
+    func loadRules() async {
+        guard let client = client() else { return }
+        rules.loading = true
+        do {
+            rules = PageRead(value: try await client.gameRules(serverId: serverId))
+            ruleEdits = [:]
+        } catch let problem as AgentError {
+            noted(problem)
+            rules = PageRead(problem: problem)
+        } catch {
+            rules.loading = false
+        }
+    }
+
+    func editRule(_ name: String, _ value: JSONValue) {
+        let said = rules.value?.rules.first(where: { $0.name == name })?.value
+        ruleEdits[name] = said == value ? nil : value
+    }
+
+    /// Saves `changed` (Save rules or Undo), or applies `preset`.
+    func saveRules(_ strings: Strings, changed: [String: JSONValue]? = nil, preset: String? = nil) async {
+        guard let client = client(), busy == nil else { return }
+        busy = "rules"
+        defer { busy = nil }
+        do {
+            let done = try await client.saveGameRules(serverId: serverId, rules: changed ?? ruleEdits, preset: preset)
+            if let current = rules.value {
+                rules = PageRead(value: GameRules(running: current.running, rules: done.rules, presets: current.presets))
+            }
+            ruleEdits = [:]
+            rulesBefore = done.before
+            rulesSkipped = done.skipped
+            rulesSaid = done.before.isEmpty
+                ? strings.t("gamerules.no_change") : strings.t("gamerules.saved", ["n": done.before.count])
+        } catch let problem as AgentError {
+            noted(problem)
+            rulesSaid = problem.message(strings)
+            rulesSkipped = []
+        } catch {}
+    }
+
     // MARK: - Server icon
 
     /// The server icon as base64 PNG; nil while unknown or when there is none.

@@ -235,3 +235,12 @@ POST /api/servers/{server_id}/quests/events/{event_id}/approve
 PUT /api/servers/{server_id}/quests/events/{event_id}/attendance/{discord_id}
 POST /api/servers/{server_id}/quests/polls
 DELETE /api/servers/{server_id}/quests/polls/{poll_id}
+PUT /api/servers/order
+POST /api/servers/start-all
+POST /api/servers/stop-all
+PUT /api/servers/{server_id}/group
+GET /api/servers/{server_id}/gamerules
+PUT /api/servers/{server_id}/gamerules
+GET /api/servers/{server_id}/console/commands
+GET /api/servers/{server_id}/logs/files
+GET /api/servers/{server_id}/logs/files/{name}

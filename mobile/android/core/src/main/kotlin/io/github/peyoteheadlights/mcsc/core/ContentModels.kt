@@ -3,6 +3,8 @@ package io.github.peyoteheadlights.mcsc.core
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /*
  * What the Mods / Plugins / Packs and Game settings screens read. As in
@@ -685,6 +687,27 @@ data class GameSetting(
     val lines: Int = 1,
     /** "world_exists" for the seed once the world is made. */
     @SerialName("read_only") val readOnly: String? = null,
+)
+
+/** One game rule as the running server said it: true/false, a number, or other text. */
+@Serializable
+data class GameRule(val name: String, val value: JsonPrimitive)
+
+@Serializable
+data class GameRules(
+    /** False: the server is stopped, so no rule was read. */
+    val running: Boolean = false,
+    val rules: List<GameRule> = emptyList(),
+    val presets: List<String> = emptyList(),
+)
+
+@Serializable
+data class GameRulesSaved(
+    val rules: List<GameRule> = emptyList(),
+    /** What each changed rule was before, sent back for Undo. */
+    val before: JsonObject = JsonObject(emptyMap()),
+    /** Rules this server doesn't have, left out. */
+    val skipped: List<String> = emptyList(),
 )
 
 @Serializable

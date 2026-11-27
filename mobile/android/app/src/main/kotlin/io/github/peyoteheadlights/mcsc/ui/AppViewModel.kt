@@ -26,6 +26,7 @@ import io.github.peyoteheadlights.mcsc.core.Pairing
 import io.github.peyoteheadlights.mcsc.core.PairingLink
 import io.github.peyoteheadlights.mcsc.core.PairingParseException
 import io.github.peyoteheadlights.mcsc.core.Permissions
+import io.github.peyoteheadlights.mcsc.core.ServerListing
 import io.github.peyoteheadlights.mcsc.core.ServerRow
 import io.github.peyoteheadlights.mcsc.core.ServerStatus
 import io.github.peyoteheadlights.mcsc.core.Strings
@@ -68,6 +69,8 @@ data class ServersUi(
     val checkedAt: Double? = null,
     val problem: Message? = null,
     val refreshing: Boolean = false,
+    /** What Start all, Stop all or a move just did, in words. */
+    val said: List<Message> = emptyList(),
 )
 
 data class ServerUi(
@@ -500,7 +503,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val list = client.servers()
                 val at = now()
-                servers = ServersUi(list.servers, loaded = true, checkedAt = at)
+                servers = ServersUi(list.servers, loaded = true, checkedAt = at, said = servers.said)
                 graph.widget.write(WidgetSnapshot.read(list, at))
                 Widgets.refresh(getApplication())
                 Widgets.shortcuts(getApplication(), list.servers)
@@ -510,6 +513,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // is passed off as current.
                 servers = servers.copy(problem = Message.of(e), refreshing = false)
             }
+        }
+    }
+
+    /** Start all or Stop all for [ids], the servers shown. */
+    fun allServers(action: String, ids: List<String>) {
+        val client = client() ?: return
+        servers = servers.copy(said = emptyList())
+        viewModelScope.launch {
+            val said = try {
+                val rows = client.allServers(action, ids).servers
+                val done = rows.count { it.result in setOf("started", "stopped", "stopping") }
+                listOf(
+                    if (done > 0) Message("servers.all_done_$action", mapOf("n" to done.toString()))
+                    else Message("servers.all_none_$action"),
+                ) + rows.filter { it.result == "failed" }.map {
+                    Message("servers.all_failed", mapOf("name" to it.name, "reason" to it.detail.orEmpty()))
+                }
+            } catch (e: AgentException) {
+                prefs.lastProblem = e.key
+                listOf(Message.of(e))
+            }
+            servers = servers.copy(said = said)
+            refreshServers()
+        }
+    }
+
+    /** Moves [id] one place up or down among [shown] (its group's servers). */
+    fun moveServer(id: String, shown: List<String>, up: Boolean) {
+        val order = ServerListing.moved(servers.list.map { it.id }, shown, id, up) ?: return
+        arrangeServers { it.saveServerOrder(order) }
+    }
+
+    fun groupServer(id: String, group: String) = arrangeServers { it.saveServerGroup(id, group.trim()) }
+
+    private fun arrangeServers(call: suspend (AgentClient) -> Unit) {
+        val client = client() ?: return
+        viewModelScope.launch {
+            try {
+                call(client)
+                servers = servers.copy(said = emptyList())
+            } catch (e: AgentException) {
+                prefs.lastProblem = e.key
+                servers = servers.copy(said = listOf(Message.of(e)))
+            }
+            refreshServers()
         }
     }
 

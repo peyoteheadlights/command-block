@@ -7,13 +7,26 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
+from ... import oldlogs
 from ...events import OWNER_ONLY_EVENTS
 from ...minecraft.analyzer import fix_for
+from ...minecraft.ask import command_list
 from ...minecraft.commands import CommandError, describe_danger, validate
 from ...security.auth import Principal
+from ...security.paths import PathSafetyError
 from ...security.permissions import CONSOLE_READ, CONSOLE_SEND, require
 from ..deps import audit, get_server
-from ..responses import CommandButtons, ConsoleLog, CrashDetail, CrashList, EventList, Ok
+from ..responses import (
+    CommandButtons,
+    ConsoleCommands,
+    ConsoleLog,
+    CrashDetail,
+    CrashList,
+    EventList,
+    LogFiles,
+    LogFileText,
+    Ok,
+)
 from .models import CommandButtonsRequest
 
 router = APIRouter()
@@ -55,6 +68,34 @@ async def download_logs(
     return PlainTextResponse(
         body, headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
+
+
+@router.get("/logs/files", response_model=LogFiles)
+async def log_files(principal: Principal = Depends(require(CONSOLE_READ)), ctx=Depends(get_server)):
+    """Minecraft's own log files in the server's logs folder, newest first."""
+    return {"files": oldlogs.listing(ctx)}
+
+
+@router.get("/logs/files/{name}", response_model=LogFileText)
+async def log_file(
+    name: str, principal: Principal = Depends(require(CONSOLE_READ)), ctx=Depends(get_server)
+):
+    """One of them, read-only (a .log.gz is unzipped here)."""
+    import asyncio
+
+    try:
+        return await asyncio.to_thread(oldlogs.read, ctx, name)
+    except PathSafetyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+
+
+@router.get("/console/commands", response_model=ConsoleCommands)
+async def console_commands(
+    principal: Principal = Depends(require(CONSOLE_SEND)), ctx=Depends(get_server)
+):
+    """The commands the running server says it has (its help), for the
+    console's autocomplete. Empty while it's stopped."""
+    return {"commands": await command_list(ctx)}
 
 
 @router.post("/logs/clear", response_model=Ok)

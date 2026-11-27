@@ -167,9 +167,13 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
     public var edition: String?
     public var capabilities: Capabilities?
     public var answering: Answering?
+    /// Where the owner put it on All servers; nil: never moved.
+    public var position: Int?
+    /// The heading it's under on All servers; empty: none.
+    public var group: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, color, state, uptime, content, edition, capabilities, answering
+        case id, name, color, state, uptime, content, edition, capabilities, answering, position, group
         case stateVerified = "state_verified"
         case playersOnline = "players_online"
         case playersVerified = "players_verified"
@@ -193,7 +197,9 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         content: String? = nil,
         edition: String? = nil,
         capabilities: Capabilities? = nil,
-        answering: Answering? = nil
+        answering: Answering? = nil,
+        position: Int? = nil,
+        group: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -210,6 +216,8 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         self.edition = edition
         self.capabilities = capabilities
         self.answering = answering
+        self.position = position
+        self.group = group
     }
 
     public init(from decoder: Decoder) throws {
@@ -229,6 +237,8 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         edition = try c.decodeIfPresent(String.self, forKey: .edition)
         capabilities = try c.decodeIfPresent(Capabilities.self, forKey: .capabilities)
         answering = try? c.decodeIfPresent(Answering.self, forKey: .answering)
+        position = try? c.decodeIfPresent(Int.self, forKey: .position)
+        group = try? c.decodeIfPresent(String.self, forKey: .group)
     }
 }
 

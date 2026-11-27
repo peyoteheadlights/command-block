@@ -42,6 +42,7 @@ struct GameSettingsView: View {
             content.said = nil
             await content.loadGame()
             await content.loadIcon()
+            await content.loadRules()
         }
     }
 
@@ -87,6 +88,11 @@ struct GameSettingsView: View {
                 CardBox(palette: palette) {
                     IconCard(content: content, canEdit: canEdit, palette: palette)
                 }
+            }
+            SectionTitle(text: model.t("gamerules.title"), palette: palette)
+            Hint(text: model.t("gamerules.hint"), palette: palette)
+            CardBox(palette: palette) {
+                RulesCard(content: content, canEdit: canEdit, palette: palette)
             }
             if canEdit {
                 Button {
@@ -330,5 +336,102 @@ private struct IconCard: View {
             picture.draw(in: CGRect(x: (64 - width) / 2, y: (64 - height) / 2, width: width, height: height))
         }
         return small.pngData()?.base64EncodedString()
+    }
+}
+
+/// Game rules: read from the running server, changed at once (no restart).
+struct RulesCard: View {
+    let content: ContentPages
+    let canEdit: Bool
+    let palette: Palette
+
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let strings = model.strings
+        let read = content.rules
+        VStack(alignment: .leading, spacing: 8) {
+            if let problem = read.problem {
+                ProblemCard(problem: problem, palette: palette) { await content.loadRules() }
+            } else if let data = read.value {
+                if !data.running {
+                    Hint(text: model.t("gamerules.stopped"), palette: palette)
+                } else if data.rules.isEmpty {
+                    Hint(text: model.t("gamerules.none"), palette: palette)
+                }
+            } else {
+                Hint(text: model.t("gamerules.reading"), palette: palette)
+            }
+            if let said = content.rulesSaid {
+                HStack {
+                    Text(said).foregroundStyle(palette.textSecondary)
+                    Spacer()
+                    if canEdit && !content.rulesBefore.isEmpty {
+                        Button(model.t("changes.undo")) {
+                            let before = content.rulesBefore
+                            Task { await content.saveRules(strings, changed: before) }
+                        }
+                    }
+                }
+            }
+            if !content.rulesSkipped.isEmpty {
+                Hint(text: model.t("gamerules.skipped", ["names": content.rulesSkipped.joined(separator: ", ")]), palette: palette)
+            }
+            let rules = read.value?.rules ?? []
+            if canEdit && !rules.isEmpty {
+                Menu(model.t("gamerules.presets")) {
+                    ForEach(read.value?.presets ?? [], id: \.self) { preset in
+                        Button(model.t("presets.\(preset)")) {
+                            Task { await content.saveRules(strings, changed: [:], preset: preset) }
+                        }
+                    }
+                }
+                .disabled(content.busy != nil)
+            }
+            ForEach(rules) { rule in
+                row(rule, content.ruleEdits[rule.name] ?? rule.value)
+            }
+            if canEdit && !rules.isEmpty {
+                Button {
+                    Task { await content.saveRules(strings) }
+                } label: {
+                    Text(model.t(content.busy == "rules" ? "action.saving" : "gamerules.save"))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(palette.accent)
+                .disabled(content.busy != nil || content.ruleEdits.isEmpty)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ rule: GameRule, _ value: JSONValue) -> some View {
+        switch value {
+        case .bool(let on):
+            Toggle(rule.name, isOn: Binding(get: { on }, set: { content.editRule(rule.name, .bool($0)) }))
+                .disabled(!canEdit)
+        case .number(let number):
+            HStack {
+                Text(rule.name)
+                Spacer()
+                TextField(rule.name, text: Binding(
+                    get: { String(Int(number)) },
+                    set: { typed in if let n = Int(typed) { content.editRule(rule.name, .number(Double(n))) } }
+                ))
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: 110)
+                .disabled(!canEdit)
+            }
+        case .string(let said):
+            // A value the app can't edit safely: shown as the server said it.
+            HStack {
+                Text(rule.name)
+                Spacer()
+                Text(hiding: said).foregroundStyle(palette.textSecondary)
+            }
+        default:
+            EmptyView()
+        }
     }
 }

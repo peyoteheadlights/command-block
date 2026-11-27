@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.TextButton
@@ -53,6 +54,8 @@ import io.github.peyoteheadlights.mcsc.core.GameForm
 import io.github.peyoteheadlights.mcsc.core.GameSetting
 import io.github.peyoteheadlights.mcsc.core.Permissions
 import io.github.peyoteheadlights.mcsc.core.RawText
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 
 /**
  * Game settings: the PC page's fields in its groups, each with its hint.
@@ -71,6 +74,7 @@ fun GameSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
         content.clearSaid()
         content.loadGame()
         content.loadIcon()
+        content.loadRules()
     }
 
     ServerFrame(
@@ -118,6 +122,8 @@ fun GameSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
             item { SectionTitle(t("motd.icon")) }
             item { Card { IconCard(vm, content, canEdit) } }
         }
+        item { SectionTitle(t("gamerules.title"), info = t("gamerules.hint")) }
+        item { Card { RulesCard(content, canEdit) } }
         if (canEdit) {
             item {
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -306,4 +312,75 @@ private fun iconPng(picture: Bitmap): String {
     val out = ByteArrayOutputStream()
     small.compress(Bitmap.CompressFormat.PNG, 100, out)
     return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+}
+
+/** Game rules: read from the running server, changed at once (no restart). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RulesCard(content: ContentPages, canEdit: Boolean) {
+    val read = content.rules
+    val data = read.value
+    val colors = LocalColors.current
+    Column(Modifier.padding(vertical = 8.dp)) {
+        read.problem?.let { ProblemNote(it, onRetry = content::loadRules) }
+        when {
+            data == null && read.problem == null -> Note(t("gamerules.reading"))
+            data != null && !data.running -> Note(t("gamerules.stopped"))
+            data != null && data.rules.isEmpty() -> Note(t("gamerules.none"))
+        }
+        content.rulesSaid?.let { said ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Note(said.text(LocalStrings.current), modifier = Modifier.weight(1f))
+                if (content.rulesBefore.isNotEmpty() && canEdit) {
+                    TextButton(onClick = { content.saveRules(content.rulesBefore) }) { Text(t("changes.undo")) }
+                }
+            }
+        }
+        if (content.rulesSkipped.isNotEmpty()) {
+            Note(t("gamerules.skipped", "names" to content.rulesSkipped.joinToString(", ")), color = colors.text3)
+        }
+        val rules = data?.rules.orEmpty()
+        if (rules.isEmpty()) return@Column
+        if (canEdit) {
+            Text(t("gamerules.presets"), modifier = Modifier.padding(horizontal = 16.dp))
+            FlowRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (preset in data?.presets.orEmpty()) {
+                    TextButton(onClick = { content.saveRules(preset = preset) }, enabled = content.busy == null) {
+                        Text(t("presets.$preset"))
+                    }
+                }
+            }
+        }
+        for (rule in rules) {
+            val value = content.ruleEdits[rule.name] ?: rule.value
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(rule.name, modifier = Modifier.weight(1f))
+                val flag = value.booleanOrNull
+                val number = value.content.toIntOrNull()
+                when {
+                    !value.isString && flag != null ->
+                        Switch(checked = flag, onCheckedChange = { content.editRule(rule.name, JsonPrimitive(it)) }, enabled = canEdit)
+                    !value.isString && number != null -> OutlinedTextField(
+                        value = value.content,
+                        onValueChange = { typed -> typed.toIntOrNull()?.let { content.editRule(rule.name, JsonPrimitive(it)) } },
+                        singleLine = true,
+                        enabled = canEdit,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.width(110.dp),
+                    )
+                    else -> Text(value.content, color = colors.text3) // shown as the server said it
+                }
+            }
+        }
+        if (canEdit) {
+            Button(
+                onClick = { content.saveRules() },
+                enabled = content.busy == null && content.ruleEdits.isNotEmpty(),
+                modifier = Modifier.padding(16.dp),
+            ) { Text(t(if (content.busy == "rules") "action.saving" else "gamerules.save")) }
+        }
+    }
 }
