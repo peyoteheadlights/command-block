@@ -93,6 +93,13 @@ def style_sheet(t: dict[str, str], scale: float = 1.0) -> str:
     return re.sub(r"(\d+(?:\.\d+)?)pt", lambda m: f"{float(m[1]) * scale:g}pt", sheet)
 
 
+def _tick(t: dict[str, str]) -> str:
+    """The tick mark's picture, white or black like the words on a filled
+    button. A style sheet can only take it from a file."""
+    name = "tick-white.svg" if t["accent-text"] == "#FFFFFF" else "tick-black.svg"
+    return (FONTS.parent / "images" / name).as_posix()
+
+
 def _sheet(t: dict[str, str]) -> str:
     return f"""
 * {{ font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif; font-size: 10pt;
@@ -120,18 +127,23 @@ QLabel[kind="good"] {{ background: {t["success-soft"]}; border-radius: {t["radiu
                        padding: 8px 12px; }}
 
 QPushButton {{ background: {t["surface"]}; border: 1px solid {t["border-strong"]};
-               border-radius: {t["radius"]}; padding: 5px 14px; min-height: 20px; }}
+               border-radius: {t["radius"]}; padding: 5px 14px; min-height: 20px; font-weight: 500; }}
 QPushButton:hover {{ background: {t["surface-sunken"]}; }}
+QPushButton:pressed {{ background: {t["surface-selected"]}; }}
 QPushButton:focus {{ border: 2px solid {t["accent-ring"]}; padding: 4px 13px; }}
 QPushButton:disabled {{ color: {t["text-tertiary"]}; background: {t["surface-sunken"]}; }}
 QPushButton[kind="primary"] {{ background: {t["accent"]}; color: {t["accent-text"]};
-                               border: 1px solid {t["accent"]}; min-width: 96px; font-weight: 600; }}
+                               border: 1px solid {t["accent-ring"]}; min-width: 96px; font-weight: 600; }}
 QPushButton[kind="primary"]:hover {{ background: {t["accent-hover"]}; }}
 QPushButton[kind="primary"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
 QPushButton[kind="primary"]:disabled {{ background: {t["accent-soft"]}; color: {t["text-tertiary"]};
                                         border-color: transparent; }}
 QPushButton[kind="danger"] {{ background: {t["danger"]}; color: {t["on-danger"]}; border: 1px solid {t["danger"]};
                               font-weight: 600; }}
+QPushButton[kind="tonal"] {{ background: {t["accent-soft"]}; border: 1px solid transparent;
+                             color: {t["accent-ink"]}; font-weight: 600; }}
+QPushButton[kind="tonal"]:hover {{ border: 1px solid {t["accent-ring"]}; }}
+QPushButton[kind="tonal"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
 QPushButton[kind="plain"] {{ background: transparent; border: 1px solid transparent;
                              color: {t["accent-ink"]}; padding: 5px 8px; }}
 QPushButton[kind="plain"]:hover {{ background: {t["accent-soft"]}; }}
@@ -160,9 +172,11 @@ QRadioButton::indicator {{ width: 14px; height: 14px; border-radius: 8px; backgr
                            border: 1px solid {t["border-strong"]}; }}
 QRadioButton::indicator:checked {{ background: {t["accent-text"]}; border: 5px solid {t["accent"]};
                                    width: 6px; height: 6px; }}
-QCheckBox::indicator {{ width: 14px; height: 14px; border-radius: 4px; background: {t["surface"]};
+QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 5px; background: {t["surface"]};
                         border: 1px solid {t["border-strong"]}; }}
-QCheckBox::indicator:checked {{ background: {t["accent"]}; border-color: {t["accent"]}; }}
+QCheckBox::indicator:hover {{ border: 1px solid {t["accent-ring"]}; }}
+QCheckBox::indicator:checked {{ background: {t["accent"]}; border-color: {t["accent-ring"]};
+                                image: url({_tick(t)}); }}
 
 QProgressBar {{ background: {t["surface-sunken"]}; border: 0; border-radius: 4px;
                 max-height: 8px; min-height: 8px; text-align: center; }}
@@ -206,6 +220,27 @@ QLabel[kind="chip"] {{ background: {t["surface-sunken"]}; color: {t["text-second
                        border-radius: 10px; padding: 2px 10px; }}
 QLabel[kind="chip"][strong="true"] {{ background: {t["accent"]}; color: {t["accent-text"]}; }}
 QPushButton[big="true"] {{ font-size: 12pt; min-width: 110px; min-height: 30px; }}
+QToolButton#tool {{ background: {t["paper"]}; border: 1px solid {t["border-strong"]};
+                    border-radius: 10px; padding: 0; min-width: 34px; max-width: 34px;
+                    min-height: 34px; max-height: 34px; }}
+QToolButton#tool:hover {{ background: {t["surface-sunken"]}; }}
+QToolButton#tool:pressed {{ background: {t["surface-selected"]}; }}
+QToolButton#tool:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QToolButton#tool[kind="accent"] {{ background: {t["accent"]}; border-color: {t["accent-ring"]}; }}
+QToolButton#tool[kind="accent"]:hover {{ background: {t["accent-hover"]}; }}
+QToolButton#tool[kind="accent"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QToolButton#tool[kind="danger"] {{ background: transparent; border-color: transparent; }}
+QToolButton#tool[kind="danger"]:hover {{ background: {t["danger"]}; }}
+QToolButton#tool[kind="danger"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QPushButton#seg {{ background: transparent; border: 2px solid transparent; border-radius: 7px;
+                   padding: 2px 14px; min-height: 20px; font-weight: 500; }}
+QPushButton#seg:checked {{ font-weight: 600; }}
+QPushButton#seg:focus {{ border: 2px solid {t["accent-ring"]}; padding: 2px 14px; }}
+QLineEdit#bigNumber {{ font-size: 25.5pt; font-weight: 600; background: transparent;
+                       border: 2px solid transparent; padding: 0 4px; min-height: 0; }}
+QLineEdit#bigNumber:hover {{ background: {t["surface-sunken"]}; }}
+QLineEdit#bigNumber:focus {{ background: {t["paper"]}; border: 2px solid {t["accent-ring"]};
+                             padding: 0 4px; }}
 QPushButton[kind="segment"]:checked {{ background: {t["accent"]}; color: {t["accent-text"]};
                                        font-weight: 600; }}
 """
