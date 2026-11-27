@@ -208,7 +208,7 @@ def folder(client):
 
 def test_the_server_folder_can_be_looked_through(multi_client):
     (folder(multi_client) / "plugins" / "Thing").mkdir(parents=True)
-    (folder(multi_client) / "plugins" / "Thing" / "config.yml").write_text("a: 1\n")
+    (folder(multi_client) / "plugins" / "Thing" / "config.yml").write_bytes(b"a: 1\n")
     top = multi_client.get("/api/servers/survival/files").json()
     assert top["path"] == "" and top["parent"] is None
     names = [e["name"] for e in top["entries"]]
