@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "id": "servercore",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "servercore"
+    ],
+    "modrinth": "servercore"
+  },
+  "versions": ">=1.5.0 <2",
+  "title": "ServerCore",
+  "what": "Makes a modded server run faster, for example by loading less around players when it's busy.",
+  "steps": [
+    "Its settings are in config/servercore. Read settings again after you change them.",
+    "Status and Mob limits can be switched off in its settings; then those buttons get no answer."
+  ],
+  "source": "https://github.com/Wesley1808/ServerCore/tree/main/common/src/main/java/me/wesley1808/servercore/common/commands",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "status",
+      "label": "Show status",
+      "command": "servercore status"
+    },
+    {
+      "id": "mobcaps",
+      "label": "Show mob limits",
+      "command": "mobcaps global"
+    },
+    {
+      "id": "entities",
+      "label": "Count entities by type",
+      "command": "statistics entities byType"
+    },
+    {
+      "id": "reload",
+      "label": "Read settings again",
+      "command": "servercore reload"
+    }
+  ]
+}

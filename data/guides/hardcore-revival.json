@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "id": "hardcore-revival",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "hardcorerevival"
+    ],
+    "modrinth": "hardcore-revival"
+  },
+  "versions": ">=20.1.0 <27",
+  "title": "Hardcore Revival",
+  "what": "A player who dies is knocked out first, and friends can bring them back before time runs out.",
+  "steps": [
+    "Another player holds right-click on the knocked-out player to bring them back.",
+    "Revive brings a knocked-out player back right away."
+  ],
+  "source": "https://github.com/TwelveIterations/HardcoreRevival/blob/main/common/src/main/java/net/blay09/mods/hardcorerevival/command/ReviveCommand.java",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "revive",
+      "label": "Revive a player",
+      "command": "revive {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ],
+      "permission": "players.manage"
+    }
+  ]
+}
