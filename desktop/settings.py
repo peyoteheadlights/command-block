@@ -440,7 +440,171 @@ class SettingsPage(Page):
         names = QVBoxLayout()
         layout.addLayout(names)
         self.names_part(names, owner)
+        tunnel = QVBoxLayout()
+        layout.addLayout(tunnel)
+        self.playit_part(tunnel, owner)
         return frame
+
+    # ------------------------------------------------------------ playit.gg
+    def playit_part(self, box: QVBoxLayout, owner: bool) -> None:
+        """playit.gg built in (agent/playit.py): install on click (on the
+        agent's PC only), link, the tunnel to make, its address and test."""
+        here = self.window_.agent.place == "this PC"
+
+        def show(now: dict) -> None:
+            if not now.get("supported", True):
+                refill(box, [])  # a plain Bedrock server: through WaterdogPE, later
+                return
+            refill(box, self.playit_lines(now, owner, here, show, failed, again))
+
+        def failed(exc: Exception) -> None:
+            refill(box, [label(str(exc), "problem")])
+
+        def again() -> None:
+            self.ask("GET", "/playit", show, failed)
+
+        self._playit_installing = lambda: refill(box, [label(text("playit.installing"), "sub")])
+        again()
+
+    def playit_lines(
+        self, now: dict, owner: bool, here: bool, show, failed, again: Callable[[], None]
+    ) -> list[QWidget]:
+        shown: list[QWidget] = [label(text("playit.title"), name="h3")]
+        phase, claim = now.get("phase"), now.get("claim") or {}
+
+        def act(action: str) -> Callable[[], None]:
+            return lambda: self.ask("POST", f"/playit/{action}", show, failed, body={}, slow=True)
+
+        def button(words: str, do: Callable[[], None], kind: str = "") -> QWidget:
+            pressed = push(text(words), kind)
+            pressed.clicked.connect(do)
+            return pressed
+
+        if not now.get("on"):
+            shown.append(label(text("playit.note"), "sub"))
+            if not owner:
+                return shown
+            if phase == "not_installed" and not here:
+                return [*shown, label(text("playit.not_here"), "sub")]
+
+            def use() -> None:
+                if phase != "not_installed":
+                    act("use")()
+                    return
+                if not self.window_.confirm(
+                    text("playit.install_title"),
+                    text("playit.install_body"),
+                    text("playit.install"),
+                ):
+                    return
+                self._playit_installing()
+                self.window_.run(self.window_.pc.install_playit, lambda _r: act("use")(), failed)
+
+            return [*shown, button("playit.use", use, "tonal")]
+        if claim.get("state") == "waiting":
+            shown.append(label(text("playit.link"), "sub"))
+            open_page = button("playit.link_open", lambda: self.window_.pc.open_link(claim["url"]))
+            shown += [open_page, button("playit.check", again)]
+        elif claim.get("state") in ("rejected", "expired", "failed"):
+            words = text(f"playit.link_{claim['state']}", detail=claim.get("detail") or "")
+            shown.append(label(words, "problem"))
+            if owner:
+                shown.append(button("playit.use", act("use"), "tonal"))
+        elif phase == "waiting_for_secret":
+            shown.append(label(text("playit.not_linked"), "problem"))
+            if owner:
+                shown.append(button("playit.use", act("use"), "tonal"))
+        elif phase != "running":
+            words = text("playit.stopped", phase=phase, problem=now.get("problem") or "")
+            shown.append(label(words.strip(), "problem"))
+            if owner and phase != "not_installed":
+                shown.append(button("playit.reconnect", act("reconnect"), "tonal"))
+        else:
+            shown += self.playit_ways(now, owner, show)
+            if owner and any(not w.get("tunnel") for w in now.get("ways") or []):
+                shown.append(button("playit.check", again))
+        if owner:
+            shown.append(button("playit.stop", lambda: self.playit_stop(show, failed, here)))
+        return shown
+
+    def playit_ways(self, now: dict, owner: bool, show) -> list[QWidget]:
+        """Each tunnel the server needs: its address, or how to make it."""
+        shown: list[QWidget] = []
+        missing = False
+        for way in now.get("ways") or []:
+            found, port = way.get("tunnel"), way["local_port"]
+            if found:
+                key = f"playit.join_{way['kind']}"
+                shown.append(label(text(key, address=found["address"], port=port), "sub"))
+                if found.get("disabled"):
+                    words = text("playit.disabled", reason=found.get("reason") or "")
+                    shown.append(label(words, "problem"))
+                continue
+            missing = True
+            proxy = text("playit.proxy_v2" if now.get("proxy") == "v2" else "playit.proxy_none")
+            kind = text(f"playit.kind_{way['kind']}")
+            shown.append(
+                label(text("playit.make_tunnel", kind=kind, port=port, proxy=proxy), "sub")
+            )
+        if missing and owner:
+            make = push(text("playit.make_open"), "tonal")
+            make.clicked.connect(lambda: self.window_.pc.open_link(now.get("new_tunnel") or ""))
+            shown.append(make)
+        test = now.get("test") or {}
+        if test.get("works") is not None:
+            key = "playit.works" if test["works"] else "playit.fails"
+            words = text(key, address=test.get("address") or "", by=text("address.by_mcsrvstat"))
+            shown.append(label(words, "sub" if test["works"] else "problem"))
+        java = next((w for w in now.get("ways") or [] if w["kind"] == "java"), None)
+        address = ((java or {}).get("tunnel") or {}).get("address")
+        if owner and address:
+            run = push(text("address.test"), "tonal")
+
+            def run_test() -> None:
+                allow = bool(now.get("mcsrvstat_ok")) or self.window_.confirm(
+                    text("address.test"),
+                    text("address.test_ask", address=address),
+                    text("address.test"),
+                )
+                if allow:
+                    run.setEnabled(False)
+                    self.ask(
+                        "POST",
+                        "/playit-test",
+                        show,
+                        None,
+                        body={"allow_mcsrvstat": True},
+                        slow=True,
+                    )
+
+            run.clicked.connect(run_test)
+            shown.append(run)
+        return shown
+
+    def playit_stop(self, show, failed, here: bool) -> None:
+        if not self.window_.confirm(
+            text("playit.stop"), text("playit.stop_body"), text("playit.stop")
+        ):
+            return
+
+        def stopped(now: dict) -> None:
+            show(now)
+            if now.get("stop_problem"):
+                problem = text("playit.stop_problem", problem=now["stop_problem"])
+                self.window_.page_problem(AgentError(problem))
+            elif here and self.window_.confirm(
+                text("playit.uninstall_title"),
+                text("playit.uninstall_body"),
+                text("playit.uninstall"),
+                text("playit.keep"),
+            ):
+                self.window_.run(
+                    self.window_.pc.uninstall_playit,
+                    lambda _r: self.ask("GET", "/playit", show, failed),
+                    failed,
+                )
+
+        self.ask("POST", "/playit/stop", stopped, failed, body={}, slow=True)
 
     # ------------------------------------------------------------ DuckDNS and No-IP
     def ask_pc(self, method: str, path: str, done, failed, body: dict | None = None) -> None:
@@ -581,10 +745,8 @@ class SettingsPage(Page):
                         label(text("ddns.join", name=name["name"], port=now.get("port")), "sub")
                     )
         elif reason in ("shared", "private"):
+            # The playit.gg part under the names offers the way round it.
             shown.append(label(text(f"address.{reason}"), "problem"))
-            playit = push(text("address.playit"))
-            playit.clicked.connect(lambda: self.window_.pc.open_link(now.get("playit") or ""))
-            shown.append(playit)
         elif reason in ("no_router", "refused"):
             shown.append(
                 label(text(f"address.{reason}", detail=now.get("detail") or ""), "problem")

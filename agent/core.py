@@ -467,6 +467,10 @@ class AgentCore:
         from .ddns import Names
 
         self.ddns = Names(self)
+        # playit.gg's program, its link and its tunnels (agent/playit.py).
+        from .playit import Playit
+
+        self.playit = Playit(self)
         self.wake = Wake(self)
         # Join protection and "Start when someone joins" (agent/joinguard.py).
         self.guard = GuardHub(self)
@@ -618,6 +622,7 @@ class AgentCore:
         self.mod_files.start()
         self.tailscale.start()
         self.ddns.start()
+        self.playit.start()
         self.wake.start()
         self.guard.start()
         try:
@@ -760,6 +765,7 @@ class AgentCore:
         self.mod_files.stop()
         self.tailscale.stop()
         self.ddns.stop()
+        self.playit.stop_watch()
         self.wake.stop()
         if self.discord is not None:
             await self.discord.stop()

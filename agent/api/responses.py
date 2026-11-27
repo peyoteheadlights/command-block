@@ -441,6 +441,43 @@ class InternetReach(Open):
     )
 
 
+class PlayitTunnel(Open):
+    address: str = Field(description="What friends type, as playit shows it")
+    destination: str = Field(description="Where playit sends it on this PC, like 127.0.0.1:25565")
+    disabled: bool = False
+    reason: str | None = Field(None, description="playit's words for why it's off")
+
+
+class PlayitWay(Open):
+    kind: str = Field(description="java, or bedrock for Geyser's port")
+    local_port: int = Field(description="The port the tunnel must send to")
+    tunnel: PlayitTunnel | None = Field(None, description="null until made on playit.gg")
+
+
+class PlayitState(Open):
+    """playit.gg on this PC, for one server (agent/playit.py)."""
+
+    on: bool = Field(description="The owner chose Use playit.gg")
+    phase: str | None = Field(
+        None,
+        description="playit's program: not_installed, stopped, waiting_for_secret (not "
+        "linked), has_invalid_secret, disabled_over_limit, starting, running, stopping, error",
+    )
+    problem: str | None = Field(None, description="playit's own words when not running")
+    down: bool = Field(False, description="It stopped after being in use (one alert was sent)")
+    claim: dict[str, Any] | None = Field(
+        None, description="The link step: url, state (waiting, rejected, expired, failed), detail"
+    )
+    ways: list[PlayitWay] = Field(default_factory=list)
+    supported: bool = Field(True, description="false for a plain Bedrock server (later)")
+    proxy: str = Field(description="What Proxy Protocol the tunnel needs: v2 or none")
+    new_tunnel: str = Field(description="The page that makes a tunnel")
+    site: str
+    test: dict[str, Any] | None = Field(None, description="The outside test on the tunnel")
+    mcsrvstat_ok: bool = False
+    stop_problem: str | None = Field(None, description="Only after Stop, when playit didn't answer")
+
+
 class JoinInfo(Open):
     java: JavaJoin | None = Field(None, description="null for a Bedrock server")
     bedrock: BedrockJoin | None = Field(None, description="null when Bedrock players can't join")
