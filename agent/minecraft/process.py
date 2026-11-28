@@ -31,9 +31,9 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .. import serveruser
 import psutil
 
+from .. import serveruser
 from ..events import Event, EventBus
 from ..safechange import blocked_message, unfinished
 from . import cpu

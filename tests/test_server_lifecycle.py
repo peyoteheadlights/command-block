@@ -278,4 +278,3 @@ async def test_a_start_that_takes_too_long_is_alerted_and_left_running(make_conf
     assert server.state is ServerState.STARTING  # an alert only, never stopped
     assert await server.wait_online(timeout=10)
     await server.stop()
-

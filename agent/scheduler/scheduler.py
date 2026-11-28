@@ -78,6 +78,8 @@ SKIPPED_WHEN_LATE = frozenset({"start", "stop", "restart", "notify"})
 
 async def _wait(seconds: float) -> None:
     await asyncio.sleep(seconds)
+
+
 EVENTS = {
     "server_started": "started",
     "server_stopped": "stopped",
