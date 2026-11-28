@@ -109,6 +109,9 @@ class AgentClient(
     private val slowHttp: OkHttpClient = http.newBuilder()
         .readTimeout(slowSeconds, TimeUnit.SECONDS)
         .callTimeout(0, TimeUnit.SECONDS)
+        // Sending it again after a dropped connection could start a second
+        // backup, and the error from the second try hides that the PC got the first.
+        .retryOnConnectionFailure(false)
         .build()
 
     private val files: OkHttpClient = http.newBuilder()
