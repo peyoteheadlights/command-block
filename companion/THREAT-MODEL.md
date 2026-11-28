@@ -58,6 +58,7 @@ registries don't match the server's.
 | 14 | Denial of service | A player who never answers | `timeout_seconds` (1 to 60) from when the challenge is sent (join steps before it, like a resource pack prompt, don't count), then judged as no answer | `JoinCheck.tick`, `ServerSideTest` |
 | 15 | Repudiation | "I wasn't refused" / unseen attacks | One log line per check, read into Recent activity; 3 failures from one player in a day alert the owner | `agent/minecraft/console.py`, `tests/test_companion_checks.py` |
 | 16 | Spoofing | Another server offering to swap a friend's modpack for its own | A new join forgets the last server's offer; the button only shows when the offer's modpack name is the one in place; server list entries only move to a new address when the update came from the server at the old one | `Updates.joining`, `Updates.checked`, `TitleExtras.followAddress` (hand check) |
+| 17 | Elevation | A stranger joining a plain Bedrock server behind WaterdogPE (playit.gg), where the server itself must run with its allow list and online mode off | The WaterdogPE plugin turns away anyone not signed in to Xbox or not on the server's `allowlist.json`, before they reach the server. Both files are read for every join; one it can't read turns everyone away. It logs a ready line when it loads, and the agent stops WaterdogPE if playit's "Registered" line comes without it (WaterdogPE only logs a plugin that fails to load) | `waterdog/AllowListTest`, `tests/test_waterdog.py` |
 
 ## Known risks we accept, or fix later
 
@@ -72,6 +73,7 @@ registries don't match the server's.
 | G | Not required: a player refused the check but never reaching the world leaves a small chat-line entry in memory | Bounded by the per-address limit (6 a minute by default) | None planned |
 | H | The title button pings the address the modpack names, which could be a LAN address | It sends only Minecraft's own status handshake | None planned |
 | I | The server hashes its own copies of the modpack's files once at start, on the server thread | Not a security problem; a slower start with a big modpack | Measure on the mini PC |
+| J | Behind WaterdogPE the Bedrock server runs with online mode off, so anyone who reaches its own port (19142, and IPv6 on `server-portv6`) can join **without** the Xbox check and claim any name and XUID, an operator's too (permissions.json is keyed by XUID). The home network can reach it, and so can the internet over IPv6 if the router and Windows Firewall let that port in | The agent turns off its LAN visibility and the router switch (UPnP) and puts them back before every start; playit only reaches WaterdogPE | A firewall rule from Diagnose server that blocks the server's own ports from other PCs (a new clicked exception), or a bind-to-127.0.0.1 setting from Mojang |
 
 ## Supply chain
 
