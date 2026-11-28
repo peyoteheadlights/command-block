@@ -97,6 +97,9 @@ def test_java_options_warn_refuse_a_bad_one_and_undo(qapp, agent_http):
     page.load()
     section(page, "Game settings")
     wait_for(qapp, lambda: "Bad flags can stop the JVM starting" in shown_text(page))
+    # The mode change and load() both ask for /memory, and each answer builds
+    # the card again, so wait for both before typing into it.
+    wait_for(qapp, lambda: not window._tasks)
     memory = card_of(page, "Memory (-Xmx)")
     args = next(e for e in memory.findChildren(QtWidgets.QLineEdit) if "-Xmx" in e.text())
     before = args.text().split()
