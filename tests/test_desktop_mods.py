@@ -115,7 +115,7 @@ def drop(qapp, window, paths) -> bool:
 
 
 # ---------------------------------------------------------------- the page
-def test_the_tab_is_named_by_type_and_hidden_for_vanilla(qapp, agent_http):
+def test_the_tab_is_named_by_type_and_vanilla_only_makes_a_modpack(qapp, agent_http):
     window = signed_in_on(qapp, agent_http)
     assert "Mods" in page_tabs(window)
     config = core_of(agent_http).servers["survival"].config
@@ -124,7 +124,14 @@ def test_the_tab_is_named_by_type_and_hidden_for_vanilla(qapp, agent_http):
     wait_for(qapp, lambda: "Plugins" in page_tabs(window) and "Mods" not in page_tabs(window))
     config.set("server.type", "vanilla")
     window.refresh()
-    wait_for(qapp, lambda: "Plugins" not in page_tabs(window) and "Mods" not in page_tabs(window))
+    wait_for(qapp, lambda: "Plugins" not in page_tabs(window) and "Mods" in page_tabs(window))
+    window.server_screen.show_page("Mods")
+    page = window.server_screen.page
+    assert page is window.server_screen.page_widgets["Vanilla mods"]
+    assert "Fabric" in page.fabric.text()
+    assert page.make_card.frame.isVisibleTo(window)
+    page.change.click()
+    wait_for(qapp, lambda: window.server_screen.current_page == "Settings")
     window.load_server_parts()
     overview = window.server_screen.simple_overview
     assert not overview.mods_card.isVisibleTo(window)
@@ -1217,6 +1224,19 @@ def test_make_dialog_offers_required_and_the_chat_line_with_the_companion(qapp):
     assert dialog.body()["required"] is True
     dialog.chat_text.setText("  ")
     assert dialog.body()["chat_line"] is None, "empty: the agent's own wording"
+
+
+def test_make_dialog_on_vanilla_offers_change_server_type(qapp):
+    from desktop import make_modpack
+
+    opened = []
+    options = {"name": "Friends", "required_to_join": {"available": False, "needs_fabric": True}}
+    dialog = make_modpack.MakeDialog(None, options, change_type=lambda: opened.append(1))
+    assert not dialog.required.isEnabled()
+    assert "Needs a Fabric server" in shown_text(dialog)
+    button(dialog, "Change server type").click()
+    assert opened == [1]
+    assert dialog.result() == make_modpack.QDialog.DialogCode.Rejected
 
 
 def test_make_dialog_sets_the_title_screen(qapp):

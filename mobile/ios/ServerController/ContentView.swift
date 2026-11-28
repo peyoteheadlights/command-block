@@ -60,7 +60,7 @@ struct ContentView: View {
                         case nil:
                             ProgressView().frame(maxWidth: .infinity)
                         case .some(ContentKind.none):
-                            EmptyCard(title: model.t("mobile.content.none_for_type"), palette: palette)
+                            vanilla(content, palette)
                         case .some(.packs):
                             packs(content, palette)
                         case .some(let kind):
@@ -240,6 +240,24 @@ struct ContentView: View {
     }
 
     // MARK: - Make a modpack
+
+    /// Vanilla runs no mods: Make a modpack, and why Required to join needs Fabric.
+    @ViewBuilder
+    private func vanilla(_ content: ContentPages, _ palette: Palette) -> some View {
+        let idle = content.busy == nil
+        SaidRow(said: content.said, palette: palette)
+        CardBox(palette: palette) {
+            Text(verbatim: model.t("make.required_vanilla")).foregroundStyle(palette.textSecondary)
+            if model.can(Permissions.SETTINGS_SERVER) {
+                Button(model.t("make.change_type")) { model.serversPath.append(.settings(serverId)) }
+            }
+        }
+        if model.can(Permissions.MODS_MANAGE) {
+            makeModpackCard(content, ready: idle, palette)
+            downloadLinkCard(content, ready: idle, palette)
+            modrinthCard(content, ready: idle, palette)
+        }
+    }
 
     /// Make a modpack from this server, then share it through the share
     /// sheet or have the Discord bot post it.
@@ -1689,8 +1707,17 @@ private struct MakeModpackSheet: View {
                 Section {
                     // Needs the Companion mod on the server, which does the join check.
                     Toggle(model.t("make.required"), isOn: $required).disabled(!options.requiredToJoin)
-                    Text(verbatim: model.t(options.requiredToJoin ? "make.required_hint" : "make.required_later"))
-                        .font(.footnote).foregroundStyle(.secondary)
+                    if options.needsFabric {
+                        // Vanilla can't run the Companion: Fabric with no other mods plays the same.
+                        Text(verbatim: model.t("make.required_vanilla")).font(.footnote).foregroundStyle(.secondary)
+                        Button(model.t("make.change_type")) {
+                            dismiss()
+                            model.serversPath.append(.settings(content.serverId))
+                        }
+                    } else {
+                        Text(verbatim: model.t(options.requiredToJoin ? "make.required_hint" : "make.required_later"))
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     if options.requiredToJoin {
                         Toggle(model.t("make.chat_line"), isOn: $chatOn).disabled(required)
                         TextField(model.t("make.chat_line"), text: $chatText).disabled(required)

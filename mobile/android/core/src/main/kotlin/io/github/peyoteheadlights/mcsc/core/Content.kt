@@ -22,7 +22,7 @@ enum class ContentKind(val titleKey: String) {
     PLUGINS("page.plugins"),
     PACKS("mobile.content.packs"),
 
-    /** Vanilla takes neither, so it has no add-ons screen. */
+    /** Vanilla takes neither: its screen only makes a modpack. */
     NONE("page.mods"),
 }
 
@@ -50,6 +50,12 @@ object Content {
             row.content == "mods" || row.capabilities?.mods == true -> ContentKind.MODS
             else -> ContentKind.NONE
         }
+    }
+
+    /** Whether the server screen links to it: vanilla's only makes a modpack. */
+    fun shown(row: ServerRow?): Boolean {
+        val kind = kind(row) ?: return false
+        return kind != ContentKind.NONE || row?.edition != "bedrock"
     }
 
     /**

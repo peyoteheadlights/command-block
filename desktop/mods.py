@@ -186,7 +186,27 @@ def names(items: list[dict], key: str = "title") -> str:
     return ", ".join(str(i.get(key) or i.get("name") or "") for i in items)
 
 
-class ModsPage(Page):
+class SharePage(Page):
+    """What the modpack cards (make, download link, Modrinth) need from the
+    page they sit on."""
+
+    def may(self, permission: str) -> bool:
+        return self.window_.may(self.row["id"], permission)
+
+    def said(self, exc: Exception) -> None:
+        self.say(str(exc))
+
+    def run_here(
+        self,
+        work: Callable[[], Any],
+        done: Callable[[Any], None],
+        failed: Callable[[AgentError], None] | None = None,
+    ) -> None:
+        here = self.window_.still_on(self.row["id"])
+        self.window_.run(work, here(done), here(failed or self.said))
+
+
+class ModsPage(SharePage):
     def __init__(self, window: MainWindow) -> None:
         super().__init__(window)
         self.data: dict = {}
@@ -459,9 +479,6 @@ class ModsPage(Page):
         ]
 
     # ------------------------------------------------------------ loading
-    def may(self, permission: str) -> bool:
-        return self.window_.may(self.row["id"], permission)
-
     @property
     def can_change(self) -> bool:
         """Mods change only while the server is stopped, and only for an
@@ -519,9 +536,6 @@ class ModsPage(Page):
     def after_change(self) -> None:
         self.changed()
         self.ask("GET", "/mods/dependencies", self.show_needs, self.needs_failed, slow=True)
-
-    def said(self, exc: Exception) -> None:
-        self.say(str(exc))
 
     def show_list(self, data: dict) -> None:
         self.data = data
@@ -1679,15 +1693,6 @@ class ModsPage(Page):
         self.ask("POST", "/mods/copy/check", confirm, self.said, body=body, slow=True)
 
     # ------------------------------------------------------------ files from this PC
-    def run_here(
-        self,
-        work: Callable[[], Any],
-        done: Callable[[Any], None],
-        failed: Callable[[AgentError], None] | None = None,
-    ) -> None:
-        here = self.window_.still_on(self.row["id"])
-        self.window_.run(work, here(done), here(failed or self.said))
-
     def sure_unknown(self, name: str, problems: dict) -> bool:
         """A jar no site lists: the agent's warning and its hash, then the person decides."""
         body = f"{name}\n\n{problems['confirm']}"
@@ -1870,6 +1875,37 @@ class ModsPage(Page):
         # The own jars were listed in the question just answered.
         payload = {"token": token, "confirm": True, "own_jars": bool(pack.get("own_jars"))}
         self.ask("POST", "/modpack", done, failed, body=payload, slow=True)
+
+
+class VanillaModsPage(SharePage):
+    """A vanilla server's Mods tab. Vanilla runs no mods, but its owner can
+    still make a modpack (the world and settings), and sees that Required to
+    join needs Fabric."""
+
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__(window)
+        self.fabric = label(text("make.required_vanilla"), "sub")
+        self.column.addWidget(self.fabric)
+        self.change = push(text("make.change_type"))
+        self.change.clicked.connect(lambda: window.open_page("Settings"))
+        line = QHBoxLayout()
+        line.addWidget(self.change)
+        line.addStretch()
+        self.column.addLayout(line)
+        # The same cards as the full Mods page: making a modpack, then its
+        # download link and Modrinth upload.
+        self.make_card = MakeCard(self)
+        self.link_card = LinkCard(self)
+        self.modrinth_card = ModrinthCard(self)
+        for one in (self.make_card, self.link_card, self.modrinth_card):
+            self.column.addWidget(one.frame)
+        self.column.addStretch()
+
+    def load(self) -> None:
+        self.fabric.setText(text("make.required_vanilla"))
+        self.change.setVisible(self.may("settings.server"))
+        for one in (self.make_card, self.link_card, self.modrinth_card):
+            one.show(self.row)
 
 
 class AddonsPage(Page):
