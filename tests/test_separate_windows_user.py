@@ -443,9 +443,10 @@ async def test_the_card_reads_the_account_and_how_the_running_server_started(
     assert seen.windows_user["running_as"] is None
 
 
-async def test_the_card_has_no_windows_user_line_off_windows(core):
+async def test_the_card_has_no_windows_user_line_off_windows(core, monkeypatch):
     from agent import protection
 
+    monkeypatch.setattr(serveruser, "IS_WINDOWS", False)
     seen = await asyncio.to_thread(protection.facts, core.servers["survival"])
     assert seen.windows_user is None
 

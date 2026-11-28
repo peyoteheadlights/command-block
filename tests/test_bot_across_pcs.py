@@ -94,6 +94,13 @@ def run(fake, name, options=None, **kwargs) -> list[str]:
     return wait_for(lambda: fake.replies(token), 15)
 
 
+def run_until_off(fake, name, options=None, **kwargs) -> list[str]:
+    """Like run, but waits for "That PC is off". A slow runner can say
+    "Still waiting" first and then edit it into the off answer."""
+    token = fake.command(name, options, **kwargs)
+    return wait_for(lambda: [w for w in fake.replies(token) if "That PC is off" in w], 15)
+
+
 async def minute(pc: PC) -> None:
     pc.core.botpc.minute(pc.core.discord)
 
@@ -236,9 +243,9 @@ def test_that_pc_is_off_and_start_tries_help_wake_first(pcs, fake, monkeypatch):
     sent = []
     monkeypatch.setattr(wake, "send_wake", lambda mac, broadcast: sent.append((mac, broadcast)))
     b.off()
-    words = run(fake, "status", {"server": ref})[-1]
+    words = run_until_off(fake, "status", {"server": ref})[-1]
     assert words.startswith("That PC is off") and "Asked" not in words
-    words = run(fake, "start", {"server": ref}, roles=[ROLE])[-1]
+    words = run_until_off(fake, "start", {"server": ref}, roles=[ROLE])[-1]
     assert "That PC is off" in words and "Asked" in words and "wake up" in words
     assert sent == [("aa:bb:cc:dd:ee:ff", "192.168.1.255")]
 

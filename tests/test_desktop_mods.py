@@ -1381,7 +1381,8 @@ def test_deep_scan_hides_jneedle_without_its_list_and_says_download_sizes(
     wait_for(qapp, lambda: deep.boxes)
     assert "jneedle" not in deep.boxes and "mcantimalware" in deep.boxes
     size = round(PROGRAMS["clamav"].size / 1e6)
-    assert f"Downloaded the first time you run it ({size} MB)." in shown_text(page)
+    # The new rows show on Qt's next pass, not straight away.
+    wait_for(qapp, lambda: f"Downloaded the first time you run it ({size} MB)." in shown_text(page))
 
 
 def test_deep_scan_schedule_and_before_start_are_saved_on_the_agent(qapp, agent_http):
