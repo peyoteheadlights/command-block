@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "id": "cobblemon",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "cobblemon"
+    ],
+    "modrinth": "cobblemon"
+  },
+  "versions": ">=1.5.0 <2",
+  "title": "Cobblemon",
+  "what": "Adds Pokémon to Minecraft: catch, train and battle them.",
+  "steps": [
+    "New players pick a starter Pokémon when they first join.",
+    "Heal fixes a player's whole team; Stop battle ends a stuck battle."
+  ],
+  "source": "https://gitlab.com/cable-mc/cobblemon/-/tree/main/common/src/main/kotlin/com/cobblemon/mod/common/command",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "heal",
+      "label": "Heal a player's Pokémon",
+      "command": "healpokemon {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "stop",
+      "label": "Stop a player's battle",
+      "command": "stopbattle {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "starter",
+      "label": "Let a player pick a starter",
+      "command": "openstarterscreen {player}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        }
+      ]
+    },
+    {
+      "id": "give",
+      "label": "Give a Pokémon",
+      "command": "givepokemonother {player} {species}",
+      "fields": [
+        {
+          "id": "player",
+          "kind": "player",
+          "label": "Player"
+        },
+        {
+          "id": "species",
+          "kind": "name",
+          "label": "Pokémon (for example pikachu)"
+        }
+      ],
+      "permission": "players.manage"
+    }
+  ]
+}

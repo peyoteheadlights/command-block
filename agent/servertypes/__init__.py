@@ -112,7 +112,7 @@ class ServerType:
     world_root: str = ""
     default_level_name: str = "world"
     # Where a running server is checked as listening: "tcp" (a connect) or
-    # "raknet" (Bedrock's unconnected ping over UDP).
+    # "raknet" (Bedrock: NetherNet's join page, then RakNet's ping over UDP).
     ping: str = "tcp"
     # Can sit behind Join protection and wake when someone joins (agent/
     # joinguard.py): a Java server on TCP.

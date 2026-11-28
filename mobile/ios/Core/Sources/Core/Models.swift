@@ -64,9 +64,11 @@ public struct Me: Codable, Equatable, Sendable {
     /// What this account may do on each server it can see, by server id.
     public var serverPermissions: [String: [String]]?
     public var preferences: [String: String]
+    /// Warnings and tips hidden with "Don't show again", by their words' key.
+    public var hidden: [String]
 
     enum CodingKeys: String, CodingKey {
-        case user, role, servers, permissions, preferences
+        case user, role, servers, permissions, preferences, hidden
         case accountPermissions = "account_permissions"
         case serverPermissions = "server_permissions"
     }
@@ -74,8 +76,9 @@ public struct Me: Codable, Equatable, Sendable {
     public init(
         user: String, role: String = "owner", servers: [String]? = nil, permissions: [String] = [],
         accountPermissions: [String]? = nil, serverPermissions: [String: [String]]? = nil,
-        preferences: [String: String] = [:]
+        preferences: [String: String] = [:], hidden: [String] = []
     ) {
+        self.hidden = hidden
         self.user = user
         self.role = role
         self.servers = servers
@@ -96,6 +99,7 @@ public struct Me: Codable, Equatable, Sendable {
         // The agent keeps other kinds of values here too; the apps only
         // reads text ones and never fails over the rest.
         preferences = (try? c.decodeIfPresent([String: String].self, forKey: .preferences)) ?? [:]
+        hidden = try c.decodeIfPresent([String].self, forKey: .hidden) ?? []
     }
 
     public var isOwner: Bool { role == "owner" }
@@ -167,9 +171,23 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
     public var edition: String?
     public var capabilities: Capabilities?
     public var answering: Answering?
+    /// Where the owner put it on All servers; nil: never moved.
+    public var position: Int?
+    /// The heading it's under on All servers; empty: none.
+    public var group: String?
+    /// A Test server: never gets a store.
+    public var test: Bool
+    /// Who it's for (first run's question): "community" servers may get the Store.
+    public var playedBy: String?
+
+    /// What every app shows (a state.* word), worked out by the agent.
+    public var label: String
+    /// The buttons the agent takes now: start, stop, force_stop, restart, change.
+    public var can: [String]
 
     enum CodingKeys: String, CodingKey {
-        case id, name, color, state, uptime, content, edition, capabilities, answering
+        case id, name, color, state, uptime, content, edition, capabilities, answering, position, group, test, label, can
+        case playedBy = "played_by"
         case stateVerified = "state_verified"
         case playersOnline = "players_online"
         case playersVerified = "players_verified"
@@ -193,7 +211,13 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         content: String? = nil,
         edition: String? = nil,
         capabilities: Capabilities? = nil,
-        answering: Answering? = nil
+        answering: Answering? = nil,
+        position: Int? = nil,
+        group: String? = nil,
+        test: Bool = false,
+        playedBy: String? = nil,
+        label: String = "unknown",
+        can: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -210,6 +234,12 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         self.edition = edition
         self.capabilities = capabilities
         self.answering = answering
+        self.position = position
+        self.group = group
+        self.test = test
+        self.playedBy = playedBy
+        self.label = label
+        self.can = can
     }
 
     public init(from decoder: Decoder) throws {
@@ -229,6 +259,12 @@ public struct ServerRow: Codable, Equatable, Identifiable, Sendable {
         edition = try c.decodeIfPresent(String.self, forKey: .edition)
         capabilities = try c.decodeIfPresent(Capabilities.self, forKey: .capabilities)
         answering = try? c.decodeIfPresent(Answering.self, forKey: .answering)
+        position = try? c.decodeIfPresent(Int.self, forKey: .position)
+        group = try? c.decodeIfPresent(String.self, forKey: .group)
+        test = (try? c.decodeIfPresent(Bool.self, forKey: .test)) ?? false
+        playedBy = try? c.decodeIfPresent(String.self, forKey: .playedBy)
+        label = try c.decodeIfPresent(String.self, forKey: .label) ?? "unknown"
+        can = try c.decodeIfPresent([String].self, forKey: .can) ?? []
     }
 }
 
@@ -296,9 +332,22 @@ public struct ServerStatus: Codable, Equatable, Sendable {
     public var players: [OnlinePlayer]
     public var maxPlayers: Int?
     public var answering: Answering?
+    /// What changed since it started that it only reads at start ("mods", "settings"...).
+    public var restartWaiting: [String]
+    public var restartWhenEmpty: Bool
+    /// The jar check or deep scan runs before a start; the start waits for it.
+    public var checkingJars: Bool
+
+    /// What every app shows (a state.* word), worked out by the agent.
+    public var label: String
+    /// The buttons the agent takes now: start, stop, force_stop, restart, change.
+    public var can: [String]
 
     enum CodingKeys: String, CodingKey {
-        case name, state, uptime, players, answering
+        case name, state, uptime, players, answering, label, can
+        case restartWaiting = "restart_waiting"
+        case restartWhenEmpty = "restart_when_empty"
+        case checkingJars = "checking_jars"
         case serverId = "server_id"
         case stateVerified = "state_verified"
         case minecraftVersion = "minecraft_version"
@@ -320,8 +369,15 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         playersVerified: Bool? = nil,
         players: [OnlinePlayer] = [],
         maxPlayers: Int? = nil,
-        answering: Answering? = nil
+        answering: Answering? = nil,
+        restartWaiting: [String] = [],
+        restartWhenEmpty: Bool = false,
+        checkingJars: Bool = false,
+        label: String = "unknown",
+        can: [String] = []
     ) {
+        self.restartWaiting = restartWaiting
+        self.restartWhenEmpty = restartWhenEmpty
         self.serverId = serverId
         self.name = name
         self.state = state
@@ -334,6 +390,9 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         self.players = players
         self.maxPlayers = maxPlayers
         self.answering = answering
+        self.checkingJars = checkingJars
+        self.label = label
+        self.can = can
     }
 
     public init(from decoder: Decoder) throws {
@@ -350,6 +409,11 @@ public struct ServerStatus: Codable, Equatable, Sendable {
         players = try c.decodeIfPresent([OnlinePlayer].self, forKey: .players) ?? []
         maxPlayers = try c.decodeIfPresent(Int.self, forKey: .maxPlayers)
         answering = try? c.decodeIfPresent(Answering.self, forKey: .answering)
+        restartWaiting = try c.decodeIfPresent([String].self, forKey: .restartWaiting) ?? []
+        restartWhenEmpty = try c.decodeIfPresent(Bool.self, forKey: .restartWhenEmpty) ?? false
+        checkingJars = try c.decodeIfPresent(Bool.self, forKey: .checkingJars) ?? false
+        label = try c.decodeIfPresent(String.self, forKey: .label) ?? "unknown"
+        can = try c.decodeIfPresent([String].self, forKey: .can) ?? []
     }
 }
 
@@ -514,4 +578,6 @@ public enum Permissions {
     public static let FILES_BROWSE = "files.browse"
     public static let WORLD_REPLACE = "world.replace"
     public static let QUESTS_MANAGE = "quests.manage"
+    /// Deep scan and its Quarantine button; owner only unless given.
+    public static let DEEP_SCAN = "deepscan.run"
 }

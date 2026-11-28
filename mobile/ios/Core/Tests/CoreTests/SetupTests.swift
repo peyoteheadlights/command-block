@@ -567,9 +567,9 @@ final class SetupTests: XCTestCase {
         XCTAssertEqual(read.recommended, "fabric")
         XCTAssertEqual(path(0), "/api/new-server/options")
         StubAgent.json(#"{"ok": true, "server_id": "fresh", "name": "Fresh", "directory": "D:/Fresh", "job_id": "j", "server": {"id": "fresh", "name": "Fresh", "state": "OFFLINE"}}"#)
-        let made = try await c.createServer(NewServerRequest(name: "Fresh", directory: "D:/Fresh", type: "fabric", minecraft: "1.21.4", loader: nil, memoryMb: 4096, color: "#F87906", eulaAccepted: true))
+        let made = try await c.createServer(NewServerRequest(name: "Fresh", directory: "D:/Fresh", type: "fabric", minecraft: "1.21.4", loader: nil, memoryMb: 4096, color: "#F87906", eulaAccepted: true, playedBy: "kids", players: ["Alex"]))
         XCTAssertEqual(made.serverId, "fresh")
-        XCTAssertEqual(body(1), ##"{"color":"#F87906","directory":"D:/Fresh","eula_accepted":true,"memory_mb":4096,"minecraft_version":"1.21.4","name":"Fresh","type":"fabric"}"##)
+        XCTAssertEqual(body(1), ##"{"color":"#F87906","directory":"D:/Fresh","eula_accepted":true,"memory_mb":4096,"minecraft_version":"1.21.4","name":"Fresh","played_by":"kids","players":["Alex"],"type":"fabric"}"##)
         StubAgent.json(#"{"ok": true, "server": {"id": "sky", "name": "Sky", "state": "OFFLINE"}, "warnings": []}"#)
         let added = try await c.addServer(name: "Sky", directory: "D:/Sky", type: "paper", jar: "")
         XCTAssertEqual(added.server.id, "sky")
@@ -577,7 +577,7 @@ final class SetupTests: XCTestCase {
         StubAgent.json(#"{"ok": true, "server_id": "pack", "name": "Pack", "directory": "D:/Pack", "job_id": "j", "server": {"id": "pack", "name": "Pack", "state": "OFFLINE"}}"#)
         _ = try await c.modpackServer(token: "abc", name: "Pack", directory: "D:/Pack", memoryMb: nil, color: nil, eulaAccepted: true)
         XCTAssertEqual(path(3), "/api/modpacks/abc/new-server")
-        XCTAssertEqual(body(3), #"{"directory":"D:/Pack","eula_accepted":true,"name":"Pack"}"#)
+        XCTAssertEqual(body(3), #"{"directory":"D:/Pack","eula_accepted":true,"name":"Pack","own_jars":false}"#)
         StubAgent.json(#"{"jobs": []}"#)
         _ = try await c.runningJobs()
         XCTAssertEqual(StubAgent.requests[4].request.url?.query, "running=true")
@@ -587,5 +587,40 @@ final class SetupTests: XCTestCase {
         XCTAssertEqual(method(5), "DELETE")
         XCTAssertEqual(path(5), "/api/modpacks/abc")
     }
-}
+    func testNamesAreAskedOnlyForFriendsOrKids() {
+        XCTAssertEqual(AddServer.players("kids", "Alex, Sam;  "), ["Alex", "Sam"])
+        XCTAssertEqual(AddServer.players("community", "Alex"), [])
+        XCTAssertEqual(AddServer.playedBy.map { $0.value }, ["friends", "kids", "community"])
+    }
 
+    func testAKindsTipShowsWhenTheAgentSaysSoAndItIsNotHidden() {
+        let options = NewServerOptions(kindTips: ["plugins", "bedrock"])
+        let paper = ServerTypeInfo(id: "paper", content: "plugins")
+        XCTAssertEqual(AddServer.tip(options, paper, hidden: []), "tip.kind.plugins")
+        XCTAssertNil(AddServer.tip(options, paper, hidden: ["tip.kind.plugins"]))
+        XCTAssertNil(AddServer.tip(options, ServerTypeInfo(id: "vanilla"), hidden: []))
+        XCTAssertEqual(AddServer.tip(options, ServerTypeInfo(id: "bedrock", edition: "bedrock"), hidden: []), "tip.kind.bedrock")
+    }
+
+    func testDontShowAgainAndShowAllAgainGoToTheAgent() async throws {
+        let c = client()
+        StubAgent.json(#"{"hidden": ["tip.kind.mods"]}"#)
+        let hid = try await c.hide("tip.kind.mods")
+        XCTAssertEqual(hid.hidden, ["tip.kind.mods"])
+        XCTAssertEqual(path(0), "/api/account/hidden")
+        XCTAssertEqual(body(0), #"{"key":"tip.kind.mods"}"#)
+        StubAgent.json(#"{"hidden": []}"#)
+        _ = try await c.showAllAgain()
+        XCTAssertEqual(method(1), "DELETE")
+    }
+
+    func testConsoleFriendsShowTheCodeThenTheGamertagFromTheAgent() throws {
+        XCTAssertEqual(ConsoleFriendsText.state(s, ConsoleFriends()), s.t("console.needs_crossplay"))
+        XCTAssertNil(ConsoleFriendsText.state(s, ConsoleFriends(available: true)))
+        let json = #"{"available": true, "enabled": true, "console_friends": {"available": true, "on": true, "sign_in": {"url": "https://www.microsoft.com/link", "code": "ABCD1234"}}}"#
+        let info = try JSONDecoder().decode(CrossplayInfo.self, from: Data(json.utf8))
+        XCTAssertTrue(ConsoleFriendsText.state(s, info.consoleFriends!)!.contains("ABCD1234"))
+        let done = ConsoleFriends(available: true, on: true, gamertag: "SpareTag")
+        XCTAssertTrue(ConsoleFriendsText.state(s, done)!.contains("SpareTag"))
+    }
+}

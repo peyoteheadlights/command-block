@@ -12,8 +12,8 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ... import bringin as bringin_module
+from ... import consolefriends, gamesettings, servertypes
 from ... import crossplay as crossplay_module
-from ... import gamesettings, servertypes
 from ...security.auth import Principal
 from ...security.permissions import (
     SERVER_VIEW,
@@ -59,6 +59,7 @@ from .models import (
     BringBackRequest,
     BringInReadRequest,
     BringInRequest,
+    ConsoleFriendsRequest,
     ConvertRequest,
     CreateServerRequest,
     CrossplayRequest,
@@ -114,7 +115,7 @@ async def new_server_options(
     principal: Principal = Depends(require(SERVERS_MANAGE)), core=Depends(get_core)
 ):
     """What the New server panel needs before anything is chosen."""
-    return await create_module.options(core)
+    return await create_module.options(core, principal.user)
 
 
 @global_router.post("/new-server", response_model=ServerCreated)
@@ -139,6 +140,8 @@ async def create_server(
         vanilla_spawns=payload.vanilla_spawns,
         user=principal.user,
         test=payload.test,
+        played_by=payload.played_by,
+        players=payload.players,
     )
     return {"ok": True, **result}
 
@@ -508,10 +511,15 @@ async def crossplay_status(
     principal: Principal = Depends(require(SERVER_VIEW)), ctx=Depends(get_server)
 ):
     """Whether Bedrock players can join, the port they use, and what differs."""
+    return await _crossplay(ctx, principal)
+
+
+async def _crossplay(ctx, principal: Principal) -> dict:
     status = crossplay_module.status(ctx)
     port = ctx.core.ports.bedrock_port_of(ctx)
     return {
         **status,
+        "console_friends": consolefriends.status(ctx, principal.is_owner),
         "address_port": port.port if port else None,
         "suggested_port": None if status["enabled"] else ctx.core.ports.suggest_bedrock(),
         # The address Bedrock players type. Only from a measured Tailscale
@@ -535,3 +543,28 @@ async def set_crossplay(
         result = await crossplay_module.disable(ctx, user=principal.user)
     audit(ctx, request, "crossplay", detail="on" if payload.enabled else "off")
     return {"ok": True, **result}
+
+
+@router.put("/crossplay/console-friends", response_model=CrossplaySaved)
+async def set_console_friends(
+    payload: ConsoleFriendsRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    """Let console friends join: the MCXboxBroadcast add-on (the owner's
+    click after the risks, house rule 2). Off deletes it and its sign-in."""
+    if not principal.is_owner:
+        raise HTTPException(
+            status_code=403, detail="Only the owner can sign a Microsoft account in for friends."
+        )
+    ctx.require_free()
+    try:
+        if payload.enabled:
+            await consolefriends.turn_on(ctx, payload.accept_risks)
+        else:
+            await consolefriends.turn_off(ctx)
+    except consolefriends.ConsoleFriendsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit(ctx, request, "console_friends", detail="on" if payload.enabled else "off")
+    return {"ok": True, **await _crossplay(ctx, principal)}

@@ -19,7 +19,14 @@ object ServerForm {
     /** bool, int, number (seconds, may have a fraction) or text. */
     data class Field(val key: String, val kind: String, val labelKey: String, val hintKey: String? = null)
 
-    data class Group(val titleKey: String, val fields: List<Field>, val noteKey: String? = null)
+    /** [technical]: shown only in Technical mode. [bedrockOwner]: only the owner, only on Bedrock. */
+    data class Group(
+        val titleKey: String,
+        val fields: List<Field>,
+        val noteKey: String? = null,
+        val technical: Boolean = false,
+        val bedrockOwner: Boolean = false,
+    )
 
     val GROUPS = listOf(
         Group("serverset.crashes", listOf(
@@ -46,7 +53,19 @@ object ServerForm {
             Field("server.stop_timeout", "number", "serverset.stop_timeout", "serverset.stop_timeout_hint"),
             Field("server.autostart_minecraft", "bool", "mobile.serverset.autostart", "mobile.serverset.autostart_hint"),
         )),
+        Group("serverset.technical_running", listOf(
+            Field("monitor.ignored_exit_codes", "text", "serverset.ignored_codes", "serverset.ignored_codes_hint"),
+            Field("server.low_priority", "bool", "serverset.low_priority", "serverset.low_priority_hint"),
+        ), technical = true),
+        // Players' games update themselves; off by default (agent/softwarecheck.py).
+        Group("serverset.bedrock_update", listOf(
+            Field("server.bedrock_auto_update", "bool", "serverset.bedrock_update_label"),
+        ), noteKey = "serverset.bedrock_update_note", bedrockOwner = true),
     )
+
+    /** Whether [group] shows for this account, mode and server. */
+    fun shown(group: Group, technical: Boolean, me: Me?, edition: String?): Boolean =
+        (!group.technical || technical) && (!group.bedrockOwner || (me?.isOwner == true && edition == "bedrock"))
 
     const val NAME = "server.name"
     const val NAME_LIMIT = 60
@@ -344,6 +363,17 @@ object Crossplay {
         strings.t(if (info.ready) "cross.ready_yes" else "cross.files_missing")
 }
 
+/** "Let console friends join": what to say about its sign-in, read from the agent. */
+object ConsoleFriendsText {
+    fun state(strings: Strings, info: ConsoleFriends): String? = when {
+        !info.on -> if (info.available) null else strings.t("console.needs_crossplay")
+        !info.available -> strings.t("console.needs_crossplay")
+        info.gamertag != null -> strings.t("console.signed_in", "gamertag" to info.gamertag)
+        info.signIn != null -> strings.t("console.sign_in", "url" to info.signIn.url, "code" to info.signIn.code)
+        else -> strings.t("console.waiting")
+    }
+}
+
 /** Duplicate: a copy of the server with its own port and color, owner only. */
 object Duplicate {
     const val COPY = "copy"
@@ -556,6 +586,27 @@ object AddServer {
     fun bedrockType(options: NewServerOptions): ServerTypeInfo? = options.types.firstOrNull { it.edition == "bedrock" }
 
     fun memoryShown(type: ServerTypeInfo): Boolean = type.takesMemoryLimit && type.edition != "bedrock"
+
+    /** "Who's this server for?" (desktop/welcome.py PLAYED_BY), as value and words key. */
+    val PLAYED_BY = listOf(
+        "friends" to "welcome.for_friends",
+        "kids" to "welcome.for_kids",
+        "community" to "welcome.for_community",
+    )
+
+    /** A few friends or kids: the whitelist goes on, with the names typed. */
+    fun namesAsked(playedBy: String): Boolean = playedBy == "friends" || playedBy == "kids"
+
+    /** The names typed, split by commas or semicolons; only when they're asked for. */
+    fun players(playedBy: String, typed: String): List<String> =
+        if (!namesAsked(playedBy)) emptyList() else typed.split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+
+    /** The first-run kind a type belongs to, for its tips: vanilla, mods, plugins or bedrock. */
+    fun tipKind(type: ServerTypeInfo): String = if (type.edition == "bedrock") "bedrock" else type.content ?: "vanilla"
+
+    /** This type's tip key, when the agent says its kind's tips show and it isn't hidden. */
+    fun tip(options: NewServerOptions, type: ServerTypeInfo, hidden: Collection<String>): String? =
+        "tip.kind.${tipKind(type)}".takeIf { tipKind(type) in options.kindTips && it !in hidden }
 
     /** One kind's column of the table, as label and value; Technical mode adds the loader, files and source. */
     fun rows(strings: Strings, type: ServerTypeInfo, technical: Boolean): List<Pair<String, String>> {

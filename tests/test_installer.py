@@ -39,7 +39,7 @@ class FakeSystem:
         self.running = False
         self.hosts_asked: list[str] = []
         self.calls: list[tuple] = []
-        self.servers = [{"id": "main", "name": "Survival", "state": "stopped"}]
+        self.servers = [{"id": "main", "name": "Survival", "state": "OFFLINE"}]
         self.fail_start = False
         self.start_count = 0
         self.task_launch = None
@@ -64,7 +64,7 @@ class FakeSystem:
             return {"servers": self.servers}
         if path.endswith("/server/stop"):
             for row in self.servers:
-                row["state"] = "stopped"
+                row["state"] = "OFFLINE"
         return {"ok": True}
 
     def remove_after_exit(self, setup_exe, folder):
@@ -95,11 +95,12 @@ class FakeSystem:
     def server_ports(self, script, ports):
         self.calls.append(("server_ports", tuple(ports)))
 
-    def register_updater_task(self, program_dir):
-        self.calls.append(("updater_task", str(program_dir)))
+    def register_updater_task(self, program_dir, reopen=True):
+        self.calls.append(("updater_task", str(program_dir), reopen))
 
-    def create_shortcuts(self, program_dir, folder=None, desktop=False):
+    def create_shortcuts(self, program_dir, folder=None, desktop=False, app_link=True):
         self.calls.append(("shortcuts", folder, desktop))
+        self.app_link = app_link
         return ["Command Block.lnk"]
 
     def write_uninstall_entry(self, program_dir, version, size_kb, per_user=False):
@@ -544,7 +545,7 @@ def test_an_installer_copy_is_updated_keeping_everything(tmp_path, places, progr
     env_before = found.env_path.read_text()
     system = FakeSystem()
     system.running = True
-    system.servers = [{"id": "s0", "name": "S0", "state": "running"}]
+    system.servers = [{"id": "s0", "name": "S0", "state": "ONLINE"}]
     system.task_launch = {
         "command": str(places["program"] / "CommandBlockAgent.exe"),
         "arguments": "--launched-by task",
@@ -735,7 +736,7 @@ def test_a_new_install_sets_everything_up(tmp_path, places, program_files):
 
     def start():
         original_start()
-        system.servers = [{"id": "survival", "name": "Survival", "state": "stopped"}]
+        system.servers = [{"id": "survival", "name": "Survival", "state": "OFFLINE"}]
 
     system.start_agent = start
     _, result, _ = run_engine(choices, program_files, system)
@@ -948,7 +949,7 @@ def test_an_update_failing_before_the_new_program_is_in_place_starts_the_old_one
     found = make_installer_copy(places, "1.0.0")
     system = FakeSystem()
     system.running = True
-    system.servers = [{"id": "s0", "name": "S0", "state": "running"}]
+    system.servers = [{"id": "s0", "name": "S0", "state": "ONLINE"}]
 
     def full_disk(pairs, report=None):
         raise OSError(28, "No space left on device")
@@ -970,7 +971,7 @@ def test_servers_stopped_before_the_app_refused_to_stop_are_started_again(places
     found = make_installer_copy(places, "1.0.0")
     system = FakeSystem()
     system.running = True
-    system.servers = [{"id": "s0", "name": "S0", "state": "running"}]
+    system.servers = [{"id": "s0", "name": "S0", "state": "ONLINE"}]
     system.stop_agent = lambda port, tls: False
     choices = Choices(
         action=engine.UPDATE, program_dir=places["program"], data_root=places["data"], found=found
@@ -1212,6 +1213,156 @@ def test_connect_only_installs_the_app_and_no_agent(places, program_files):
     assert not (places["data"] / "config" / ".env").exists()
     record = json.loads((places["program"] / "install.json").read_text())
     assert record["connect_only"] is True  # a later update keeps it that way
+
+
+# ====================================================================
+# "Agent only": the agent without the desktop app
+# ====================================================================
+def test_agent_only_installs_the_agent_without_the_desktop_app(places, program_files):
+    choices = Choices(
+        action=engine.INSTALL,
+        program_dir=places["program"],
+        data_root=places["data"],
+        password=PASSWORD,
+        agent_only=True,
+    )
+    _, result, system = run_engine(choices, program_files)
+    assert result.ok, result.message + result.details
+    program = places["program"]
+    assert (program / "CommandBlockAgent.exe").is_file() and (program / "mcsc.exe").is_file()
+    assert not (program / "CommandBlock.exe").exists()
+    # Everything an install with the app has: the agent starts with the PC,
+    # devices may connect, updates work.
+    for done in ("register_startup", "firewall", "start_agent"):
+        assert system.called(done), done
+    # Updates still run, but nothing opens a desktop app afterwards.
+    assert system.called("updater_task") == [("updater_task", str(program), False)]
+    assert system.app_link is False  # only the setup in the Start menu
+    record = json.loads((program / "install.json").read_text())
+    assert record["agent_only"] is True  # a later update keeps it that way
+
+
+def test_agent_only_sends_setups_first_run_answers_to_the_agent(places, program_files):
+    answers = {"first_time": False, "kinds": ["mods"], "played_by": "kids"}
+    _, result, system = run_engine(
+        new_install(places, agent_only=True, welcome=answers), program_files
+    )
+    assert result.ok, result.message + result.details
+    assert ("api", "PUT", "/account/welcome", answers) in system.calls
+    # A full install leaves them to the desktop app's own questions.
+    _, result, system = run_engine(new_install(places, welcome=answers), program_files)
+    assert not [c for c in system.calls if c[:3] == ("api", "PUT", "/account/welcome")]
+
+
+def test_switching_a_full_copy_to_agent_only_removes_the_desktop_app(places, program_files):
+    found = make_installer_copy(places, "1.0.0")
+    (places["program"] / "CommandBlock.exe").write_bytes(b"old desktop app")
+    system = FakeSystem()
+    system.running = True
+    choices = Choices(
+        action=engine.UPDATE,
+        program_dir=places["program"],
+        data_root=places["data"],
+        found=found,
+        agent_only=True,
+        from_app=True,
+    )
+    _, result, _ = run_engine(choices, program_files, system)
+    assert result.ok, result.message + result.details
+    assert not (places["program"] / "CommandBlock.exe").exists()
+    assert system.called("close_app")  # the open app was shut first
+    assert not system.called("reopen_app")  # and isn't opened again: it's gone
+    assert system.called("open_at_sign_in") == [("open_at_sign_in", None)]
+
+
+@pytest.mark.parametrize("agent_only", [True, False])
+def test_running_setup_again_moves_an_agent_only_pc_onto_tailscale(
+    places, program_files, agent_only
+):
+    """Nothing else can reach an Agent only PC on 127.0.0.1, so setup run
+    again after connecting Tailscale moves it. A full copy has its app's
+    Tailscale step for that, so it's left alone."""
+    from agent.config import Config
+
+    found = make_installer_copy(places)
+    system = FakeSystem()
+    system.running = True
+    system.tailscale = "100.101.102.103"
+    choices = Choices(
+        action=engine.REPAIR,
+        program_dir=places["program"],
+        data_root=places["data"],
+        found=found,
+        agent_only=agent_only,
+    )
+    _, result, _ = run_engine(choices, program_files, system, version="1.0.0")
+    assert result.ok, result.message + result.details
+    host = Config.load(places["data"] / "config" / "config.yaml").network.host
+    assert host == ("100.101.102.103" if agent_only else "127.0.0.1")
+
+
+def test_an_update_keeps_agent_only_unless_setup_switches_it(places, program_files, monkeypatch):
+    from installer import wizard
+
+    found = make_installer_copy(places, "1.0.0")
+    record = json.loads((places["program"] / "install.json").read_text())
+    (places["program"] / "install.json").write_text(json.dumps({**record, "agent_only": True}))
+    monkeypatch.setattr(
+        wizard.detect,
+        "probe_windows",
+        lambda: {"task_folder": places["program"], "registry_folder": None},
+    )
+    w = connect_wizard(program_files, FakeSystem(), data_root=str(places["data"]))
+    assert w.state()["found"][0]["agent_only"] is True  # the window picks it again
+    assert w.choices_from({"found": 0}).agent_only is True  # an update from the app
+    assert w.choices_from({"found": 0, "agent_only": False}).agent_only is False
+    assert found.program_dir == places["program"]
+
+
+@pytest.mark.parametrize("signed", [True, False])
+def test_setup_installs_and_signs_in_tailscale_for_agent_only(program_files, monkeypatch, signed):
+    from desktop import pc as desktop_pc
+    from installer import wizard
+
+    did: list[str] = []
+
+    class Tailscale:
+        """The two desktop/pc.py calls setup uses, after the click."""
+
+        def install_tailscale(self):
+            did.append("install")
+            if not signed:
+                raise desktop_pc.PCError("The download wasn't signed by Tailscale Inc.")
+
+        def tailscale_up(self):
+            did.append("up")
+            return "https://login.tailscale.com/a/1234"
+
+    monkeypatch.setattr(desktop_pc, "WindowsPC", Tailscale)
+    monkeypatch.setattr(
+        "agent.tailscale.tailscale_status", lambda: {"cli_found": False, "connected": None}
+    )
+    monkeypatch.setattr(
+        wizard.detect, "probe_windows", lambda: {"task_folder": None, "registry_folder": None}
+    )
+    system = FakeSystem()
+    w = connect_wizard(program_files, system)
+    assert did == []  # nothing runs before the click
+    assert w.tailscale()["connected"] is False and not w.tailscale()["installed"]
+    assert w.connect_tailscale()["ok"]
+    assert w.tailscale_thread is not None
+    w.tailscale_thread.join(5)
+    state = w.tailscale()
+    assert not state["busy"]
+    if signed:
+        assert did == ["install", "up"]
+        assert state["page"] == "https://login.tailscale.com/a/1234" and not state["problem"]
+        assert state["connected"] is False  # the sign-in isn't done yet
+        system.tailscale = "100.64.1.2"  # Tailscale itself says connected
+        assert w.tailscale()["connected"] is True
+    else:
+        assert did == ["install"]  # never signed in with a setup it refused
+        assert "Tailscale Inc." in state["problem"] and state["page"] is None
 
 
 def connect_wizard(program_files, system, **args):
@@ -1550,3 +1701,82 @@ def test_a_failed_install_removes_the_separate_user_it_made(tmp_path, places, pr
         eng.roll_back()  # when the run leaves it to the setup window's button
     assert ("remove_server_user", "CommandBlockServer") in system.calls
     assert ("remove_starter",) in system.calls
+
+
+# ====================================================================
+# a power cut in the middle of an install or update
+# ====================================================================
+def test_a_power_cut_between_the_program_swap_puts_the_old_copy_back(places):
+    found = make_installer_copy(places, "1.0.0")
+    program = places["program"]
+    # The old program was parked, the new one not moved in yet.
+    program.rename(program.with_name(program.name + ".previous"))
+    (program.with_name(program.name + ".incoming")).mkdir()
+
+    again = detect.find_installs(
+        task_folder=program, registry_folder=program, data_root=places["data"], places=[]
+    )
+
+    assert [f.version for f in again] == ["1.0.0"]
+    assert (program / "CommandBlockAgent.exe").read_bytes() == b"old agent"
+    assert engine.decide_action(again[0], "1.2.0")[0] == engine.UPDATE
+    assert found.env_path.is_file()
+
+
+def test_a_parked_folder_that_is_not_the_app_is_left_alone(tmp_path):
+    folder = tmp_path / "Command Block"
+    previous = folder.with_name(folder.name + ".previous")
+    previous.mkdir()
+    (previous / "notes.txt").write_text("not the app")
+    folder.with_name(folder.name + ".incoming").mkdir()
+
+    assert detect.find_installs(task_folder=folder, data_root=tmp_path / "x", places=[]) == []
+    assert previous.is_dir() and not folder.exists()
+
+
+def test_an_old_parked_copy_without_a_new_one_beside_it_stays_parked(places):
+    make_installer_copy(places, "1.0.0")
+    program = places["program"]
+    # Left over after an update or uninstall that couldn't delete it, then
+    # the program folder went away. No update was half done.
+    shutil.copytree(program, program.with_name(program.name + ".previous"))
+    shutil.rmtree(program)
+
+    detect.find_installs(
+        task_folder=program, registry_folder=program, data_root=places["data"], places=[]
+    )
+
+    assert not program.exists()
+
+
+def test_a_new_install_never_replaces_the_password_of_a_finished_install(places, program_files):
+    from agent.security.auth import verify_password
+
+    found = make_installer_copy(places, "1.0.0")
+    shutil.rmtree(places["program"])  # the program folder is gone, the settings are not
+    choices = new_install(places)
+    choices.password = "a different long password"
+
+    run_engine(choices, program_files)
+
+    env = found.env_path.read_text()
+    saved = env.split("MCSC_ADMIN_PASSWORD_HASH=")[1].split("\n")[0]
+    assert verify_password(PASSWORD, saved)
+
+
+def test_a_new_install_tried_again_uses_the_password_typed_last(places, program_files):
+    from agent.security.auth import verify_password
+
+    system = FakeSystem()
+    system.fail_start = True  # the first try never answers
+    _, first, _ = run_engine(new_install(places), program_files, system)
+    assert not first.ok
+    choices = new_install(places)
+    choices.password = "a different long password"
+
+    _, second, _ = run_engine(choices, program_files)
+
+    assert second.ok, second.message + second.details
+    env = (places["data"] / "config" / ".env").read_text()
+    saved = env.split("MCSC_ADMIN_PASSWORD_HASH=")[1].split("\n")[0]
+    assert verify_password("a different long password", saved)

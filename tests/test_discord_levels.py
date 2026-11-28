@@ -10,7 +10,7 @@ import time
 
 from agent import levels
 from agent.addons import world_path
-from agent.discord import layout
+from agent.discord import client, layout
 from agent.stats import read_files
 from tests.conftest import build_bedrock_config
 from tests.fake_discord import GUILD_ID, MEMBER_ID, wait_for
@@ -232,6 +232,82 @@ def test_level_roles_replace_each_other_and_level_ups_are_posted(agent, fake):  
     core.links.unlink(ALEX)
     call(agent, core.discord.update_levels)
     assert fake.members[MEMBER_ID] == [] and len(bot_posts(fake)) == posts
+
+
+def test_one_failing_discord_server_doesnt_stop_level_ups_in_another(agent, fake):  # noqa: F811
+    set_up(agent)
+    core = core_of(agent)
+    broken = "999"  # a Discord server that only answers errors
+    core.discord.guilds[broken] = {"id": broken, "name": "Broken"}
+    core.db.execute(
+        "INSERT INTO discord_roles (guild_id, kind, role_id) VALUES (?, 'level_5', '1')", (broken,)
+    )
+    played(core, "Alex", ALEX, 1)
+    linked(core, "Alex", ALEX)
+    for _ in range(2):
+        call(agent, core.discord.update_levels)
+    core.db.execute("UPDATE players SET total_seconds = 20 * 3600 WHERE uuid = ?", (ALEX,))
+    for _ in range(3):
+        call(agent, core.discord.update_levels)
+    assert sum("reached **Level 5**" in m["content"] for m in bot_posts(fake)) == 1
+
+
+def test_a_level_up_discord_failed_to_post_doesnt_post_the_others_again(agent, fake):  # noqa: F811
+    set_up(agent)
+    core = core_of(agent)
+    fake.members[OTHER] = []
+    played(core, "Alex", ALEX, 1)
+    played(core, "Bob", ALT, 1)
+    linked(core, "Alex", ALEX)
+    linked(core, "Bob", ALT, member=OTHER)
+    call(agent, core.discord.update_levels)
+    core.db.execute("UPDATE players SET total_seconds = 20 * 3600")
+    real, posts = core.discord.rest.request, []
+
+    async def second_post_fails_once(method, path, *args, **kwargs):
+        if method == "POST" and path.endswith("/messages"):
+            posts.append(path)
+            if len(posts) == 2:
+                raise client.DiscordError("Discord is busy", status=500)
+        return await real(method, path, *args, **kwargs)
+
+    core.discord.rest.request = second_post_fails_once
+    for _ in range(3):
+        call(agent, core.discord.update_levels)
+    for member in (MEMBER_ID, OTHER):
+        said = [m for m in bot_posts(fake) if m["content"].startswith(f"<@{member}> reached")]
+        assert len(said) == 1
+
+
+def test_level_ups_from_while_levels_were_unused_arent_posted_later(agent, fake):  # noqa: F811
+    set_up(agent)
+    core = core_of(agent)
+    played(core, "Alex", ALEX, 1)
+    linked(core, "Alex", ALEX)
+    call(agent, core.discord.update_levels)
+    agent.put(f"/api/discord/guilds/{GUILD_ID}/levels", json={"announce": False})
+    core.db.execute("DELETE FROM discord_roles WHERE kind LIKE 'level_%'")
+    core.db.execute("UPDATE players SET total_seconds = 20 * 3600")
+    call(agent, core.discord.update_levels)
+    agent.put(f"/api/discord/guilds/{GUILD_ID}/levels", json={"announce": True})
+    call(agent, core.discord.update_levels)
+    assert bot_posts(fake) == []
+
+
+def test_the_old_shared_seen_carries_over_even_before_discord_answers(agent, fake):  # noqa: F811
+    set_up(agent)
+    core = core_of(agent)
+    played(core, "Alex", ALEX, 1)
+    linked(core, "Alex", ALEX)
+    call(agent, core.discord.update_levels)
+    key = "discord_levels_seen"
+    core.db.set_setting(key, core.db.get_setting(key)[GUILD_ID])  # saved the old way
+    guilds, core.discord.guilds = core.discord.guilds, {}
+    call(agent, core.discord.update_levels)
+    core.discord.guilds = guilds
+    core.db.execute("UPDATE players SET total_seconds = 20 * 3600")
+    call(agent, core.discord.update_levels)
+    assert any("reached **Level 5**" in m["content"] for m in bot_posts(fake))
 
 
 def test_without_a_levels_channel_level_ups_go_to_quests(agent, fake):  # noqa: F811

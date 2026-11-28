@@ -43,7 +43,7 @@ from ..security.auth import AuthError, Principal, RateLimiter
 from ..startrequests import STOPPED, TOLD, StartRequest, StartRequestError
 from ..stats import player_stats
 from ..whitelist import WhitelistError, settled, settled_words
-from . import bridge, client, layout, live, progress
+from . import botpc, bridge, client, layout, live, progress
 from .botpc import LinkRefused
 from .links import CODE_LIFE, LinkError
 
@@ -60,6 +60,8 @@ LOGO = PROJECT_ROOT / "desktop" / "images" / "icon-192.png"
 INTENTS = client.GUILDS
 MESSAGE_INTENTS = client.GUILD_MESSAGES | client.MESSAGE_CONTENT
 EPHEMERAL = 64
+ALREADY_ANSWERED = 40060  # Discord: this interaction already has its first answer
+SAY_WAITING = 2.0  # another PC this slow: say "Still waiting" before Discord's 3 s run out
 # Minecraft names as the server prints them; Floodgate's "." is kept.
 NAME_RE = re.compile(r"^\.?[A-Za-z0-9_]{1,16}$")
 PROFILE_KEY = "discord_profile"
@@ -76,7 +78,7 @@ REFUSED = "\N{NO ENTRY SIGN}"  # the reaction on a message that didn't go into t
 STORE_SEEN_KEY = "discord_store_seen"  # guild id -> member id -> Store rank roles given
 STORE_EVERY = 3600.0  # Store rank roles are checked hourly, and soon after a player joins
 STORE_AFTER_JOIN = 120.0  # Tebex runs a purchase's commands within minutes of a join
-SEEN_KEY = "discord_levels_seen"  # member id -> the Level their roles were last set for
+SEEN_KEY = "discord_levels_seen"  # guild id -> member id -> the Level their roles were last set for
 BOARDS_KEY = "discord_leaderboards"  # guild id -> the day its leaderboard was last posted
 BOARD_HOUR = 18  # on the PC's clock
 QUEST_BOARDS_KEY = "discord_quest_boards"  # quests channel id -> {"message", "words"}
@@ -204,6 +206,7 @@ class Bot:
         self._task: asyncio.Task | None = None
         self._live: asyncio.Task | None = None
         self._jobs: set[asyncio.Task] = set()
+        self._setting_up = asyncio.Lock()  # one "Set up this server" at a time
         self._levels_lock = asyncio.Lock()
         # Event and poll posts: two quick presses can't leave older counts showing.
         self._posts_lock = asyncio.Lock()
@@ -422,56 +425,78 @@ class Bot:
         """Give each member whose Level changed the Level role that goes
         with it (and take the one before), and post their level-up. Discord
         is only called for a change, and a member seen for the first time
-        gets their role without a message."""
+        gets their role without a message. Each Discord server keeps its
+        own "seen", so one that fails doesn't post again in the others."""
         async with self._levels_lock:
             db = self.core.db
             resync, self._resync = self._resync, False
-            if resync:
-                db.set_setting(SEEN_KEY, {})
-            seen: dict[str, int] = db.get_setting(SEEN_KEY, {}) or {}
-            now = {m: levels.level_of(xp) for m, xp in self.xp().items()}
-            # Every account unlinked: back to no Level role, once.
-            gone = {m for m in seen if m not in now}
-            now.update({m: 0 for m in gone})
-            changed = {m: lv for m, lv in now.items() if seen.get(m) != lv}
-            if not changed:
-                return
+            before = db.get_setting(SEEN_KEY, {}) or {}
+            saved: dict = {} if resync else dict(before)
+            if any(isinstance(v, int) for v in saved.values()):
+                ids = {
+                    r["guild_id"] for r in db.query("SELECT DISTINCT guild_id FROM discord_roles")
+                }
+                saved = {
+                    gid: dict(saved) for gid in ids | set(self.guilds)
+                }  # one "seen" for all before
+            levels_now = {m: levels.level_of(xp) for m, xp in self.xp().items()}
             for gid in list(self.guilds):
+                seen: dict[str, int] = saved.get(gid, {})
+                now = dict(levels_now)
+                # Every account unlinked: back to no Level role, once.
+                gone = {m for m in seen if m not in now}
+                now.update({m: 0 for m in gone})
+                changed = {m: lv for m, lv in now.items() if seen.get(m) != lv}
                 roles = layout.level_roles(db, gid)
                 retired = layout.level_settings(db, gid).get("retired") or []
-                if not roles and not retired and not self._announces(gid):
+                if not changed:
                     continue
-                found = {r["id"]: r for r in await self.rest.request("GET", f"/guilds/{gid}/roles")}
-                for member, level in changed.items():
+                if roles or retired or self._announces(gid):
                     try:
-                        role = await self._set_level_role(gid, member, level, roles, found, retired)
+                        await self._update_guild_levels(gid, seen, now, changed, roles, retired)
                     except client.DiscordError as exc:
-                        if exc.status not in (403, 404):
-                            # Discord or the network: try again next minute.
-                            now[member] = seen.get(member, -1)
-                        log.info("couldn't set a Level role: %s", exc)
-                        continue
-                    if role is False:
-                        continue  # not in this Discord server
-                    old = seen.get(member)
-                    if old is not None and level > old and self._announces(gid):
-                        name = found.get(role or "", {}).get("name") if role else None
-                        channel = layout.levels_channel(db, gid)
-                        await self.rest.request(
-                            "POST",
-                            f"/channels/{channel}/messages",
-                            {
-                                "content": progress.level_up(member, level, name),
-                                "allowed_mentions": {"parse": []},
-                            },
-                        )
-                if resync and retired:
-                    layout.set_level_settings(db, gid, retired=[])
-            # Kept: who's still linked, and (to try again) anyone Discord failed for.
-            db.set_setting(
-                SEEN_KEY,
-                {m: lv for m, lv in now.items() if lv >= 0 and not (m in gone and lv == 0)},
-            )
+                        log.info("couldn't update Levels in a Discord server: %s", exc)
+                        continue  # try again next minute
+                    if resync and retired:
+                        layout.set_level_settings(db, gid, retired=[])
+                # Kept: who's still linked, and (to try again) anyone Discord failed for.
+                saved[gid] = {
+                    m: lv for m, lv in now.items() if lv >= 0 and not (m in gone and lv == 0)
+                }
+            if saved != before:
+                db.set_setting(SEEN_KEY, saved)
+
+    async def _update_guild_levels(self, gid, seen, now, changed, roles, retired) -> None:
+        db = self.core.db
+        found = {r["id"]: r for r in await self.rest.request("GET", f"/guilds/{gid}/roles")}
+        for member, level in changed.items():
+            try:
+                role = await self._set_level_role(gid, member, level, roles, found, retired)
+            except client.DiscordError as exc:
+                if exc.status not in (403, 404):
+                    # Discord or the network: try again next minute.
+                    now[member] = seen.get(member, -1)
+                log.info("couldn't set a Level role: %s", exc)
+                continue
+            if role is False:
+                continue  # not in this Discord server
+            old = seen.get(member)
+            if old is not None and level > old and self._announces(gid):
+                name = found.get(role or "", {}).get("name") if role else None
+                channel = layout.levels_channel(db, gid)
+                try:
+                    await self.rest.request(
+                        "POST",
+                        f"/channels/{channel}/messages",
+                        {
+                            "content": progress.level_up(member, level, name),
+                            "allowed_mentions": {"parse": []},
+                        },
+                    )
+                except client.DiscordError as exc:
+                    if exc.status not in (403, 404):
+                        now[member] = seen.get(member, -1)  # post it next minute
+                    log.info("couldn't post a level-up: %s", exc)
 
     def _announces(self, guild_id: str) -> bool:
         return bool(
@@ -616,7 +641,7 @@ class Bot:
                 found = await self.core.botpc.call(
                     pc, "leaderboard", {"servers": sids, "until": now.timestamp()}
                 )
-                if found is None:
+                if found is None or found is botpc.WAITING:
                     off.append(self.core.botpc.name_of(pc))
                     continue
                 played += found.get("played") or []
@@ -909,6 +934,22 @@ class Bot:
         raise Refused("The screenshot has to be a PNG or JPEG picture.")
 
     # -- alerts ------------------------------------------------------------------
+    def owner_id(self) -> str | None:
+        """The Discord account that made the bot's application: the owner,
+        who set the bot up. A team's owner when a team holds it."""
+        team = self.app.get("team") or {}
+        if team.get("owner_user_id"):
+            return str(team["owner_user_id"])
+        owner = (self.app.get("owner") or {}).get("id")
+        return str(owner) if owner else None
+
+    async def tell_owner(self, words: str) -> bool:
+        """A private message to the owner. False when it couldn't be sent."""
+        owner = self.owner_id()
+        if not self.connected or owner is None:
+            return False
+        return await self._private(owner, words)
+
     def posts_alert(self, event: Event) -> bool:
         """Whether this alert goes to an alerts channel: only a Minecraft
         server's own alerts, never the ones about the PC (owner only)."""
@@ -1051,8 +1092,7 @@ class Bot:
         if gid not in self.guilds or not layout.guild_options(db, gid)["remove_on_leave"]:
             return
         if not self.rest_only:  # the other PCs' servers too
-            for pc in self.core.botpc.linked():
-                self.spawn(self.core.botpc.call(pc, "member_left", {"data": data}))
+            self.core.botpc.member_left(self, data)
         servers = set(layout.servers_of(db, gid))
         for row in self.core.links.of_member(member):
             ctx = self.core.discord_servers.get(row["server_id"])
@@ -1287,7 +1327,7 @@ class Bot:
     def problem(self) -> dict[str, Any] | None:
         """The first thing wrong, for the Recommendations card and the
         checklist; None when nothing is (or nothing is known yet)."""
-        if self.gateway.state in ("token_rejected", "intents_refused"):
+        if self.gateway.state in ("token_rejected", "intents_refused", "refused"):
             return {"id": self.gateway.state}
         for gid, report in self.reports.items():
             for problem in report.get("problems") or []:
@@ -1313,7 +1353,8 @@ class Bot:
     async def set_up(self, guild_id: str, server_ids: list[str]) -> dict[str, Any]:
         names = {s["id"]: s["name"] for s in self.status()["servers"]}
         servers = {sid: names[sid] for sid in server_ids}
-        made = await layout.set_up(self.rest, self.core.db, guild_id, servers)
+        async with self._setting_up:  # a double click waits, then finds it all made
+            made = await layout.set_up(self.rest, self.core.db, guild_id, servers)
         await self.refresh(guild_id)
         return made
 
@@ -1443,12 +1484,42 @@ class Bot:
 
     async def pass_on(self, data: dict, ref: str, name: str) -> None:
         """A server on another of the owner's PCs: that PC answers Discord
-        itself. "That PC is off" when it doesn't take it in time."""
+        itself. "Still waiting" when it's slow (Discord wants a first answer
+        within 3 s; that PC's answer then replaces it), "That PC is off"
+        when it can't be reached."""
         sid, _, pc = ref.partition("@")
-        if await self.core.botpc.call(pc, "interaction", {"interaction": data, "server": ref}):
+        asked = asyncio.ensure_future(
+            self.core.botpc.call(pc, "interaction", {"interaction": data, "server": ref})
+        )
+        said_waiting = False
+        if not (await asyncio.wait({asked}, timeout=SAY_WAITING))[0]:
+            body = {
+                "type": 4,
+                "data": {
+                    "content": self.core.botpc.waiting_words(ref),
+                    "allowed_mentions": {"parse": []},
+                    "flags": EPHEMERAL,
+                },
+            }
+            try:
+                # Straight to Discord, not _callback: an answer that PC
+                # already gave is never edited over.
+                await self.rest.request(
+                    "POST", f"/interactions/{data['id']}/{data['token']}/callback", body
+                )
+                said_waiting = True
+            except client.DiscordError as exc:
+                # ALREADY_ANSWERED: that PC answered first. Anything else
+                # (Discord's 3 s ran out): that PC's answer still comes.
+                log.info("couldn't say still waiting: %s", exc)
+        if await asked is not None:
             return
         starting = name in ("/start", "button start_yes", "/request-start")
-        await self.respond(data, self.core.botpc.off_words(ref, starting))
+        words = self.core.botpc.off_words(ref, starting)
+        if said_waiting:
+            await self.rest.request("PATCH", self.original(data), {"content": words})
+        else:
+            await self.respond(data, words)
 
     def pick_server(self, call: Call) -> str:
         """The option if given, else the channel's Minecraft server, else
@@ -1503,9 +1574,17 @@ class Bot:
         )
 
     async def _callback(self, interaction: dict, body: dict) -> None:
-        await self.rest.request(
-            "POST", f"/interactions/{interaction['id']}/{interaction['token']}/callback", body
-        )
+        try:
+            await self.rest.request(
+                "POST", f"/interactions/{interaction['id']}/{interaction['token']}/callback", body
+            )
+        except client.DiscordError as exc:
+            # Passed on from the Bot PC after it said "Still waiting": edit that.
+            if exc.code != ALREADY_ANSWERED:
+                raise
+            if "content" in (body.get("data") or {}):
+                edit = {k: body["data"][k] for k in ("content", "components") if k in body["data"]}
+                await self.rest.request("PATCH", self.original(interaction), edit)
 
     def original(self, interaction: dict) -> str:
         return f"/webhooks/{self.app.get('id')}/{interaction['token']}/messages/@original"
@@ -1923,11 +2002,11 @@ def diagnose_words(name: str, result: dict[str, Any]) -> str:
     out = [f"Diagnose server on {name}:"]
     for group, oks in groups.items():
         if False in oks:
-            out.append(f"\N{CROSS MARK} {group}: failed")
+            out.append(f"{group}: failed")
         elif None in oks:
-            out.append(f"\N{WHITE QUESTION MARK ORNAMENT} {group}: not checked")
+            out.append(f"{group}: not checked")
         else:
-            out.append(f"\N{WHITE HEAVY CHECK MARK} {group}: worked")
+            out.append(f"{group}: worked")
     out += [f"- {known['say']}" for known in result.get("known") or []]
     changes = len(result.get("changes") or [])
     if changes:
@@ -2060,6 +2139,8 @@ async def unlink(bot: Bot, call: Call) -> str:
         if row["name"].lower() == name.lower():
             asked = {"member": call.member_id, "name": row["name"]}
             found = await bot.core.botpc.call(row["pc"], "unlink", asked)
+            if found is botpc.WAITING:
+                raise Refused(f"{bot.core.botpc.waiting_words(row['server'])} Try again later.")
             if found is None:
                 raise Refused(f"{bot.core.botpc.off_words(row['server'], False)} Try again later.")
             return f"{row['name']} isn't linked to you any more."

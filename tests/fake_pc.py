@@ -17,7 +17,10 @@ class FakePC(WindowsPC):
         self.picker_titles: list[str] = []
         self.saved: dict[str, str] = {}  # the pretend Credential Manager
         self.scale = 1.0  # Windows' text size, 1.0 to 2.25
+        self.remote = False  # shown over Remote Desktop
+        self.animated = False  # Windows' "Show animations"; off so tests don't wait
         self.alerts: list[tuple[str, str]] = []  # Windows alerts shown, as (title, body)
+        self.sounds: list[bool] = []  # sounds played: True for a crash, False for a join
         self.alert_keys: list[tuple[str, tuple]] = []  # and each one's key and buttons
         self.alert_clicked = lambda key, action: None
         self.settings: dict = {}
@@ -32,6 +35,8 @@ class FakePC(WindowsPC):
         self.server_user_code = 0
         # The Tailscale step: what it ran, and what each step says went wrong.
         self.tailscale_installs = 0
+        self.playit_installs = 0
+        self.playit_uninstalls = 0
         self.tailscale_ups = 0
         self.tailscale_logouts = 0
         self.install_problem: str | None = None
@@ -51,6 +56,9 @@ class FakePC(WindowsPC):
 
     def open_link(self, url: str) -> None:
         self.opened.append(url)
+
+    def open_folder(self, path: str) -> None:
+        self.opened.append(path)
 
     def save_file(self, name: str, data: bytes) -> str | None:
         if self.save_answer is None:
@@ -80,6 +88,15 @@ class FakePC(WindowsPC):
 
     def text_scale(self) -> float:
         return self.scale
+
+    def remote_desktop(self) -> bool:
+        return self.remote
+
+    def animations(self) -> bool:
+        return self.animated and not self.remote
+
+    def play_sound(self, crash: bool) -> None:
+        self.sounds.append(crash)
 
     def show_alert(self, title: str, body: str, key: str = "", buttons=()) -> None:
         self.alerts.append((title, body))
@@ -133,6 +150,14 @@ class FakePC(WindowsPC):
         self.tailscale_installs += 1
         if self.install_problem:
             raise PCError(self.install_problem)
+
+    def install_playit(self) -> None:
+        self.playit_installs += 1
+        if self.install_problem:
+            raise PCError(self.install_problem)
+
+    def uninstall_playit(self) -> None:
+        self.playit_uninstalls += 1
 
     def tailscale_up(self) -> str | None:
         self.tailscale_ups += 1

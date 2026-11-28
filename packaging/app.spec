@@ -13,12 +13,16 @@ ICON = str(ROOT / "desktop" / "images" / "app.ico")
 
 datas = [
     (str(ROOT / "desktop" / "images"), "desktop/images"),
+    # With Archivo, the heading font, in shared/fonts (its license is
+    # licenses/Archivo-OFL.txt).
     (str(ROOT / "shared"), "shared"),
     # The notes file as it was at release: its add-on suggestions are used
     # until a signed one is fetched (agent/notes.py load_shipped).
     (str(ROOT / "data" / "catalog.json"), "data"),
     # The add-on guides, one file each (agent/guides.py).
     (str(ROOT / "data" / "guides"), "data/guides"),
+    # Our Deep scan behaviour rules (agent/mods/deepscan.py).
+    (str(ROOT / "data" / "deepscan"), "data/deepscan"),
     (str(ROOT / "installer" / "firewall.ps1"), "installer"),
     (str(ROOT / "config" / "config.example.yaml"), "config"),
     (str(ROOT / "LICENSE"), "."),
@@ -38,7 +42,7 @@ hidden = (
     + collect_submodules("desktop")
     + collect_submodules("installer")
     + collect_submodules("uvicorn")
-    + ["websockets", "multipart", "segno"]
+    + ["websockets", "multipart", "segno", "yara_x"]
 )
 
 a = Analysis(  # noqa: F821

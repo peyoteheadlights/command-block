@@ -3,6 +3,8 @@ package io.github.peyoteheadlights.mcsc.core
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /*
  * What the Mods / Plugins / Packs and Game settings screens read. As in
@@ -23,6 +25,8 @@ data class ModIssue(
 data class ModUpdate(
     @SerialName("latest_version") val latestVersion: String = "",
     @SerialName("version_id") val versionId: String? = null,
+    /** Update all waits until then (the update hold); null when it doesn't wait. */
+    @SerialName("held_until") val heldUntil: Double? = null,
 )
 
 /** One mod or plugin in the server's folder. */
@@ -39,6 +43,13 @@ data class Mod(
     val status: String? = null,
     val issues: List<ModIssue> = emptyList(),
     @SerialName("update_available") val updateAvailable: ModUpdate? = null,
+    /** On a linked modpack's server: true when the modpack didn't put it there. */
+    @SerialName("added_by_you") val addedByYou: Boolean? = null,
+    val loader: String? = null,
+    /** server, players or both: who needs it. */
+    val side: String? = null,
+    /** Where [side] came from: you, modpack, modrinth, curseforge, file or unknown. */
+    @SerialName("side_from") val sideFrom: String? = null,
 )
 
 @Serializable
@@ -47,6 +58,354 @@ data class ModList(
     /** Null until the server has started once. */
     @SerialName("minecraft_version") val minecraftVersion: String? = null,
     @SerialName("server_state") val serverState: String = "UNKNOWN",
+    /** The server's drive can't link to the shared store, so its jars are copies. */
+    @SerialName("stored_separately") val storedSeparately: Boolean = false,
+    /** The "Still fit?" card after a mod or version change; null: nothing to show. */
+    val fit: ModFit? = null,
+    /** The same mod twice, or mods that do the same job. */
+    val overlaps: List<Overlap> = emptyList(),
+    /** The modpack this server came from; null: not linked. */
+    val modpack: LinkedModpack? = null,
+    /** The player-only folder: kept for the modpack, never loaded by the server. */
+    @SerialName("player_only") val playerOnly: List<PlayerFile> = emptyList(),
+    @SerialName("player_only_options") val playerOnlyOptions: PlayerOnlyOptions = PlayerOnlyOptions(),
+    /** A mod needs one that sits on the other side. */
+    @SerialName("odd_setups") val oddSetups: List<OddSetup> = emptyList(),
+)
+
+@Serializable
+data class PlayerFile(
+    val filename: String,
+    val name: String = "",
+    val version: String = "",
+    /** mod or pack (a resource pack or shader pack). */
+    val kind: String = "",
+    @SerialName("size_bytes") val sizeBytes: Long = 0,
+    /** Not the file the app first saw: changed outside it. */
+    val changed: Boolean = false,
+    /** The app added it, but it's gone (Get it again when [site] is modrinth). */
+    val missing: Boolean = false,
+    val site: String? = null,
+)
+
+@Serializable
+data class PlayerOnlyOptions(
+    /** Back up the player-only folder. */
+    val backup: Boolean = true,
+    /** Leave out files Modrinth lists; got again by hash after a restore. */
+    @SerialName("skip_listed") val skipListed: Boolean = false,
+)
+
+@Serializable
+data class OddSetup(val filename: String = "", val text: String = "")
+
+/** "On all servers": one mod with one mark, and the servers it's on. */
+@Serializable
+data class ModSideRow(
+    val name: String,
+    @SerialName("mod_id") val modId: String? = null,
+    /** server, players or both. */
+    val side: String,
+    val servers: List<ModSideServer> = emptyList(),
+)
+
+@Serializable
+data class ModSideServer(
+    val id: String,
+    val name: String,
+    val filename: String = "",
+    val version: String? = null,
+    /** Like [Mod.sideFrom]; unknown: not sure. Null for the player-only folder. */
+    @SerialName("side_from") val sideFrom: String? = null,
+    val enabled: Boolean = true,
+)
+
+@Serializable
+data class ModSideNotRead(val id: String, val name: String, val detail: String = "")
+
+@Serializable
+data class ModSides(
+    val mods: List<ModSideRow> = emptyList(),
+    /** A server whose mods couldn't be read: named, never left out quietly. */
+    @SerialName("not_read") val notRead: List<ModSideNotRead> = emptyList(),
+)
+
+@Serializable
+data class ModSideChanged(val side: String = "", val moved: Boolean = false)
+
+@Serializable
+data class PlayerFileAdded(val added: String = "", val kind: String = "")
+
+@Serializable
+data class LinkedModpackUpdate(
+    @SerialName("version_id") val versionId: String,
+    /** Empty for CurseForge, whose names aren't kept. */
+    val version: String = "",
+)
+
+@Serializable
+data class LinkedModpack(
+    val name: String = "",
+    /** Modrinth or CurseForge. */
+    val site: String = "",
+    val version: String = "",
+    val update: LinkedModpackUpdate? = null,
+    @SerialName("added_by_you") val addedByYou: Int = 0,
+)
+
+@Serializable
+data class NewerMod(val name: String = "", val from: String = "", val to: String = "")
+
+/** What Modpack update changes, compared by file hash. */
+@Serializable
+data class ModpackChanges(
+    @SerialName("from_version") val fromVersion: String = "",
+    @SerialName("to_version") val toVersion: String = "",
+    val added: List<String> = emptyList(),
+    val removed: List<String> = emptyList(),
+    val newer: List<NewerMod> = emptyList(),
+    @SerialName("added_by_you") val addedByYou: List<String> = emptyList(),
+    @SerialName("configs_changed_by_you") val configsChangedByYou: List<String> = emptyList(),
+    /** New or changed own jars: the update needs ownJars = true. */
+    @SerialName("new_own_jars") val newOwnJars: List<String> = emptyList(),
+    @SerialName("version_change") val versionChange: Boolean = false,
+    @SerialName("minecraft_version") val minecraftVersion: String = "",
+    val problems: List<String> = emptyList(),
+)
+
+@Serializable
+data class ModpackUpdatePreview(
+    val token: String,
+    val pack: Modpack = Modpack(),
+    val changes: ModpackChanges = ModpackChanges(),
+)
+
+@Serializable
+data class ModpackUpdated(val undo: Undo? = null)
+
+/** A config file Make a modpack can put in. */
+@Serializable
+data class ModpackConfigFile(val path: String, @SerialName("size_bytes") val sizeBytes: Long = 0)
+
+@Serializable
+data class PlayersLoader(val id: String, val name: String = "")
+
+/**
+ * [available]: the Companion mod is on the server. [on]: ticked last time.
+ * [needsFabric]: a vanilla server, which can't run the Companion.
+ */
+@Serializable
+data class RequiredToJoin(
+    val available: Boolean = false,
+    val on: Boolean = false,
+    @SerialName("needs_fabric") val needsFabric: Boolean = false,
+)
+
+/** The line players without the modpack see; {name}, {version}, {link}, {get_it} are filled in. */
+@Serializable
+data class ChatLine(val on: Boolean = true, val text: String = "")
+
+/** The Companion's title-screen join button and the address it joins. */
+@Serializable
+data class TitleButton(val on: Boolean = false, val address: String = "")
+
+/** The yellow flavor text, up to 60 letters. */
+@Serializable
+data class FlavorText(val on: Boolean = false, val text: String = "")
+
+@Serializable
+data class OnOff(val on: Boolean = false)
+
+/** What friends with the Companion see when Minecraft starts. [backgroundSet]: a picture was uploaded. */
+@Serializable
+data class TitleScreen(
+    val button: TitleButton = TitleButton(),
+    @SerialName("flavor_text") val flavorText: FlavorText = FlavorText(),
+    val background: OnOff = OnOff(),
+    @SerialName("background_set") val backgroundSet: Boolean = false,
+)
+
+/** What Make a modpack offers. [playersLoaders] is empty on a mod server. */
+@Serializable
+data class ModpackMakeOptions(
+    val name: String = "",
+    val version: String = "1",
+    val configs: List<ModpackConfigFile> = emptyList(),
+    @SerialName("players_loaders") val playersLoaders: List<PlayersLoader> = emptyList(),
+    val discord: Boolean = false,
+    @SerialName("required_to_join") val requiredToJoin: RequiredToJoin = RequiredToJoin(),
+    @SerialName("chat_line") val chatLine: ChatLine = ChatLine(),
+    @SerialName("title_screen") val titleScreen: TitleScreen = TitleScreen(),
+)
+
+/** The person's answers to Make a modpack. */
+data class MakeModpack(
+    val name: String,
+    val version: String,
+    val leaveOutServerOnly: Boolean = true,
+    val configs: List<String> = emptyList(),
+    val playersLoader: String = "fabric",
+    val required: Boolean = false,
+    val chatLine: ChatLine? = null,
+    val titleScreen: TitleScreen? = null,
+)
+
+/** A CurseForge mod its author keeps from other apps: never put in. */
+@Serializable
+data class GetYourself(val name: String = "", val page: String? = null)
+
+/** A made modpack, downloaded with [token]. [trustNote]: own files are inside. */
+@Serializable
+data class ModpackMade(
+    val token: String,
+    val filename: String = "modpack.mrpack",
+    val files: Int = 0,
+    @SerialName("size_bytes") val sizeBytes: Long? = null,
+    @SerialName("own_files") val ownFiles: List<String> = emptyList(),
+    @SerialName("trust_note") val trustNote: String? = null,
+    @SerialName("get_yourself") val getYourself: List<GetYourself> = emptyList(),
+    @SerialName("plugins_to_get") val pluginsToGet: List<String> = emptyList(),
+    @SerialName("left_out") val leftOut: List<String> = emptyList(),
+    val discord: Boolean = false,
+)
+
+/** [asLink]: too big for Discord, so the bot posted the download link. */
+@Serializable
+data class ModpackPosted(val posted: Int = 0, @SerialName("as_link") val asLink: Boolean = false)
+
+/** The server resource pack: a zip the download link serves ([served]), or an outside link. */
+@Serializable
+data class ResourcePack(
+    val source: String,
+    val filename: String? = null,
+    val url: String? = null,
+    val sha1: String? = null,
+    @SerialName("size_bytes") val sizeBytes: Long? = null,
+    val required: Boolean = false,
+    val served: Boolean = false,
+)
+
+/** The Download link card. [whyNot]: why it can't be turned on (no Tailscale yet). */
+@Serializable
+data class DownloadLink(
+    val on: Boolean = false,
+    @SerialName("why_not") val whyNot: String? = null,
+    val listening: Boolean = false,
+    @SerialName("modpack_url") val modpackUrl: String? = null,
+    @SerialName("speed_cap_bytes") val speedCapBytes: Long = 0,
+    @SerialName("resource_pack") val resourcePack: ResourcePack? = null,
+    @SerialName("max_pack_bytes") val maxPackBytes: Long = 0,
+    @SerialName("restart_needed") val restartNeeded: Boolean = false,
+)
+
+/** Sign in with Modrinth on the PC. The token itself never reaches the phone. */
+@Serializable
+data class ModrinthAccount(
+    val available: Boolean = false,
+    @SerialName("signed_in") val signedIn: Boolean = false,
+    val username: String? = null,
+    @SerialName("ran_out") val ranOut: Boolean = false,
+)
+
+@Serializable
+data class ModrinthSignInStarted(val url: String)
+
+@Serializable
+data class ModrinthMade(val name: String, val version: String)
+
+@Serializable
+data class ModrinthOwnProject(val id: String, val slug: String, val title: String = "", val url: String)
+
+@Serializable
+data class ModrinthUpload(@SerialName("version_id") val versionId: String, val version: String)
+
+/** An own jar in the newest modpack; [url] once it is on Modrinth. */
+@Serializable
+data class ModrinthJar(val path: String, val name: String, val url: String? = null)
+
+@Serializable
+data class ModrinthServerProject(val url: String)
+
+@Serializable
+data class ModrinthOlder(val listed: String, val newest: String)
+
+/** The "Put it on Modrinth" card. [address]: the address typed for friends. */
+@Serializable
+data class ModrinthShare(
+    val account: ModrinthAccount = ModrinthAccount(),
+    val made: ModrinthMade? = null,
+    val project: ModrinthOwnProject? = null,
+    val uploads: List<ModrinthUpload> = emptyList(),
+    @SerialName("own_jars") val ownJars: List<ModrinthJar> = emptyList(),
+    @SerialName("server_project") val serverProject: ModrinthServerProject? = null,
+    val older: ModrinthOlder? = null,
+    val address: String? = null,
+)
+
+/** A free anti-cheat, installed from Modrinth with the normal install. [warning]: Fabric with mods players need. */
+@Serializable
+data class AntiCheatFree(val id: String, val name: String, val project: String, val on: Boolean = false, val warning: Boolean = false)
+
+/** A paid anti-cheat: bought on the seller's [link]. [price]: null when none was read; [checked]: the day it was. */
+@Serializable
+data class AntiCheatPaid(val id: String, val name: String, val on: Boolean = false, val link: String, val setup: String? = null, val price: String? = null, val checked: String? = null)
+
+/** The anti-cheat picker. [supported]: false when none runs on this server type. */
+@Serializable
+data class AntiCheat(
+    val supported: Boolean = false,
+    val installed: List<String> = emptyList(),
+    val free: List<AntiCheatFree> = emptyList(),
+    val paid: List<AntiCheatPaid> = emptyList(),
+    @SerialName("may_install") val mayInstall: Boolean = false,
+    @SerialName("may_add_own_jar") val mayAddOwnJar: Boolean = false,
+)
+
+/** One mod in an [Overlap]. [turnOff]: the pick isn't this one. */
+@Serializable
+data class OverlapMod(
+    val filename: String,
+    @SerialName("mod_id") val modId: String = "",
+    val name: String = "",
+    val version: String = "",
+    @SerialName("turn_off") val turnOff: Boolean = false,
+    /** An installed mod that needs this one, "" when none. */
+    @SerialName("needed_by") val neededBy: String = "",
+)
+
+/** The same mod twice ("same_mod"), mods on the notes file's same-job list
+ * ("same_job") or a site saying two don't work together ("site_says"). */
+@Serializable
+data class Overlap(
+    val kind: String = "",
+    val why: String = "",
+    /** The file to keep, "" when nothing says which. */
+    val keep: String = "",
+    /** "Keep 0.5.2, turn off 0.5.1", or "Keep the one you use". */
+    val say: String = "",
+    val mods: List<OverlapMod> = emptyList(),
+)
+
+/** One mod on the "Still fit?" card: what the mods or its site said. For
+ * one that needs a change, [from], [to] and [versionId] are filled. */
+@Serializable
+data class FitRow(
+    @SerialName("mod_id") val modId: String = "",
+    val name: String = "",
+    val filename: String,
+    val why: String = "",
+    val from: String = "",
+    val to: String = "",
+    @SerialName("version_id") val versionId: String? = null,
+)
+
+@Serializable
+data class ModFit(
+    /** What changed: "Create 6.0" or "Minecraft 1.21.4". */
+    val about: String = "",
+    @SerialName("needs_change") val needsChange: List<FitRow> = emptyList(),
+    @SerialName("no_fit") val noFit: List<FitRow> = emptyList(),
+    @SerialName("cant_tell") val cantTell: List<FitRow> = emptyList(),
 )
 
 @Serializable
@@ -119,6 +478,130 @@ data class ModHistoryRow(
 @Serializable
 data class ModHistory(val history: List<ModHistoryRow> = emptyList())
 
+/** Something one jar check found, or noted, in a jar: a strings key and its values. */
+@Serializable
+data class JarScanWords(
+    val scanner: String? = null,
+    val words: String = "",
+    val values: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class JarScanRow(
+    val filename: String = "",
+    val name: String? = null,
+    val findings: List<JarScanWords> = emptyList(),
+    val notes: List<JarScanWords> = emptyList(),
+    val waiting: Boolean = false,
+    val words: String = "",
+    val values: Map<String, String> = emptyMap(),
+    /** New or different since the last check, and nobody changed it in the app. */
+    @SerialName("changed_outside") val changedOutside: Boolean = false,
+)
+
+@Serializable
+data class QuarantinedJar(
+    val id: String = "",
+    val filename: String = "",
+    val at: Double = 0.0,
+    val findings: List<JarScanWords> = emptyList(),
+)
+
+@Serializable
+data class JarScanSummary(
+    val checked: Int = 0,
+    val jars: Int = 0,
+    val found: Int = 0,
+    val unknown: Int = 0,
+    val couldnt: Int = 0,
+)
+
+/** The jar check: each jar's result and the jars in quarantine. */
+@Serializable
+data class JarScanReport(
+    @SerialName("checked_at") val checkedAt: Double? = null,
+    val weekly: Boolean = true,
+    @SerialName("on_change") val onChange: Boolean = true,
+    @SerialName("before_start") val beforeStart: Boolean = false,
+    @SerialName("ask_first") val askFirst: Boolean = false,
+    @SerialName("update_hold_days") val updateHoldDays: Int = 3,
+    val jars: List<JarScanRow> = emptyList(),
+    val quarantine: List<QuarantinedJar> = emptyList(),
+    val summary: JarScanSummary = JarScanSummary(),
+)
+
+@Serializable
+data class JarScanUndone(val restored: String? = null)
+
+@Serializable
+data class DeepScanTook(val seconds: Double = 0.0, val files: Int = 0)
+
+@Serializable
+data class DeepScanDownloaded(val tag: String = "", val at: Double = 0.0)
+
+/** One check the deep scan can run, with how long it took last time. */
+@Serializable
+data class DeepScanScanner(
+    val id: String = "",
+    val words: String = "",
+    val what: String = "",
+    val speed: String = "",
+    val took: DeepScanTook? = null,
+    val downloaded: DeepScanDownloaded? = null,
+    /** False for an outside program until its first download. */
+    val installed: Boolean = true,
+    /** False while jNeedle's list can't be downloaded; the row is hidden. */
+    val available: Boolean = true,
+    /** Download size in bytes, only for a program not downloaded yet. */
+    val size: Long? = null,
+    /** VirusTotal only: whether the owner saved a key. Null on every other row. */
+    val key: Boolean? = null,
+)
+
+/** A file the deep scan listed: Known bad, or Worth a look. [root] is "server" or "java". */
+@Serializable
+data class DeepScanFound(
+    val root: String = "server",
+    val path: String = "",
+    val kind: String = "",
+    val findings: List<JarScanWords> = emptyList(),
+    val state: String = "",
+)
+
+@Serializable
+data class DeepScanLast(
+    val finished: Double = 0.0,
+    val files: Int = 0,
+    val skipped: Int = 0,
+    val found: List<DeepScanFound> = emptyList(),
+    val errors: List<JarScanWords> = emptyList(),
+)
+
+@Serializable
+data class DeepScanRunning(val id: String = "", val done: Double? = null, val total: Double? = null)
+
+/** The deep scan: its checks, the scan running now and the last results. */
+@Serializable
+data class DeepScanReport(
+    val scanners: List<DeepScanScanner> = emptyList(),
+    val running: DeepScanRunning? = null,
+    val last: DeepScanLast? = null,
+    val options: DeepScanOptions = DeepScanOptions(),
+) {
+    /** The checks to list. VirusTotal stays listed without a key, so the owner can add one. */
+    val shown: List<DeepScanScanner> get() = scanners.filter { it.available || it.key != null }
+}
+
+/** Before each start, and the daily or weekly run. [next] is null while it is off. */
+@Serializable
+data class DeepScanOptions(
+    @SerialName("before_start") val beforeStart: Boolean = false,
+    val schedule: String = "off",
+    val time: String = "04:00",
+    val day: String = "sun",
+    val next: Double? = null,
+)
+
 /** A Modrinth search result. [iconUrl] is loaded straight from Modrinth. */
 @Serializable
 data class ModrinthHit(
@@ -129,12 +612,23 @@ data class ModrinthHit(
     val downloads: Long? = null,
     @SerialName("icon_url") val iconUrl: String? = null,
     val page: String? = null,
+    /** "modrinth" or "curseforge", and the site's name as shown. */
+    val source: String? = null,
+    @SerialName("source_name") val sourceName: String? = null,
+    /** Modpacks: "Fabric", "Forge"..., the newest Minecraft version, "unsupported" when it's
+     *  made for players' games only, and what Modrinth was told it holds ("Shows ads"). */
+    val loaders: List<String> = emptyList(),
+    @SerialName("minecraft_version") val minecraftVersion: String? = null,
+    @SerialName("server_side") val serverSide: String? = null,
+    val disclosures: List<String> = emptyList(),
 )
 
 @Serializable
 data class ModSearch(
     val hits: List<ModrinthHit> = emptyList(),
     val total: Int? = null,
+    /** A site that couldn't be asked: "CurseForge isn't available right now." */
+    val problems: List<String> = emptyList(),
 )
 
 @Serializable
@@ -257,6 +751,9 @@ data class UpdateAllRow(
     @SerialName("installed_version") val installedVersion: String = "",
     @SerialName("latest_version") val latestVersion: String = "",
     @SerialName("version_id") val versionId: String? = null,
+    /** How old the site's list was when it came from a saved copy; null when asked just now. */
+    val saved: String? = null,
+    @SerialName("held_until") val heldUntil: Double? = null,
 )
 
 /** One Modrinth couldn't be asked about, with the reason. */
@@ -286,6 +783,8 @@ data class UpdateAllResult(
     val updated: List<UpdateAllDone> = emptyList(),
     @SerialName("safety_backup") val safetyBackup: SafetyBackup? = null,
     val undo: Undo? = null,
+    /** Left out because they came out too recently (the update hold). */
+    val held: List<String> = emptyList(),
 )
 
 @Serializable
@@ -311,6 +810,10 @@ data class Modpack(
     @SerialName("download_bytes") val downloadBytes: Long = 0,
     @SerialName("client_only") val clientOnly: List<String> = emptyList(),
     @SerialName("skipped_overrides") val skippedOverrides: List<String> = emptyList(),
+    /** Jars no site checked: importing them needs ownJars = true and "Add own .jar". */
+    @SerialName("own_jars") val ownJars: List<String> = emptyList(),
+    /** From the pack's command-block.json: plugins to get by hand. */
+    @SerialName("plugins_to_get") val pluginsToGet: List<String> = emptyList(),
     val problems: List<String> = emptyList(),
     @SerialName("can_import") val canImport: Boolean = false,
 )
@@ -352,6 +855,8 @@ data class AddonList(
     val addons: List<Addon> = emptyList(),
     /** The world the packs are on; null before the server made one. */
     val world: String? = null,
+    /** Bedrock's "Required to join" (texturepack-required). */
+    val required: Boolean = false,
     val running: Boolean = false,
     @SerialName("restart_needed") val restartNeeded: Boolean? = null,
 )
@@ -379,8 +884,31 @@ data class GameSetting(
     val min: Int? = null,
     val max: Int? = null,
     @SerialName("max_length") val maxLength: Int? = null,
+    /** How many lines the value can have (the MOTD has 2). */
+    val lines: Int = 1,
     /** "world_exists" for the seed once the world is made. */
     @SerialName("read_only") val readOnly: String? = null,
+)
+
+/** One game rule as the running server said it: true/false, a number, or other text. */
+@Serializable
+data class GameRule(val name: String, val value: JsonPrimitive)
+
+@Serializable
+data class GameRules(
+    /** False: the server is stopped, so no rule was read. */
+    val running: Boolean = false,
+    val rules: List<GameRule> = emptyList(),
+    val presets: List<String> = emptyList(),
+)
+
+@Serializable
+data class GameRulesSaved(
+    val rules: List<GameRule> = emptyList(),
+    /** What each changed rule was before, sent back for Undo. */
+    val before: JsonObject = JsonObject(emptyMap()),
+    /** Rules this server doesn't have, left out. */
+    val skipped: List<String> = emptyList(),
 )
 
 @Serializable
@@ -392,6 +920,18 @@ data class GameSettings(
     @SerialName("restart_needed") val restartNeeded: Boolean = false,
     /** The whole file as it is now, for the Technical mode editor. */
     val text: String = "",
+    /** Whether server-icon.png is there; null on Bedrock, which shows none. */
+    val icon: Boolean? = null,
+)
+
+/** server-icon.png in base64, or null when the server has none. */
+@Serializable
+data class ServerIcon(val png: String? = null)
+
+@Serializable
+data class ServerIconSaved(
+    val icon: Boolean = false,
+    val running: Boolean = false,
 )
 
 @Serializable
@@ -401,3 +941,43 @@ data class GameSettingsSaved(
     val running: Boolean = false,
     @SerialName("restart_needed") val restartNeeded: Boolean = false,
 )
+
+/** One far-view choice. [available] false: [why] says what's missing. [server]/[players]: what it adds, by name. */
+@Serializable
+data class FarViewChoice(
+    val id: String,
+    val name: String,
+    val available: Boolean = false,
+    val why: String? = null,
+    val server: List<String> = emptyList(),
+    val players: List<String> = emptyList(),
+)
+
+/** "Load the world ahead at night" with Chunky. [running]: loading right now. */
+@Serializable
+data class FarViewLoadAhead(
+    val on: Boolean = false,
+    val radius: Int = 2000,
+    val world: String = "",
+    val chunky: Boolean = false,
+    val running: Boolean = false,
+    val night: String = "",
+    @SerialName("main_world") val mainWorld: String = "",
+)
+
+/** The Far view card: Off / Distant Horizons / Voxy. [unvisited]: DH builds land nobody visited. */
+@Serializable
+data class FarView(
+    val supported: Boolean = false,
+    val choice: String = "off",
+    val choices: List<FarViewChoice> = emptyList(),
+    val unvisited: Boolean = false,
+    @SerialName("load_ahead") val loadAhead: FarViewLoadAhead = FarViewLoadAhead(),
+    @SerialName("may_change") val mayChange: Boolean = false,
+)
+
+@Serializable
+data class FarViewChanged(val ok: Boolean = false, val choice: String = "off", val removed: List<String> = emptyList(), val added: List<String> = emptyList())
+
+@Serializable
+data class FarViewRebuilt(val ok: Boolean = false, val files: Int = 0, @SerialName("size_bytes") val sizeBytes: Long = 0)

@@ -109,6 +109,9 @@ class AgentClient(
     private val slowHttp: OkHttpClient = http.newBuilder()
         .readTimeout(slowSeconds, TimeUnit.SECONDS)
         .callTimeout(0, TimeUnit.SECONDS)
+        // Sending it again after a dropped connection could start a second
+        // backup, and the error from the second try hides that the PC got the first.
+        .retryOnConnectionFailure(false)
         .build()
 
     private val files: OkHttpClient = http.newBuilder()
@@ -134,13 +137,39 @@ class AgentClient(
         return call(post("/api/auth/login", body), LoginResult.serializer(), signedIn = false)
     }
 
-    suspend fun logout() {
-        runCatching { call(post("/api/auth/logout", JsonObject(emptyMap())), JsonObject.serializer()) }
+    /** False when the PC didn't hear it: its sign-in for this phone stays until it is signed out there. */
+    suspend fun logout(): Boolean = try {
+        call(post("/api/auth/logout", JsonObject(emptyMap())), JsonObject.serializer())
+        true
+    } catch (e: AgentException.SignedOut) {
+        true
+    } catch (e: AgentException) {
+        false
     }
 
     suspend fun me(): Me = get("/api/auth/me", Me.serializer())
 
     suspend fun servers(): ServerList = get("/api/servers", ServerList.serializer())
+
+    /** Start all or Stop all ([action] "start" or "stop") for [ids], the
+     * servers shown. The agent skips the ones this account may not control. */
+    suspend fun allServers(action: String, ids: List<String>): AllServersAction {
+        require(action in setOf("start", "stop")) { "Not an action the app offers: $action" }
+        val body = buildJsonObject { put("ids", JsonArray(ids.map(::JsonPrimitive))) }
+        return call(post("/api/servers/$action-all", body), AllServersAction.serializer(), slow = action == "stop")
+    }
+
+    /** The order of All servers, first to last (the owner's, the same on every app). */
+    suspend fun saveServerOrder(ids: List<String>) {
+        val body = buildJsonObject { put("ids", JsonArray(ids.map(::JsonPrimitive))) }
+        call(request("/api/servers/order").put(body.toBody()).build(), JsonObject.serializer())
+    }
+
+    /** The heading [serverId] is under on All servers; empty takes it out of its group. */
+    suspend fun saveServerGroup(serverId: String, group: String) {
+        val body = buildJsonObject { put("group", group) }
+        call(request("${server(serverId)}/group").put(body.toBody()).build(), JsonObject.serializer())
+    }
 
     suspend fun status(serverId: String): ServerStatus =
         get("/api/servers/${path(serverId)}/status", ServerStatus.serializer())
@@ -148,11 +177,18 @@ class AgentClient(
     /** start, stop or restart. */
     suspend fun serverAction(serverId: String, action: String): ServerAction {
         require(action in QUICK_ACTIONS) { "Not an action the app offers: $action" }
+        // Force stop is a stop the agent ends without the console.
+        val body = if (action == "force_stop") buildJsonObject { put("force", true) } else JsonObject(emptyMap())
+        val route = if (action == "force_stop") "stop" else action
         return call(
-            post("/api/servers/${path(serverId)}/server/$action", JsonObject(emptyMap())),
+            post("/api/servers/${path(serverId)}/server/$route", body),
             ServerAction.serializer(),
         )
     }
+
+    /** Skip on "Checking jars...": the start goes on without waiting. Owner only. */
+    suspend fun skipCheck(serverId: String): Ok =
+        call(post("/api/servers/${path(serverId)}/server/skip-check", JsonObject(emptyMap())), Ok.serializer())
 
     suspend fun alerts(after: Long?, limit: Int = 50): AppAlerts {
         val query = buildString {
@@ -288,6 +324,86 @@ class AgentClient(
     /** How friends join. Can take a few seconds: the PC asks Tailscale. */
     suspend fun join(serverId: String): JoinInfo = get("${server(serverId)}/join", JoinInfo.serializer())
 
+    /** "Let friends join from the internet": its state, the switch and the outside tests. */
+    suspend fun internet(serverId: String): InternetReach = get("${server(serverId)}/internet", InternetReach.serializer())
+
+    suspend fun setInternet(serverId: String, on: Boolean): InternetReach = call(
+        request("${server(serverId)}/internet").put(buildJsonObject { put("on", on) }.toBody()).build(),
+        InternetReach.serializer(),
+        slow = true,
+    )
+
+    /** mcsrvstat.us pings it; [allow] once the owner said yes to sending the address there. */
+    suspend fun testInternet(serverId: String, allow: Boolean): InternetReach = call(
+        post("${server(serverId)}/internet/test", buildJsonObject { put("allow_mcsrvstat", allow) }),
+        InternetReach.serializer(),
+        slow = true,
+    )
+
+    /** What this phone's own ping over mobile data found. */
+    suspend fun phoneTest(serverId: String, address: String, port: Int, works: Boolean): InternetReach = call(
+        post("${server(serverId)}/internet/phone-test", buildJsonObject {
+            put("address", address)
+            put("port", port)
+            put("works", works)
+        }),
+        InternetReach.serializer(),
+    )
+
+    /** playit.gg on the server's PC, for this server's tunnels (agent/playit.py). */
+    suspend fun playit(serverId: String): PlayitState = get("${server(serverId)}/playit", PlayitState.serializer())
+
+    /** [action] is use, reconnect or stop. Installing it is the desktop app's job. */
+    suspend fun playitAction(serverId: String, action: String): PlayitState = call(
+        post("${server(serverId)}/playit/$action", JsonObject(emptyMap())),
+        PlayitState.serializer(),
+        slow = true,
+    )
+
+    /** mcsrvstat.us pings the tunnel's address; [allow] as for testInternet. */
+    /** A plain Bedrock server behind WaterdogPE: playit's config.yml box (holds the tunnel's token). */
+    suspend fun setUpWaterdog(serverId: String, box: String): PlayitState = call(
+        post("${server(serverId)}/playit-bedrock", buildJsonObject { put("box", box) }),
+        PlayitState.serializer(),
+    )
+
+    suspend fun stopWaterdog(serverId: String): PlayitState =
+        call(request("${server(serverId)}/playit-bedrock").delete().build(), PlayitState.serializer())
+
+    suspend fun testPlayit(serverId: String, allow: Boolean): PlayitState = call(
+        post("${server(serverId)}/playit-test", buildJsonObject { put("allow_mcsrvstat", allow) }),
+        PlayitState.serializer(),
+        slow = true,
+    )
+
+    /** This PC's DuckDNS and No-IP names (agent/ddns.py). Saved only after the site said yes. */
+    suspend fun ddns(): DdnsState = get("/api/ddns", DdnsState.serializer())
+
+    suspend fun saveDuckDns(name: String, token: String): DdnsState = call(
+        request("/api/ddns/duckdns").put(buildJsonObject {
+            put("name", name)
+            put("token", token)
+        }.toBody()).build(),
+        DdnsState.serializer(),
+        slow = true,
+    )
+
+    suspend fun saveNoIp(name: String, username: String, password: String): DdnsState = call(
+        request("/api/ddns/noip").put(buildJsonObject {
+            put("name", name)
+            put("username", username)
+            put("password", password)
+        }.toBody()).build(),
+        DdnsState.serializer(),
+        slow = true,
+    )
+
+    /** The owner confirmed the No-IP name on noip.com: 30 more days. */
+    suspend fun noIpConfirmed(): DdnsState = call(post("/api/ddns/noip/confirmed", JsonObject(emptyMap())), DdnsState.serializer())
+
+    /** [kind] is duckdns or noip. */
+    suspend fun removeDdns(kind: String): DdnsState = call(request("/api/ddns/$kind").delete().build(), DdnsState.serializer())
+
     // ------------------------------------------------------------------
     // Backups, Restore world, Schedules and Performance. Making a backup,
     // a restore and Run now answer only once the work is done, which can
@@ -318,6 +434,32 @@ class AgentClient(
         call(post("${server(serverId)}/backups/$backupId/copy", JsonObject(emptyMap())), BackupCopied.serializer(), slow = true)
 
     suspend fun offsite(serverId: String): Offsite = get("${server(serverId)}/backups/offsite", Offsite.serializer())
+
+    /** Keep this backup (or stop keeping it): the clean-up never deletes a kept one. */
+    suspend fun keepBackup(serverId: String, backupId: Long, keep: Boolean): BackupKept =
+        call(post("${server(serverId)}/backups/$backupId/keep", buildJsonObject { put("keep", keep) }), BackupKept.serializer())
+
+    /** How big a backup would be now; walks the world on the PC. */
+    suspend fun backupSize(serverId: String): BackupSize =
+        get("${server(serverId)}/backups/size", BackupSize.serializer(), slow = true)
+
+    /** What the clean-up offers, and what's in its bin. Nothing changes. */
+    suspend fun cleanup(serverId: String): CleanupList =
+        get("${server(serverId)}/cleanup", CleanupList.serializer(), slow = true)
+
+    /** Moves the picked items into the clean-up bin as one batch. */
+    suspend fun cleanUp(serverId: String, paths: List<String>): CleanupDone = call(
+        post("${server(serverId)}/cleanup", buildJsonObject { put("paths", JsonArray(paths.map { JsonPrimitive(it) })) }),
+        CleanupDone.serializer(),
+        slow = true,
+    )
+
+    suspend fun cleanupUndo(serverId: String, batch: String): CleanupUndone =
+        call(post("${server(serverId)}/cleanup/undo", buildJsonObject { put("batch", batch) }), CleanupUndone.serializer(), slow = true)
+
+    /** Empties the whole bin for good. */
+    suspend fun cleanupEmpty(serverId: String): CleanupEmptied =
+        call(post("${server(serverId)}/cleanup/empty", JsonObject(emptyMap())), CleanupEmptied.serializer(), slow = true)
 
     /** Turns second copies off. Choosing a folder needs the PC's folder list. */
     suspend fun turnOffsiteOff(serverId: String): Offsite = call(
@@ -434,7 +576,13 @@ class AgentClient(
 
     /** Streams the help file into [out], as [downloadBackup] does, for the share menu. */
     suspend fun downloadHelpFile(made: HelpFileMade, out: java.io.OutputStream): Long =
-        downloadZip("/api/help-bundle/${path(made.token)}?filename=${path(made.filename)}", out) { _, _ -> }
+        downloadZip("/api/help-bundle/${path(made.token)}?filename=${path(made.filename)}", out, { _, _ -> })
+
+    /** "Don't show again" on a warning or tip, for this account on every device. */
+    suspend fun hide(key: String): Hidden = call(post("/api/account/hidden", buildJsonObject { put("key", key) }), Hidden.serializer())
+
+    /** PC settings' "Show all warnings again". */
+    suspend fun showAllAgain(): Hidden = call(request("/api/account/hidden").delete().build(), Hidden.serializer())
 
     suspend fun newServerOptions(): NewServerOptions = get("/api/new-server/options", NewServerOptions.serializer())
 
@@ -449,6 +597,8 @@ class AgentClient(
             new.memoryMb?.let { put("memory_mb", it) }
             new.color?.let { put("color", it) }
             put("eula_accepted", new.eulaAccepted)
+            put("played_by", new.playedBy)
+            put("players", JsonArray(new.players.map(::JsonPrimitive)))
         }),
         ServerCreated.serializer(),
         slow = true,
@@ -465,14 +615,15 @@ class AgentClient(
         ServerAdded.serializer(),
     )
 
-    /** Makes a new server from a pack already read by [inspectModpack]. */
-    suspend fun modpackServer(token: String, name: String, directory: String, memoryMb: Int?, color: String?, eulaAccepted: Boolean): ServerCreated = call(
+    /** Makes a new server from a pack already read by [inspectModpack]. [ownJars]: its own jars were shown and said yes to. */
+    suspend fun modpackServer(token: String, name: String, directory: String, memoryMb: Int?, color: String?, eulaAccepted: Boolean, ownJars: Boolean = false): ServerCreated = call(
         post("/api/modpacks/${path(token)}/new-server", buildJsonObject {
             put("name", name)
             put("directory", directory)
             memoryMb?.let { put("memory_mb", it) }
             color?.let { put("color", it) }
             put("eula_accepted", eulaAccepted)
+            put("own_jars", ownJars)
         }),
         ServerCreated.serializer(),
         slow = true,
@@ -509,6 +660,7 @@ class AgentClient(
         path: String,
         out: java.io.OutputStream,
         progress: (Long, Long?) -> Unit,
+        type: String = "application/zip",
     ): Long = withContext(Dispatchers.IO) {
         val current = token() ?: throw AgentException.SignedOut()
         val request = Request.Builder().url(pairing.origin + path).header("Authorization", "Bearer $current").get().build()
@@ -520,7 +672,7 @@ class AgentClient(
         }
         response.use {
             log.line("GET ${request.url.encodedPath} -> ${it.code}")
-            if (!it.isSuccessful || !it.header("Content-Type").orEmpty().startsWith("application/zip")) {
+            if (!it.isSuccessful || !it.header("Content-Type").orEmpty().startsWith(type)) {
                 read(it, request, JsonObject.serializer(), signedIn = true)
                 throw AgentException.NotAnAgent()
             }
@@ -651,9 +803,40 @@ class AgentClient(
 
     suspend fun mods(serverId: String): ModList = get("${server(serverId)}/mods", ModList.serializer())
 
+    /** "On all servers": who needs each mod on every server this account sees. */
+    suspend fun modSides(): ModSides = get("/api/mod-sides", ModSides.serializer())
+
     /** Turns a mod or plugin on or off without removing it. */
     suspend fun setModEnabled(serverId: String, filename: String, enabled: Boolean): ModChanged =
         call(post("${server(serverId)}/mods/${if (enabled) "enable" else "disable"}", fileBody(filename)), ModChanged.serializer())
+
+    /** Server, Players or Both. Players moves the jar out of the mods folder. */
+    suspend fun setModSide(serverId: String, filename: String, side: String): ModSideChanged {
+        val body = buildJsonObject {
+            put("filename", filename)
+            put("side", side)
+        }
+        return call(post("${server(serverId)}/mods/side", body), ModSideChanged.serializer())
+    }
+
+    /** A mod, resource pack or shader pack for players only. */
+    suspend fun uploadForPlayers(serverId: String, file: PickedFile): PlayerFileAdded =
+        call(upload("${server(serverId)}/mods/player-only/upload?confirm=true", file), PlayerFileAdded.serializer(), slow = true)
+
+    /** A missing player-only file, downloaded again from Modrinth and checked by its hash. */
+    suspend fun fetchForPlayers(serverId: String, filename: String): PlayerFileAdded =
+        call(post("${server(serverId)}/mods/player-only/fetch", fileBody(filename)), PlayerFileAdded.serializer(), slow = true)
+
+    suspend fun setPlayerOnlyOptions(serverId: String, options: PlayerOnlyOptions): PlayerOnlyOptions {
+        val body = buildJsonObject {
+            put("backup", options.backup)
+            put("skip_listed", options.skipListed)
+        }
+        return call(post("${server(serverId)}/mods/player-only/options", body), PlayerOnlyOptions.serializer())
+    }
+
+    suspend fun removeForPlayers(serverId: String, filename: String): Ok =
+        call(post("${server(serverId)}/mods/player-only/remove", fileBody(filename)), Ok.serializer())
 
     /** What else needs a mod, asked before removing it. */
     suspend fun modImpact(serverId: String, filename: String): ModImpact =
@@ -686,6 +869,84 @@ class AgentClient(
     suspend fun modHistory(serverId: String, limit: Int = 100): ModHistory =
         get("${server(serverId)}/mods/history?limit=${limit.coerceIn(1, 500)}", ModHistory.serializer())
 
+    /** The jar check's last results. Checks nothing. */
+    suspend fun jarScan(serverId: String): JarScanReport =
+        get("${server(serverId)}/mods/scan", JarScanReport.serializer())
+
+    /** Checks every jar again, on Modrinth and CurseForge too. */
+    suspend fun scanJars(serverId: String): JarScanReport =
+        call(post("${server(serverId)}/mods/scan", JsonObject(emptyMap())), JarScanReport.serializer(), slow = true)
+
+    suspend fun putBackJar(serverId: String, id: String): JarScanUndone =
+        call(post("${server(serverId)}/mods/scan/undo", buildJsonObject { put("id", id) }), JarScanUndone.serializer())
+
+    /** "That was me": clears the changed-outside warning of [filename]. */
+    suspend fun jarChangedOk(serverId: String, filename: String): JarScanReport =
+        call(post("${server(serverId)}/mods/scan/changed", buildJsonObject { put("filename", filename) }), JarScanReport.serializer())
+
+    /** [askFirst] and [updateHoldDays] (0 to 14) are the owner's only. */
+    suspend fun jarScanOptions(
+        serverId: String,
+        weekly: Boolean? = null,
+        onChange: Boolean? = null,
+        beforeStart: Boolean? = null,
+        askFirst: Boolean? = null,
+        updateHoldDays: Int? = null,
+    ): JarScanReport {
+        val body = buildJsonObject {
+            weekly?.let { put("weekly", it) }
+            onChange?.let { put("on_change", it) }
+            beforeStart?.let { put("before_start", it) }
+            askFirst?.let { put("ask_first", it) }
+            updateHoldDays?.let { put("update_hold_days", it) }
+        }
+        return call(post("${server(serverId)}/mods/scan/options", body), JarScanReport.serializer())
+    }
+
+    /** The deep scan's checks, the scan running now and its last results. Scans nothing. */
+    suspend fun deepScan(serverId: String): DeepScanReport =
+        get("${server(serverId)}/mods/deepscan", DeepScanReport.serializer())
+
+    /** Starts a deep scan: [scope] is "jar" (with [filename]), "mods" or "folder". */
+    suspend fun runDeepScan(serverId: String, scope: String, scanners: List<String>, filename: String? = null): DeepScanReport {
+        val body = buildJsonObject {
+            put("scope", scope)
+            put("scanners", JsonArray(scanners.map { JsonPrimitive(it) }))
+            filename?.let { put("filename", it) }
+        }
+        return call(post("${server(serverId)}/mods/deepscan", body), DeepScanReport.serializer())
+    }
+
+    /** [schedule] is "off", "daily" or "weekly", [time] "HH:MM", [day] "mon" to "sun". */
+    suspend fun deepScanOptions(
+        serverId: String,
+        beforeStart: Boolean? = null,
+        schedule: String? = null,
+        time: String? = null,
+        day: String? = null,
+    ): DeepScanReport {
+        val body = buildJsonObject {
+            beforeStart?.let { put("before_start", it) }
+            schedule?.let { put("schedule", it) }
+            time?.let { put("time", it) }
+            day?.let { put("day", it) }
+        }
+        return call(post("${server(serverId)}/mods/deepscan/options", body), DeepScanReport.serializer())
+    }
+
+    /** Saves the owner's own VirusTotal key once VirusTotal takes it. The key is never sent back. */
+    suspend fun saveVirusTotalKey(serverId: String, key: String): DeepScanReport =
+        call(post("${server(serverId)}/mods/deepscan/virustotal", buildJsonObject { put("key", key) }), DeepScanReport.serializer())
+
+    suspend fun removeVirusTotalKey(serverId: String): DeepScanReport =
+        call(request("${server(serverId)}/mods/deepscan/virustotal").delete().build(), DeepScanReport.serializer())
+
+    suspend fun deepScanQuarantine(serverId: String, root: String, path: String): DeepScanReport =
+        call(
+            post("${server(serverId)}/mods/deepscan/quarantine", buildJsonObject { put("root", root); put("path", path) }),
+            DeepScanReport.serializer(),
+        )
+
     /** What Update all would change, checked on Modrinth now. */
     suspend fun updateAllPlan(serverId: String): UpdateAllPlan =
         get("${server(serverId)}/mods/update-all", UpdateAllPlan.serializer(), slow = true)
@@ -693,6 +954,10 @@ class AgentClient(
     /** Updates the ticked ones as one change (one backup, all or nothing). */
     suspend fun updateAll(serverId: String, body: JsonObject): UpdateAllResult =
         call(post("${server(serverId)}/mods/update-all", body), UpdateAllResult.serializer(), slow = true)
+
+    /** Hides the "Still fit?" card until the next change checks again. */
+    suspend fun hideFit(serverId: String): Ok =
+        call(post("${server(serverId)}/mods/fit/hide", JsonObject(emptyMap())), Ok.serializer())
 
     /** Modrinth results that fit this server's type and Minecraft version. */
     suspend fun searchMods(serverId: String, query: String, offset: Int = 0): ModSearch =
@@ -720,10 +985,10 @@ class AgentClient(
     suspend fun installDependencies(serverId: String): DependencyInstall =
         call(post("${server(serverId)}/mods/dependencies/install", JsonObject(emptyMap())), DependencyInstall.serializer(), slow = true)
 
-    /** Adds a mod or plugin file (.jar) picked on the phone. Picking it counts as the
-     *  yes for a file no site lists (the phone has no "Install anyway?" screen yet). */
-    suspend fun uploadMod(serverId: String, file: PickedFile): ModUploaded =
-        call(upload("${server(serverId)}/mods/upload?confirm=true", file), ModUploaded.serializer(), slow = true)
+    /** Adds a mod or plugin file (.jar) picked on the phone. A file no site lists is
+     *  refused with a "confirm" problem (the warning) until [confirm] is true. */
+    suspend fun uploadMod(serverId: String, file: PickedFile, confirm: Boolean = false): ModUploaded =
+        call(upload("${server(serverId)}/mods/upload?confirm=$confirm", file), ModUploaded.serializer(), slow = true)
 
     /** Reads a modpack (.mrpack); with [serverId], also what importing it there would do. */
     suspend fun inspectModpack(serverId: String?, file: PickedFile): ModpackInspected = call(
@@ -732,23 +997,204 @@ class AgentClient(
         slow = true,
     )
 
+    /** Modrinth's and CurseForge's modpacks side by side, each named. */
+    suspend fun searchModpacks(query: String): ModSearch =
+        get("/api/modpacks/search?q=${path(query)}&limit=$SEARCH_PAGE", ModSearch.serializer())
+
+    /** Downloads a found modpack's newest release and reads it like a picked file. */
+    suspend fun fetchModpack(hit: ModrinthHit, serverId: String?): ModpackInspected {
+        val body = buildJsonObject {
+            put("project", hit.projectId.orEmpty())
+            put("server_id", serverId.orEmpty())
+        }
+        return call(post("/api/modpacks/${Modpacks.site(hit)}", body), ModpackInspected.serializer(), slow = true)
+    }
+
     /** Throws away a modpack read but not imported. */
     suspend fun forgetModpack(token: String): Ok =
         call(request("/api/modpacks/${path(token)}").delete().build(), Ok.serializer())
 
-    suspend fun importModpack(serverId: String, token: String): ModpackImported {
+    /** [ownJars]: the pack's own jars were shown and said yes to. */
+    suspend fun importModpack(serverId: String, token: String, ownJars: Boolean = false): ModpackImported {
         val body = buildJsonObject {
             put("token", token)
             put("confirm", true)
+            put("own_jars", ownJars)
         }
         return call(post("${server(serverId)}/modpack", body), ModpackImported.serializer(), slow = true)
     }
+
+    /** Downloads the linked modpack's new version and says what Modpack update changes. */
+    suspend fun previewModpackUpdate(serverId: String, versionId: String?): ModpackUpdatePreview {
+        val body = buildJsonObject { put("version_id", versionId) }
+        return call(post("${server(serverId)}/modpack/update/preview", body), ModpackUpdatePreview.serializer(), slow = true)
+    }
+
+    /** Modpack update: one backup, all or nothing, one Undo. */
+    suspend fun updateModpack(serverId: String, token: String, usePackConfigs: Boolean, ownJars: Boolean = false): ModpackUpdated {
+        val body = buildJsonObject {
+            put("token", token)
+            put("use_pack_configs", usePackConfigs)
+            put("confirm", true)
+            put("own_jars", ownJars)
+        }
+        return call(post("${server(serverId)}/modpack/update", body), ModpackUpdated.serializer(), slow = true)
+    }
+
+    /** Unlink: the server keeps its mods and stops following the modpack. */
+    suspend fun unlinkModpack(serverId: String): Ok =
+        call(request("${server(serverId)}/modpack/link").delete().build(), Ok.serializer())
+
+    /** What Make a modpack offers: name, next version, config files, players' loaders. */
+    suspend fun makeModpackOptions(serverId: String): ModpackMakeOptions =
+        get("${server(serverId)}/modpack/make", ModpackMakeOptions.serializer())
+
+    /** Makes a modpack from this server, as a task; [downloadModpack] fetches it. */
+    suspend fun makeModpack(serverId: String, make: MakeModpack): ModpackMade {
+        val body = buildJsonObject {
+            put("name", make.name)
+            put("version", make.version)
+            put("leave_out_server_only", make.leaveOutServerOnly)
+            put("configs", JsonArray(make.configs.map { JsonPrimitive(it) }))
+            put("players_loader", make.playersLoader)
+            put("required", make.required)
+            make.chatLine?.let { put("chat_line", buildJsonObject { put("on", it.on); put("text", it.text) }) }
+            make.titleScreen?.let {
+                put("title_screen", buildJsonObject {
+                    put("button", buildJsonObject { put("on", it.button.on); put("address", it.button.address) })
+                    put("flavor_text", buildJsonObject { put("on", it.flavorText.on); put("text", it.flavorText.text) })
+                    put("background", buildJsonObject { put("on", it.background.on) })
+                })
+            }
+        }
+        return call(post("${server(serverId)}/modpack/make", body), ModpackMade.serializer(), slow = true)
+    }
+
+    /** The title-screen background (a PNG picked on the phone) for the next modpacks. */
+    suspend fun uploadTitleBackground(serverId: String, file: PickedFile): ModpackMakeOptions =
+        call(upload("${server(serverId)}/modpack/title-background", file), ModpackMakeOptions.serializer(), slow = true)
+
+    /** Streams the made modpack into [out], as [downloadBackup] does, for the share menu. */
+    suspend fun downloadModpack(
+        serverId: String,
+        made: ModpackMade,
+        out: java.io.OutputStream,
+        progress: (Long, Long?) -> Unit = { _, _ -> },
+    ): Long = downloadZip("${server(serverId)}/modpack/made/${path(made.token)}", out, progress)
+
+    /** The Discord bot posts the made modpack in this server's chat channels. */
+    suspend fun postModpack(serverId: String, token: String): ModpackPosted =
+        call(post("${server(serverId)}/modpack/made/discord", buildJsonObject { put("token", token) }), ModpackPosted.serializer())
+
+    /** The download link and the server resource pack. */
+    suspend fun downloadLink(serverId: String): DownloadLink =
+        get("${server(serverId)}/download-link", DownloadLink.serializer())
+
+    /** Turns the download link on (a new link) or off (the old link stops). Owner only. */
+    suspend fun setDownloadLink(serverId: String, on: Boolean): DownloadLink =
+        call(post("${server(serverId)}/download-link", buildJsonObject { put("on", on) }), DownloadLink.serializer(), slow = true)
+
+    /** A new link: the old one stops working at once. */
+    suspend fun newDownloadLink(serverId: String): DownloadLink =
+        call(post("${server(serverId)}/download-link/new", buildJsonObject {}), DownloadLink.serializer(), slow = true)
+
+    /** A resource pack (.zip) picked on the phone, served by the download link. */
+    suspend fun uploadResourcePack(serverId: String, file: PickedFile, required: Boolean): DownloadLink =
+        call(upload("${server(serverId)}/resource-pack/upload?required=$required", file), DownloadLink.serializer(), slow = true)
+
+    /** A resource pack someone else hosts, with the site's SHA-1 when it gives one. */
+    suspend fun setResourcePackLink(serverId: String, url: String, sha1: String, required: Boolean): DownloadLink {
+        val body = buildJsonObject {
+            put("url", url)
+            put("sha1", sha1)
+            put("required", required)
+        }
+        return call(post("${server(serverId)}/resource-pack", body), DownloadLink.serializer(), slow = true)
+    }
+
+    /** "Players must accept the resource pack". */
+    suspend fun setResourcePackRequired(serverId: String, required: Boolean): DownloadLink =
+        call(post("${server(serverId)}/resource-pack", buildJsonObject { put("required", required) }), DownloadLink.serializer(), slow = true)
+
+    suspend fun removeResourcePack(serverId: String): DownloadLink =
+        call(request("${server(serverId)}/resource-pack").delete().build(), DownloadLink.serializer(), slow = true)
+
+    /** The anti-cheat picker. Installing goes through [installMod] and [uploadMod]. */
+    suspend fun antiCheat(serverId: String): AntiCheat = get("${server(serverId)}/anticheat", AntiCheat.serializer())
+
+    /** The Far view card. */
+    suspend fun farView(serverId: String): FarView = get("${server(serverId)}/far-view", FarView.serializer())
+
+    /** Far view off ("off") or to "distanthorizons" / "voxy": installs what it needs. The server must be stopped. */
+    suspend fun chooseFarView(serverId: String, choice: String): FarViewChanged =
+        call(post("${server(serverId)}/far-view", buildJsonObject { put("choice", choice) }), FarViewChanged.serializer(), slow = true)
+
+    suspend fun farViewOptions(serverId: String, unvisited: Boolean, loadAhead: Boolean, radius: Int, world: String): FarView {
+        val body = buildJsonObject {
+            put("unvisited", unvisited)
+            put("load_ahead", loadAhead)
+            put("radius", radius)
+            put("world", world)
+        }
+        return call(post("${server(serverId)}/far-view/options", body), FarView.serializer())
+    }
+
+    /** Deletes the far-view data; it's built again from the world. */
+    suspend fun rebuildFarView(serverId: String): FarViewRebuilt =
+        call(post("${server(serverId)}/far-view/rebuild", buildJsonObject {}), FarViewRebuilt.serializer(), slow = true)
+
+    /** The "Put it on Modrinth" card. */
+    suspend fun modrinth(serverId: String): ModrinthShare = get("${server(serverId)}/modrinth", ModrinthShare.serializer())
+
+    /** Modrinth's sign-in page; it comes back to the app as mcsc://modrinth. Owner only. */
+    suspend fun modrinthSignIn(): ModrinthSignInStarted =
+        call(post("/api/modrinth/sign-in", buildJsonObject { put("return_to", "phone") }), ModrinthSignInStarted.serializer())
+
+    /** The code Modrinth gave: the PC swaps it and keeps the sign-in. */
+    suspend fun modrinthFinish(code: String, state: String): ModrinthAccount {
+        val body = buildJsonObject {
+            put("code", code)
+            put("state", state)
+        }
+        return call(post("/api/modrinth/sign-in/finish", body), ModrinthAccount.serializer(), slow = true)
+    }
+
+    suspend fun modrinthSignOut(): ModrinthAccount =
+        call(post("/api/modrinth/sign-out", buildJsonObject {}), ModrinthAccount.serializer())
+
+    /** The newest modpack up as a draft; [slug] and [summary] only the first time. */
+    suspend fun modrinthUpload(serverId: String, slug: String, summary: String): ModrinthShare {
+        val body = buildJsonObject {
+            put("slug", slug)
+            put("summary", summary)
+        }
+        return call(post("${server(serverId)}/modrinth/upload", body), ModrinthShare.serializer(), slow = true)
+    }
+
+    /** One own jar of the newest modpack as its own Modrinth mod (a draft). */
+    suspend fun modrinthOwnJar(serverId: String, path: String, slug: String, summary: String): ModrinthShare {
+        val body = buildJsonObject {
+            put("path", path)
+            put("slug", slug)
+            put("summary", summary)
+        }
+        return call(post("${server(serverId)}/modrinth/own-jar", body), ModrinthShare.serializer(), slow = true)
+    }
+
+    /** The Modrinth Server Project's link (empty: forget it). */
+    suspend fun modrinthServerProject(serverId: String, link: String): ModrinthShare =
+        call(post("${server(serverId)}/modrinth/server-project", buildJsonObject { put("link", link) }), ModrinthShare.serializer(), slow = true)
 
     /** A Bedrock server's behavior and resource packs. */
     suspend fun addons(serverId: String): AddonList = get("${server(serverId)}/addons", AddonList.serializer())
 
     suspend fun uploadAddon(serverId: String, file: PickedFile): AddonResult =
         call(upload("${server(serverId)}/addons/upload", file), AddonResult.serializer(), slow = true)
+
+    suspend fun setAddonsRequired(serverId: String, required: Boolean): AddonResult = call(
+        request("${server(serverId)}/addons/required").put(buildJsonObject { put("required", required) }.toBody()).build(),
+        AddonResult.serializer(),
+    )
 
     suspend fun setAddonEnabled(serverId: String, uuid: String, enabled: Boolean): AddonResult = call(
         request("${server(serverId)}/addons/${path(uuid)}").put(buildJsonObject { put("enabled", enabled) }.toBody()).build(),
@@ -757,6 +1203,46 @@ class AgentClient(
 
     suspend fun removeAddon(serverId: String, uuid: String): AddonResult =
         call(request("${server(serverId)}/addons/${path(uuid)}").delete().build(), AddonResult.serializer())
+
+    /** Every game rule as the running server says it; none while it's stopped. */
+    suspend fun gameRules(serverId: String): GameRules =
+        get("${server(serverId)}/gamerules", GameRules.serializer(), slow = true)
+
+    /** Changes [rules] (name to true/false or a number), or applies [preset]. */
+    suspend fun saveGameRules(serverId: String, rules: JsonObject, preset: String? = null): GameRulesSaved {
+        val body = buildJsonObject {
+            put("rules", rules)
+            if (preset != null) put("preset", preset)
+        }
+        return call(request("${server(serverId)}/gamerules").put(body.toBody()).build(), GameRulesSaved.serializer(), slow = true)
+    }
+
+    /** The commands the running server's help lists; empty while it's stopped. */
+    suspend fun consoleCommands(serverId: String): CommandList =
+        get("${server(serverId)}/console/commands", CommandList.serializer())
+
+    /** Minecraft's own log files (logs/), newest first. */
+    suspend fun logFiles(serverId: String): LogFiles = get("${server(serverId)}/logs/files", LogFiles.serializer())
+
+    /** One folder of the server's folder (owner only). */
+    suspend fun serverFiles(serverId: String, folder: String): ServerFiles =
+        get("${server(serverId)}/files?path=${path(folder)}", ServerFiles.serializer())
+
+    /** Streams one file of the server's folder into [out], as [downloadBackup] does. */
+    suspend fun downloadServerFile(serverId: String, file: String, out: java.io.OutputStream): Long =
+        downloadZip("${server(serverId)}/files/download?path=${path(file)}", out, { _, _ -> }, type = "application/octet-stream")
+
+    /** Puts [file] into [folder] of the server's folder; never over a file that's there. */
+    suspend fun uploadServerFile(serverId: String, folder: String, file: PickedFile): ServerFileUploaded =
+        call(upload("${server(serverId)}/files/upload?path=${path(folder)}", file), ServerFileUploaded.serializer(), slow = true)
+
+    /** The graphs' points for [hours] as CSV text, for a spreadsheet. */
+    suspend fun performanceCsv(serverId: String, hours: Int): PerformanceCsv =
+        get("${server(serverId)}/performance/csv?hours=${hours.coerceIn(1, 168)}", PerformanceCsv.serializer())
+
+    /** One of them, read-only. */
+    suspend fun logFile(serverId: String, name: String): LogFileText =
+        get("${server(serverId)}/logs/files/${path(name)}", LogFileText.serializer())
 
     suspend fun gameSettings(serverId: String): GameSettings =
         get("${server(serverId)}/game-settings", GameSettings.serializer())
@@ -767,6 +1253,19 @@ class AgentClient(
         request("${server(serverId)}/game-settings").put(buildJsonObject { put("values", values) }.toBody()).build(),
         GameSettingsSaved.serializer(),
     )
+
+    /** The server icon, as base64 PNG, or null when there is none. */
+    suspend fun serverIcon(serverId: String): String? =
+        get("${server(serverId)}/server-icon", ServerIcon.serializer()).png
+
+    /** A new server icon: a 64 x 64 PNG in base64 (the app resizes it first). */
+    suspend fun saveServerIcon(serverId: String, png: String): ServerIconSaved = call(
+        request("${server(serverId)}/server-icon").put(buildJsonObject { put("png", png) }.toBody()).build(),
+        ServerIconSaved.serializer(),
+    )
+
+    suspend fun removeServerIcon(serverId: String): ServerIconSaved =
+        call(request("${server(serverId)}/server-icon").delete().build(), ServerIconSaved.serializer())
 
     /** Saves the whole server.properties as typed in Technical mode. The
      * agent still checks the known keys, and writes nothing when one fails. */
@@ -850,15 +1349,27 @@ class AgentClient(
         slow = true,
     )
 
+    /** The MCXboxBroadcast add-on; on only after the risks were shown. */
+    suspend fun setConsoleFriends(serverId: String, enabled: Boolean): CrossplayInfo = call(
+        request("${server(serverId)}/crossplay/console-friends").put(buildJsonObject {
+            put("enabled", enabled)
+            put("accept_risks", enabled)
+        }.toBody()).build(),
+        CrossplayInfo.serializer(),
+        slow = true,
+    )
+
     suspend fun duplicateOptions(serverId: String): DuplicateOptions =
         get("${server(serverId)}/duplicate", DuplicateOptions.serializer())
 
     /** Starts the copy as a task; the new server appears once it is checked. */
-    suspend fun duplicate(serverId: String, name: String, directory: String, world: String): DuplicateStarted = call(
+    suspend fun duplicate(serverId: String, name: String, directory: String, world: String, fromBackup: Long? = null): DuplicateStarted = call(
         request("${server(serverId)}/duplicate").post(buildJsonObject {
             put("name", name)
             put("directory", directory)
             put("world", world)
+            // Restore as a new server: the backup's world, settings and add-ons.
+            if (fromBackup != null) put("from_backup", fromBackup)
         }.toBody()).build(),
         DuplicateStarted.serializer(),
     )
@@ -1007,6 +1518,69 @@ class AgentClient(
     suspend fun removeServer(serverId: String): ServerRemoved =
         call(request(server(serverId)).delete().build(), ServerRemoved.serializer())
 
+    // ------------------------------------------------------- rented servers
+    /** Rented servers this account may see; panels only for the owner. */
+    suspend fun rented(): RentedList = get("/api/rented", RentedList.serializer())
+
+    private fun panelBody(address: String, key: String, servers: List<String> = emptyList()) = buildJsonObject {
+        put("address", address.trim())
+        put("key", key.trim())
+        // The owner ticked "Let Command Block talk to this panel".
+        put("allow_host", true)
+        put("servers", JsonArray(servers.map { JsonPrimitive(it) }))
+    }
+
+    /** The panel's servers for this key, before anything is saved. */
+    suspend fun checkPanel(address: String, key: String): PanelCheck =
+        call(post("/api/rented/check", panelBody(address, key)), PanelCheck.serializer(), slow = true)
+
+    suspend fun connectPanel(address: String, key: String, servers: List<String>): RentedAdded =
+        call(post("/api/rented/panels", panelBody(address, key, servers)), RentedAdded.serializer(), slow = true)
+
+    /** Remove key: the key is deleted and the panel's servers leave the list. */
+    suspend fun removePanelKey(panelId: String): JsonObject =
+        call(request("/api/rented/panels/${path(panelId)}").delete().build(), JsonObject.serializer())
+
+    suspend fun rentedStatus(id: String): RentedServer = get("/api/rented/${path(id)}/status", RentedServer.serializer())
+
+    /** start, stop, restart, or kill with [confirm] (it can damage the world). */
+    suspend fun rentedPower(id: String, signal: String, confirm: Boolean = false): RentedDone = call(
+        post("/api/rented/${path(id)}/power", buildJsonObject { put("signal", signal); put("confirm", confirm) }),
+        RentedDone.serializer(),
+    )
+
+    suspend fun rentedConsole(id: String, after: Int): RentedConsole =
+        get("/api/rented/${path(id)}/console?after=$after", RentedConsole.serializer())
+
+    suspend fun rentedCommand(id: String, command: String, confirm: Boolean = false): RentedDone = call(
+        post("/api/rented/${path(id)}/command", buildJsonObject { put("command", command.trim()); put("confirm", confirm) }),
+        RentedDone.serializer(),
+    )
+
+    suspend fun rentedBackups(id: String): RentedBackups = get("/api/rented/${path(id)}/backups", RentedBackups.serializer())
+
+    suspend fun makeRentedBackup(id: String): RentedDone =
+        call(post("/api/rented/${path(id)}/backups", JsonObject(emptyMap())), RentedDone.serializer())
+
+    /** off, status or control: what the Discord bot may do with it. */
+    suspend fun rentedDiscord(id: String, choice: String): RentedServer = call(
+        request("/api/rented/${path(id)}/discord").put(buildJsonObject { put("choice", choice) }.toBody()).build(),
+        RentedServer.serializer(),
+    )
+
+    // ---------------------------------------------------------------- store
+    suspend fun store(serverId: String): StoreView = get("${server(serverId)}/store", StoreView.serializer())
+
+    /** Checks the key with Tebex, then installs the plugin and LuckPerms (backup first, one Undo). */
+    suspend fun connectStore(serverId: String, key: String): StoreView = call(
+        post("${server(serverId)}/store/connect", buildJsonObject { put("key", key.trim()) }),
+        StoreView.serializer(),
+        slow = true,
+    )
+
+    suspend fun checkStore(serverId: String): StoreView =
+        call(post("${server(serverId)}/store/check", JsonObject(emptyMap())), StoreView.serializer(), slow = true)
+
     private fun server(id: String) = "/api/servers/${path(id)}"
 
     private fun path(id: String) = java.net.URLEncoder.encode(id, "UTF-8").replace("+", "%20")
@@ -1051,7 +1625,11 @@ class AgentClient(
                 if (slow && e is java.net.SocketTimeoutException && waited >= TimeUnit.SECONDS.toNanos(slowSeconds) * 9 / 10) {
                     throw AgentException.StillWorking()
                 }
-                throw translate(e)
+                val failed = translate(e)
+                // The PC got the work and then the connection dropped (the
+                // phone slept, Wi-Fi changed): the job goes on there.
+                if (slow && failed is AgentException.Unreachable && !couldNotConnect(e)) throw AgentException.StillWorking()
+                throw failed
             }
             response.use { read(it, request, serializer, signedIn) }
         }
@@ -1097,6 +1675,11 @@ class AgentClient(
 
     internal fun translateFailure(e: IOException): AgentException = translate(e)
 
+    /** The PC never got the request: off, asleep, or no route to it. */
+    private fun couldNotConnect(e: IOException): Boolean =
+        e is java.net.ConnectException || e is java.net.UnknownHostException ||
+            e is java.net.NoRouteToHostException || e is java.net.SocketTimeoutException
+
     private fun translate(e: IOException): AgentException {
         var cause: Throwable? = e
         while (cause != null) {
@@ -1112,7 +1695,7 @@ class AgentClient(
     }
 
     companion object {
-        val QUICK_ACTIONS = listOf("start", "stop", "restart")
+        val QUICK_ACTIONS = listOf("start", "stop", "restart", "force_stop")
 
         const val SLOW_SECONDS = 30L * 60
         const val SEARCH_PAGE = 20

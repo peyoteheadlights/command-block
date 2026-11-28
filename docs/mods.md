@@ -250,6 +250,23 @@ against the pack's SHA-512, then copies the pack's extra files (`overrides/`,
 then `server-overrides/`). The server type and version are set up with the
 same installer as **New server** and **Change the kind or version**.
 
+**Own jars and other owners' modpacks.** A jar in a pack's extra files (or
+a file of the server's own program, like `libraries/`) isn't checked by any
+site. The pack's summary lists these as "Not checked by a site", and the
+import only takes them when you said yes to that list and hold the **Add own
+.jar** permission. That permission is in no level: a moderator only has it
+if the owner ticks it, and it is also needed to add a jar no site lists by
+hand (a dropped file, a GitHub release, or a Players only mod). Modpack
+update asks again only when an own jar is new or changed.
+
+A pack's `client-overrides/` mods, resource packs and shader packs go into
+the Players only folder; its other client files are skipped. A pack made
+from a plugin server by another Command Block owner carries
+`server-overrides/command-block.json`, which names the server type (Paper,
+Purpur, Leaf...) and its plugins: the server is made as that type, plugins
+the pack can't download are listed under "Get these plugins yourself", and
+the file itself is never copied in.
+
 Into an existing server, the import stops the server and takes a verified
 backup first. If the server isn't already on the pack's type and versions
 (as its console last reported them), the version is changed first. The mods

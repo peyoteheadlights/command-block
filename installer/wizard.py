@@ -47,6 +47,10 @@ class Wizard:
         # The command line as given, without what setup.exe adds itself:
         # to start again with Administrator rights (relaunch_as_admin).
         self.argv: list[str] = []
+        # The Tailscale step ("Agent only"): its work runs on a thread.
+        self.tailscale_thread: threading.Thread | None = None
+        self.tailscale_page: str | None = None
+        self.tailscale_problem = ""
         self.detect()
 
     @staticmethod
@@ -88,6 +92,9 @@ class Wizard:
                     "why": why,
                     "refused": refused,
                     "servers": self.server_javas(found),
+                    "agent_only": bool(
+                        (appinfo.install_record(found.program_dir) or {}).get("agent_only")
+                    ),
                 }
             )
         best = java_setup.best_java(self.java)
@@ -190,10 +197,53 @@ class Wizard:
             # The app answers but wouldn't list its servers: one may be
             # running with people on it, so ask rather than assume.
             return {"known": False, "online": None, "running": None}
-        counts = [r.get("players_online") for r in rows if r.get("state") == "running"]
+        counts = [r.get("players_online") for r in rows if r.get("state") in ("ONLINE", "STARTING")]
         if any(c is None for c in counts):
             return {"known": False, "online": None, "running": len(counts)}
         return {"known": True, "online": sum(counts), "running": len(counts)}
+
+    # ------------------------------------------------------------ Tailscale ("Agent only")
+    def tailscale(self) -> dict[str, Any]:
+        """The Tailscale step's state. Nothing else can reach an "Agent only"
+        PC until Tailscale connects, so setup does the step the desktop app
+        does elsewhere. Connected only when Tailscale itself says so."""
+        from agent.tailscale import tailscale_status
+
+        report = tailscale_status()
+        return {
+            "installed": bool(report.get("cli_found")),
+            "connected": self.system.tailscale_address() is not None,
+            "account": report.get("account"),
+            "error": report.get("error") or "",
+            "busy": self.tailscale_thread is not None and self.tailscale_thread.is_alive(),
+            "page": self.tailscale_page,
+            "problem": self.tailscale_problem,
+        }
+
+    def connect_tailscale(self) -> dict[str, Any]:
+        """After a click: install Tailscale when it isn't (its own setup,
+        refused unless Tailscale Inc. signed it), then ``tailscale up``. The
+        same calls as the desktop app's step (desktop/pc.py); the window
+        asks tailscale() until it connects."""
+        if self.tailscale_thread is not None and self.tailscale_thread.is_alive():
+            return {"ok": False}
+        self.tailscale_page, self.tailscale_problem = None, ""
+
+        def work() -> None:
+            from agent.tailscale import tailscale_binary
+            from desktop.pc import PCError, WindowsPC
+
+            pc = WindowsPC()
+            try:
+                if tailscale_binary() is None:
+                    pc.install_tailscale()
+                self.tailscale_page = pc.tailscale_up()
+            except PCError as exc:
+                self.tailscale_problem = str(exc)
+
+        self.tailscale_thread = threading.Thread(target=work, name="tailscale", daemon=True)
+        self.tailscale_thread.start()
+        return {"ok": True}
 
     # ------------------------------------------------------------ the work
     def choices_from(self, body: dict[str, Any]) -> engine.Choices:
@@ -211,6 +261,12 @@ class Wizard:
         keep = found if found is not None and not found.legacy else None
         if keep is not None and keep.kind == detect.INSTALLER:
             program_dir = keep.program_dir
+            record = appinfo.install_record(program_dir) or {}
+        # "Agent only" or "Full app": an update keeps what was chosen, unless
+        # setup was run again to switch.
+        agent_only = body.get("agent_only")
+        if agent_only is None:
+            agent_only = record.get("agent_only")
         try:
             action = engine.decide_action(found)[0]
         except engine.Refused:
@@ -241,6 +297,8 @@ class Wizard:
             setup_exe=Path(self.args.setup_exe) if self.args.setup_exe else None,
             from_app=bool(self.args.from_app),
             connect_only=connect_only,
+            agent_only=bool(agent_only) and not connect_only,
+            welcome=body.get("welcome") if agent_only and not connect_only else None,
             desktop_shortcut=bool(body.get("desktop_shortcut")),
             open_at_sign_in=body.get("open_at_sign_in"),
         )

@@ -492,5 +492,194 @@
       "players_need": "server",
       "technical_only": true
     }
+  ],
+  "same_job": [
+    {
+      "types": [
+        "paper",
+        "purpur",
+        "leaf",
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge"
+      ],
+      "why": "They all draw a web map of the world.",
+      "usual_pick": "swbUV1cr",
+      "addons": [
+        {
+          "project": "swbUV1cr",
+          "ids": [
+            "bluemap"
+          ]
+        },
+        {
+          "project": "fRQREgAc",
+          "ids": [
+            "dynmap"
+          ]
+        },
+        {
+          "project": "PFb7ZqK6",
+          "ids": [
+            "squaremap"
+          ]
+        },
+        {
+          "project": "34T8oVNY",
+          "ids": [
+            "pl3xmap"
+          ]
+        }
+      ]
+    },
+    {
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "why": "Both are WorldEdit; FastAsyncWorldEdit is a faster copy of it.",
+      "addons": [
+        {
+          "project": "1u6JkXh5",
+          "ids": [
+            "worldedit"
+          ]
+        },
+        {
+          "project": "z4HZZnLr",
+          "ids": [
+            "fastasyncworldedit"
+          ]
+        }
+      ]
+    },
+    {
+      "types": [
+        "paper",
+        "purpur",
+        "leaf"
+      ],
+      "why": "They all decide who can use which commands, with ranks.",
+      "usual_pick": "Vebnzrzj",
+      "addons": [
+        {
+          "project": "Vebnzrzj",
+          "ids": [
+            "luckperms"
+          ]
+        },
+        {
+          "project": "ecVvYtj3",
+          "ids": [
+            "powerranks"
+          ]
+        },
+        {
+          "ids": [
+            "groupmanager"
+          ]
+        }
+      ]
+    },
+    {
+      "types": [
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge"
+      ],
+      "why": "They all make new chunks ahead of time.",
+      "usual_pick": "fALzjamp",
+      "addons": [
+        {
+          "project": "fALzjamp",
+          "ids": [
+            "chunky"
+          ]
+        },
+        {
+          "project": "3PDHuC6e",
+          "ids": [
+            "mr_chunk_pregenerator"
+          ]
+        },
+        {
+          "project": "AsjPpia1",
+          "ids": [
+            "chunkpregen"
+          ]
+        }
+      ]
+    },
+    {
+      "types": [
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge"
+      ],
+      "why": "They all ask players for a password when they join.",
+      "addons": [
+        {
+          "project": "aZj58GfX",
+          "ids": [
+            "easyauth"
+          ]
+        },
+        {
+          "project": "fnP1u8PK",
+          "ids": [
+            "nedologin"
+          ]
+        },
+        {
+          "project": "S4Tu3Hn2",
+          "ids": [
+            "loginsystem"
+          ]
+        }
+      ]
+    },
+    {
+      "types": [
+        "paper",
+        "purpur",
+        "leaf",
+        "fabric"
+      ],
+      "why": "They are all anti-cheats, and one is enough.",
+      "addons": [
+        {
+          "project": "LJNGWSvH",
+          "ids": [
+            "grimac"
+          ]
+        },
+        {
+          "project": "4zi91sqi",
+          "ids": [
+            "intave"
+          ]
+        },
+        {
+          "project": "CzhWXA8H",
+          "ids": [
+            "spartan"
+          ]
+        },
+        {
+          "ids": [
+            "vulcan"
+          ]
+        },
+        {
+          "ids": [
+            "polarloader"
+          ]
+        }
+      ]
+    }
   ]
 }

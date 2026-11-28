@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -20,7 +21,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,14 +29,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.CpuCores
 import io.github.peyoteheadlights.mcsc.core.Crossplay
 import io.github.peyoteheadlights.mcsc.core.Duplicate
+import io.github.peyoteheadlights.mcsc.core.FolderPicker
+import io.github.peyoteheadlights.mcsc.core.Internet
+import io.github.peyoteheadlights.mcsc.core.Playit
 import io.github.peyoteheadlights.mcsc.core.Memory
 import io.github.peyoteheadlights.mcsc.core.RawText
 import io.github.peyoteheadlights.mcsc.core.RemoveServer
@@ -52,7 +57,7 @@ import io.github.peyoteheadlights.mcsc.core.VersionChange
  * Someone who may only look sees it all read-only.
  */
 @Composable
-fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onRemoved: () -> Unit) {
+fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onRemoved: () -> Unit, onFiles: () -> Unit = {}) {
     val setup = vm.pages(serverId).setup
     val strings = vm.strings
     val canEdit = ServerForm.editable(vm.me)
@@ -63,6 +68,9 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
         setup.loadMemory()
         setup.loadVersion()
         setup.loadCrossplay()
+        setup.loadInternet()
+        setup.loadDdns()
+        setup.loadPlayit()
         if (Duplicate.allowed(vm.me)) setup.loadCopyOptions()
     }
 
@@ -76,6 +84,9 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             setup.loadMemory()
             setup.loadVersion()
             setup.loadCrossplay()
+            setup.loadInternet()
+            setup.loadDdns()
+            setup.loadPlayit()
         },
         overlay = {
             when (asking) {
@@ -106,6 +117,14 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
                     },
                     onDismiss = { asking = null },
                 )
+                SetupAsk.CONSOLE_ON -> Confirm(
+                    t("console.risk_title"), t("console.risk_body"), t("console.risk_button"), danger = true,
+                    onConfirm = {
+                        asking = null
+                        setup.setConsoleFriends(true, strings)
+                    },
+                    onDismiss = { asking = null },
+                )
                 SetupAsk.REMOVE -> Confirm(
                     t("serverset.remove_title", "name" to (vm.servers.list.firstOrNull { it.id == serverId }?.name ?: serverId)),
                     t("serverset.remove_body"), t("serverset.remove_confirm"), danger = true,
@@ -115,6 +134,76 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
                     },
                     onDismiss = { asking = null },
                 )
+                SetupAsk.MCSRVSTAT -> Confirm(
+                    t("address.test"),
+                    t("address.test_ask", "address" to (setup.internet.value?.let(Internet::address) ?: "")),
+                    t("address.test"),
+                    danger = false,
+                    onConfirm = {
+                        asking = null
+                        setup.testInternet(true, strings)
+                    },
+                    onDismiss = { asking = null },
+                )
+                SetupAsk.PLAYIT_MCSRVSTAT -> Confirm(
+                    t("address.test"),
+                    t("address.test_ask", "address" to (setup.playit.value?.let(Playit::javaAddress) ?: "")),
+                    t("address.test"),
+                    danger = false,
+                    onConfirm = {
+                        asking = null
+                        setup.playitCall(strings) { it.testPlayit(serverId, true) }
+                    },
+                    onDismiss = { asking = null },
+                )
+                SetupAsk.PLAYIT_STOP -> Confirm(
+                    t("playit.stop"),
+                    t("playit.stop_body"),
+                    t("playit.stop"),
+                    danger = true,
+                    onConfirm = {
+                        asking = null
+                        setup.playitCall(strings) { it.playitAction(serverId, "stop") }
+                    },
+                    onDismiss = { asking = null },
+                )
+                SetupAsk.WATERDOG_ON -> Confirm(
+                    t("playit.bedrock_confirm_title"),
+                    t("playit.bedrock_confirm_body"),
+                    t("playit.bedrock_set_up"),
+                    danger = false,
+                    onConfirm = {
+                        asking = null
+                        setup.playitCall(strings) { it.setUpWaterdog(serverId, setup.waterdogBox) }
+                    },
+                    onDismiss = { asking = null },
+                )
+                SetupAsk.WATERDOG_OFF -> Confirm(
+                    t("playit.waterdog_stop"),
+                    t("playit.waterdog_stop_body"),
+                    t("playit.waterdog_stop"),
+                    danger = true,
+                    onConfirm = {
+                        asking = null
+                        setup.playitCall(strings) { it.stopWaterdog(serverId) }
+                    },
+                    onDismiss = { asking = null },
+                )
+                SetupAsk.REMOVE_DUCKDNS, SetupAsk.REMOVE_NOIP -> {
+                    val kind = if (asking == SetupAsk.REMOVE_DUCKDNS) "duckdns" else "noip"
+                    val saved = setup.ddns.value?.let { if (kind == "duckdns") it.duckdns else it.noip }
+                    Confirm(
+                        t("ddns.remove"),
+                        t("ddns.remove_body", "name" to (saved?.name ?: "")),
+                        t("ddns.remove"),
+                        danger = false,
+                        onConfirm = {
+                            asking = null
+                            setup.ddnsCall("ddns", strings) { it.removeDdns(kind) }
+                        },
+                        onDismiss = { asking = null },
+                    )
+                }
                 null -> Unit
             }
         },
@@ -129,6 +218,8 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             return@ServerFrame
         }
 
+        item { SectionTitle(t("address.title")) }
+        item { Card { AddressCard(vm, setup, serverId) { asking = it } } }
         item { SectionTitle(t("serverset.identity")) }
         item {
             Card {
@@ -148,6 +239,7 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             }
         }
         for (group in ServerForm.GROUPS) {
+            if (!ServerForm.shown(group, vm.technical, vm.me, vm.servers.list.firstOrNull { it.id == serverId }?.edition)) continue
             item { SectionTitle(t(group.titleKey)) }
             item {
                 Card {
@@ -178,6 +270,10 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             }
         }
         item { SaidNote(setup.said) }
+        if (FolderPicker.allowed(vm.me)) {
+            item { SectionTitle(t("files.title")) }
+            item { Card { Item(t("files.open"), subtitle = t("files.hint"), onClick = onFiles) } }
+        }
         item { SectionTitle(t("serverset.cpu")) }
         item { Card { CoresCard(vm, setup, canEdit) } }
         item { SectionTitle(t("version.title")) }
@@ -202,6 +298,10 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
                             busy = setup.busy != null,
                             onSave = { setup.saveJavaOptions(RawText.args(typed), strings) },
                         )
+                        HideableNote(vm, "memory.raw_warning")
+                        setup.argsBefore?.let { before ->
+                            Presses(listOf(Press(t("changes.undo"), { setup.saveJavaOptions(before, strings, undoing = true) }, enabled = setup.busy == null)))
+                        }
                     }
                 }
             }
@@ -215,6 +315,186 @@ fun ServerSettingsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit,
             item { Card { RemoveCard(vm, setup) { asking = it } } }
         }
     }
+}
+
+/**
+ * Server address: "Let friends join from the internet" (owner only), what
+ * the router did, the two outside tests (mcsrvstat.us after asking once,
+ * or this phone over mobile data), port forwarding by hand, and playit.gg
+ * when the internet provider blocks it. Home and Tailscale addresses are
+ * on the Overview's "How friends join".
+ */
+@Composable
+private fun AddressCard(vm: AppViewModel, setup: SetupPages, serverId: String, ask: (SetupAsk) -> Unit) {
+    val colors = LocalColors.current
+    val context = LocalContext.current
+    val read = setup.internet
+    val owner = vm.me?.isOwner == true
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Gap) {
+        read.problem?.let { Text(it.text(vm.strings), color = colors.danger) }
+        Text(t("address.consoles"), color = colors.text2)
+        val info = read.value ?: return@Column
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(t("address.internet_label"), color = colors.text, modifier = Modifier.weight(1f))
+            Switch(
+                checked = info.on,
+                onCheckedChange = { setup.setInternet(it, vm.strings) },
+                enabled = owner && setup.busy == null,
+            )
+        }
+        if (setup.busy == "internet") Text(t("address.busy"), color = colors.text2)
+        for (line in Internet.lines(vm.strings, info, owner)) Text(line.text, color = colors.tone(line.tone))
+        val address = info.address
+        val port = info.port
+        if (Internet.testable(info) && address != null && port != null) {
+            if (owner) {
+                Button(onClick = { if (info.mcsrvstatOk) setup.testInternet(false, vm.strings) else ask(SetupAsk.MCSRVSTAT) }, enabled = setup.busy == null) {
+                    Text(t("address.test"))
+                }
+            }
+            val mobile = onMobileDataOnly(context)
+            val bedrock = vm.servers.list.firstOrNull { it.id == serverId }?.edition == "bedrock"
+            OutlinedButton(onClick = { setup.phoneTest(address, port, bedrock, vm.strings) }, enabled = mobile && setup.busy == null) {
+                Text(t("address.test_phone_button"))
+            }
+            if (!mobile) Text(t("address.wifi_off"), color = colors.text2)
+        }
+        for (line in Internet.nameLines(vm.strings, info)) Text(line, color = colors.text2)
+        val steps = Internet.forwardSteps(vm.strings, info, vm.technical)
+        if (steps.isNotEmpty()) {
+            Text(t("address.forward_title"), color = colors.text)
+            for (step in steps) Text(step, color = colors.text2)
+        }
+        NamesPart(vm, setup, owner, ask)
+        PlayitPart(vm, setup, serverId, owner, ask)
+    }
+}
+
+/**
+ * playit.gg (agent/playit.py): link the program on the server's PC, the
+ * tunnel to make on playit.gg, its address and test. Installing it is done
+ * from the desktop app on that PC.
+ */
+@Composable
+private fun PlayitPart(vm: AppViewModel, setup: SetupPages, serverId: String, owner: Boolean, ask: (SetupAsk) -> Unit) {
+    val colors = LocalColors.current
+    val context = LocalContext.current
+    setup.playit.problem?.let { Text(it.text(vm.strings), color = colors.danger) }
+    val state = setup.playit.value ?: return
+    val step = Playit.step(vm.strings, state, owner)
+    val free = setup.busy == null
+    Text(t("playit.title"), color = colors.text)
+    for (line in step.lines) Text(line.text, color = colors.tone(line.tone))
+    when (step.button) {
+        "use" -> Button(onClick = { setup.playitCall(vm.strings) { it.playitAction(serverId, "use") } }, enabled = free) { Text(t("playit.use")) }
+        "link" -> Button(onClick = { openLink(context, state.claim?.url.orEmpty()) }) { Text(t("playit.link_open")) }
+        "reconnect" -> Button(onClick = { setup.playitCall(vm.strings) { it.playitAction(serverId, "reconnect") } }, enabled = free) { Text(t("playit.reconnect")) }
+        "make" -> Button(onClick = { openLink(context, state.newTunnel) }) { Text(t("playit.make_open")) }
+        "waterdog" -> {
+            OutlinedButton(onClick = { openLink(context, state.newTunnel) }) { Text(t("playit.make_open")) }
+            OutlinedTextField(
+                setup.waterdogBox,
+                { setup.waterdogBox = it.take(64 * 1024) },
+                label = { Text(t("playit.bedrock_paste")) },
+                minLines = 4,
+                maxLines = 8,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(onClick = { ask(SetupAsk.WATERDOG_ON) }, enabled = free && setup.waterdogBox.isNotBlank()) { Text(t("playit.bedrock_set_up")) }
+        }
+    }
+    if (step.checkAgain) OutlinedButton(onClick = { setup.loadPlayit() }) { Text(t("playit.check")) }
+    if (owner && state.on && state.phase == "running" && Playit.javaAddress(state) != null) {
+        OutlinedButton(
+            onClick = { if (state.mcsrvstatOk) setup.playitCall(vm.strings) { it.testPlayit(serverId, false) } else ask(SetupAsk.PLAYIT_MCSRVSTAT) },
+            enabled = free,
+        ) { Text(t("address.test")) }
+    }
+    if (setup.busy == "playit") Text(t("address.busy"), color = colors.text2)
+    if (owner && state.waterdog != null) OutlinedButton(onClick = { ask(SetupAsk.WATERDOG_OFF) }, enabled = free) { Text(t("playit.waterdog_stop")) }
+    if (owner && state.on) OutlinedButton(onClick = { ask(SetupAsk.PLAYIT_STOP) }, enabled = free) { Text(t("playit.stop")) }
+}
+
+/**
+ * A name for the internet address (agent/ddns.py): DuckDNS, with No-IP next
+ * to it. The names are this PC's, so every server shows the same ones.
+ */
+@Composable
+private fun NamesPart(vm: AppViewModel, setup: SetupPages, owner: Boolean, ask: (SetupAsk) -> Unit) {
+    val colors = LocalColors.current
+    val context = LocalContext.current
+    val state = setup.ddns.value ?: return
+    var open by remember { mutableStateOf<String?>(null) }
+    // One form open at a time, so one set of fields.
+    var name by remember(open) { mutableStateOf("") }
+    var user by remember(open) { mutableStateOf("") }
+    var secret by remember(open) { mutableStateOf("") }
+    Text(t("ddns.title"), color = colors.text)
+    Text(t("ddns.note"), color = colors.text2)
+    for (kind in listOf("duckdns", "noip")) {
+        val saved = if (kind == "duckdns") state.duckdns else state.noip
+        if (saved != null) {
+            val date = { at: Double -> java.text.DateFormat.getDateInstance().format(java.util.Date((at * 1000).toLong())) }
+            for (line in Internet.savedLines(vm.strings, kind, saved, date)) Text(line.text, color = colors.tone(line.tone))
+            if (!owner) continue
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (kind == "noip") {
+                    // One tap to No-IP's hostname page (its Confirm button is there), then "I confirmed it".
+                    Button(onClick = { openLink(context, state.noipSite) }) { Text(t("ddns.noip_open")) }
+                    OutlinedButton(onClick = { setup.ddnsCall("ddns", vm.strings) { it.noIpConfirmed() } }, enabled = setup.busy == null) {
+                        Text(t("ddns.noip_confirmed"))
+                    }
+                }
+                OutlinedButton(
+                    onClick = { ask(if (kind == "duckdns") SetupAsk.REMOVE_DUCKDNS else SetupAsk.REMOVE_NOIP) },
+                    enabled = setup.busy == null,
+                ) { Text(t("ddns.remove")) }
+            }
+            continue
+        }
+        if (!owner) continue
+        if (open != kind) {
+            OutlinedButton(onClick = { open = kind }) { Text(t("ddns.${kind}_use")) }
+            continue
+        }
+        Text(t("ddns.${kind}_steps"), color = colors.text2)
+        OutlinedButton(onClick = { openLink(context, if (kind == "duckdns") state.duckdnsSite else state.noipSite) }) {
+            Text(t("ddns.${kind}_open"))
+        }
+        OutlinedTextField(name, { name = it.take(253) }, label = { Text(t("ddns.${kind}_name")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        if (kind == "noip") {
+            OutlinedTextField(user, { user = it.take(100) }, label = { Text(t("ddns.noip_username")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        }
+        OutlinedTextField(
+            secret,
+            { secret = it.take(200) },
+            label = { Text(t(if (kind == "duckdns") "ddns.duckdns_token" else "ddns.noip_password")) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (setup.busy == "ddns") Text(t("ddns.checking"), color = colors.text2)
+        setup.said?.let { if (!it.good) Text(it.text, color = colors.danger) }
+        Button(
+            onClick = {
+                setup.ddnsCall("ddns", vm.strings, done = { open = null }) {
+                    if (kind == "duckdns") it.saveDuckDns(name.trim(), secret.trim()) else it.saveNoIp(name.trim(), user.trim(), secret)
+                }
+            },
+            enabled = setup.busy == null && name.isNotBlank() && secret.isNotEmpty() && (kind == "duckdns" || user.isNotBlank()),
+        ) { Text(t("ddns.save")) }
+    }
+}
+
+/** Wi-Fi off and mobile data on, so the phone asks from outside the home, like a friend. */
+private fun onMobileDataOnly(context: android.content.Context): Boolean {
+    val manager = context.getSystemService(android.net.ConnectivityManager::class.java) ?: return false
+    @Suppress("DEPRECATION") // allNetworks: every network, the VPN's underlying ones too (Tailscale)
+    val all = manager.allNetworks.mapNotNull(manager::getNetworkCapabilities)
+    val wifi = all.any { it.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) }
+    val cellular = all.any { it.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) }
+    return cellular && !wifi
 }
 
 /** Which CPU cores the server may use, who else uses each, and what the
@@ -376,7 +656,7 @@ internal fun ColorPicker(palette: List<Pair<String, String>>, current: String?, 
         ServerColors.rgb(current)?.let { rgb ->
             val fill = ServerColors.fillWithText(rgb)
             Box(
-                Modifier.padding(top = 8.dp).background(hexColor(ServerColors.hex(fill.fill)) ?: colors.neutral, CircleShape)
+                Modifier.padding(top = 8.dp).background(hexColor(ServerColors.hex(fill.fill)) ?: colors.neutral, RoundedCornerShape(8.dp))
                     .padding(horizontal = 12.dp, vertical = 4.dp),
             ) { Text(current.orEmpty().uppercase(), color = hexColor(ServerColors.hex(fill.text)) ?: colors.text) }
         }

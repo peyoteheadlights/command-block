@@ -9,7 +9,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from ... import joinguard
+from ... import downtime, joinguard
+from ...events import Event
 from ...minecraft.commands import CommandError, validate
 from ...minecraft.java import memory_limit_mb
 from ...minecraft.process import ServerError
@@ -32,7 +33,9 @@ from ..responses import (
     CrashBlockCleared,
     DiagnoseStarted,
     Diagnosis,
+    Ok,
     Performance,
+    PerformanceCsv,
     Requested,
     ServerAction,
     ServerHealth,
@@ -93,6 +96,9 @@ async def server_start(
     principal: Principal = Depends(require(SERVER_CONTROL)),
     ctx=Depends(get_server),
 ):
+    if ctx.jarscan.checks_before_start() and not ctx.server.running:
+        _can_start(ctx)
+        return _start_after_checks(ctx, request, "server_start", ctx.server.start(principal.user))
     with audit_failure(ctx, request, "server_start"):
         result = await ctx.server.start(actor=principal.user)
     audit(ctx, request, "server_start", detail=f"pid={result['pid']}")
@@ -108,6 +114,78 @@ async def server_start(
         "state": ctx.server.state.value,
         "startup_confirmed": ctx.server.startup_confirmed,
     }
+
+
+def _can_start(ctx) -> None:
+    """What would stop a start, said now and not after the jar checks."""
+    state = ctx.server.state.value
+    if state in ("STARTING", "ONLINE", "STOPPING"):
+        raise HTTPException(409, f"The server is already {state.lower()}; start ignored")
+    if state == "RESTART_PENDING":
+        raise HTTPException(
+            409,
+            "An automatic restart is already scheduled. "
+            "Use Restart Now to start immediately, or Cancel to stay stopped.",
+        )
+    pre = ctx.server.preflight()
+    if not pre.ok:
+        raise HTTPException(409, "; ".join(pre.problems))
+
+
+def _start_after_checks(ctx, request: Request, action: str, starting) -> dict:
+    """The start waits for the jar checks before start, which can take
+    minutes, so the answer comes now and the start goes on in the background.
+    A start that then fails says so as a start_failed event."""
+    if ctx.server.checking_jars or ctx.server.start_queued:
+        starting.close()
+        raise HTTPException(409, "The jars are being checked before a start already.")
+
+    # Set now and kept until the start is over, so a second tap gets the
+    # 409 above. checking_jars is only on while the checks really run.
+    ctx.server.start_queued = True
+
+    async def run() -> None:
+        try:
+            result = await starting
+            if isinstance(result, dict) and result.get("restarted") is False:
+                raise ServerError("it didn't come back up in time")
+            audit(ctx, request, action)
+        except Exception as exc:
+            audit(ctx, request, action, result="failed", detail=str(exc))
+            await ctx.bus.publish(
+                Event(type="start_failed", level="error", message=f"The server didn't start: {exc}")
+            )
+        finally:
+            ctx.server.start_queued = False
+
+    task = asyncio.create_task(run())
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+    return {
+        "result": "CHECKING",
+        "detail": "The jars are checked first, then the server starts. Watch for the "
+        "server_started or start_failed event.",
+        "state": ctx.server.state.value,
+        "startup_confirmed": False,
+    }
+
+
+_background: set[asyncio.Task] = set()
+
+
+@router.post("/server/skip-check", response_model=Ok)
+async def skip_check(
+    request: Request,
+    principal: Principal = Depends(require(SERVER_CONTROL)),
+    ctx=Depends(get_server),
+):
+    """Skip on "Checking jars...": the start goes on without waiting."""
+    if not principal.is_owner:
+        raise HTTPException(403, "Only the owner can skip the jar checks.")
+    if not ctx.jarscan.skip():
+        raise HTTPException(409, "No jar check is running before a start.")
+    audit(ctx, request, "skip_jar_check")
+    return {"ok": True}
 
 
 @router.get("/start-request", response_model=StartRequestOpen)
@@ -174,6 +252,10 @@ async def server_restart(
     principal: Principal = Depends(require(SERVER_CONTROL)),
     ctx=Depends(get_server),
 ):
+    if ctx.jarscan.checks_before_start():
+        return _start_after_checks(
+            ctx, request, "server_restart", ctx.server.restart(actor=principal.user)
+        )
     with audit_failure(ctx, request, "server_restart"):
         result = await ctx.server.restart(actor=principal.user)
     audit(ctx, request, "server_restart")
@@ -320,6 +402,39 @@ async def clear_crash_block(
     return {"ok": True, "auto_restart_blocked": ctx.server.auto_restart_blocked}
 
 
+@router.post("/server/restart-when-empty", response_model=ServerAction)
+async def restart_when_empty(
+    request: Request,
+    principal: Principal = Depends(require(SERVER_CONTROL)),
+    ctx=Depends(get_server),
+):
+    """Restart at the next moment nobody is playing, so the changes waiting
+    for a restart are used without kicking anyone (agent/downtime.py)."""
+    with audit_failure(ctx, request, "restart_when_empty", result="refused"):
+        await downtime.restart_when_empty(ctx, principal.user)
+    audit(ctx, request, "restart_when_empty")
+    return {
+        "result": "REQUESTED",
+        "state": ctx.server.state.value,
+        "detail": "The server restarts as soon as nobody is playing.",
+    }
+
+
+@router.post("/server/cancel-restart-when-empty", response_model=ServerAction)
+async def cancel_restart_when_empty(
+    request: Request,
+    principal: Principal = Depends(require(SERVER_CONTROL)),
+    ctx=Depends(get_server),
+):
+    await downtime.cancel_restart_when_empty(ctx, principal.user)
+    audit(ctx, request, "cancel_restart_when_empty")
+    return {
+        "result": "VERIFIED",
+        "state": ctx.server.state.value,
+        "detail": "It won't restart by itself. The changes are used at the next start.",
+    }
+
+
 @router.post("/server/command", response_model=CommandSent)
 async def server_command(
     payload: CommandRequest,
@@ -399,6 +514,44 @@ async def performance(
         "thresholds": ctx.config.thresholds.to_dict(),
         "storage": await ctx.metrics.storage() if storage else None,
     }
+
+
+CSV_COLUMNS = (
+    ("time", "ts"),
+    ("pc_cpu_percent", "cpu_percent"),
+    ("pc_memory_mb", "ram_used_mb"),
+    ("server_memory_mb", "proc_ram_mb"),
+    ("tps", "tps"),
+    ("mspt", "mspt"),
+    ("players", "players"),
+)
+
+
+@router.get("/performance/csv", response_model=PerformanceCsv)
+async def performance_csv(
+    hours: float = 6,
+    principal: Principal = Depends(require(SERVER_VIEW)),
+    ctx=Depends(get_server),
+):
+    """The graphs' points as a CSV file's text, for a spreadsheet. A value
+    nobody measured is an empty cell, never 0."""
+    import csv
+    import io
+    from datetime import datetime
+
+    hours = max(0.1, min(hours, 168))
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(name for name, _ in CSV_COLUMNS)
+    for point in ctx.metrics.series(hours=hours)["points"]:
+        row = [datetime.fromtimestamp(point["ts"]).isoformat(timespec="seconds")]
+        for _, key in CSV_COLUMNS[1:]:
+            value = point.get(key)
+            row.append("" if value is None else f"{value:.1f}")
+        writer.writerow(row)
+    stamp = datetime.now().strftime("%Y-%m-%d-%H%M")
+    safe = "".join(c if c.isalnum() else "-" for c in ctx.name).strip("-") or "server"
+    return {"filename": f"{safe}-performance-{stamp}.csv", "text": out.getvalue()}
 
 
 @router.get("/health/server", response_model=ServerHealth)

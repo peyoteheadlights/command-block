@@ -16,7 +16,7 @@ uses come first; the rest of the older routes are listed in
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,6 +50,8 @@ class ServerRow(Open):
     name: str
     color: str | None = None
     state: str
+    label: str | None = Field(None, description="what every app shows: a state.* word")
+    can: list[str] = Field(default_factory=list, description="the buttons the agent takes now")
     state_verified: bool | None = None
     uptime: float | None = None
     players_online: int | None = Field(None, description="null until it has been measured")
@@ -59,10 +61,67 @@ class ServerRow(Open):
     type: str | None = None
     type_name: str | None = None
     default: bool | None = None
+    position: int | None = Field(None, description="Place on All servers; null: never moved")
+    group: str | None = Field(None, description="The heading it's under; empty: none")
     edition: str | None = Field(None, description="java or bedrock")
     capabilities: dict[str, bool] | None = Field(
         None, description="What this server's type can do; false means not applicable"
     )
+
+
+class AllServersResult(Open):
+    id: str
+    name: str
+    result: str = Field(description="started, already, stopped, stopping or failed")
+    detail: str | None = None
+
+
+class AllServersAction(Open):
+    servers: list[AllServersResult]
+
+
+class ServerGroupSaved(Open):
+    ok: bool
+    group: str
+
+
+class GameRule(Open):
+    name: str
+    value: bool | int | str
+
+
+class GameRules(Open):
+    """Every rule as the running server says it is. ``running`` false: none read."""
+
+    running: bool
+    rules: list[GameRule]
+    presets: list[str]
+
+
+class GameRulesSaved(Open):
+    rules: list[GameRule]
+    before: dict[str, bool | int | str] = Field(description="What each changed rule was, for Undo")
+    skipped: list[str] = Field(description="Rules this server doesn't have, left out")
+
+
+class ConsoleCommands(Open):
+    commands: list[dict[str, str]] = Field(description="name and usage, as the server's help says")
+
+
+class LogFile(Open):
+    name: str
+    size: int
+    changed: float
+
+
+class LogFiles(Open):
+    files: list[LogFile]
+
+
+class LogFileText(Open):
+    name: str
+    lines: list[str]
+    cut: bool = Field(description="The file goes on after these lines")
 
 
 class ServerList(Open):
@@ -76,6 +135,8 @@ class ServerStatus(Open):
     server_id: str | None = None
     name: str | None = None
     state: str
+    label: str | None = Field(None, description="what every app shows: a state.* word")
+    can: list[str] = Field(default_factory=list, description="the buttons the agent takes now")
     state_verified: bool | None = None
     uptime: float | None = None
     minecraft_version: str | None = None
@@ -87,6 +148,11 @@ class ServerStatus(Open):
     max_players: int | None = None
     metrics: dict[str, Any] | None = None
     job: Job | None = None
+    # What changed since it started that it only reads at start ("mods",
+    # "settings", "memory", "files", "addons", "join", "icon").
+    restart_waiting: list[str] = []
+    restart_when_empty: bool = False
+    checking_jars: bool | None = None
 
 
 class ServerAction(Open):
@@ -195,6 +261,10 @@ class OnlinePlayer(Open):
     last_seen: float | None = None
     edition: str | None = Field(None, description="java or bedrock; null when it can't be told")
     session_seconds: float = Field(description="0 when the session's start isn't known")
+    modpack_version: str | None = Field(
+        None, description="From the Companion's last check; empty: none. null: never checked"
+    )
+    modpack_ok: int | None = Field(None, description="1 if that check passed")
 
 
 class KnownPlayer(OnlinePlayer):
@@ -329,9 +399,111 @@ class BedrockJoin(Open):
     own_server: bool | None = Field(None, description="true for a Bedrock server of its own")
 
 
+class DdnsNameShort(Open):
+    provider: str = Field(description="duckdns or noip")
+    name: str
+
+
+class DdnsName(Open):
+    name: str = Field(description="The whole name friends type, like myserver.duckdns.org")
+    ip: str | None = Field(None, description="The address the site last set")
+    updated_at: float | None = None
+    problem: str | None = Field(None, description="Why updates stopped; null when working")
+
+
+class NoIpName(DdnsName):
+    confirm_by: float = Field(description="When No-IP deletes the free name unless confirmed")
+    confirm_soon: bool = Field(description="Within a week of confirm_by")
+
+
+class DdnsState(Open):
+    """DuckDNS and No-IP names for this PC's internet address (agent/ddns.py)."""
+
+    duckdns: DdnsName | None = None
+    noip: NoIpName | None = None
+    duckdns_site: str
+    noip_site: str
+
+
 class InternetReach(Open):
-    known: bool = Field(description="Always false: reaching it from the internet isn't tested")
-    reason: str | None = None
+    """ "Let friends join from the internet" (agent/internet.py)."""
+
+    on: bool = False
+    known: bool = Field(description="True only once an outside test answered")
+    works: bool | None = Field(None, description="The outside test's answer, null when not known")
+    tested_by: str | None = Field(None, description="phone or mcsrvstat")
+    reason: str | None = Field(
+        None,
+        description="tested, off, not_running, not_open, no_router, refused, shared (carrier-"
+        "grade NAT), private (another router in front), not_tested, not_checked, no_address",
+    )
+    address: str | None = Field(None, description="The router's internet address, when public")
+    port: int | None = None
+    local_address: str | None = Field(
+        None, description="This PC's home address, for port forwarding"
+    )
+    problem: str | None = None
+    mcsrvstat_ok: bool = False
+    playit: str | None = None
+    names: list[DdnsNameShort] = Field(
+        default_factory=list, description="This PC's DuckDNS / No-IP names that work"
+    )
+
+
+class PlayitTunnel(Open):
+    address: str = Field(description="What friends type, as playit shows it")
+    destination: str = Field(description="Where playit sends it on this PC, like 127.0.0.1:25565")
+    disabled: bool = False
+    reason: str | None = Field(None, description="playit's words for why it's off")
+
+
+class PlayitWay(Open):
+    kind: str = Field(
+        description="java, bedrock for Geyser's port, nethernet for WaterdogPE's (plain Bedrock)"
+    )
+    local_port: int = Field(description="The port the tunnel must send to")
+    tunnel: PlayitTunnel | None = Field(None, description="null until made on playit.gg")
+
+
+class WaterdogState(Open):
+    """WaterdogPE in front of a plain Bedrock server (agent/waterdog.py). Never the token."""
+
+    state: str = Field(description="server_off, starting, registered (playit sees it), stopped")
+    listen_port: int = Field(description="WaterdogPE's port")
+    media_port: int = Field(description="NetherNet's UDP port: the tunnel's local port")
+    server_port: int = Field(description="The Bedrock server's own port now")
+    list_on: bool = Field(description="The Companion plugin keeps the allow list")
+
+
+class PlayitState(Open):
+    """playit.gg on this PC, for one server (agent/playit.py)."""
+
+    on: bool = Field(description="The owner chose Use playit.gg")
+    phase: str | None = Field(
+        None,
+        description="playit's program: not_installed, stopped, waiting_for_secret (not "
+        "linked), has_invalid_secret, disabled_over_limit, starting, running, stopping, error",
+    )
+    problem: str | None = Field(None, description="playit's own words when not running")
+    down: bool = Field(False, description="It stopped after being in use (one alert was sent)")
+    claim: dict[str, Any] | None = Field(
+        None, description="The link step: url, state (waiting, rejected, expired, failed), detail"
+    )
+    ways: list[PlayitWay] = Field(default_factory=list)
+    supported: bool = Field(True, description="Always true now (kept for older apps)")
+    plain_bedrock: bool = Field(False, description="A Bedrock server: needs WaterdogPE first")
+    waterdog: WaterdogState | None = Field(
+        None, description="A plain Bedrock server behind WaterdogPE; null when not set up"
+    )
+    internet_off: bool = Field(
+        False, description="Only after setting up WaterdogPE: the router switch was turned off"
+    )
+    proxy: str = Field(description="What Proxy Protocol the tunnel needs: v2 or none")
+    new_tunnel: str = Field(description="The page that makes a tunnel")
+    site: str
+    test: dict[str, Any] | None = Field(None, description="The outside test on the tunnel")
+    mcsrvstat_ok: bool = False
+    stop_problem: str | None = Field(None, description="Only after Stop, when playit didn't answer")
 
 
 class JoinInfo(Open):
@@ -361,6 +533,8 @@ class Backup(Open):
     includes: str | None = Field(None, description="Its top-level folders, comma-separated")
     exists: bool | None = Field(None, description="Whether its file is still on disk")
     copy_: BackupCopy | None = Field(None, alias="copy")
+    kept: bool | None = Field(None, description="Keep this backup: the clean-up never deletes it")
+    excludes: str | None = Field(None, description="Folders it left out, comma-separated")
 
 
 class Retention(Open):
@@ -385,6 +559,61 @@ class BackupMade(Open):
     job_id: str | None = None
 
 
+class BackupKept(Open):
+    ok: bool
+    id: int
+    name: str
+    kept: bool
+
+
+class BackupSize(Open):
+    """What a manual or scheduled backup would hold, measured now."""
+
+    folders: list[dict[str, Any]] = Field(description="path, size_bytes, left_out")
+    excluded: list[dict[str, Any]] = Field(description="path, exists, size_bytes, in_backup")
+    suggested: list[dict[str, Any]] = Field(description="Map tile folders: path, name, size_bytes")
+    total_bytes: int
+    free_bytes: int
+
+
+class CleanupList(Open):
+    """What the clean-up offers, and what's in its bin."""
+
+    items: list[dict[str, Any]] = Field(
+        description="path, kind (old_log, crash_report, set_aside, unused_dimension), "
+        "size_bytes, modified"
+    )
+    total_bytes: int
+    dimensions_checked: bool = Field(
+        description="False when unused dimensions couldn't be told (a mod couldn't be read)"
+    )
+    free_bytes: int
+    bin: list[dict[str, Any]] = Field(
+        description="batch, created_at, items, size_bytes, empties_at"
+    )
+
+
+class CleanupDone(Open):
+    ok: bool
+    batch: str | None = Field(None, description="The batch Undo puts back; null when nothing moved")
+    moved: list[str]
+    skipped: list[dict[str, Any]]
+    size_bytes: int
+    bin_days: int
+
+
+class CleanupUndone(Open):
+    ok: bool
+    put_back: list[str]
+    left_in_bin: list[str]
+
+
+class CleanupEmptied(Open):
+    ok: bool
+    emptied: int
+    freed_bytes: int
+
+
 class BackupCheck(Open):
     """Opening the archive and checking it now. ``reason`` says why it failed."""
 
@@ -404,6 +633,9 @@ class Undo(Open):
     kind: str
     backup_id: int
     backup: str
+    change_id: int | None = Field(
+        None, description="Send it with /changes/undo, so only this change is undone"
+    )
 
 
 class Restored(Open):
@@ -492,7 +724,7 @@ class Schedule(Open):
     id: int
     name: str
     task: str
-    kind: str = Field(description="daily, weekly or interval")
+    kind: str = Field(description="daily, weekly, interval, cron, once or event")
     expr: str
     payload: dict[str, Any] = {}
     enabled: bool
@@ -571,6 +803,11 @@ class Performance(Open):
     sample_interval: float
     memory_limit_mb: int | None = Field(None, description="The -Xmx setting; null when none")
     storage: Storage | None = Field(None, description="null when asked with storage=false")
+
+
+class PerformanceCsv(Open):
+    filename: str
+    text: str = Field(description="The graphs' points as CSV, one row per point, oldest first")
 
 
 class HealthCheck(Open):
@@ -666,6 +903,20 @@ class LoginResult(Open):
 class Preferences(Open):
     mode: str = Field(description="simple or technical")
     theme: str = Field(description="system, light, dark, graphite or contrast")
+    tips: str = Field(default="on", description="on or off")
+
+
+class Welcome(Open):
+    answered: bool = Field(description="The first-run questions were answered or skipped")
+    first_time: bool | None = Field(description='null: "I know what I\'m doing"')
+    kinds: list[str] = Field(description="Kinds made before: vanilla, mods, plugins, bedrock")
+    played_by: str = Field(
+        description="This PC's default for new servers: friends, kids, community or empty"
+    )
+
+
+class Hidden(Open):
+    hidden: list[str] = Field(description='Warnings and tips hidden with "Don\'t show again"')
 
 
 class Me(Open):
@@ -687,6 +938,10 @@ class Me(Open):
         description="What this account may do on each server it can see, by server id"
     )
     preferences: dict[str, Any]
+    hidden: list[str] = Field(
+        default_factory=list,
+        description='Warnings and tips this account hid with "Don\'t show again"',
+    )
 
 
 class Health(Open):
@@ -698,6 +953,9 @@ class Health(Open):
 class VersionInfo(Open):
     version: str = Field(description="The app's version, like 1.2.0")
     api_version: int = Field(description="Goes up only for a change a client must know about")
+    agent_only: bool = Field(
+        False, description="Installed as Agent only: the PC has no desktop app of its own"
+    )
 
 
 class PairingCode(Open):
@@ -753,6 +1011,7 @@ class WakeDevice(Open):
     helper: dict[str, Any] | None = Field(None, description="The helping PC: address and port")
     router_url: str | None = Field(None, description="The router's wake page (https)")
     has_key: bool = Field(description="Whether this sign-in has a wake key")
+    key_hash: str | None = Field(None, description="SHA-256 of this sign-in's wake key")
 
 
 class WakeKey(Open):
@@ -1016,8 +1275,19 @@ class Addon(Open):
 class AddonList(Open):
     addons: list[Addon]
     world: str | None = Field(None, description="The world the packs are enabled in")
+    required: bool = Field(
+        False, description="texturepack-required: players must take the packs to join"
+    )
     running: bool
     restart_needed: bool | None = None
+
+
+class AddonRequired(Open):
+    ok: bool
+    required: bool
+    undo: Undo | None = None
+    running: bool
+    restart_needed: bool
 
 
 class AddonResult(Open):
@@ -1040,6 +1310,9 @@ class ModUpdate(Open):
     latest_version: str
     version_id: str
     installed_version: str | None = None
+    held_until: float | None = Field(
+        None, description="Update hold: left out of Update all and the notices until then"
+    )
 
 
 class ModUpdates(Open):
@@ -1075,6 +1348,15 @@ class Mod(Open):
     checked_with: str | None = Field(
         None, description="sha1 for CurseForge, a weaker check than the other sites use"
     )
+    added_by_you: bool | None = Field(
+        None, description="On a linked modpack's server: not from the modpack. Null: not linked"
+    )
+    side: str | None = Field(None, description="server, players or both")
+    side_from: str | None = Field(
+        None,
+        description="Where the mark came from: you, modpack, modrinth, curseforge, file, or "
+        "unknown (nothing says; shown as Both, not sure)",
+    )
 
 
 class ModProblem(ModIssue):
@@ -1093,15 +1375,160 @@ class NeedsYou(Open):
     page: str | None = Field(None, description="Its CurseForge page; null when not known now")
 
 
+class FitRow(Open):
+    mod_id: str
+    name: str
+    filename: str
+    why: str = Field(description="What the mods or the site said, in plain words")
+
+
+class FitChange(FitRow):
+    from_: str = Field(alias="from", description="The installed version")
+    to: str = Field(description="The version that fits")
+    version_id: str = Field(description="Send with filename to /mods/update-all")
+
+
+class ModFit(Open):
+    """The "Still fit?" card: only what the mods and sites said, never a guess."""
+
+    about: str = Field(description='What changed, e.g. "Create 6.0" or "Minecraft 1.21.4"')
+    minecraft_version: str | None = None
+    needs_change: list[FitChange] = Field(description="Ticked list for Change these")
+    no_fit: list[FitRow] = Field(description="No version fits; Turn off is offered")
+    cant_tell: list[FitRow] = Field(description="Nothing said either way")
+    checked_at: float | None = None
+
+
+class OverlapMod(Open):
+    filename: str
+    mod_id: str
+    name: str
+    version: str
+    turn_off: bool = Field(
+        description="Suggested to turn off: there is a pick and it isn't this one"
+    )
+    needed_by: str = Field(description="An installed mod that needs this one, '' when none")
+
+
+class Overlap(Open):
+    """The same mod twice, or add-ons that do the same job (agent/mods/overlap.py)."""
+
+    kind: Literal["same_mod", "same_job", "site_says"]
+    why: str
+    keep: str = Field(description="The file to keep, '' when nothing says which")
+    say: str = Field(description='"Keep 0.5.2, turn off 0.5.1" or "Keep the one you use"')
+    mods: list[OverlapMod]
+
+
+class LinkedModpackUpdate(Open):
+    version_id: str = Field(description="Send to /modpack/update/preview")
+    version: str
+
+
+class LinkedModpack(Open):
+    """The modpack this server came from (agent/linkedpack.py)."""
+
+    name: str
+    site: str = Field(description="Modrinth or CurseForge")
+    version: str
+    update: LinkedModpackUpdate | None = Field(None, description="Null: none known")
+    checked_at: float | None = None
+    added_by_you: int = Field(description="How many mods aren't from the modpack (kept)")
+
+
+class PlayerFile(Open):
+    """A file in the player-only folder: kept for the modpack, never loaded
+    by the server."""
+
+    filename: str
+    name: str
+    version: str = ""
+    kind: str = Field(description="mod or pack (a resource pack or shader pack)")
+    size_bytes: int
+    mod_id: str | None = None
+    changed: bool = Field(False, description="Not the file the app first saw (changed outside it)")
+    missing: bool = Field(False, description="The app added it, but it's gone (Get it again)")
+    site: str | None = Field(None, description="modrinth or curseforge when a site lists it")
+
+
+class PlayerOnlyOptions(Open):
+    backup: bool = Field(True, description="Back up the player-only folder")
+    skip_listed: bool = Field(
+        False, description="Leave out files Modrinth lists; got again by hash after a restore"
+    )
+
+
+class OddSetup(Open):
+    filename: str
+    text: str
+
+
 class ModList(Open):
     mods: list[Mod]
+    player_only: list[PlayerFile] = Field(
+        [], description="The player-only folder: Players-only mods, resource and shader packs"
+    )
+    player_only_options: PlayerOnlyOptions | None = None
+    odd_setups: list[OddSetup] = Field(
+        [], description="A mod needs one that sits on the other side"
+    )
     needs_you: list[NeedsYou] = []
     problems: list[ModProblem] = []
     minecraft_version: str | None = Field(
         None, description="null until the server has started once"
     )
     server_state: str
+    label: str | None = None
+    can: list[str] = Field(default_factory=list, description="'change' while mods may change")
     updates_checked_at: float | None = None
+    stored_separately: bool = Field(
+        False, description="This server's jars are copies: its drive can't link to the shared store"
+    )
+    fit: ModFit | None = Field(None, description='The "Still fit?" card, null when nothing to show')
+    modpack: LinkedModpack | None = Field(None, description="Null: not linked to a modpack")
+    overlaps: list[Overlap] = []
+
+
+class ModSideServer(Open):
+    id: str
+    name: str
+    filename: str
+    version: str | None = None
+    side_from: str | None = Field(
+        None, description="you, modpack, modrinth, curseforge, file or unknown; null: player-only"
+    )
+    enabled: bool = True
+
+
+class ModSideRow(Open):
+    name: str
+    mod_id: str | None = None
+    side: str = Field(description="server, players or both")
+    servers: list[ModSideServer]
+
+
+class ModSideNotRead(Open):
+    id: str
+    name: str
+    detail: str
+
+
+class ModSides(Open):
+    mods: list[ModSideRow]
+    not_read: list[ModSideNotRead] = []
+
+
+class ModSideChanged(Open):
+    ok: bool
+    filename: str
+    side: str
+    moved: bool = Field(description="True: the file moved in or out of the mods folder")
+
+
+class PlayerFileAdded(Open):
+    ok: bool
+    added: str
+    kind: str
 
 
 class ModChanged(Open):
@@ -1130,6 +1557,77 @@ class ModRemoved(Open):
     ok: bool
     removed: dict[str, Any]
     trash: str | None = Field(None, description="Where the file was kept")
+
+
+class JarScanRow(Open):
+    filename: str
+    name: str
+    sha256: str
+    checked_at: float | None = None
+    sites: dict[str, str] = Field(
+        {}, description="modrinth / curseforge: found, not_found or error; empty until asked"
+    )
+    findings: list[dict[str, Any]] = []
+    notes: list[dict[str, Any]] = []
+    waiting: bool = Field(False, description="Goes to quarantine before the server next starts")
+    changed_outside: bool = Field(
+        False, description="New or different since the last check, and not changed by the app"
+    )
+    words: str
+    values: dict[str, Any] = {}
+
+
+class JarScanReport(Open):
+    """The jar check: every jar, what was found and what is in quarantine."""
+
+    checked_at: float | None = None
+    looked_up_at: float | None = None
+    weekly: bool
+    on_change: bool
+    before_start: bool = False
+    ask_first: bool = False
+    update_hold_days: int = 3
+    checking: bool = False
+    jars: list[JarScanRow]
+    quarantine: list[dict[str, Any]]
+    summary: dict[str, Any]
+
+
+class DeepScanScanner(Open):
+    id: str
+    name: str
+    words: str
+    what: str
+    speed: str
+    took: dict[str, Any] | None = Field(
+        None, description="seconds and files of its last run, or none before the first"
+    )
+    downloaded: dict[str, Any] | None = Field(
+        None, description="YARA Forge only: tag, sha256 and when it was downloaded"
+    )
+    installed: bool = Field(True, description="false until a program is downloaded")
+    available: bool = Field(
+        True, description="false for a day after jNeedle's list couldn't be downloaded"
+    )
+    size: int | None = Field(None, description="bytes downloaded the first time it runs")
+    key: bool | None = Field(None, description="VirusTotal only: whether a key is saved")
+
+
+class DeepScanReport(Open):
+    """The deep scan: its scanners, the running scan and the last results."""
+
+    scanners: list[DeepScanScanner]
+    antivirus: bool
+    running: dict[str, Any] | None = None
+    last: dict[str, Any] | None = None
+    options: dict[str, Any] | None = Field(
+        None, description="before_start, schedule (off/daily/weekly), time, day, next"
+    )
+
+
+class JarScanUndone(Open):
+    ok: bool
+    restored: str
 
 
 class ModUpdated(Open):
@@ -1192,6 +1690,11 @@ class ModrinthHit(Open):
     )
     look_alike: str | None = Field(
         None, description="A far more downloaded result whose name is nearly the same"
+    )
+    minecraft_version: str | None = Field(None, description="The newest one it's made for")
+    loaders: list[str] = Field([], description='"Fabric", "Quilt", "Forge", "NeoForge"')
+    disclosures: list[str] = Field(
+        [], description='Modrinth: what it told Modrinth it holds, "Shows ads"'
     )
 
 
@@ -1368,6 +1871,9 @@ class UpdateAllRow(Open):
     saved: str | None = Field(
         None, description="How old the site's list was, when only its saved copy could be read"
     )
+    held_until: float | None = Field(
+        None, description="Update hold: Update all leaves it out until then; Update now doesn't"
+    )
 
 
 class UpdateAllUnchecked(Open):
@@ -1401,6 +1907,7 @@ class UpdateAllResult(Open):
     ok: bool
     job_id: str
     updated: list[UpdateAllDone]
+    held: list[str] = Field([], description="Names left out because of the update hold")
     safety_backup: SafetyBackup | None = Field(None, description="The one backup made first")
     undo: Undo | None = None
 
@@ -1578,6 +2085,74 @@ class ProtectionCard(Open):
     running: bool
 
 
+class AntiCheatFree(Open):
+    id: str
+    name: str
+    project: str = Field(description="Its Modrinth project, for the normal add-on install")
+    on: bool = Field(description="It is in and turned on")
+    warning: bool = Field(description="Fabric with mods players need: try it with a friend first")
+
+
+class AntiCheatPaid(Open):
+    id: str
+    name: str
+    on: bool
+    link: str = Field(description="The seller's page")
+    setup: str | None = Field(None, description="The seller's own setup steps")
+    price: str | None = Field(None, description="Like 19.99 USD; null: no price was read")
+    checked: str | None = Field(None, description="When the price was read, like 14 November 2026")
+
+
+class AntiCheat(Open):
+    supported: bool = Field(description="False: no anti-cheat runs on this server type")
+    installed: list[str] = Field(description="The anti-cheats that are in, by name")
+    free: list[AntiCheatFree]
+    paid: list[AntiCheatPaid]
+    may_install: bool = False
+    may_add_own_jar: bool = False
+
+
+class FarViewChoice(Open):
+    id: str = Field(description="distanthorizons or voxy")
+    name: str
+    available: bool = Field(description="False: nothing fits this server; why says so")
+    why: str | None = None
+    server: list[str] = Field(description="What the server gets, by name, needs first")
+    players: list[str] = Field(description="What the players' modpack gets beyond the server's")
+
+
+class FarViewLoadAhead(Open):
+    on: bool
+    radius: int
+    world: str = Field(description="Empty: the main world")
+    chunky: bool = Field(description="Chunky is in (it does the loading)")
+    running: bool = Field(description="Loading right now")
+    night: str = Field(description="When it runs, like 1:00-6:00")
+    main_world: str
+
+
+class FarView(Open):
+    supported: bool = Field(description="False: a server without mods or plugins")
+    choice: str = Field(description="off, distanthorizons or voxy")
+    choices: list[FarViewChoice]
+    unvisited: bool = Field(description="DH builds land nobody has visited (off by default)")
+    load_ahead: FarViewLoadAhead
+    may_change: bool = False
+
+
+class FarViewChanged(Open):
+    ok: bool
+    choice: str
+    removed: list[str]
+    added: list[str]
+
+
+class FarViewRebuilt(Open):
+    ok: bool
+    files: int
+    size_bytes: int
+
+
 class ProtectionFixed(Open):
     ok: bool
     fix: str
@@ -1683,6 +2258,8 @@ class Modpack(Open):
     download_bytes: int = 0
     client_only: list[str] = []
     skipped_overrides: list[str] = []
+    own_jars: list[str] = Field([], description='"Not checked by a site": needs own_jars sent')
+    plugins_to_get: list[str] = Field([], description="From command-block.json, get by hand")
     problems: list[str] = []
     can_import: bool
 
@@ -1706,6 +2283,174 @@ class ModpackImported(Open):
     undo: Undo | None = None
 
 
+class NewerMod(Open):
+    name: str
+    from_: str = Field(alias="from")
+    to: str
+
+
+class ModpackChanges(Open):
+    """What Modpack update changes, compared by file hash."""
+
+    from_version: str
+    to_version: str
+    added: list[str]
+    removed: list[str]
+    newer: list[NewerMod]
+    added_by_you: list[str] = Field(description="Mods not from the modpack: kept")
+    configs_changed_by_you: list[str] = Field(description="Kept unless use_pack_configs is sent")
+    new_own_jars: list[str] = Field([], description="New or changed own jars: needs own_jars sent")
+    version_change: bool
+    minecraft_version: str
+    problems: list[str]
+
+
+class ModpackUpdatePreview(Open):
+    token: str
+    pack: Modpack
+    changes: ModpackChanges
+
+
+class ModpackMadeFile(Open):
+    """The newest modpack made from a server (agent/modpackmake.py)."""
+
+    token: str
+    filename: str
+    name: str
+    version: str
+    size_bytes: int
+    made_at: float
+    trust_note: bool = False
+    get_yourself: list[str] = []
+    own_jars: list[dict[str, Any]] = Field(
+        default=[], description="Own jars inside: name, path (in the server folder), side"
+    )
+
+
+class ModpackMakeOptions(Open):
+    """What the Make a modpack screen offers."""
+
+    name: str
+    version: str
+    configs: list[dict[str, Any]] = Field(description="path, size_bytes")
+    players_loaders: list[dict[str, str]] = Field(
+        description="id, name; empty on a mod server (its own loader is used)"
+    )
+    discord: bool
+    discord_limit_bytes: int
+    required_to_join: dict[str, Any] = Field(
+        description="available: the Companion mod is on the server; on: ticked last time; "
+        "needs_fabric: a vanilla server, which can't run the Companion (show Change server type)"
+    )
+    chat_line: dict[str, Any] = Field(
+        description="on, text: the line for players without the modpack, with {name}, "
+        "{version}, {link} and {get_it} placeholders"
+    )
+    title_screen: dict[str, Any] = Field(
+        description="button (on, address), flavor_text (on, text), background (on), "
+        "background_set: a picture was uploaded"
+    )
+    made: ModpackMadeFile | None = None
+
+
+class ModpackMade(Open):
+    """A modpack made; save it with GET .../modpack/made/{token}."""
+
+    ok: bool
+    job_id: str | None = None
+    token: str
+    filename: str
+    files: int
+    size_bytes: int
+    own_files: list[str] = Field(description="Own files inside, not from Modrinth or CurseForge")
+    trust_note: str | None = None
+    get_yourself: list[dict[str, Any]] = Field(
+        description="CurseForge mods its authors keep from other apps: name, filename, page"
+    )
+    plugins_to_get: list[str] = []
+    left_out: list[str] = []
+    discord: bool = False
+
+
+class ModpackPosted(Open):
+    ok: bool
+    posted: int
+    as_link: bool = Field(
+        default=False, description="Too big for Discord, so the bot posted the download link"
+    )
+
+
+class ResourcePack(Open):
+    """The server resource pack: a zip the link serves, or an outside link."""
+
+    source: str = Field(description="file or link")
+    filename: str | None = None
+    url: str | None = Field(
+        None, description="What players' games download; none while unreachable"
+    )
+    sha1: str | None = None
+    size_bytes: int | None = None
+    required: bool = Field(description="Players must accept the resource pack")
+    served: bool = Field(description="Served by this PC's download link")
+
+
+class DownloadLinkState(Open):
+    """The Download link card: on or off, the modpack's link, the resource pack."""
+
+    on: bool
+    why_not: str | None = Field(None, description="Why the link can't be turned on here")
+    listening: bool
+    modpack_url: str | None = None
+    speed_cap_bytes: int
+    resource_pack: ResourcePack | None = None
+    max_pack_bytes: int
+    undo: Undo | None = None
+    restart_needed: bool = False
+
+
+class ModrinthAccount(Open):
+    """Sign in with Modrinth on this PC. The token itself is never in an answer."""
+
+    available: bool = Field(description="False when this copy has no sign-in service set")
+    signed_in: bool
+    username: str | None = None
+    ran_out: bool = Field(description="Was signed in, but Modrinth's sign-in ran out")
+
+
+class ModrinthSignInStarted(Open):
+    url: str = Field(description="Modrinth's page to open in the browser")
+
+
+class ModrinthShare(Open):
+    """The "Put it on Modrinth" card of one server."""
+
+    account: ModrinthAccount
+    made: dict[str, Any] | None = Field(None, description="The newest made modpack: name, version")
+    project: dict[str, Any] | None = Field(
+        None, description="This server's Modrinth modpack project: id, slug, title, url"
+    )
+    uploads: list[dict[str, Any]] = Field(description="version_id, version, at; newest first")
+    own_jars: list[dict[str, Any]] = Field(
+        description="Own jars in the newest modpack: path, name, side, slug, url (once put up)"
+    )
+    server_project: dict[str, Any] | None = Field(
+        None, description="The owner's Modrinth Server Project: id, slug, url"
+    )
+    older: dict[str, Any] | None = Field(
+        None, description="The Server Project lists an older upload: listed, newest"
+    )
+    address: str | None = Field(None, description="The address typed for friends, if any")
+
+
+class ModpackUpdated(Open):
+    ok: bool
+    job_id: str | None = None
+    changes: ModpackChanges
+    kept_configs: list[str]
+    version_change: bool
+    undo: Undo | None = None
+
+
 # ------------------------------------------------------------ game settings
 class GameSetting(Open):
     key: str
@@ -1719,6 +2464,7 @@ class GameSetting(Open):
     min: int | None = None
     max: int | None = None
     max_length: int | None = None
+    lines: int = Field(1, description="How many lines the value can have (the MOTD has 2)")
     read_only: str | None = Field(
         None, description='"world_exists" for the seed once there is a world'
     )
@@ -1731,6 +2477,9 @@ class GameSettings(Open):
     fields: list[GameSetting]
     running: bool
     restart_needed: bool
+    icon: bool | None = Field(
+        None, description="Whether server-icon.png is there; null on Bedrock, which shows none"
+    )
 
 
 class GameSettingsSaved(Open):
@@ -1742,6 +2491,17 @@ class GameSettingsSaved(Open):
     undo: Undo | None = None
     running: bool
     restart_needed: bool
+
+
+class ServerIcon(Open):
+    png: str | None = Field(None, description="server-icon.png in base64; null when there is none")
+
+
+class ServerIconSaved(Open):
+    ok: bool
+    icon: bool
+    undo: Undo | None = None
+    running: bool
 
 
 # ------------------------------------------------------------ server settings
@@ -2126,8 +2886,25 @@ class EulaAccepted(Open):
 
 
 # ------------------------------------------------------------ crossplay and duplicate
+class SignInCode(Open):
+    url: str
+    code: str
+
+
+class ConsoleFriends(Open):
+    """The MCXboxBroadcast add-on (agent/consolefriends.py)."""
+
+    available: bool
+    on: bool
+    sign_in: SignInCode | None = Field(None, description="Owner only")
+    gamertag: str | None = None
+    problem: str | None = None
+
+
 class Crossplay(Open):
     """Whether Bedrock players can join this Java server (Geyser)."""
+
+    console_friends: ConsoleFriends | None = None
 
     available: bool
     unavailable_reason: str | None = None
@@ -2186,6 +2963,30 @@ class PcFolder(Open):
     world: bool = Field(description="It holds a Minecraft world (a level.dat inside)")
 
 
+class ServerFileEntry(Open):
+    name: str
+    folder: bool
+    size: int | None = Field(None, description="Bytes; null for a folder")
+    changed: float
+
+
+class ServerFiles(Open):
+    """One folder inside a server's folder. Paths use / and are relative
+    to the server folder ("" is the server folder itself)."""
+
+    path: str
+    parent: str | None = Field(description="null in the server folder itself")
+    entries: list[ServerFileEntry]
+    truncated: bool = False
+
+
+class ServerFileUploaded(Open):
+    ok: bool = True
+    path: str
+    name: str
+    size: int
+
+
 class FolderListing(Open):
     """The folders inside one folder, names only. With no folder asked for:
     the PC's drives and the usual shortcuts, and path is null."""
@@ -2235,6 +3036,13 @@ class NewServerOptions(Open):
     color: str
     palette: list[PaletteColor]
     eula_url: str
+    played_by: str = Field(
+        "", description="This PC's first-run answer to \"Who's this server for?\""
+    )
+    kind_tips: list[str] = Field(
+        default_factory=list,
+        description="Kinds whose tips to show (vanilla, mods, plugins, bedrock)",
+    )
     bedrock: BedrockNewOptions
 
 
@@ -2331,12 +3139,21 @@ class SettingsSecrets(Open):
     api_token_configured: bool
 
 
+class ModStorage(Open):
+    """The shared mod and plugin files (agent/mods/store.py), read from disk."""
+
+    files: int
+    on_disk: int = Field(description="Bytes the shared files really use")
+    saved: int = Field(description="Bytes more they'd use if each server had its own copy")
+
+
 class SettingsView(Open):
     """The PC's settings, with passwords and links left out (they stay in .env)."""
 
     config: dict[str, Any]
     editable: list[str] = Field(description="Key prefixes PUT /settings accepts")
     secrets: SettingsSecrets
+    mod_storage: ModStorage | None = None
 
 
 class SettingsSaved(Open):
@@ -2480,7 +3297,7 @@ class TailscaleState(Open):
 class DiscordStatus(Open):
     token_set: bool
     state: str = Field(
-        description="off (no token), connecting, connected, token_rejected, intents_refused, "
+        description="off (no token), connecting, connected, token_rejected, intents_refused, refused, "
         "stopped, or elsewhere (another of the owner's PCs runs the bot)"
     )
     bot_pc: dict[str, Any] | None = Field(

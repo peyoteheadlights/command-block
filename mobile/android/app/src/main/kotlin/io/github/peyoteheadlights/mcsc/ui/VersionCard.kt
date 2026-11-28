@@ -15,7 +15,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -30,7 +29,7 @@ import io.github.peyoteheadlights.mcsc.core.Display
 import io.github.peyoteheadlights.mcsc.core.VersionChange
 
 /** What Server settings asks to confirm. */
-enum class SetupAsk { CHANGE, ROLL_BACK, CROSSPLAY_ON, REMOVE }
+enum class SetupAsk { CHANGE, ROLL_BACK, CROSSPLAY_ON, REMOVE, MCSRVSTAT, REMOVE_DUCKDNS, REMOVE_NOIP, PLAYIT_MCSRVSTAT, PLAYIT_STOP, WATERDOG_ON, WATERDOG_OFF, CONSOLE_ON }
 
 /**
  * The server's kind and version as its console said them, the EULA when

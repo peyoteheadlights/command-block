@@ -45,7 +45,7 @@ struct ServerView: View {
         .background(palette.sheet.ignoresSafeArea())
         .navigationTitle(row?.name ?? status?.name ?? serverId)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(palette.sheet, for: .navigationBar)
+        .binder(current: serverId)
         .refreshable {
             await load()
             await pages.loadCards()
@@ -55,6 +55,14 @@ struct ServerView: View {
         }
         .task(id: serverId) {
             await pages.loadCards()
+        }
+        .task(id: status?.checkingJars == true) {
+            // The start waits for the jar checks; read again until they finish.
+            while status?.checkingJars == true {
+                try? await Task.sleep(for: .seconds(2))
+                if Task.isCancelled { return }
+                await load()
+            }
         }
         .onAppear { model.watch(serverId) }
         .onDisappear { model.unwatch(serverId) }
@@ -73,12 +81,12 @@ struct ServerView: View {
     private func header(_ palette: Palette) -> some View {
         // Nothing old is shown as current: without a fresh read, Unknown.
         let state = status?.state ?? States.UNKNOWN
-        let words = Display.state(state, answering: status?.answering?.ok)
+        let words = Display.state(status?.label)
         return card(palette) {
             HStack(alignment: .center, spacing: 12) {
                 ColorBadge(hex: row?.color, size: 18)
                 Text(row?.name ?? status?.name ?? serverId)
-                    .font(.title2.weight(.bold))
+                    .font(.heading(.title2))
                     .foregroundStyle(palette.textPrimary)
             }
             HStack(spacing: 8) {
@@ -103,6 +111,24 @@ struct ServerView: View {
                 Text(model.t("mobile.server.restart_pending"))
                     .foregroundStyle(palette.textSecondary)
             }
+            // Changes that wait for a restart, and "Restart when nobody's on".
+            if let waiting = Display.restartWaiting(model.strings, status, canControl: model.canControl) {
+                Text(waiting.words)
+                    .foregroundStyle(palette.textSecondary)
+                if let action = waiting.action {
+                    Button(model.t(action.labelKey)) { run(action) }
+                        .frame(minHeight: 44)
+                        .disabled(working)
+                }
+            }
+            if status?.checkingJars == true {
+                Text(model.t("head.checking_jars"))
+                    .foregroundStyle(palette.tone(.warning))
+                if model.me?.isOwner == true {
+                    Button(model.t("action.skip_check")) { skipCheck() }
+                        .disabled(working)
+                }
+            }
             if !loaded {
                 ProgressView()
             }
@@ -111,7 +137,7 @@ struct ServerView: View {
 
     @ViewBuilder
     private func actions(_ palette: Palette) -> some View {
-        let available = Display.actions(status?.state, canControl: model.canControl)
+        let available = Display.actions(status?.can ?? [], canControl: model.canControl)
         if model.me != nil && !model.canControl {
             card(palette) {
                 Text(model.t("mobile.server.not_allowed"))
@@ -158,7 +184,7 @@ struct ServerView: View {
         return card(palette) {
             HStack {
                 Text(model.t("mobile.server.players_now"))
-                    .font(.headline)
+                    .font(.heading())
                     .foregroundStyle(palette.textPrimary)
                 Spacer()
                 Text(Display.players(model.strings, online, status?.maxPlayers))
@@ -174,9 +200,7 @@ struct ServerView: View {
             } else {
                 ForEach(list, id: \.username) { player in
                     HStack {
-                        Image(systemName: "person.fill")
-                            .foregroundStyle(palette.accentInk)
-                            .accessibilityHidden(true)
+                        Face(palette: palette)
                         Text(player.username)
                             .foregroundStyle(palette.textPrimary)
                         Spacer()
@@ -196,13 +220,14 @@ struct ServerView: View {
 
     /// Console, Chat, Players, Performance, Backups, Restore world,
     /// Schedules, Activity and Crashes, then Mods / Plugins / Packs (named
-    /// for the server type, when it takes any) and Game settings.
+    /// for the server type; vanilla's only makes a modpack) and Game settings.
     private func screens(_ palette: Palette) -> some View {
         card(palette) {
             ForEach(ServerPage.allCases.filter { model.me?.readsConsole != false || !$0.readsConsole }, id: \.self) { page in
                 screenLink(model.t(page.titleKey), ServerRoute.page(serverId, page), palette)
             }
-            if let kind = Content.kind(model.servers.first(where: { $0.id == serverId })), kind != .none {
+            let row = model.servers.first(where: { $0.id == serverId })
+            if let kind = Content.kind(row), Content.shown(row) {
                 screenLink(model.t(kind.titleKey), ServerRoute.content(serverId), palette)
             }
             screenLink(model.t("page.game_settings"), ServerRoute.game(serverId), palette)
@@ -214,6 +239,10 @@ struct ServerView: View {
             }
             if ServerForm.visible(model.me) {
                 screenLink(model.t("page.server_settings"), ServerRoute.settings(serverId), palette)
+            }
+            // Only the owner, in Technical, on a community server (agent/store.py).
+            if Store.shown(model.servers.first(where: { $0.id == serverId }), me: model.me, technical: model.technical) {
+                screenLink(model.t("desktop.page.store"), ServerRoute.store(serverId), palette)
             }
         }
     }
@@ -244,8 +273,9 @@ struct ServerView: View {
         .background(palette.surface, in: RoundedRectangle(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(palette.accentEdge.opacity(0.35), lineWidth: 1)
+                .strokeBorder(palette.edge, lineWidth: 1.5)
         )
+        .shadow(color: .black.opacity(0.08), radius: 3, y: 2)
     }
 
     // MARK: - Confirming
@@ -263,6 +293,7 @@ struct ServerView: View {
         switch pending?.action ?? "" {
         case "stop": return model.t("confirm.stop_title")
         case "restart": return model.t("confirm.restart_title")
+        case "force_stop": return model.t("confirm.force_stop_title")
         default: return ""
         }
     }
@@ -271,6 +302,7 @@ struct ServerView: View {
         switch action.action {
         case "stop": return model.t("confirm.stop_body")
         case "restart": return model.t("confirm.restart_body")
+        case "force_stop": return model.t("confirm.force_stop_body")
         default: return ""
         }
     }
@@ -290,6 +322,21 @@ struct ServerView: View {
             return
         }
         loaded = true
+    }
+
+    /// Owner only: start now without waiting for the jar checks.
+    private func skipCheck() {
+        guard let client = model.client else { return }
+        working = true
+        Task {
+            do {
+                _ = try await client.skipCheck(serverId: serverId)
+            } catch let error as AgentError {
+                result = error.message(model.strings)
+            } catch {}
+            working = false
+            await load()
+        }
     }
 
     private func run(_ action: QuickAction) {

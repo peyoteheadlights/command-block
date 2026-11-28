@@ -226,6 +226,41 @@ def test_a_level_and_a_switch_are_saved_for_one_server(qapp, agent_http):
     assert "players.manage" in held()
 
 
+def test_a_whole_group_of_switches_ticks_together(qapp, agent_http):
+    add_moderator(agent_http)
+    window, page = gear(qapp, agent_http, "moderators")
+    window.set_mode(True)  # the switches by their permission names
+    window.open_list("PC settings", "moderators")
+    wait_for(qapp, lambda: "sam" in shown_text(page))
+    shows(qapp, page, "Edit permissions")
+    button(page, "Edit permissions").click()
+
+    def tick(words):
+        return next(
+            b
+            for b in page.findChildren(QtWidgets.QCheckBox)
+            if b.text() == words and b.isVisibleTo(page)
+        )
+
+    tick("Backups").click()
+    backups = ["backups.create", "backups.restore", "backups.download", "backups.delete"]
+    assert all(tick(p).isChecked() for p in backups)
+    tick("backups.delete").click()
+    assert not tick("Backups").isChecked()
+    tick("Backups").click()
+    tick("Backups").click()
+    assert not any(tick(p).isChecked() for p in backups)
+    tick("Protection").click()
+    assert tick("deepscan.run").isChecked()
+    button(page, "Save for this server").click()
+
+    def held() -> list[str]:
+        sam = agent_http.get("/api/accounts", headers=owner(agent_http)).json()["helpers"][0]
+        return next(a for a in sam["access"] if a["id"] == "survival")["permissions"]
+
+    wait_for(qapp, lambda: "deepscan.run" in held(), 20)
+
+
 def test_removing_a_moderator_asks_first(qapp, agent_http):
     add_moderator(agent_http)
     window, page = gear(qapp, agent_http, "moderators")
@@ -487,10 +522,42 @@ def test_all_servers_groups_other_pcs_servers_by_pc(qapp, agent_http):
     window._elsewhere_at = 10**12  # the agent's own list (this PC alone) isn't asked for again
     screen = window.screens["All servers"]
     screen.show_all()
-    qapp.processEvents()
+    # The cards show on the next turn of the event loop, later on a slow PC.
+    wait_for(qapp, lambda: "Kids world" in shown_text(screen))
     shown = shown_text(screen)
     assert "Living room" in shown and "Bedroom" in shown and "Kids world" in shown
     window.elsewhere["b"] = "Can't reach x:1."
     screen.show_all()
     qapp.processEvents()
     assert "Can't reach x:1." in shown_text(screen)
+
+
+def test_shared_mod_files_show_real_disk_use():
+    from desktop.gear import mod_files_words
+    from desktop.words import text
+
+    assert mod_files_words({"files": 0, "on_disk": 0, "saved": 0}) == text("modfiles.none")
+    words = mod_files_words({"files": 2, "on_disk": 3 * 1024**2, "saved": 5 * 1024**3})
+    assert words == text("modfiles.usage", used="3.0 MB", saved="5.0 GB")
+
+
+def test_an_agent_only_pc_says_where_its_tailscale_is_changed(
+    qapp, agent_http, monkeypatch, tmp_path
+):
+    """On another PC: an Agent only PC has no app to "open there"."""
+    from agent import appinfo
+
+    (tmp_path / appinfo.INSTALL_RECORD).write_text(
+        '{"data_root": "x", "agent_only": true}', encoding="utf-8"
+    )
+    monkeypatch.setattr(appinfo, "program_dir", lambda: tmp_path)
+    window = open_window(qapp, agent_http)
+    window.agent.place = "100.64.0.7"
+    sign_in(qapp, window)
+    on_all_servers(qapp, window)
+    wait_for(qapp, lambda: window.role == "owner" and window.agent_only)
+    window.pc.set_setting("section:PC settings", "pc")
+    window.tools["gear"].click()
+    page = window.gear.sections["pc"]
+    wait_for(qapp, lambda: "Tailscale's own icon on 100.64.0.7" in shown_text(page))
+    assert "Open Command Block there" not in shown_text(page)

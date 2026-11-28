@@ -43,6 +43,8 @@ data class Me(
     /** What this account may do on each server it can see, by server id. */
     @SerialName("server_permissions") val serverPermissions: Map<String, List<String>>? = null,
     val preferences: Map<String, String> = emptyMap(),
+    /** Warnings and tips hidden with "Don't show again", by their words' key. */
+    val hidden: List<String> = emptyList(),
 ) {
     val isOwner: Boolean get() = role == "owner"
 
@@ -91,6 +93,10 @@ data class ServerRow(
     val name: String,
     val color: String? = null,
     val state: String = "UNKNOWN",
+    /** What every app shows (a state.* word), worked out by the agent. */
+    val label: String = "unknown",
+    /** The buttons the agent takes now: start, stop, force_stop, restart, change. */
+    val can: List<String> = emptyList(),
     @SerialName("state_verified") val stateVerified: Boolean? = null,
     val uptime: Double? = null,
     @SerialName("players_online") val playersOnline: Int? = null,
@@ -103,11 +109,71 @@ data class ServerRow(
     val edition: String? = null,
     val capabilities: Capabilities? = null,
     val answering: Answering? = null,
+    /** Where the owner put it on All servers; null: never moved. */
+    val position: Int? = null,
+    /** The heading it's under on All servers; empty: none. */
+    val group: String? = null,
+    /** A Test server: never gets a store. */
+    val test: Boolean = false,
+    /** Who it's for (first run's question): "community" servers may get the Store. */
+    @SerialName("played_by") val playedBy: String? = null,
 )
 
 /** Does the server answer on its game port? ok is null until checked. */
 @Serializable
 data class Answering(val ok: Boolean? = null)
+
+@Serializable
+data class AllServersResult(
+    val id: String,
+    val name: String,
+    /** started, already, stopped, stopping or failed. */
+    val result: String,
+    val detail: String? = null,
+)
+
+@Serializable
+data class AllServersAction(val servers: List<AllServersResult> = emptyList())
+
+/** A command the running server's own help lists, for completing the console box. */
+@Serializable
+data class CommandUsage(val name: String, val usage: String)
+
+@Serializable
+data class CommandList(val commands: List<CommandUsage> = emptyList())
+
+/** One of Minecraft's own log files in the server's logs folder. */
+@Serializable
+data class LogFile(val name: String, val size: Long = 0, val changed: Double = 0.0)
+
+@Serializable
+data class LogFiles(val files: List<LogFile> = emptyList())
+
+/** One entry of a folder in the server's folder (Server files). */
+@Serializable
+data class ServerFileEntry(val name: String, val folder: Boolean = false, val size: Long? = null, val changed: Double = 0.0)
+
+/** A folder in the server's folder; [path] is relative with "/", "" for the server folder itself. */
+@Serializable
+data class ServerFiles(
+    val path: String = "",
+    val parent: String? = null,
+    val entries: List<ServerFileEntry> = emptyList(),
+    val truncated: Boolean = false,
+) {
+    /** The path of [name] inside this folder. */
+    fun inside(name: String): String = if (path.isEmpty()) name else "$path/$name"
+}
+
+@Serializable
+data class ServerFileUploaded(val ok: Boolean = true, val path: String = "", val name: String = "", val size: Long = 0)
+
+/** The graphs' points as a CSV file's text. */
+@Serializable
+data class PerformanceCsv(val filename: String, val text: String)
+
+@Serializable
+data class LogFileText(val name: String, val lines: List<String> = emptyList(), val cut: Boolean = false)
 
 @Serializable
 data class ServerList(
@@ -130,6 +196,10 @@ data class ServerStatus(
     @SerialName("server_id") val serverId: String? = null,
     val name: String? = null,
     val state: String = "UNKNOWN",
+    /** What every app shows (a state.* word), worked out by the agent. */
+    val label: String = "unknown",
+    /** The buttons the agent takes now: start, stop, force_stop, restart, change. */
+    val can: List<String> = emptyList(),
     @SerialName("state_verified") val stateVerified: Boolean? = null,
     val uptime: Double? = null,
     @SerialName("minecraft_version") val minecraftVersion: String? = null,
@@ -139,6 +209,11 @@ data class ServerStatus(
     val players: List<OnlinePlayer> = emptyList(),
     @SerialName("max_players") val maxPlayers: Int? = null,
     val answering: Answering? = null,
+    /** What changed since it started that it only reads at start ("mods", "settings"...). */
+    @SerialName("restart_waiting") val restartWaiting: List<String> = emptyList(),
+    @SerialName("restart_when_empty") val restartWhenEmpty: Boolean = false,
+    // The jar checks before start are running; the start waits for them.
+    @SerialName("checking_jars") val checkingJars: Boolean = false,
 )
 
 @Serializable
@@ -238,6 +313,7 @@ object Permissions {
     const val BACKUPS_DELETE = "backups.delete"
     const val SCHEDULES_MANAGE = "schedules.manage"
     const val MODS_MANAGE = "mods.manage"
+    const val DEEP_SCAN = "deepscan.run"
     const val SERVERS_MANAGE = "servers.manage"
     const val FILES_BROWSE = "files.browse"
     const val WORLD_REPLACE = "world.replace"

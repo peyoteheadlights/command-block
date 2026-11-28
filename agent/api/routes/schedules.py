@@ -4,14 +4,32 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
+from ...scheduler.scheduler import steps_of
 from ...security.auth import Principal
-from ...security.permissions import SCHEDULES_MANAGE, SERVER_VIEW, require
+from ...security.permissions import (
+    CHAT_SEND,
+    CONSOLE_SEND,
+    SCHEDULES_MANAGE,
+    SERVER_VIEW,
+    check,
+    require,
+)
 from ..deps import audit, get_server
 from ..errors import respond_as
 from ..responses import Ok, ScheduleList, ScheduleRan, ScheduleSaved
 from .models import ScheduleRequest
 
 router = APIRouter()
+
+
+def may_save(principal: Principal, ctx, payload: ScheduleRequest) -> None:
+    """A schedule that types in the console or chat needs that permission
+    too, so a schedule is never a way around it."""
+    for task, _step in steps_of(payload.task, payload.payload):
+        if task == "command":
+            check(principal, CONSOLE_SEND, ctx.server_id)
+        elif task == "message":
+            check(principal, CHAT_SEND, ctx.server_id)
 
 
 @router.get("/schedules", response_model=ScheduleList)
@@ -28,6 +46,7 @@ async def create_schedule(
     principal: Principal = Depends(require(SCHEDULES_MANAGE)),
     ctx=Depends(get_server),
 ):
+    may_save(principal, ctx, payload)
     row = ctx.scheduler.add(
         payload.name, payload.task, payload.kind, payload.expr, payload.payload, payload.enabled
     )
@@ -43,6 +62,7 @@ async def update_schedule(
     principal: Principal = Depends(require(SCHEDULES_MANAGE)),
     ctx=Depends(get_server),
 ):
+    may_save(principal, ctx, payload)
     row = ctx.scheduler.update(
         schedule_id,
         name=payload.name,

@@ -52,6 +52,9 @@ from .uninstall import servers_inside
 INSTALL, UPDATE, REPAIR, MIGRATE = "install", "update", "repair", "migrate"
 OLD_COPY_RECORD = "old-copy.json"
 UPDATE_RESULT = "last-update.json"
+# Kept in the data folder while a new install is unfinished: only then may
+# the password it saved be replaced by the one typed on a try again.
+INSTALL_UNFINISHED = "install-unfinished"
 
 
 class StepFailed(Exception):
@@ -96,6 +99,12 @@ class Choices:
     connect_only: bool = False
     desktop_shortcut: bool = False
     open_at_sign_in: bool | None = None
+    # "Agent only": the agent, Java and the servers, no desktop app, for a
+    # weak PC run from a phone or another PC. Kept in the install record.
+    agent_only: bool = False
+    # "Agent only": the first-run answers asked by setup, sent to the agent
+    # for the owner ({"first_time", "kinds", "played_by"}).
+    welcome: dict[str, Any] | None = None
 
     def to_log(self) -> dict[str, Any]:
         return {
@@ -117,6 +126,8 @@ class Choices:
             "java_servers": self.java_servers,
             "from_app": self.from_app,
             "connect_only": self.connect_only,
+            "agent_only": self.agent_only,
+            "welcome": self.welcome,
             "desktop_shortcut": self.desktop_shortcut,
             "open_at_sign_in": self.open_at_sign_in,
         }
@@ -493,7 +504,7 @@ class Engine:
     def _reopen_app(self) -> None:
         """An update from the app closed the desktop app; open it again,
         whether the update worked or was put back."""
-        if not self.c.from_app:
+        if not self.c.from_app or self.c.agent_only:
             return
         try:
             self.system.reopen_app(self.c.program_dir if self.c.connect_only else None)
@@ -559,7 +570,7 @@ class Engine:
                 rows = []
                 self.log.write("servers_not_listed", error=str(exc))
             for row in rows:
-                if row.get("state") in ("running", "starting"):
+                if row.get("state") in ("ONLINE", "STARTING"):
                     self.system.api(port, tls, token, "POST", f"/servers/{row['id']}/server/stop")
                     self.stopped_servers.append(row["id"])
             if self.stopped_servers:
@@ -579,7 +590,7 @@ class Engine:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             rows = self.system.api(port, tls, token, "GET", "/servers")["servers"]
-            if all(r.get("state") in ("stopped", "crashed") for r in rows):
+            if all(r.get("state") in ("OFFLINE", "CRASHED") for r in rows):
                 return
             time.sleep(2)
         raise StepFailed(
@@ -592,9 +603,12 @@ class Engine:
         target = self.c.program_dir
         incoming = target.with_name(target.name + ".incoming")
         shutil.rmtree(incoming, ignore_errors=True)
+        # Agent only leaves the desktop app out (an earlier full copy's goes
+        # with the old folder).
+        skip = (appinfo.INSTALL_RECORD, *((appinfo.DESKTOP_EXE,) if self.c.agent_only else ()))
         pairs = [
             (self.source_dir / rel, incoming / rel)
-            for rel in fileops.list_files(self.source_dir, skip=(appinfo.INSTALL_RECORD,))
+            for rel in fileops.list_files(self.source_dir, skip=skip)
         ]
         if self.c.setup_exe and Path(self.c.setup_exe).is_file():
             pairs.append((Path(self.c.setup_exe), incoming / layout.SETUP_COPY))
@@ -607,6 +621,8 @@ class Engine:
         }
         if self.c.connect_only:
             record["connect_only"] = True
+        if self.c.agent_only:
+            record["agent_only"] = True
         (incoming / appinfo.INSTALL_RECORD).write_text(json.dumps(record, indent=2), "utf-8")
         if target.exists():
             self.system.close_app()
@@ -638,6 +654,11 @@ class Engine:
             return self._move_settings()
         if self.config_path.is_file():
             self._check_config()
+            if self.c.agent_only and self.existing and self._on_this_pc_only():
+                # Run again to connect Tailscale: nothing else can reach an
+                # "Agent only" PC, so it moves now (the restore point has the
+                # settings as they were).
+                return self._listen_on_tailscale()
             return None
         if self.c.action != INSTALL:
             raise StepFailed(
@@ -651,6 +672,11 @@ class Engine:
         self.created_settings.append(self.config_path)
         self._check_config()
         return self._listen_on_tailscale()
+
+    def _on_this_pc_only(self) -> bool:
+        from agent.config import Config
+
+        return Config.load(self.config_path, self.env_path).network.host == LOOPBACK
 
     def _listen_on_tailscale(self) -> str | None:
         """A new install that lets other devices in listens on this PC's
@@ -881,9 +907,17 @@ class Engine:
         from .setup_tool import read_env, step_secrets, write_env_value
 
         has_password = is_password_hash(read_env(self.env_path).get("MCSC_ADMIN_PASSWORD_HASH", ""))
-        if has_password and not (self.c.action == INSTALL and self.c.password):
+        unfinished = self.c.data_root / INSTALL_UNFINISHED
+        # A saved password is only replaced while a new install is unfinished
+        # (tried again with a new password). A finished install's password is
+        # the owner's.
+        retyped = self.c.action == INSTALL and self.c.password and unfinished.is_file()
+        if has_password and not retyped:
             step_secrets(self._setup_context())  # adds an API token if one is missing
             return "Your existing password is kept."
+        if self.c.action == INSTALL:
+            unfinished.parent.mkdir(parents=True, exist_ok=True)
+            unfinished.touch()
         if has_password and self.c.password:
             # A new install tried again with a different password: use the
             # one typed this time.
@@ -997,8 +1031,10 @@ class Engine:
                 self.system.open_at_sign_in(c.program_dir if c.open_at_sign_in else None)
             self.system.write_uninstall_entry(c.program_dir, self.version, size_kb, per_user=True)
         else:
-            self.system.register_updater_task(c.program_dir)
-            links = self.system.create_shortcuts(c.program_dir)
+            self.system.register_updater_task(c.program_dir, reopen=not c.agent_only)
+            links = self.system.create_shortcuts(c.program_dir, app_link=not c.agent_only)
+            if c.agent_only:
+                self.system.open_at_sign_in(None)  # a full copy's app opened at sign-in
             self.system.write_uninstall_entry(c.program_dir, self.version, size_kb)
         self.log.write("registered", shortcuts=links, size_kb=size_kb)
         return None
@@ -1036,6 +1072,15 @@ class Engine:
                         {"color": pick["color"]},
                     )
                     done.append(f"color for {server_id}")
+        if self.c.welcome and self.c.agent_only and self.c.action == INSTALL and token:
+            # No desktop app here to ask the first-run questions: setup did.
+            # Not saved is no reason to undo the install: the owner's desktop
+            # app on another PC asks them at its first sign-in instead.
+            try:
+                self.system.api(port, tls, token, "PUT", "/account/welcome", self.c.welcome)
+                done.append("saved the first-run answers")
+            except SystemError_ as exc:
+                done.append(f"first-run answers not saved ({exc}); the app asks them")
         for server_id in self.stopped_servers:
             self.system.api(port, tls, token, "POST", f"/servers/{server_id}/server/start")
             done.append(f"started {server_id}")
@@ -1059,6 +1104,7 @@ class Engine:
                 else:
                     shutil.rmtree(found.program_dir, ignore_errors=True)
                     done.append(f"removed {found.program_dir}")
+        (self.c.data_root / INSTALL_UNFINISHED).unlink(missing_ok=True)
         self.log.write("finished", done=done)
         return None if done else "Nothing else to do."
 

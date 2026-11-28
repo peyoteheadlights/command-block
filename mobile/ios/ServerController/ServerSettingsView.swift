@@ -30,6 +30,9 @@ struct ServerSettingsView: View {
                 await setup.loadMemory()
                 await setup.loadVersion()
                 await setup.loadCrossplay()
+                await setup.loadInternet()
+                await setup.loadDdns()
+                await setup.loadPlayit()
             }
             .alert(askTitle(setup), isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })) {
                 Button(askButton,
@@ -42,6 +45,16 @@ struct ServerSettingsView: View {
                         case .rollBack: await setup.rollBack(strings)
                         case .change: await setup.changeVersion(strings)
                         case .crossplayOn: await setup.setCrossplay(true, strings)
+                        case .mcsrvstat: await setup.testInternet(allow: true, strings)
+                        case .removeDuckDns: await setup.ddnsCall(strings) { try await $0.removeDdns(kind: "duckdns") }
+                        case .removeNoIp: await setup.ddnsCall(strings) { try await $0.removeDdns(kind: "noip") }
+                        case .playitMcsrvstat: await setup.playitCall(strings) { try await $0.testPlayit(serverId: serverId, allow: true) }
+                        case .playitStop: await setup.playitCall(strings) { try await $0.playitAction(serverId: serverId, action: "stop") }
+                        case .waterdogOn:
+                            let box = setup.waterdogBox
+                            await setup.playitCall(strings) { try await $0.setUpWaterdog(serverId: serverId, box: box) }
+                        case .waterdogOff: await setup.playitCall(strings) { try await $0.stopWaterdog(serverId: serverId) }
+                        case .consoleOn: await setup.setConsoleFriends(true, strings)
                         // The server is gone: back to All servers, not to its page.
                         case .remove: if await setup.removeServer(strings) { model.serversPath = [] }
                         case nil: break
@@ -59,6 +72,8 @@ struct ServerSettingsView: View {
             await setup.loadMemory()
             await setup.loadVersion()
             await setup.loadCrossplay()
+            await setup.loadInternet()
+            await setup.loadDdns()
             if Duplicate.allowed(model.me) { await setup.loadCopyOptions() }
         }
     }
@@ -68,6 +83,13 @@ struct ServerSettingsView: View {
         case .rollBack: return model.t("version.back_title")
         case .change: return model.t("version.confirm_title", ["name": setup.report?.value.map(VersionChange.target) ?? ""])
         case .crossplayOn: return model.t("cross.on_title")
+        case .mcsrvstat: return model.t("address.test")
+        case .removeDuckDns, .removeNoIp: return model.t("ddns.remove")
+        case .playitMcsrvstat: return model.t("address.test")
+        case .playitStop: return model.t("playit.stop")
+        case .waterdogOn: return model.t("playit.bedrock_confirm_title")
+        case .waterdogOff: return model.t("playit.waterdog_stop")
+        case .consoleOn: return model.t("console.risk_title")
         case .remove: return model.t("serverset.remove_title", ["name": model.servers.first(where: { $0.id == serverId })?.name ?? serverId])
         case nil: return ""
         }
@@ -77,6 +99,13 @@ struct ServerSettingsView: View {
         switch asking {
         case .rollBack: return model.t("version.back_button")
         case .crossplayOn: return model.t("cross.on_button")
+        case .mcsrvstat: return model.t("address.test")
+        case .removeDuckDns, .removeNoIp: return model.t("ddns.remove")
+        case .playitMcsrvstat: return model.t("address.test")
+        case .playitStop: return model.t("playit.stop")
+        case .waterdogOn: return model.t("playit.bedrock_set_up")
+        case .consoleOn: return model.t("console.risk_button")
+        case .waterdogOff: return model.t("playit.waterdog_stop")
         case .remove: return model.t("serverset.remove_confirm")
         default: return model.t("version.confirm_button")
         }
@@ -86,6 +115,14 @@ struct ServerSettingsView: View {
         switch asking {
         case .rollBack: return model.t("version.back_body")
         case .crossplayOn: return Crossplay.confirm(model.strings, setup.crossPort)
+        case .mcsrvstat: return model.t("address.test_ask", ["address": setup.internet.value.flatMap(Internet.address) ?? ""])
+        case .removeDuckDns: return model.t("ddns.remove_body", ["name": setup.ddns.value?.duckdns?.name ?? ""])
+        case .removeNoIp: return model.t("ddns.remove_body", ["name": setup.ddns.value?.noip?.name ?? ""])
+        case .playitMcsrvstat: return model.t("address.test_ask", ["address": setup.playit.value.flatMap(Playit.javaAddress) ?? ""])
+        case .playitStop: return model.t("playit.stop_body")
+        case .waterdogOn: return model.t("playit.bedrock_confirm_body")
+        case .waterdogOff: return model.t("playit.waterdog_stop_body")
+        case .consoleOn: return model.t("console.risk_body")
         case .remove: return model.t("serverset.remove_body")
         default: return model.t("version.confirm_body")
         }
@@ -105,6 +142,10 @@ struct ServerSettingsView: View {
             ProblemCard(problem: problem, palette: palette) { await setup.loadSettings() }
         }
         if let settings = read.value {
+            SectionTitle(text: model.t("address.title"), palette: palette)
+            CardBox(palette: palette) {
+                AddressCardView(setup: setup, serverId: serverId, palette: palette) { asking = $0 }
+            }
             SectionTitle(text: model.t("serverset.identity"), palette: palette)
             CardBox(palette: palette) {
                 SettingField(
@@ -115,7 +156,8 @@ struct ServerSettingsView: View {
                     colors: settings.palette, current: setup.color ?? settings.color, locked: !canEdit, palette: palette
                 ) { setup.pickColor($0) }
             }
-            ForEach(ServerForm.GROUPS, id: \.titleKey) { group in
+            let edition = model.servers.first(where: { $0.id == serverId })?.edition
+            ForEach(ServerForm.GROUPS.filter { ServerForm.shown($0, technical: model.technical, me: model.me, edition: edition) }, id: \.titleKey) { group in
                 SectionTitle(text: model.t(group.titleKey), palette: palette)
                 CardBox(palette: palette) {
                     ForEach(group.fields, id: \.key) { field in
@@ -146,6 +188,13 @@ struct ServerSettingsView: View {
                 .disabled(setup.busy != nil)
             }
             SaidRow(said: setup.said, palette: palette)
+            if FolderPicker.allowed(model.me) {
+                SectionTitle(text: model.t("files.title"), palette: palette)
+                CardBox(palette: palette) {
+                    NavigationLink(model.t("files.open")) { FilesView(serverId: serverId) }
+                    Hint(text: model.t("files.hint"), palette: palette)
+                }
+            }
             SectionTitle(text: model.t("serverset.cpu"), palette: palette)
             CardBox(palette: palette) { coresCard(setup, settings.cpu, canEdit, palette) }
             SectionTitle(text: model.t("version.title"), palette: palette)
@@ -170,6 +219,15 @@ struct ServerSettingsView: View {
                     ) { typed in
                         let strings = model.strings
                         Task { await setup.saveJavaOptions(RawText.args(typed), strings) }
+                    }
+                    HideableNote(key: "memory.raw_warning", palette: palette)
+                    if let before = setup.argsBefore {
+                        let strings = model.strings
+                        Presses(presses: [
+                            Press(title: model.t("changes.undo"), enabled: setup.busy == nil) {
+                                Task { await setup.saveJavaOptions(before, strings, undoing: true) }
+                            },
+                        ], palette: palette)
                     }
                 }
             }
@@ -220,7 +278,7 @@ extension ServerSettingsView {
             Text(CpuCores.nowLine(model.strings, cpu))
                 .foregroundStyle(palette.textSecondary)
             if let problem = cpu.status.problems.first {
-                Text(verbatim: problem).foregroundStyle(palette.danger)
+                Text(hiding: problem).foregroundStyle(palette.danger)
             }
             if canEdit {
                 HStack {
@@ -311,7 +369,7 @@ struct SettingField: View {
                     .disabled(locked)
             }
             if let problem {
-                Text(verbatim: problem)
+                Text(hiding: problem)
                     .font(.footnote)
                     .foregroundStyle(palette.danger)
             }
@@ -371,11 +429,11 @@ struct ServerColorPicker: View {
                 .foregroundStyle(bad ? palette.danger : palette.textSecondary)
             if let rgb = ServerColors.rgb(current) {
                 let fill = ServerColors.fillWithText(rgb)
-                Text(verbatim: (current ?? "").uppercased())
+                Text(hiding: (current ?? "").uppercased())
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
                     .foregroundStyle(Color.fromHex(ServerColors.hex(fill.text)) ?? palette.textPrimary)
-                    .background(Capsule().fill(Color.fromHex(ServerColors.hex(fill.fill)) ?? .gray))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.fromHex(ServerColors.hex(fill.fill)) ?? .gray))
             }
         }
         .onAppear { typed = current ?? "" }

@@ -165,6 +165,25 @@ def test_a_session_discord_ended_logs_in_again(agent, fake):
     assert fake.resumes == 0
 
 
+def test_a_close_retrying_cant_help_stops_the_bot(agent, fake):
+    fake.socket.drop(4011)  # sharding required: the same login would be closed again
+    wait_for(lambda: core_of(agent).discord.gateway.state == "refused")
+    import time
+
+    time.sleep(2)
+    assert len(fake.sockets) == 1
+
+
+def test_a_connection_that_was_fine_for_a_while_reconnects_at_once(agent, fake):
+    import time
+
+    gateway = core_of(agent).discord.gateway
+    gateway.failures = 7  # seven drops earlier in the agent's life: a 60 s wait
+    gateway.connected_at = time.time() - 120
+    fake.socket.drop(1006)
+    wait_for(lambda: fake.resumes == 1, 5)
+
+
 def test_a_silent_connection_is_noticed_by_the_heartbeat(fake, tmp_path, monkeypatch):
     fake.heartbeat_ms = 60
     fake.ack_heartbeats = False
@@ -603,3 +622,22 @@ def test_pasting_a_token_saves_it_in_env_and_connects(fake, tmp_path, monkeypatc
         assert fake.socket.closed
     finally:
         client.__exit__(None, None, None)
+
+
+def test_set_up_clicked_twice_at_once_makes_each_channel_once(agent, fake):
+    core = core_of(agent)
+    bot = core.discord
+    real = bot.rest.request
+
+    async def slow(method, path, body=None):
+        if method == "POST" and path.endswith("/channels"):
+            await asyncio.sleep(0.2)  # Discord takes a moment to make a channel
+        return await real(method, path, body)
+
+    async def twice():
+        return await asyncio.gather(bot.set_up(GUILD_ID, ["test"]), bot.set_up(GUILD_ID, ["test"]))
+
+    bot.rest.request = slow
+    asyncio.run_coroutine_threadsafe(twice(), core.pcs._loop).result(20)
+    names = [c["name"] for c in fake.channels]
+    assert len(names) == len(set(names)), names

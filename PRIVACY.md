@@ -17,6 +17,7 @@ here.
 | **Modrinth** | When you search for, add or update mods, and every 12 hours to see if your mods have updates (on by default; `mods.update_check_hours: 0` in `config.yaml` turns it off) | Your search words, or which mods you have, and the Minecraft version |
 | **Hangar** (`hangar.papermc.io`, PaperMC's plugin site) | On Paper and Purpur servers: when you search for, add or update plugins, with the same update check as Modrinth, and once for each plugin jar the app didn't add, to look it up by its checksum | Your search words, which plugins you have (as checksums or project numbers), and the Minecraft version |
 | **CurseForge**, through Command Block's relay (a Firebase function, `europe-west1-command-block-d4526.cloudfunctions.net`) | On mod servers: when you search for, add or update mods, read or import a CurseForge modpack, and once for the mod jars the app didn't add, to look them up by fingerprint. Never in the 12-hour update check. The first time, the agent signs in to Firebase anonymously (no name, no email) | Searching CurseForge goes through Command Block's relay, which sees which mods you search for: your search words, which mods and files you ask about (as numbers or fingerprints) and the Minecraft version. The relay keeps nothing; Google's servers see your IP address as for any request. Mod files then come straight from CurseForge's own file servers (`forgecdn.net`) |
+| **Spiget** (`api.spiget.org`, a public copy of SpigotMC's plugin list) | At most once a day, when someone opens the Anti-cheat card on a Paper, Purpur or Leaf server | Which paid anti-cheat's price to read (Vulcan's SpigotMC number). Nothing about your server |
 | **GitHub** (one add-on's repository) | When you paste a GitHub release link to add a mod or plugin, and with the update check for an add-on added that way | Which repository and release |
 | **Adoptium** (Java) | When you ask the setup or the apps to get Java | Which Java version to download |
 | **Discord** | Only if you set up Discord alerts | The alert text (for example "Server crashed") to the webhook you entered |
@@ -24,7 +25,14 @@ here.
 | **Google Firebase Cloud Messaging** (Android) and **Apple Push Notification service** (iPhone) | Only if the owner set up lock-screen alerts for the phone app, and only to phones that turned them on | A wake-up with an alert number and no words in it. The phone then reads the alert from your PC |
 | **Your other PCs** (Your PCs) | Only after you join two of your own PCs into one account: when an account changes, and when a PC starts | The owner and moderator accounts (names and password hashes, never passwords), which servers each moderator was given, and the signed-in devices; with the Discord bot, its token (encrypted), its Discord settings, and each PC's server names, Levels XP, linked Minecraft names and wake details. Straight from PC to PC over your own network. No server in between |
 | **Tailscale** (`pkgs.tailscale.com`, `api.tailscale.com`) | When you select Install Tailscale in the desktop app, and when you make a share link for a moderator with a Tailscale key you saved | Which Tailscale setup to download, or the key and this PC's Tailscale address, to make the link |
-| **mcsrvstat.us** (`api.mcsrvstat.us`) | Only when you run Diagnose server and typed an address to share for that server (Discord settings) | That address, so mcsrvstat.us can ping it from the internet |
+| **mcsrvstat.us** (`api.mcsrvstat.us`) | When you run Diagnose server and the server has an internet address (one you typed in Discord settings, or the one your router gave after "Let friends join from the internet"), and after "Let friends join from the internet" opens the router port, only once you said yes to it | That address and port, so mcsrvstat.us can ping it from the internet |
+| **DuckDNS** (`www.duckdns.org`) | Only after you save a DuckDNS name in Server address, then every 30 minutes and when your internet address changes | The name, your DuckDNS token and (from the request itself) your internet address |
+| **No-IP** (`dynupdate.no-ip.com`) | Only after you save a No-IP name in Server address, then when your internet address changes (or once a day if your router doesn't say it) | The name, your No-IP username and password, your internet address, and the app's name, version and the project's contact email (No-IP asks every update program for these) |
+| **playit.gg** (`api.playit.gg`, `github.com/playit-cloud`) | Only after you select Use playit.gg: the desktop app downloads playit's setup from its GitHub releases, and the agent links playit's program to your playit account | A one-time link code, and the key playit sends back, which goes straight to playit's program on this PC (Command Block doesn't keep it). After that, playit's own program connects to playit, and friends' game traffic goes through playit's servers (playit's own privacy policy applies) |
+| **WaterdogPE** (`github.com/WaterdogPE`, our own GitHub releases), for a plain Bedrock server through playit.gg | Only after you select Set up WaterdogPE: the agent downloads WaterdogPE's newest build and the Companion's WaterdogPE plugin, each checked against GitHub's SHA-256 | Nothing is sent by Command Block. WaterdogPE itself talks to playit's signaling service with the tunnel token you pasted (kept only in WaterdogPE's own settings file on this PC). WaterdogPE's anonymous error reports and bStats statistics are turned off |
+| **MCXboxBroadcast** (`github.com/MCXboxBroadcast/Broadcaster`), for "Let console friends join" | Only after you read the risks and select Let console friends join: the agent downloads its newest Geyser add-on, checked against GitHub's SHA-256 | Nothing is sent by Command Block. The add-on signs in to the Microsoft account you choose (its sign-in is kept in its own folder in the server's files, left out of backups, deleted when you turn it off) and tells Xbox Live about the server so that account's friends can see and join it |
+| **Your home router** (UPnP, on your own network) | When "Let friends join from the internet" is on: when the server starts and stops, and when you turn it on or off | Asks it to send the game ports to this PC and to stop again, and reads the internet address it has. Nothing leaves your home network |
+| **VirusTotal** (`www.virustotal.com`) | Only if the owner saved their own VirusTotal key and ticks VirusTotal in a deep scan | The SHA-256 fingerprint of each mod or plugin jar, and the owner's key. Never the files themselves |
 | **GitHub** (HeadlessMC), **Mojang / Microsoft**, the mod loader's site and **Adoptium** | Only when you say yes to Diagnose server's join with all mods, or sign in for it | Downloads of HeadlessMC, the Minecraft game, its mod loader and Java. Signing in for it sends your Microsoft account sign-in to Microsoft, and HeadlessMC keeps it on this PC (in the agent's data folder) until you sign out |
 
 Each of these services has its own privacy policy, and sees your PC's
@@ -48,6 +56,17 @@ server's console, its lines are posted there with addresses hidden.
 **Get help** saves a file of logs and checks on your PC. It is never sent
 by itself: you choose who to give it to. It never contains passwords, keys
 or worlds.
+
+## The Companion mod
+
+When you join a server that runs the Command Block Companion, your game
+tells that server only, for each mod file the server names, whether your
+game loaded it, which version of its modpack you have, and whether you
+have any other mods (yes or no): never the names of your own mods, your
+files or anything else from your PC. A server can name any mod file it
+likes, so it can find out whether you use that one. Updates come only
+from Modrinth, CurseForge or the server's own download link, and only
+after you say yes.
 
 ## The phone apps
 

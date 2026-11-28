@@ -30,6 +30,8 @@ jobs:
         run: python -m ruff check .
       - name: ruff format
         run: python -m ruff format --check .
+      - name: folder rules
+        run: lint-imports
       - name: mypy
         run: python -m mypy
 
@@ -54,7 +56,7 @@ jobs:
   unit-tests:
     name: Unit tests (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45  # Windows takes about 30 minutes now
+    timeout-minutes: 90  # Windows takes about 60 minutes now
     strategy:
       fail-fast: false
       matrix:

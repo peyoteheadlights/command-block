@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "carpet",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "carpet"
+    ],
+    "modrinth": "carpet"
+  },
+  "versions": ">=1.4.0 <27",
+  "title": "Carpet",
+  "what": "Tools for technical players: extra settings (rules), fake players and measuring tools.",
+  "steps": [
+    "Every extra feature is a rule that is off until you turn it on.",
+    "Technical players change rules in the game with /carpet <rule> <value>.",
+    "Saved rules are kept in the world's carpet.conf."
+  ],
+  "source": "https://github.com/gnembon/fabric-carpet/blob/master/src/main/java/carpet/api/settings/SettingsManager.java",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "list",
+      "label": "List all rules",
+      "command": "carpet list"
+    },
+    {
+      "id": "defaults",
+      "label": "List saved rules",
+      "command": "carpet list defaults"
+    },
+    {
+      "id": "rule",
+      "label": "Show one rule",
+      "command": "carpet {rule}",
+      "fields": [
+        {
+          "id": "rule",
+          "kind": "name",
+          "label": "Rule name"
+        }
+      ]
+    }
+  ]
+}

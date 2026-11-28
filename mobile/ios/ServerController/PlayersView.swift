@@ -97,9 +97,12 @@ struct PlayersView: View {
         } else {
             ForEach(page.online, id: \.username) { player in
                 CardBox(palette: palette) {
-                    Text(verbatim: player.username)
-                        .font(.headline)
-                        .foregroundStyle(palette.textPrimary)
+                    HStack(spacing: 10) {
+                        Face(palette: palette)
+                        Text(hiding: player.username)
+                            .font(.headline)
+                            .foregroundStyle(palette.textPrimary)
+                    }
                     Text(
                         model.t("players.col_session") + ": " + Display.playingFor(model.strings, player)
                             + (player.edition == "bedrock" ? " · " + model.t("players.bedrock") : "")
@@ -128,7 +131,7 @@ struct PlayersView: View {
                             Text(model.t("players.do_\(action.kind)") + " · " + action.name)
                                 .foregroundStyle(palette.textPrimary)
                             if let message = action.message, !message.isEmpty {
-                                Text(verbatim: message)
+                                Text(hiding: message)
                                     .font(.footnote)
                                     .foregroundStyle(palette.textSecondary)
                             }
@@ -202,7 +205,7 @@ struct PlayersView: View {
                     listed(entry, kind, canRemove: canRemove, palette)
                 }
             } else {
-                Text(verbatim: list?.reason ?? model.t("value.unknown"))
+                Text(hiding: list?.reason ?? model.t("value.unknown"))
                     .foregroundStyle(palette.textSecondary)
             }
             if let file = list?.file {
@@ -217,7 +220,7 @@ struct PlayersView: View {
             let action = PlayerButtons.removeFrom(kind)
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: name).foregroundStyle(palette.textPrimary)
+                    Text(hiding: name).foregroundStyle(palette.textPrimary)
                     if kind == "banned", let reason = entry.reason, !reason.isEmpty {
                         Text(model.t("players.col_reason") + ": " + reason)
                             .font(.footnote)
@@ -235,7 +238,7 @@ struct PlayersView: View {
         } else {
             // Bedrock: an operator known only by Xbox number.
             VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: entry.uuid ?? model.t("value.unknown")).foregroundStyle(palette.textPrimary)
+                Text(hiding: entry.uuid ?? model.t("value.unknown")).foregroundStyle(palette.textPrimary)
                 hint(model.t("players.xuid_only"), palette)
             }
         }
@@ -255,10 +258,14 @@ struct PlayersView: View {
                         + Display.ago(model.strings, known.lastSeen, now: context.date.timeIntervalSince1970)
                     let tags = PlayerButtons.tags(known.username, page: page).map { model.t($0) }
                     CardBox(palette: palette) {
-                        Text(verbatim: known.username)
-                            .font(.headline)
-                            .foregroundStyle(palette.textPrimary)
-                        Text(([seen] + tags).joined(separator: " · "))
+                        HStack(spacing: 10) {
+                            Face(palette: palette)
+                            Text(hiding: known.username)
+                                .font(.headline)
+                                .foregroundStyle(palette.textPrimary)
+                        }
+                        let modpack = PlayerButtons.modpack(model.strings, known).map { [$0] } ?? []
+                        Text(([seen] + modpack + tags).joined(separator: " · "))
                             .font(.footnote)
                             .foregroundStyle(palette.textSecondary)
                         buttons(
@@ -384,7 +391,7 @@ struct PlayersView: View {
 
     private func section(_ text: String, _ palette: Palette) -> some View {
         Text(text)
-            .font(.headline)
+            .font(.heading())
             .foregroundStyle(palette.textPrimary)
             .padding(.top, 8)
             .accessibilityAddTraits(.isHeader)
@@ -454,7 +461,7 @@ private struct LinkRequestCard: View {
             } else {
                 Picker(model.t("discord.links.pick"), selection: $picked) {
                     ForEach(players, id: \.uuid) { player in
-                        Text(verbatim: player.name).tag(Optional(player.uuid))
+                        Text(hiding: player.name).tag(Optional(player.uuid))
                     }
                 }
             }

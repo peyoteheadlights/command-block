@@ -151,3 +151,34 @@ def status(pid: int | None, cores: list[int]) -> dict[str, Any]:
         "unsupported_reason": reason,
         "problems": problems(cores),
     }
+
+
+def set_low_priority(pid: int, low: bool) -> str | None:
+    """Below normal priority for the process (or normal again). None when
+    it worked, or why not. Only the operating system's own call (psutil)."""
+    import os
+
+    if os.name == "nt":
+        level = psutil.BELOW_NORMAL_PRIORITY_CLASS if low else psutil.NORMAL_PRIORITY_CLASS  # type: ignore[attr-defined]
+    else:
+        level = 10 if low else 0
+    try:
+        psutil.Process(pid).nice(level)
+    except (psutil.Error, OSError) as exc:
+        return str(exc) or exc.__class__.__name__
+    return None
+
+
+def exit_codes(text: str) -> set[int]:
+    """The ignored exit codes from their setting ("1, 130"). Raises
+    ValueError naming the first part that isn't a whole number."""
+    found = set()
+    for part in str(text or "").replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            found.add(int(part))
+        except ValueError:
+            raise ValueError(f"{part!r} isn't an exit code (a whole number, like 1)") from None
+    return found

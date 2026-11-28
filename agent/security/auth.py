@@ -159,6 +159,10 @@ def write_one_time_sign_in(data_dir: Path) -> str:
     return code
 
 
+# This PC's answer to "Who's this server for?": the default for new servers.
+PLAYED_BY_DEFAULT = "played_by_default"
+
+
 # ----------------------------------------------------------------------
 @dataclass(frozen=True)
 class Access:
@@ -866,16 +870,23 @@ class AuthManager:
             return None, None
         return account["role"], account["access"]
 
-    def may_see_alert(self, user: str, server_id: str | None) -> bool:
+    def may_see_alert(self, user: str, server_id: str | None, event_type: str = "") -> bool:
         """Whether this account's phones are told about an alert: a moderator
-        only about the servers they can see now, and alerts about the PC
+        only about the servers they can see now (and some alerts only with a
+        permission, see permissions.ALERT_NEEDS), and alerts about the PC
         itself (failed sign-ins, the certificate) only go to the owner."""
+        from .permissions import ALERT_NEEDS
+
         role, access = self._role_of(user)
         if role is None:
             return False
         if server_id is None:
             return role == "owner"
-        return access is None or bool(access.on(server_id))
+        if access is None:
+            return True
+        held = access.on(server_id)
+        need = ALERT_NEEDS.get(event_type)
+        return bool(held) and (need is None or need in held)
 
     # -- helper accounts ---------------------------------------------------
     @staticmethod
@@ -1462,8 +1473,9 @@ class AuthManager:
     PREFERENCE_CHOICES: dict[str, tuple[str, ...]] = {
         "mode": ("simple", "technical"),
         "theme": ("system", "light", "dark", "graphite", "contrast"),
+        "tips": ("on", "off"),
     }
-    PREFERENCE_DEFAULTS: dict[str, str] = {"mode": "simple", "theme": "system"}
+    PREFERENCE_DEFAULTS: dict[str, str] = {"mode": "simple", "theme": "system", "tips": "on"}
 
     def preferences(self, user: str) -> dict[str, str]:
         saved = self.db.get_setting(f"user:{user}:preferences", {}) or {}
@@ -1481,6 +1493,91 @@ class AuthManager:
             prefs[key] = value
         self.db.set_setting(f"user:{user}:preferences", prefs)
         return prefs
+
+    # -- first-run questions ---------------------------------------------
+    # "Is this your first time making a Minecraft server?" and, for "No",
+    # the kinds made before. first_time None: "I know what I'm doing".
+    WELCOME_KINDS = ("vanilla", "mods", "plugins", "bedrock")
+
+    def welcome(self, user: str) -> dict[str, Any]:
+        saved = self.db.get_setting(f"user:{user}:welcome", None)
+        if not isinstance(saved, dict):
+            return {"answered": False, "first_time": None, "kinds": []}
+        kinds = [k for k in saved.get("kinds") or [] if k in self.WELCOME_KINDS]
+        first = saved.get("first_time")
+        return {
+            "answered": True,
+            "first_time": first if first in (True, False) else None,
+            "kinds": kinds,
+        }
+
+    def set_welcome(
+        self, user: str, first_time: bool | None, kinds: list[str], defaults: bool = True
+    ) -> dict[str, Any]:
+        """Saves the answers. On first run (``defaults``) they also pick the
+        mode and tips: Yes is Simple mode with tips, No and "I know what I'm
+        doing" Technical without. PC settings changes only the kinds."""
+        if any(k not in self.WELCOME_KINDS for k in kinds):
+            raise ValueError("Unknown kind of server.")
+        if not defaults:
+            first_time = self.welcome(user)["first_time"]
+        if first_time is not False and defaults:
+            kinds = []  # only "No" asks which kinds
+        kinds = [k for k in self.WELCOME_KINDS if k in kinds]
+        self.db.set_setting(f"user:{user}:welcome", {"first_time": first_time, "kinds": kinds})
+        if not defaults:
+            return self.welcome(user)
+        self.set_preferences(
+            user,
+            {
+                "mode": "simple" if first_time else "technical",
+                "tips": "on" if first_time else "off",
+            },
+        )
+        return self.welcome(user)
+
+    def kind_tips(self, user: str) -> list[str]:
+        """The kinds whose tips the New server panel shows. Tips on: every
+        kind. Otherwise, after "No", the kinds not made before, once each
+        (``made_kind``). Kinds hidden with "Don't show again" are left out."""
+        if self.preferences(user)["tips"] == "on":
+            kinds = list(self.WELCOME_KINDS)
+        else:
+            answers = self.welcome(user)
+            made = answers["kinds"] if answers["first_time"] is False else self.WELCOME_KINDS
+            kinds = [k for k in self.WELCOME_KINDS if k not in made]
+        hidden = set(self.hidden(user))
+        return [k for k in kinds if f"tip.kind.{k}" not in hidden]
+
+    def made_kind(self, user: str, kind: str) -> None:
+        """A server of this kind was made, so its tips were seen: after "No"
+        it now counts as a kind made before."""
+        saved = self.db.get_setting(f"user:{user}:welcome", None)
+        if not isinstance(saved, dict) or saved.get("first_time") is not False:
+            return
+        kinds = self.welcome(user)["kinds"]
+        if kind in self.WELCOME_KINDS and kind not in kinds:
+            ordered = [k for k in self.WELCOME_KINDS if k in (*kinds, kind)]
+            self.db.set_setting(f"user:{user}:welcome", {**saved, "kinds": ordered})
+
+    # -- "Don't show again" ----------------------------------------------
+    # The warnings and tips each account hid, by their words' key, so they
+    # stay hidden on every device. "Show all warnings again" clears them.
+    HIDDEN_MAX = 200
+
+    def hidden(self, user: str) -> list[str]:
+        saved = self.db.get_setting(f"user:{user}:hidden", [])
+        return [k for k in saved if isinstance(k, str)] if isinstance(saved, list) else []
+
+    def hide(self, user: str, key: str) -> list[str]:
+        keys = self.hidden(user)
+        if key not in keys:
+            keys = [*keys, key][-self.HIDDEN_MAX :]
+            self.db.set_setting(f"user:{user}:hidden", keys)
+        return keys
+
+    def show_all_again(self, user: str) -> None:
+        self.db.set_setting(f"user:{user}:hidden", [])
 
     # -- alerts read -----------------------------------------------------
     # The newest alert each account has read, like a chat app's read marker:

@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from .graphs import HoursGraph
 from .overview import card, title_of
+from .parts import Face, Row
 from .ui import Page, clock, duration, label, push, refill
 from .words import mode, text
 
@@ -75,6 +76,16 @@ NAMES = {
 }
 
 
+def modpack_words(p: dict) -> str | None:
+    """The Companion's last check of this player, or None if never checked."""
+    if p.get("modpack_ok") is None:
+        return None
+    version = p.get("modpack_version")
+    if not version:
+        return text("players.modpack_none")
+    return text("players.modpack" if p["modpack_ok"] else "players.modpack_bad", version=version)
+
+
 class PlayersPage(Page):
     POLL_MS = 1000
     POLLS = 22  # then the line stays "Sent" and says so
@@ -95,7 +106,7 @@ class PlayersPage(Page):
 
         top = QHBoxLayout()
         top.setSpacing(12)
-        self.online_card, layout = card("")
+        self.online_card, layout = card("", box=False)
         self.online_title = title_of(self.online_card)
         self.online = QVBoxLayout()
         layout.addLayout(self.online)
@@ -154,7 +165,7 @@ class PlayersPage(Page):
         layout.addWidget(self.hours_line)
         self.column.addWidget(self.hours_card)
 
-        everyone, layout = card(text("players.everyone"))
+        everyone, layout = card(text("players.everyone"), box=False)
         self.everyone = QVBoxLayout()
         layout.addLayout(self.everyone)
         self.column.addWidget(everyone)
@@ -427,23 +438,20 @@ class PlayersPage(Page):
         return "  ·  ".join(parts)
 
     def known_info(self, p: dict) -> str:
-        return "  ·  ".join(
-            [
-                f"{text('players.col_first')} {clock(p.get('first_seen')) or text('time.never')}",
-                f"{text('players.col_last')} {clock(p.get('last_seen')) or text('time.never')}",
-                f"{text('players.col_sessions')} {p.get('sessions', 0)}",
-                f"{text('players.col_total')} {duration(p.get('total_seconds_live'))}",
-            ]
-        )
+        parts = [
+            f"{text('players.col_first')} {clock(p.get('first_seen')) or text('time.never')}",
+            f"{text('players.col_last')} {clock(p.get('last_seen')) or text('time.never')}",
+            f"{text('players.col_sessions')} {p.get('sessions', 0)}",
+            f"{text('players.col_total')} {duration(p.get('total_seconds_live'))}",
+        ]
+        return "  ·  ".join(parts + [w for w in [modpack_words(p)] if w])
 
     def player_row(self, name: str, info: str, online: bool, player: dict | None = None) -> QFrame:
-        row = QFrame()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
+        h.addWidget(Face(name))
         words = QVBoxLayout()
-        top = QHBoxLayout()
-        top.addWidget(label(name, "step"))
+        words.addWidget(label(name, "step"))
         lower = name.lower()
         tags = [
             ("players.bedrock", (player or {}).get("edition") == "bedrock"),
@@ -451,14 +459,9 @@ class PlayersPage(Page):
             ("players.tag_op", lower in self.sets["ops"]),
             ("players.tag_banned", lower in self.sets["banned"]),
         ]
-        for key, shown in tags:
-            if shown:
-                chip = label(self.words(key), "chip")
-                chip.setWordWrap(False)
-                top.addWidget(chip)
-        top.addStretch()
-        words.addLayout(top)
-        words.addWidget(label(info, "sub"))
+        # One plain line, no pills: "Whitelisted · Admin · last seen ..."
+        facts = [self.words(key) for key, shown in tags if shown] + [info]
+        words.addWidget(label("  ·  ".join(f for f in facts if f), "sub"))
         shown = self.stats.get((self.row["id"], name))
         if shown:
             words.addWidget(label(shown, "sub"))

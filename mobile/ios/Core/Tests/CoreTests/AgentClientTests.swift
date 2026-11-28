@@ -63,6 +63,19 @@ final class AgentClientTests: XCTestCase {
         XCTAssertEqual(row.state, "UNKNOWN")
     }
 
+    func testSignOutSaysWhetherThePCHeardIt() async {
+        StubAgent.json("{\"ok\": true}")
+        let heard = await client().logout()
+        XCTAssertTrue(heard)
+        // Already signed out on the PC: nothing left there.
+        StubAgent.json("{\"detail\": \"Not signed in\"}", status: 401)
+        let gone = await client().logout()
+        XCTAssertTrue(gone)
+        StubAgent.enqueue(StubAgent.Answer(status: 0, headers: [:], body: Data(), failure: URLError(.cannotConnectToHost)))
+        let off = await client().logout()
+        XCTAssertFalse(off)
+    }
+
     func testSigningThePhoneOutOnThePCSignsTheAppOut() async {
         StubAgent.json("{\"detail\": \"Not signed in\"}", status: 401)
         var signedOut = false
@@ -92,6 +105,19 @@ final class AgentClientTests: XCTestCase {
         StubAgent.json("{\"detail\": \"Busy\"}", status: 409, headers: ["X-Request-ID": "abc123"])
         let failed = await expectError { try await c.serverAction(serverId: "survival", action: "start") }
         XCTAssertEqual(failed as? AgentError, .failed(status: 409, reason: "Busy", requestId: "abc123"))
+    }
+
+    func testForceStopIsAStopWithForceOnAndTheLabelAndButtonsAreRead() async throws {
+        StubAgent.json("{\"result\": \"VERIFIED\", \"state\": \"OFFLINE\"}")
+        StubAgent.json("{\"state\": \"ONLINE\", \"label\": \"not_answering\", \"can\": [\"stop\", \"restart\"]}")
+        let c = client()
+        _ = try await c.serverAction(serverId: "survival", action: "force_stop")
+        let sent = StubAgent.requests[0]
+        XCTAssertTrue(sent.request.url?.absoluteString.hasSuffix("/api/servers/survival/server/stop") ?? false)
+        XCTAssertEqual(String(data: sent.body, encoding: .utf8), #"{"force":true}"#)
+        let status = try await c.status(serverId: "survival")
+        XCTAssertEqual(status.label, "not_answering")
+        XCTAssertEqual(status.can, ["stop", "restart"])
     }
 
     func testOnlyStartStopAndRestartCanBeSent() async {

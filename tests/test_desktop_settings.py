@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from agent import downloads
+from desktop.parts import InfoDot, Switch
 
 from .test_desktop_app import (
     button,
@@ -29,10 +30,24 @@ QtWidgets = pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is in requi
 def settings_page(qapp, agent_http, name="Survival"):
     window = signed_in_on(qapp, agent_http, name)
     page = open_page(qapp, window, "Settings")
-    wait_for(
-        qapp, lambda: "Name and color" in shown_text(page) and "Difficulty" in shown_text(page)
-    )
+    wait_for(qapp, lambda: "Name and color" in shown_text(page) and loaded(page, "Difficulty"))
     return window, page
+
+
+def loaded(page, words) -> bool:
+    """``words`` is on the page, in the section that shows or in another one."""
+    return any(words in w.text() for w in page.findChildren(QtWidgets.QLabel))
+
+
+def section(page, words):
+    """Clicks one of the four sections at the top of Settings."""
+    button(page, words).click()
+    return page
+
+
+def switch_named(frame, words):
+    [switch] = [s for s in frame.findChildren(Switch) if s.accessibleName() == words]
+    return switch
 
 
 def card_of(page, title):
@@ -60,10 +75,16 @@ def test_settings_has_four_sections_and_a_jump_to_each(qapp, agent_http):
 def test_renaming_and_recoloring_a_server_shows_in_its_tab(qapp, agent_http):
     window, page = settings_page(qapp, agent_http)
     identity = card_of(page, "Name and color")
-    identity.findChild(QtWidgets.QLineEdit, "serverName").setText("Big Survival")
+    # No Save button: the name saves on Enter, the color on its click.
+    assert not [b for b in identity.findChildren(QtWidgets.QPushButton) if "Save" in b.text()]
+    name = identity.findChild(QtWidgets.QLineEdit, "serverName")
+    name.setText("Big Survival")
+    name.editingFinished.emit()
+    wait_for(qapp, lambda: window.server_screen.header.name.text() == "Big Survival", 20)
+    identity = card_of(page, "Name and color")
     [green] = [b for b in identity.findChildren(QtWidgets.QPushButton) if b.toolTip() == "Green"]
     green.click()
-    button(identity, "Save name and color").click()
+    wait_for(qapp, lambda: window.server_screen.row.get("color") == "#30C067", 20)
     wait_for(qapp, lambda: window.server_screen.header.name.text() == "Big Survival", 20)
     row = agent_http.get("/api/servers", headers=owner(agent_http)).json()["servers"][0]
     assert (row["name"], row["color"]) == ("Big Survival", "#30C067")
@@ -71,11 +92,12 @@ def test_renaming_and_recoloring_a_server_shows_in_its_tab(qapp, agent_http):
 
 def test_a_card_saves_only_what_changed_and_says_so(qapp, agent_http):
     _window, page = settings_page(qapp, agent_http)
-    crashes = card_of(page, "When it crashes")
+    crashes = card_of(page, "Restart after a crash")
+    [dot] = crashes.findChildren(InfoDot)  # the sentence that explains the switch
+    assert dot.accessibleDescription().startswith("If the server crashes")
     button(crashes, "Save").click()
     assert "Nothing changed." in shown_text(crashes)
-    crashes.findChild(QtWidgets.QCheckBox).setChecked(True)
-    button(crashes, "Save").click()
+    crashes.findChild(Switch).click()  # a switch saves by itself, with no Save
     headers = owner(agent_http)
     wait_for(
         qapp,
@@ -86,9 +108,53 @@ def test_a_card_saves_only_what_changed_and_says_so(qapp, agent_http):
     )
 
 
+def test_saving_one_card_keeps_what_was_typed_in_the_others(qapp, agent_http):
+    _window, page = settings_page(qapp, agent_http)
+    headers = owner(agent_http)
+
+    def monitor():
+        url = "/api/servers/survival/settings"
+        return agent_http.get(url, headers=headers).json()["monitor"]
+
+    def typed_still_there():
+        keep = card_of(page, "How many backups to keep")  # the one on screen now
+        return keep.findChildren(QtWidgets.QSpinBox)[0].value() == typed
+
+    keep = card_of(page, "How many backups to keep")
+    daily = keep.findChildren(QtWidgets.QSpinBox)[0]
+    daily.setValue(daily.value() + 3)  # typed, not saved
+    typed = daily.value()
+    crashes = card_of(page, "Restart after a crash")
+    delay = crashes.findChildren(QtWidgets.QDoubleSpinBox)[0]
+    was = delay.value()
+    delay.setValue(was + 5)
+    button(crashes, "Save").click()
+    wait_for(qapp, lambda: "Settings saved." in shown_text(crashes), 20)
+    assert monitor()["restart_delay"] == pytest.approx(was + 5)
+    switch = crashes.findChild(Switch)
+    on = switch.isChecked()
+    switch.click()  # saves by itself
+    wait_for(qapp, lambda: monitor()["auto_restart"] is not on, 20, pause=0.5)
+    game = card_of(section(page, "Game settings"), "Game settings")
+    difficulty = next(c for c in game.findChildren(QtWidgets.QComboBox) if c.findData("hard") >= 0)
+    difficulty.setCurrentIndex(difficulty.findData("hard"))
+    button(game, "Save").click()
+    game_saved = ("uses them next time", "Restart the server to use them")
+    wait_for(qapp, lambda: any(words in shown_text(page) for words in game_saved))
+    qapp.processEvents()
+    assert typed_still_there()
+    # Put back by hand: the card knows the agent has the new value now.
+    delay.setValue(was)
+    button(crashes, "Save").click()
+    wait_for(qapp, lambda: monitor()["restart_delay"] == pytest.approx(was), 20, pause=0.5)
+    switch.click()
+    wait_for(qapp, lambda: monitor()["auto_restart"] is on, 20, pause=0.5)
+    assert typed_still_there()
+
+
 def test_a_game_setting_is_saved_and_a_bad_one_is_marked(qapp, agent_http):
     _window, page = settings_page(qapp, agent_http)
-    game = card_of(page, "Game settings")
+    game = card_of(section(page, "Game settings"), "Game settings")
     difficulty = next(c for c in game.findChildren(QtWidgets.QComboBox) if c.findData("hard") >= 0)
     difficulty.setCurrentIndex(difficulty.findData("hard"))
     button(game, "Save").click()
@@ -111,11 +177,46 @@ def test_the_memory_slider_saves_the_limit(qapp, agent_http):
     wait_for(
         qapp, lambda: "Memory" in [h.text() for h in page.findChildren(QtWidgets.QLabel, "h2")]
     )
-    memory = card_of(page, "Memory")
+    memory = card_of(section(page, "Game settings"), "Memory")
     slider = memory.findChild(QtWidgets.QSlider, "memorySlider")
     slider.setValue(slider.value() - 4)  # 2 GB less, in 512 MB steps
-    button(memory, "Save memory").click()
-    wait_for(qapp, lambda: "Up to 4 GB" in shown_text(page) or "up to 4 GB" in shown_text(page), 20)
+    # No Save button: it saves a moment after the slider stops moving.
+    assert not [b for b in memory.findChildren(QtWidgets.QPushButton) if "Save" in b.text()]
+    headers = owner(agent_http)
+    wait_for(
+        qapp,
+        lambda: (
+            agent_http.get("/api/servers/survival/memory", headers=headers).json()["limit_mb"]
+            == 4096
+        ),
+        20,
+        pause=0.3,
+    )
+    # The page is read again from the agent: the big number is what was saved.
+    wait_for(
+        qapp,
+        lambda: (
+            "Saved." in shown_text(page)
+            and card_of(page, "Memory").findChild(QtWidgets.QLineEdit, "bigNumber").text() == "4"
+        ),
+    )
+
+
+def test_the_big_number_on_a_slider_is_a_field_and_view_distance_saves(qapp, agent_http):
+    _window, page = settings_page(qapp, agent_http)
+    view = card_of(section(page, "Game settings"), "View distance")
+    slider = view.findChild(QtWidgets.QSlider, "viewSlider")
+    big = view.findChild(QtWidgets.QLineEdit, "bigNumber")
+    assert big.text() == str(slider.value())
+    big.setText("7")
+    big.editingFinished.emit()  # Enter
+    assert slider.value() == 7
+    folder = core_of(agent_http).servers["survival"].config.server_dir
+    wait_for(qapp, lambda: "Saved." in shown_text(page))
+    assert "view-distance=7" in (folder / "server.properties").read_text()
+    # The form under it no longer has a second View distance field.
+    game = card_of(page, "Game settings")
+    assert "View distance" not in shown_text(game)
 
 
 def test_changing_the_version_is_checked_first(qapp, agent_http, monkeypatch):
@@ -132,7 +233,7 @@ def test_changing_the_version_is_checked_first(qapp, agent_http, monkeypatch):
             ]
         ),
     )
-    version = card_of(page, "Kind and version")
+    version = card_of(section(page, "Kind and version"), "Kind and version")
     assert "The version is only known once this server starts" in shown_text(version)
     button(version, "Make the change").click()
     assert not button(version, "Make the change").isEnabled()  # until the list is open
@@ -144,9 +245,23 @@ def test_changing_the_version_is_checked_first(qapp, agent_http, monkeypatch):
     button(version, "Check first").click()
     wait_for(qapp, lambda: "After the change: Fabric" in shown_text(version), 20)
 
+    # A check that answers after another version was picked is an old answer:
+    # it never lets the change go ahead for the new pick.
+    late = []
+    monkeypatch.setattr(page, "ask", lambda *args, **kw: late.append(args[2]))
+    combos[0].setCurrentIndex(0)
+    button(version, "Check first").click()
+    assert combos[0].count() > 1
+    combos[0].setCurrentIndex(1)
+    late[0]({"target": {"type_name": "Fabric", "minecraft_version": "old"}})
+    button(version, "Make the change").click()
+    assert "Press Check first" in shown_text(version)
+    assert len(late) == 1  # nothing was sent
+
 
 def test_change_server_type_is_its_own_card_and_never_guesses_the_version(qapp, agent_http):
     _window, page = settings_page(qapp, agent_http)
+    section(page, "Kind and version")
     wait_for(qapp, lambda: "Start the server once" in shown_text(page), 20)
     card = card_of(page, "Change server type")
     assert "Your world, settings and Minecraft version stay" in shown_text(card)
@@ -157,7 +272,9 @@ def test_change_server_type_is_its_own_card_and_never_guesses_the_version(qapp, 
 
 def test_bedrock_players_says_what_the_server_still_needs(qapp, agent_http):
     _window, page = settings_page(qapp, agent_http)
-    wait_for(qapp, lambda: "Geyser needs the Fabric API mod" in shown_text(page))
+    wait_for(qapp, lambda: loaded(page, "Geyser needs the Fabric API mod"))
+    section(page, "Bedrock players")
+    assert "Geyser needs the Fabric API mod" in shown_text(page)
     assert "Port for Bedrock players" in shown_text(page)
 
 
@@ -211,10 +328,8 @@ def test_a_moderator_sees_settings_they_cant_change_greyed_out(qapp, agent_http)
     wait_for(qapp, lambda: window.role == "helper" and "Survival" in shown_text(window))
     open_server(qapp, window, "Survival")
     page = open_page(qapp, window, "Settings")
-    wait_for(
-        qapp, lambda: "Name and color" in shown_text(page) and "Difficulty" in shown_text(page)
-    )
-    assert not card_of(page, "When it crashes").isEnabled()
+    wait_for(qapp, lambda: "Name and color" in shown_text(page) and loaded(page, "Difficulty"))
+    assert not card_of(page, "Restart after a crash").isEnabled()
     assert card_of(page, "Game settings").isEnabled()
     assert "Duplicate this server" not in shown_text(page)
 
@@ -229,12 +344,11 @@ def test_update_bedrock_by_itself_is_an_owner_switch_off_by_default(qapp, agent_
     window.server_screen.show_row(window.server_screen.row)
     page = open_page(qapp, window, "Settings")
     words = "Update Bedrock by itself"
-    wait_for(qapp, lambda: words in [b.text() for b in page.findChildren(QtWidgets.QCheckBox)])
+    wait_for(qapp, lambda: words in [b.accessibleName() for b in page.findChildren(Switch)])
     frame = card_of(page, "Bedrock updates")
-    switch = next(b for b in frame.findChildren(QtWidgets.QCheckBox) if b.text() == words)
+    switch = switch_named(frame, words)
     assert not switch.isChecked()
-    switch.setChecked(True)
-    button(frame, "Save").click()
+    switch.click()
     core = core_of(agent_http)
     wait_for(qapp, lambda: core.servers["survival"].config.server.bedrock_auto_update)
 
@@ -254,7 +368,7 @@ def test_the_version_picker_says_how_old_a_saved_list_is(qapp, agent_http, monke
             "Change the version" in [b.text() for b in page.findChildren(QtWidgets.QPushButton)]
         ),
     )
-    version = card_of(page, "Kind and version")
+    version = card_of(section(page, "Kind and version"), "Kind and version")
     button(version, "Change the version").click()
     wait_for(qapp, lambda: "ago, couldn't reach Fabric." in shown_text(version), 20)
 
@@ -265,11 +379,7 @@ def test_join_protection_is_one_switch_and_saves(qapp, agent_http):
     # The fake servers run from a start command, which can't take --port.
     assert "started with its own start command" in shown_text(join)
     assert "Blocked addresses" not in shown_text(join)  # Technical only
-    [switch] = [
-        b for b in join.findChildren(QtWidgets.QCheckBox) if b.text() == "Turn on Join protection"
-    ]
-    switch.setChecked(True)
-    button(join, "Save").click()
+    switch_named(join, "Turn on Join protection").click()
     headers = owner(agent_http)
     wait_for(
         qapp,

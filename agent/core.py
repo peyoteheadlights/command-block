@@ -19,7 +19,19 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from . import __version__, colors, memory, protection, supportask, watchers
+from . import (
+    __version__,
+    colors,
+    consolefriends,
+    downtime,
+    farview,
+    linkedpack,
+    memory,
+    protection,
+    safechange,
+    supportask,
+    watchers,
+)
 from .autosleep import AutoSleep
 from .backups.manager import BackupManager
 from .config import ConfigError
@@ -35,6 +47,11 @@ from .minecraft.chat import ChatLog, parse_chat
 from .minecraft.crash import CrashReporter
 from .minecraft.playeractions import PlayerActions
 from .minecraft.process import MinecraftServer, ServerError
+from .minecraft.state import controls
+from .mods import sides
+from .mods.deepscan import DeepScanner
+from .mods.fit import Later as FitCheck
+from .mods.jarscan import JarScanner
 from .mods.manager import ModManager
 from .monitoring.answering import AnswerWatch
 from .monitoring.metrics import MetricsMonitor
@@ -45,6 +62,7 @@ from .notifications.dispatcher import Notifier
 from .ports import PortManager
 from .quests import Quests
 from .scheduler.scheduler import Scheduler
+from .security import antivirus
 from .security.auth import AuthManager
 from .softwarecheck import SoftwareCheck
 from .startrequests import StartRequests
@@ -85,12 +103,16 @@ class ServerContext:
         self.metrics = MetricsMonitor(self.config, self.bus, self.db, self.server)
         self.tps = TpsMonitor(self.config, self.bus, self.db, self.server)
         self.mods = ModManager(self.config, self.bus, self.db, self.server)
+        # The "Still fit?" check, after a mod or version change (agent/mods/fit.py).
+        self.fit = FitCheck(self)
+        self.jarscan = JarScanner(self)
+        self.deepscan = DeepScanner(self)
         self.backups = BackupManager(self.config, self.bus, self.db, self.server, jobs=core.jobs)
         self.crashes = CrashReporter(
             self.config, self.db, self.server, self.metrics, self.players, self.mods
         )
         self.scheduler = Scheduler(
-            self.config, self.bus, self.db, self.server, self.backups, core.notifier
+            self.config, self.bus, self.db, self.server, self.backups, core.notifier, self.players
         )
 
         self.player_actions = PlayerActions(self.server, self.bus)
@@ -99,15 +121,20 @@ class ServerContext:
         # a server nobody is playing on (off unless this server turns it on).
         self.chat = ChatLog()
         self.autosleep = AutoSleep(self)
+        # Far view's "Load the world ahead": Chunky at night (agent/farview.py).
+        self.night_load = farview.NightLoad(self)
         self.spam = watchers.ChatSpam(self)
         # Online and really answering, or online and stuck.
         self.answering = AnswerWatch(self)
         # Diagnose server's last (or running) result (agent/diagnose.py).
         self.diagnosis: dict[str, Any] | None = None
+        # "Restart when nobody's on" watching the player count (agent/downtime.py).
+        self._empty_task: asyncio.Task | None = None
 
         self.server.signal_hook = self._console_signals
         self.server.crash_hook = self.crashes.collect
         self.server.maintenance = core.config.maintenance.enabled
+        self.scheduler.set_maintenance = core.set_maintenance
         self.server.start_guard = lambda: core.ports.start_conflicts(self)
         self.server.start_warnings = lambda: [
             # The guard holding the port isn't "another program".
@@ -115,13 +142,17 @@ class ServerContext:
             *memory.start_warnings(self),
         ]
         self.server.before_launch = self._before_launch
+        self.server.busy = self.busy
         self._update_task: asyncio.Task | None = None
+        self._jar_scan_task: asyncio.Task | None = None
         self._stop_backup: asyncio.Task | None = None
 
     async def _before_launch(self) -> list[str]:
         """As the server starts: a Test server's builds are copied in (a
         failed copy is said in the console, and the start goes on), then
-        Join protection picks the start arguments."""
+        the jar check moves any jar it found something in to quarantine
+        (a jar it can't move stops the start), then Join protection picks
+        the start arguments."""
         from . import testserver
 
         try:
@@ -139,6 +170,33 @@ class ServerContext:
                     message=f"Build folder not copied: {exc}",
                 )
             )
+        if self.config.server_type.edition == "bedrock":
+            from .ports import set_udp_ports
+
+            try:
+                said = await asyncio.to_thread(self.core.waterdog.before_launch, self)
+            except (OSError, ValueError) as exc:  # never stops a start
+                said = f"[agent] allow-list and online-mode not checked: {exc}"
+            if said:
+                self.server._emit_console(said)
+
+            try:
+                udp = await asyncio.to_thread(set_udp_ports, self.config.server_dir)
+            except (OSError, ValueError) as exc:  # never stops a start
+                self.server._emit_console(f"[agent] server-udp-ports not set: {exc}")
+            else:
+                if udp:
+                    self.server._emit_console(
+                        f"[agent] set server-udp-ports={udp} so Bedrock players' game traffic "
+                        f"uses one UDP port (the same number as the game port)"
+                    )
+
+        try:
+            # Far view's "generate unvisited land" in DH's own config files.
+            await asyncio.to_thread(farview.before_start, self)
+        except OSError as exc:
+            self.server._emit_console(f"[agent] far view setting not written: {exc}")
+        await self.jarscan.before_start()
         return await self.core.guard.before_launch(self)
 
     def _whitelist_addon(self, kind: str):
@@ -150,6 +208,7 @@ class ServerContext:
         await self.player_actions.handle(sig, line)
         await self.core.whitelist.heard(self, line)
         await watchers.heard(self, line)
+        consolefriends.heard(self, line)
         said = parse_chat(line)
         if said and said[0] == "player" and self.core.links.hear(self, said[1] or "", said[2]):
             return  # a link code: kept out of the chat log, so never bridged to Discord
@@ -169,6 +228,19 @@ class ServerContext:
     def color(self) -> str | None:
         return self.core.db.server_color(self.server_id)
 
+    def busy(self, job_id: str | None = None) -> str | None:
+        """What is changing this server's files right now, by name, or None.
+        Start, auto-sleep and Remove all ask this one question. ``job_id`` is
+        the asker's own job (a restore starting the server at its end)."""
+        if self.server.held_by:
+            return self.server.held_by
+        job = self.core.jobs.risky_job(self.server_id)
+        if job is not None and job.id != job_id:
+            return job.title
+        if self.backups.running:
+            return f"Backing up {self.name}"
+        return None
+
     def require_free(self) -> None:
         """Refuse (409) while another change holds this server."""
         if self.server.held_by:
@@ -186,7 +258,9 @@ class ServerContext:
 
         async def run(job: JobHandle) -> Any:
             job.step(title)
-            return await change()
+            result = await change()
+            downtime.mark(self, "mods")  # Minecraft reads mods only at start
+            return result
 
         _, result = await self.core.jobs.run(
             "mods", f"{title} on {self.name}", run, server_id=self.server_id, risky=True, user=user
@@ -197,6 +271,7 @@ class ServerContext:
     async def handle(self, event: Event) -> None:
         """This server's own events, passed on by AgentCore."""
         await self.tps.handle(event)
+        self.fit.heard(event)
         if event.type in ("server_stopped", "server_crashed"):
             try:
                 await self.players.clear_online()
@@ -208,15 +283,21 @@ class ServerContext:
             if event.type == "server_started":
                 await watchers.compare(self)
                 await protection.router_open(self)
+                await self.core.waterdog.start(self)
             elif event.type in ("server_stopped", "server_crashed"):
                 watchers.remember(self)
                 await protection.router_close(self)
+                await self.core.waterdog.stop(self)
                 if event.type == "server_stopped" and self.backup_on_stop(event):
                     self._stop_backup = asyncio.create_task(self._backup_after_stop())
             elif event.type == "backup_restored":
                 watchers.remember(self)
         except Exception:  # pragma: no cover - reported, never stops the server's events
             log.exception("the Protection card's start/stop work failed")
+        try:
+            await self.scheduler.heard(event)
+        except Exception:  # pragma: no cover - reported, never stops the server's events
+            log.exception("event schedules failed")
 
     def backup_on_stop(self, event: Event) -> bool:
         """Back up now? Only when it's on, after a planned stop that isn't
@@ -227,7 +308,7 @@ class ServerContext:
             return False
         if event.data.get("reason") not in ("user_stop", "scheduled_stop"):
             return False
-        if event.data.get("restart") or self.server.held_by:
+        if event.data.get("restart") or self.server.held_by or self.core.stopping:
             return False
         if self.core.jobs.risky_job(self.server_id):
             return False
@@ -252,14 +333,42 @@ class ServerContext:
             log.warning("backup after stop failed: %s", exc)
 
     async def start(self) -> None:
+        # Read before this start writes anything new.
+        last_alive = self.core.agent_last_alive()
+        # A change cut off by a power cut is put back before anything can
+        # start the server on half-moved files.
+        self.backups.changes.settle(await safechange.recover(self.server))
+        await asyncio.to_thread(self.backups.clear_parts)
         # Establish facts before the apps can ask for them, so the first
         # status it sees is verified rather than assumed.
         self.server.verify_state()
+        if self.server.left_behind is not None:
+            await self.server.watch_left_behind()
+            await self.bus.publish(
+                Event(
+                    type="server_left_running",
+                    level="warn",
+                    message=(
+                        f"{self.name} was still running when the agent started, so the "
+                        "agent can't reach its console: commands, backups and the player "
+                        "list wait until it restarts. Type /stop in the game to stop it "
+                        "cleanly, then start it from the app."
+                    ),
+                    data={"pid": self.server.pid},
+                )
+            )
         # `java -version` can take seconds on a cold disk; don't block the loop.
         await asyncio.to_thread(self.server.detect_java)
         if self.server.state.value == "OFFLINE":
             # Nothing is running, so "nobody is online" is a verified fact.
-            await self.players.clear_online()
+            # Sessions the last agent left open end when it was last alive,
+            # not now: hours the PC was off aren't playtime.
+            await self.players.clear_online(at=last_alive)
+        elif self.server.left_behind is not None:
+            # Still running, but without its console nobody's joins or leaves
+            # can be seen: the old sessions end there and the count is unknown.
+            await self.players.clear_online(at=last_alive)
+            self.players.verified_at = self.players.verified_source = None
         self.metrics.start(
             player_source=lambda: self.players.online() if self.players.verified else None
         )
@@ -269,22 +378,12 @@ class ServerContext:
         self._update_task = asyncio.create_task(
             self._update_check_loop(), name=f"mod-updates-{self.server_id}"
         )
+        self._jar_scan_task = asyncio.create_task(
+            self._jar_scan_loop(), name=f"jar-scan-{self.server_id}"
+        )
         self.autosleep.start()
+        self.night_load.start()
         self.answering.start()
-
-    async def autostart(self) -> None:
-        if not self.config.server.autostart_minecraft:
-            return
-        try:
-            await self.server.start(actor="agent-autostart")
-        except ServerError as exc:
-            await self.bus.publish(
-                Event(
-                    type="autostart_failed",
-                    level="error",
-                    message=f"Automatic start failed: {exc}",
-                )
-            )
 
     async def _update_check_loop(self) -> None:
         hours = self.config.mods.update_check_hours
@@ -293,26 +392,56 @@ class ServerContext:
         await asyncio.sleep(60)
         while True:
             try:
-                updates = await self.mods.check_updates(background=True)
-                if updates:
-                    await self.bus.publish(
-                        Event(
-                            type="mod_updates_available",
-                            level="info",
-                            message=f"{len(updates)} mod update(s) available",
-                            data={"updates": updates[:10]},
-                        )
-                    )
+                await linkedpack.check_quietly(self, relay=False)
+                await sides.catch_up(self.mods)
+                await self._tell_updates()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.debug("mod update check failed", exc_info=True)
             await asyncio.sleep(hours * 3600)
 
+    async def _tell_updates(self) -> None:
+        """Check for updates and tell about the ones out of the update hold."""
+        updates = await self.mods.check_updates(background=True)
+        ready = [u for u in updates if not u["held_until"]]
+        if ready:
+            await self.bus.publish(
+                Event(
+                    type="mod_updates_available",
+                    level="info",
+                    message=f"{len(ready)} mod update(s) available",
+                    data={"updates": ready[:10]},
+                )
+            )
+
+    async def _jar_scan_loop(self) -> None:
+        await asyncio.sleep(90)
+        while True:
+            try:
+                await self.jarscan.tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.debug("jar check failed", exc_info=True)
+            try:
+                await self.deepscan.tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.warning("scheduled deep scan failed", exc_info=True)
+            await asyncio.sleep(300)
+
     async def stop(self) -> None:
         if self._update_task:
             self._update_task.cancel()
+        if self._empty_task:
+            self._empty_task.cancel()
+        self.fit.stop()
+        if self._jar_scan_task:
+            self._jar_scan_task.cancel()
         await self.autosleep.stop()
+        await self.night_load.stop()
         await self.answering.stop()
         await self.metrics.stop()
         await self.tps.stop()
@@ -338,15 +467,30 @@ class ServerContext:
         status["agent"] = self.core.agent_status(self)
         status["sleep"] = self.autosleep.status()
         status["answering"] = self.answering.status()
+        status["restart_waiting"] = downtime.waiting(self)
+        status.update(self.controls())
         return status
+
+    def controls(self) -> dict[str, Any]:
+        """The label and buttons every app shows (minecraft/state.py)."""
+        return controls(
+            self.server.state,
+            self.answering.status(),
+            self.busy(),
+            self.server.left_behind is not None,
+        )
 
     def summary(self) -> dict[str, Any]:
         """One row of the All servers view: measured facts only."""
         status = self.server.status()
+        place = self.core.db.server_row(self.server_id) or {}
         return {
             "id": self.server_id,
             "name": self.name,
-            "color": self.color,
+            "color": place.get("color"),
+            # Where the owner put it on All servers: null is after the placed ones.
+            "position": place.get("position"),
+            "group": place.get("group_name") or "",
             "state": status["state"],
             "state_verified": status["state_verified"],
             "uptime": status["uptime"],
@@ -387,6 +531,7 @@ class ServerContext:
             "default": self.server_id == self.core.config.default_server_id,
             "recent_crashes": status["recent_crashes"],
             "answering": self.answering.status(),
+            **self.controls(),
         }
 
 
@@ -397,6 +542,7 @@ class AgentCore:
         self.started_at = time.time()
         self.bus = EventBus()
         self.db = Database(config.database_path)
+        antivirus.remember(self.db)
         self.events = EventWriter(self.db)
         self.auth = AuthManager(config, self.db, self.bus)
         # The owner's other PCs, sharing one account (agent/yourpcs.py).
@@ -435,11 +581,31 @@ class AgentCore:
         # server software (agent/softwarecheck.py).
         self.notes = SafetyNotes(self)
         self.software = SoftwareCheck(self)
+        # One copy of each mod file: the daily share and tidy (agent/mods/store.py).
+        from .mods.store import Upkeep
+
+        self.mod_files = Upkeep(self)
         # Moves the agent onto Tailscale and checks it every minute after.
         self.tailscale = TailscaleWatch(self)
+        # DuckDNS and No-IP names for the home address (agent/ddns.py).
+        from .ddns import Names
+
+        self.ddns = Names(self)
+        # playit.gg's program, its link and its tunnels (agent/playit.py).
+        from .playit import Playit
+
+        self.playit = Playit(self)
+        # WaterdogPE in front of a plain Bedrock server, for playit (agent/waterdog.py).
+        from .waterdog import Waterdog
+
+        self.waterdog = Waterdog(self)
         self.wake = Wake(self)
         # Join protection and "Start when someone joins" (agent/joinguard.py).
         self.guard = GuardHub(self)
+        # The download link for made modpacks and resource packs (agent/downloadlink.py).
+        from .downloadlink import LinkServer
+
+        self.download_link = LinkServer(self)
         # Linked accounts work without the bot (the apps list and remove
         # them); the bot itself only exists while a token is set.
         self.links = Links(self.db)
@@ -455,6 +621,10 @@ class AgentCore:
         from .microsoft import Microsoft
 
         self.microsoft = Microsoft(config.data_dir)
+        # Sign in with Modrinth, for putting modpacks on it (agent/modrinthshare.py).
+        from .modrinthshare import ModrinthAccount
+
+        self.modrinth = ModrinthAccount(config)
         # HeadlessMC and its own sign-in, for the join with all mods (agent/headlessmc.py).
         from .headlessmc import HeadlessMc
 
@@ -473,6 +643,21 @@ class AgentCore:
         self._cert_alerted: str | None = None
         self._servers_lock = asyncio.Lock()
         self.restart: Callable[[], None] | None = None
+        # True while stop() runs: the servers stopping then are not "a stop"
+        # to back up after; they start again with the agent.
+        self.stopping = False
+
+    def agent_last_alive(self) -> float | None:
+        """The newest thing the last run of the agent wrote (a measurement
+        or an event, for any server): when it was last known to be running.
+        Read once, before this run writes anything."""
+        if not hasattr(self, "_last_alive"):
+            row = self.db.query_one(
+                "SELECT MAX(ts) AS ts FROM (SELECT MAX(ts) AS ts FROM metrics "
+                "UNION ALL SELECT MAX(ts) FROM events)"
+            )
+            self._last_alive = float(row["ts"]) if row and row["ts"] is not None else None
+        return self._last_alive
 
     def request_restart(self) -> None:
         """Stop so the startup task starts the agent again. agent/main.py
@@ -564,6 +749,8 @@ class AgentCore:
 
     # ------------------------------------------------------------------
     async def start(self) -> None:
+        self.agent_last_alive()
+        await asyncio.to_thread(antivirus.load)  # loading amsi.dll can take a moment
         for ctx in list(self.servers.values()):
             await ctx.start()
         self.rented.start()
@@ -574,18 +761,28 @@ class AgentCore:
         await self.updates.start()
         self.notes.start()
         self.software.start()
+        self.mod_files.start()
         self.tailscale.start()
+        self.ddns.start()
+        self.playit.start()
         self.wake.start()
         self.guard.start()
+        try:
+            await self.download_link.ensure()
+        except Exception:  # the link must never stop the agent starting
+            log.exception("the download link didn't start")
         self.pcs.start()
         await self._check_database_access()
         self.game_events.start()
+        self.quests.start()
         self.start_discord()
         # After the bot, so a request that ran out while the agent was off
         # still tells its asker.
         self.start_requests.load()
         for ctx in list(self.servers.values()):
-            await ctx.autostart()
+            if ctx.server.left_behind is not None and ctx.server.behind_guard:
+                await self.guard.take_back(ctx)
+        await downtime.start_after_agent(self)
 
     async def _check_database_access(self, windows: bool = os.name == "nt") -> None:
         """The database holds every password hash: only the agent's Windows
@@ -701,13 +898,20 @@ class AgentCore:
             await asyncio.sleep(max(hours, 0.25) * 3600)
 
     async def stop(self) -> None:
+        self.stopping = True
         await self.bus.publish(Event(type="agent_stopping", message="Server agent stopping"))
+        # First, while the rest still works: warn players, stop every server
+        # together and let each save (agent/downtime.py).
+        await downtime.stop_for_agent(self)
         if self._cert_task:
             self._cert_task.cancel()
         await self.updates.stop()
         await self.notes.stop()
         await self.software.stop()
+        self.mod_files.stop()
         self.tailscale.stop()
+        self.ddns.stop()
+        self.playit.stop_watch()
         self.wake.stop()
         if self.discord is not None:
             await self.discord.stop()
@@ -718,7 +922,9 @@ class AgentCore:
         await self.jobs.stop()
         for ctx in list(self.servers.values()):
             await ctx.stop()
+        await self.waterdog.shutdown()
         await self.guard.stop()
+        await self.download_link.stop()
         await self.rented.stop()
         self.microsoft.cancel()
         self.headlessmc.cancel()
@@ -760,8 +966,9 @@ class AgentCore:
             ctx = self.get_server(server_id)
             if ctx.server.running:
                 raise ServerError(f"Stop {ctx.name} before removing it from the list")
-            if self.jobs.risky_job(server_id):
-                raise ServerError(f"Wait for {ctx.name}'s running job to finish first")
+            doing = ctx.busy()
+            if doing:
+                raise ServerError(f"Wait for '{doing}' to finish first")
             name, directory = ctx.name, str(ctx.config.server_dir)
             # Stop supervising first: the managers still read this server's
             # settings while they shut down.
@@ -806,9 +1013,17 @@ class AgentCore:
         return self.default.status()
 
     def set_maintenance(self, enabled: bool, user: str = "system") -> dict[str, Any]:
+        """The one owner of maintenance mode: the button, a setting and a
+        schedule all come here. Saved, so a restart keeps it."""
+        previous = self.config.maintenance.enabled
+        self.config.set("maintenance.enabled", bool(enabled))
+        try:
+            self.config.save()
+        except OSError:
+            self.config.set("maintenance.enabled", previous)
+            raise
         for ctx in self.servers.values():
             ctx.server.maintenance = bool(enabled)
-        self.config.set("maintenance.enabled", bool(enabled))
         self.db.audit("maintenance_mode", user=user, detail="on" if enabled else "off")
         self.bus.publish_soon(
             Event(

@@ -24,6 +24,10 @@ public enum ServerForm {
         public let titleKey: String
         public let fields: [Field]
         public let noteKey: String?
+        /// Shown only in Technical mode.
+        public var technical: Bool = false
+        /// Only the owner, only on a Bedrock server.
+        public var bedrockOwner: Bool = false
     }
 
     public static let GROUPS: [Group] = [
@@ -51,7 +55,20 @@ public enum ServerForm {
             Field("server.stop_timeout", "number", "serverset.stop_timeout", "serverset.stop_timeout_hint"),
             Field("server.autostart_minecraft", "bool", "mobile.serverset.autostart", "mobile.serverset.autostart_hint"),
         ], noteKey: nil),
+        Group(titleKey: "serverset.technical_running", fields: [
+            Field("monitor.ignored_exit_codes", "text", "serverset.ignored_codes", "serverset.ignored_codes_hint"),
+            Field("server.low_priority", "bool", "serverset.low_priority", "serverset.low_priority_hint"),
+        ], noteKey: nil, technical: true),
+        // Players' games update themselves; off by default (agent/softwarecheck.py).
+        Group(titleKey: "serverset.bedrock_update", fields: [
+            Field("server.bedrock_auto_update", "bool", "serverset.bedrock_update_label"),
+        ], noteKey: "serverset.bedrock_update_note", bedrockOwner: true),
     ]
+
+    /// Whether `group` shows for this account, mode and server.
+    public static func shown(_ group: Group, technical: Bool, me: Me?, edition: String?) -> Bool {
+        (!group.technical || technical) && (!group.bedrockOwner || (me?.isOwner == true && edition == "bedrock"))
+    }
 
     public static let NAME = "server.name"
     public static let NAME_LIMIT = 60
@@ -367,6 +384,17 @@ public enum Crossplay {
     }
 }
 
+/// "Let console friends join": what to say about its sign-in, read from the agent.
+public enum ConsoleFriendsText {
+    public static func state(_ strings: Strings, _ info: ConsoleFriends) -> String? {
+        if !info.available { return strings.t("console.needs_crossplay") }
+        if !info.on { return nil }
+        if let tag = info.gamertag { return strings.t("console.signed_in", ["gamertag": tag]) }
+        if let code = info.signIn { return strings.t("console.sign_in", ["url": code.url, "code": code.code]) }
+        return strings.t("console.waiting")
+    }
+}
+
 /// Duplicate: a copy of the server with its own port and color, owner only.
 public enum Duplicate {
     public static let COPY = "copy"
@@ -620,6 +648,30 @@ public enum AddServer {
     public static func bedrockType(_ options: NewServerOptions) -> ServerTypeInfo? { options.types.first { $0.edition == "bedrock" } }
 
     public static func memoryShown(_ type: ServerTypeInfo) -> Bool { type.takesMemoryLimit && type.edition != "bedrock" }
+
+    /// "Who's this server for?" (desktop/welcome.py PLAYED_BY), as value and words key.
+    public static let playedBy: [(value: String, key: String)] = [
+        ("friends", "welcome.for_friends"), ("kids", "welcome.for_kids"), ("community", "welcome.for_community"),
+    ]
+
+    /// A few friends or kids: the whitelist goes on, with the names typed.
+    public static func namesAsked(_ playedBy: String) -> Bool { playedBy == "friends" || playedBy == "kids" }
+
+    /// The names typed, split by commas or semicolons; only when they're asked for.
+    public static func players(_ playedBy: String, _ typed: String) -> [String] {
+        guard namesAsked(playedBy) else { return [] }
+        return typed.split(whereSeparator: { $0 == "," || $0 == ";" })
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    /// The first-run kind a type belongs to, for its tips: vanilla, mods, plugins or bedrock.
+    public static func tipKind(_ type: ServerTypeInfo) -> String { type.edition == "bedrock" ? "bedrock" : type.content ?? "vanilla" }
+
+    /// This type's tip key, when the agent says its kind's tips show and it isn't hidden.
+    public static func tip(_ options: NewServerOptions, _ type: ServerTypeInfo, hidden: Set<String>) -> String? {
+        let key = "tip.kind.\(tipKind(type))"
+        return options.kindTips.contains(tipKind(type)) && !hidden.contains(key) ? key : nil
+    }
 
     /// One kind's column of the table, as label and value; Technical mode
     /// adds the loader, files and source.

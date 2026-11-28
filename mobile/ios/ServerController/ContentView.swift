@@ -9,6 +9,7 @@ private struct ContentConfirm: Identifiable {
     let body: String
     let confirm: String
     var danger = true
+    var cancel: (() -> Void)? = nil
     let run: () -> Void
 
     var id: String { title }
@@ -16,7 +17,15 @@ private struct ContentConfirm: Identifiable {
 
 /// Which file the Files picker is choosing.
 private enum Picking {
-    case jar, modpack, pack
+    case jar, modpack, pack, players, resourcePack
+}
+
+/// "Who needs it?" for one mod; `ready`: the server is stopped, so Players (a move) is offered.
+private struct SideAsk: Identifiable {
+    let mod: Mod
+    let ready: Bool
+
+    var id: String { mod.filename }
 }
 
 /// Mods, Plugins or Packs, named for the server type (mirrors
@@ -32,7 +41,10 @@ struct ContentView: View {
     @Environment(AppModel.self) private var model
     @State private var asking: ContentConfirm?
     @State private var picking: Picking?
+    @State private var choosingSide: SideAsk?
     @State private var query = ""
+    @State private var packQuery = ""
+    @State private var farRadius = ""
     @State private var web: WebLink?
 
     private var content: ContentPages { model.pages(serverId).content }
@@ -49,7 +61,7 @@ struct ContentView: View {
                         case nil:
                             ProgressView().frame(maxWidth: .infinity)
                         case .some(ContentKind.none):
-                            EmptyCard(title: model.t("mobile.content.none_for_type"), palette: palette)
+                            vanilla(content, palette)
                         case .some(.packs):
                             packs(content, palette)
                         case .some(let kind):
@@ -72,15 +84,32 @@ struct ContentView: View {
                         asking = nil
                         content.removing = nil
                         content.updating = nil
+                        content.unknown = nil
                     }
                 }),
                 presenting: pending(content),
                 actions: { ask in
                     Button(ask.confirm, role: ask.danger ? .destructive : nil, action: ask.run)
-                    Button(model.t("mobile.common.cancel"), role: .cancel) {}
+                    Button(model.t("mobile.common.cancel"), role: .cancel) { ask.cancel?() }
                 },
-                message: { ask in Text(verbatim: ask.body) }
+                message: { ask in Text(hiding: ask.body) }
             )
+            .confirmationDialog(
+                model.t("sides.who_title", ["name": choosingSide.map { $0.mod.name.isEmpty ? $0.mod.filename : $0.mod.name } ?? ""]),
+                isPresented: Binding(get: { choosingSide != nil }, set: { if !$0 { choosingSide = nil } }),
+                titleVisibility: .visible,
+                presenting: choosingSide
+            ) { ask in
+                // Players moves the jar out of the mods folder, so only while the server is stopped.
+                ForEach(Sides.picks(ask.mod).filter { $0 != "players" || ask.ready }, id: \.self) { side in
+                    Button(model.t("sides.mark_" + side)) {
+                        let strings = model.strings
+                        let name = ask.mod.name.isEmpty ? ask.mod.filename : ask.mod.name
+                        Task { await content.setSide(ask.mod.filename, name: name, side: side, strings) }
+                    }
+                }
+                Button(model.t("mobile.common.cancel"), role: .cancel) {}
+            }
             .sheet(item: $content.versions) { ask in
                 VersionsSheet(content: content, ask: ask, palette: palette)
             }
@@ -100,6 +129,9 @@ struct ContentView: View {
                 sheetBody(content, sheet)
             }
         }
+        .sheet(item: $content.sharing, onDismiss: { content.finishSharing() }) { done in
+            ShareSheet(file: done.file)
+        }
         .task(id: serverId) {
             content.said = nil
             await reload(kind)
@@ -114,7 +146,7 @@ struct ContentView: View {
         }
     }
 
-    /// The question showing now: one asked here, a Remove or an Update.
+    /// The question showing now: one asked here, a Remove, an Update or a file no site lists.
     private func pending(_ content: ContentPages) -> ContentConfirm? {
         if let asking = asking { return asking }
         let strings = model.strings
@@ -144,7 +176,474 @@ struct ContentView: View {
                 Task { await content.update(mod, strings) }
             }
         }
+        if let ask = content.unknown {
+            var lines = [ask.file.name, ask.warning]
+            if let hash = ask.sha512 { lines.append(strings.t("desktop.mods.unknown_hash", ["hash": hash])) }
+            return ContentConfirm(
+                title: strings.t("desktop.mods.unknown_title"),
+                body: lines.joined(separator: "\n\n"),
+                confirm: strings.t("desktop.mods.unknown_add"),
+                cancel: { content.throwAway(ask) }
+            ) {
+                Task { await content.uploadMod(ask.file, strings, confirm: true) }
+            }
+        }
         return nil
+    }
+
+    // MARK: - Doing the same job
+
+    /// The same mod twice, or mods that do the same job: which one to turn
+    /// off when the facts say. Turn off has Undo like the mod's own row.
+    @ViewBuilder
+    private func sameJobCard(_ content: ContentPages, _ list: ModList, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        let manage = model.can(Permissions.MODS_MANAGE)
+        SectionTitle(text: model.t("same.title"), palette: palette)
+        CardBox(palette: palette) {
+            ForEach(list.overlaps) { overlap in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(hiding: overlap.say).foregroundStyle(palette.textPrimary)
+                    Hint(text: overlap.why, palette: palette)
+                    if manage {
+                        ForEach(SameJob.turnOff(overlap)) { row in
+                            if let mod = list.mods.first(where: { $0.filename == row.filename && $0.enabled }) {
+                                Text(hiding: "\(row.name) \(row.version)").foregroundStyle(palette.textPrimary)
+                                Presses(presses: [
+                                    Press(title: model.t("mods.turn_off"), enabled: ready) {
+                                        Task { await content.setEnabled(mod, false, strings) }
+                                    },
+                                ], palette: palette)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Linked modpack
+
+    /// The modpack this server came from: Modpack update and Unlink.
+    @ViewBuilder
+    private func linkedPackCard(_ content: ContentPages, _ pack: LinkedModpack, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        SectionTitle(text: model.t("linked.title"), palette: palette)
+        CardBox(palette: palette) {
+            ForEach(LinkedPacks.lines(strings, pack), id: \.self) { line in
+                Text(hiding: line).foregroundStyle(palette.textPrimary)
+            }
+            if model.can(Permissions.MODS_MANAGE) {
+                Presses(presses: (pack.update != nil && model.can(Permissions.SETTINGS_SERVER) ? [
+                    Press(title: model.t("linked.update"), enabled: ready) {
+                        Task { await content.previewPackUpdate(pack.update?.versionId, strings) }
+                    },
+                ] : []) + [
+                    Press(title: model.t("linked.unlink"), danger: true, enabled: ready) {
+                        asking = ContentConfirm(
+                            title: strings.t("linked.unlink_title", ["name": pack.name]),
+                            body: strings.t("linked.unlink_body"),
+                            confirm: strings.t("linked.unlink")
+                        ) {
+                            Task { await content.unlinkPack(strings) }
+                        }
+                    },
+                ], palette: palette)
+            }
+        }
+    }
+
+    // MARK: - Make a modpack
+
+    /// Vanilla runs no mods: Make a modpack, and why Required to join needs Fabric.
+    @ViewBuilder
+    private func vanilla(_ content: ContentPages, _ palette: Palette) -> some View {
+        let idle = content.busy == nil
+        SaidRow(said: content.said, palette: palette)
+        CardBox(palette: palette) {
+            Text(hiding: model.t("make.required_vanilla")).foregroundStyle(palette.textSecondary)
+            if model.can(Permissions.SETTINGS_SERVER) {
+                Button(model.t("make.change_type")) { model.serversPath.append(.settings(serverId)) }
+            }
+        }
+        if model.can(Permissions.MODS_MANAGE) {
+            makeModpackCard(content, ready: idle, palette)
+            downloadLinkCard(content, ready: idle, palette)
+            modrinthCard(content, ready: idle, palette)
+        }
+    }
+
+    /// Make a modpack from this server, then share it through the share
+    /// sheet or have the Discord bot post it.
+    @ViewBuilder
+    private func makeModpackCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        SectionTitle(text: model.t("make.title"), palette: palette)
+        CardBox(palette: palette) {
+            Text(hiding: model.t("make.intro")).foregroundStyle(palette.textSecondary)
+            if let made = content.made {
+                ForEach(MadeModpacks.lines(strings, made), id: \.self) { line in
+                    Text(hiding: line).foregroundStyle(palette.textPrimary)
+                }
+            }
+            Presses(presses: [
+                Press(title: model.t("make.start"), enabled: ready) {
+                    Task { await content.askMakeModpack(strings) }
+                },
+            ] + (content.made == nil ? [] : [
+                Press(title: model.t("make.share"), enabled: ready) {
+                    Task { await content.shareModpack(strings) }
+                },
+            ]) + (content.made?.discord == true ? [
+                Press(title: model.t("make.discord"), enabled: ready) {
+                    Task { await content.postModpack(strings) }
+                },
+            ] : []), palette: palette)
+            if content.made != nil {
+                Text(hiding: model.t("make.guide_title")).foregroundStyle(palette.textPrimary)
+                Text(hiding: model.t("make.guide")).foregroundStyle(palette.textSecondary)
+            }
+        }
+    }
+
+    // MARK: - Download link
+
+    /// The download link (on, off, New link, Copy) and the server resource pack.
+    @ViewBuilder
+    private func downloadLinkCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        let owner = model.can(Permissions.PC_SETTINGS)
+        let game = model.can(Permissions.SETTINGS_GAME)
+        SectionTitle(text: model.t("link.title"), palette: palette)
+        CardBox(palette: palette) {
+            Text(hiding: model.t("link.intro")).foregroundStyle(palette.textSecondary)
+            if let link = content.link {
+                ForEach(DownloadLinks.lines(strings, link, owner: owner), id: \.self) { line in
+                    Text(hiding: line).foregroundStyle(palette.textPrimary)
+                }
+                Presses(presses: [
+                    Press(title: model.t(link.on ? "link.turn_off" : "link.turn_on"), enabled: ready && owner && (link.on || link.whyNot == nil)) {
+                        Task { await content.switchLink(!link.on, strings) }
+                    },
+                ] + (link.on && owner ? [
+                    Press(title: model.t("link.new"), enabled: ready) {
+                        Task { await content.newLink(strings) }
+                    },
+                ] : []) + (link.modpackUrl.map { url in [
+                    Press(title: model.t("link.copy"), enabled: true) {
+                        UIPasteboard.general.string = url
+                        content.said = Said(text: strings.t("link.copied"), good: true)
+                    },
+                ] } ?? []), palette: palette)
+                Text(hiding: model.t("pack.title")).foregroundStyle(palette.textPrimary)
+                Text(hiding: model.t("pack.intro")).foregroundStyle(palette.textSecondary)
+                ForEach(DownloadLinks.packLines(strings, link), id: \.self) { line in
+                    Text(hiding: line).foregroundStyle(palette.textPrimary)
+                }
+                if let pack = link.resourcePack {
+                    Toggle(model.t("pack.required"), isOn: Binding(
+                        get: { pack.required },
+                        set: { on in Task { await content.setPackRequired(on, strings) } }
+                    ))
+                    .disabled(!ready || !game)
+                }
+                Presses(presses: [
+                    Press(title: model.t("pack.pick"), enabled: ready && game) { picking = .resourcePack },
+                    Press(title: model.t("pack.use_link"), enabled: ready && game) { content.askingPackLink = true },
+                ] + (link.resourcePack == nil ? [] : [
+                    Press(title: model.t("pack.remove"), enabled: ready && game) {
+                        Task { await content.removePack(strings) }
+                    },
+                ]), palette: palette)
+                Text(hiding: model.t("pack.tailscale_only")).foregroundStyle(palette.textSecondary)
+            }
+        }
+        .task(id: serverId) { await content.loadLink() }
+        .sheet(isPresented: Binding(get: { content.askingPackLink }, set: { content.askingPackLink = $0 })) {
+            NavigationStack { PackLinkSheet(content: content) }
+        }
+    }
+
+    // MARK: - The anti-cheat picker
+
+    /// Free from Modrinth, paid from the seller's page, or your own jar.
+    @ViewBuilder
+    private func antiCheatCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        Group {
+            if let picker = content.antiCheat {
+                let ownJar = picker.mayInstall && picker.mayAddOwnJar
+                SectionTitle(text: model.t("anticheat.title"), palette: palette)
+                CardBox(palette: palette) {
+                    Text(hiding: model.t("anticheat.intro")).foregroundStyle(palette.textSecondary)
+                    Text(hiding: AntiCheats.status(strings, picker)).foregroundStyle(palette.textPrimary)
+                    if picker.supported {
+                        Text(hiding: model.t("anticheat.cpu")).foregroundStyle(palette.textSecondary)
+                        if !picker.mayInstall {
+                            Text(hiding: model.t("anticheat.no_install")).foregroundStyle(palette.textSecondary)
+                        }
+                        Text(hiding: model.t("anticheat.free")).foregroundStyle(palette.textPrimary)
+                        ForEach(picker.free) { item in
+                            ForEach(AntiCheats.free(strings, item), id: \.self) { line in
+                                Text(hiding: line).foregroundStyle(palette.textPrimary)
+                            }
+                            if !item.on && picker.mayInstall {
+                                Presses(presses: [
+                                    Press(title: strings.t("anticheat.add", ["name": item.name]), enabled: ready) {
+                                        Task { await content.openProject(slug: item.project) }
+                                    },
+                                ], palette: palette)
+                            }
+                        }
+                        if !picker.paid.isEmpty {
+                            Text(hiding: model.t("anticheat.paid")).foregroundStyle(palette.textPrimary)
+                            Text(hiding: model.t("anticheat.buy_note")).foregroundStyle(palette.textSecondary)
+                            ForEach(picker.paid) { item in
+                                ForEach(AntiCheats.paid(strings, item), id: \.self) { line in
+                                    Text(hiding: line).foregroundStyle(palette.textPrimary)
+                                }
+                                Presses(presses: [
+                                    Press(title: model.t("anticheat.seller")) {
+                                        if let url = URL(string: item.link) { web = WebLink(url: url) }
+                                    },
+                                ] + (item.setup.flatMap(URL.init(string:)).map { url in [
+                                    Press(title: model.t("anticheat.setup")) { web = WebLink(url: url) },
+                                ] } ?? []) + (ownJar && !item.on ? [
+                                    Press(title: model.t("anticheat.from_file"), enabled: ready) { picking = .jar },
+                                ] : []), palette: palette)
+                            }
+                            Text(hiding: model.t("anticheat.prices_note")).foregroundStyle(palette.textSecondary)
+                        }
+                        Text(hiding: model.t("anticheat.custom")).foregroundStyle(palette.textPrimary)
+                        Text(hiding: model.t("anticheat.custom_about")).foregroundStyle(palette.textSecondary)
+                        if ownJar {
+                            Presses(presses: [
+                                Press(title: model.t("anticheat.from_file"), enabled: ready) { picking = .jar },
+                            ], palette: palette)
+                        } else {
+                            Text(hiding: model.t("anticheat.no_own_jar")).foregroundStyle(palette.textSecondary)
+                        }
+                    }
+                }
+            }
+        }
+        .task(id: serverId) { await content.loadAntiCheat() }
+    }
+
+    // MARK: - Far view
+
+    /// Off / Distant Horizons / Voxy, DH's unvisited land, Chunky at night, and (Technical) Rebuild.
+    @ViewBuilder
+    private func farViewCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        Group {
+            if let card = content.farView {
+                let may = card.mayChange
+                let load = card.loadAhead
+                let radius = Int(farRadius) ?? load?.radius ?? 2000
+                SectionTitle(text: model.t("farview.title"), palette: palette)
+                CardBox(palette: palette) {
+                    Text(hiding: model.t("farview.intro")).foregroundStyle(palette.textSecondary)
+                    Text(hiding: FarViews.status(strings, card)).foregroundStyle(palette.textPrimary)
+                    if card.supported {
+                        Text(hiding: model.t(may ? "farview.stop_first" : "farview.no_change")).foregroundStyle(palette.textSecondary)
+                        ForEach(card.choices) { item in
+                            ForEach(FarViews.lines(strings, item, now: card.choice), id: \.self) { line in
+                                Text(hiding: line).foregroundStyle(palette.textPrimary)
+                            }
+                            if may && item.available && item.id != card.choice {
+                                Presses(presses: [
+                                    Press(title: strings.t("farview.use", ["name": item.name]), enabled: ready) {
+                                        Task { await content.chooseFarView(item.id, strings) }
+                                    },
+                                ], palette: palette)
+                            }
+                        }
+                        if may && card.choice != "off" {
+                            Hint(text: model.t("farview.off_note"), palette: palette)
+                            Presses(presses: [
+                                Press(title: model.t("farview.turn_off"), enabled: ready) {
+                                    Task { await content.chooseFarView("off", strings) }
+                                },
+                            ], palette: palette)
+                        }
+                        if card.choice == "distanthorizons" {
+                            Toggle(model.t("farview.unvisited"), isOn: Binding(get: { card.unvisited }, set: { on in
+                                Task { await content.saveFarView(unvisited: on, loadAhead: load?.on ?? false, radius: radius, strings) }
+                            }))
+                            .disabled(!may || !ready)
+                            Hint(text: model.t("farview.unvisited_hint"), palette: palette)
+                        }
+                        Toggle(model.t("farview.load_ahead"), isOn: Binding(get: { load?.on ?? false }, set: { on in
+                            Task { await content.saveFarView(unvisited: card.unvisited, loadAhead: on, radius: radius, strings) }
+                        }))
+                        .disabled(!may || !ready || !(load?.chunky ?? false))
+                        Hint(text: strings.t("farview.load_ahead_hint", ["night": load?.night ?? ""]), palette: palette)
+                        if !(load?.chunky ?? false) {
+                            Hint(text: model.t("farview.needs_chunky"), palette: palette)
+                            if may {
+                                Presses(presses: [
+                                    Press(title: model.t("farview.add_chunky"), enabled: ready) {
+                                        Task { await content.openProject(slug: "chunky") }
+                                    },
+                                ], palette: palette)
+                            }
+                        } else if load?.running ?? false {
+                            Text(hiding: model.t("farview.loading_now")).foregroundStyle(palette.textPrimary)
+                        }
+                        TextField(model.t("farview.radius"), text: Binding(
+                            get: { farRadius.isEmpty ? String(load?.radius ?? 2000) : farRadius },
+                            set: { farRadius = String($0.filter(\.isNumber).prefix(5)) }
+                        ))
+                        .keyboardType(.numberPad)
+                        .disabled(!may)
+                        if may {
+                            Presses(presses: [
+                                Press(title: model.t("farview.save"), enabled: ready && (100...30000).contains(radius)) {
+                                    Task { await content.saveFarView(unvisited: card.unvisited, loadAhead: load?.on ?? false, radius: radius, strings) }
+                                },
+                            ], palette: palette)
+                        }
+                        Hint(text: model.t("farview.backups_note"), palette: palette)
+                        if model.technical && may {
+                            Hint(text: model.t("farview.rebuild_hint"), palette: palette)
+                            Presses(presses: [
+                                Press(title: model.t("farview.rebuild"), enabled: ready) {
+                                    asking = ContentConfirm(
+                                        title: strings.t("farview.rebuild"),
+                                        body: strings.t("farview.rebuild_ask"),
+                                        confirm: strings.t("farview.rebuild")
+                                    ) {
+                                        Task { await content.rebuildFarView(strings) }
+                                    }
+                                },
+                            ], palette: palette)
+                        }
+                    }
+                }
+            }
+        }
+        .task(id: serverId) { await content.loadFarView() }
+    }
+
+    // MARK: - Put it on Modrinth
+
+    /// Sign in with Modrinth, upload the modpack and own jars, the Server Project helper.
+    @ViewBuilder
+    private func modrinthCard(_ content: ContentPages, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        let owner = model.can(Permissions.PC_SETTINGS)
+        SectionTitle(text: model.t("modrinth.title"), palette: palette)
+        CardBox(palette: palette) {
+            Text(hiding: model.t("modrinth.intro")).foregroundStyle(palette.textSecondary)
+            if let share = content.modrinth {
+                let account = share.account
+                let signedIn = account?.signedIn == true
+                ForEach(ModrinthCards.lines(strings, share, owner: owner), id: \.self) { line in
+                    Text(hiding: line).foregroundStyle(palette.textPrimary)
+                }
+                let waiting = share.ownJars.first(where: { $0.url == nil })
+                let upload = share.made.map { strings.t("modrinth.upload_named", ["name": $0.name, "version": $0.version]) } ?? model.t("modrinth.upload")
+                Presses(presses: (owner && account?.available == true && !signedIn ? [
+                    Press(title: model.t("modrinth.sign_in"), enabled: ready) {
+                        Task { await content.signInModrinth(strings) }
+                    },
+                ] : []) + [
+                    Press(title: upload, enabled: ready && signedIn && share.made != nil) {
+                        if share.project != nil {
+                            Task { await content.uploadToModrinth("", "", strings) }
+                        } else {
+                            content.askingModrinth = ModrinthAsk(jar: nil, name: share.made?.name ?? "")
+                        }
+                    },
+                ] + (waiting.map { jar in [
+                    Press(title: model.t("modrinth.own_jar"), enabled: ready && signedIn) {
+                        content.askingModrinth = ModrinthAsk(jar: jar, name: jar.name)
+                    },
+                ] } ?? []) + (owner && signedIn ? [
+                    Press(title: model.t("modrinth.sign_out"), enabled: ready) {
+                        Task { await content.signOutModrinth(strings) }
+                    },
+                ] : []), palette: palette)
+                Text(hiding: model.t("modrinth.review_note")).foregroundStyle(palette.textSecondary)
+                Text(hiding: model.t("modrinth.server_title")).foregroundStyle(palette.textPrimary)
+                Text(hiding: model.t("modrinth.server_intro")).foregroundStyle(palette.textSecondary)
+                ForEach(ModrinthCards.serverLines(strings, share), id: \.self) { line in
+                    Text(hiding: line).foregroundStyle(palette.textPrimary)
+                }
+                if share.address != nil {
+                    Text(hiding: ModrinthCards.steps(strings, share)).foregroundStyle(palette.textSecondary)
+                    Presses(presses: [
+                        Press(title: model.t("modrinth.server_paste"), enabled: ready) { content.askingServerLink = true },
+                    ], palette: palette)
+                }
+            }
+        }
+        .task(id: serverId) { await content.loadModrinth() }
+        .task(id: model.modrinthReturn) {
+            guard let url = model.modrinthReturn else { return }
+            model.modrinthReturn = nil
+            await content.finishModrinth(url, strings)
+        }
+        .sheet(item: Binding(get: { content.askingModrinth }, set: { content.askingModrinth = $0 })) { ask in
+            NavigationStack { ModrinthProjectSheet(content: content, ask: ask) }
+        }
+        .sheet(isPresented: Binding(get: { content.askingServerLink }, set: { content.askingServerLink = $0 })) {
+            NavigationStack { ServerProjectSheet(content: content) }
+        }
+    }
+
+    // MARK: - Still fit?
+
+    /// After a mod or version change: the ones to change (one Update all), the
+    /// ones with no version that fits (Turn off) and the ones nothing said about.
+    @ViewBuilder
+    private func stillFitCard(_ content: ContentPages, _ list: ModList, _ fit: ModFit, _ kind: ContentKind, ready: Bool, _ palette: Palette) -> some View {
+        let strings = model.strings
+        let manage = model.can(Permissions.MODS_MANAGE)
+        SectionTitle(text: model.t("fit.title"), palette: palette)
+        CardBox(palette: palette) {
+            Text(hiding: StillFit.lead(strings, fit, plugins: kind == .plugins))
+                .foregroundStyle(palette.textPrimary)
+            ForEach(fit.needsChange) { row in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(hiding: row.name).foregroundStyle(palette.textPrimary)
+                    Hint(text: Content.change(strings, row.from, row.to) + "\n" + row.why, palette: palette)
+                }
+            }
+            if !fit.noFit.isEmpty {
+                Text(hiding: model.t("fit.no_fit")).foregroundStyle(palette.textPrimary)
+            }
+            ForEach(fit.noFit) { row in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(hiding: row.name).foregroundStyle(palette.textPrimary)
+                    Hint(text: row.why, palette: palette)
+                    if manage, let mod = list.mods.first(where: { $0.filename == row.filename && $0.enabled }) {
+                        Presses(presses: [
+                            Press(title: model.t("mods.turn_off"), enabled: ready) {
+                                Task { await content.setEnabled(mod, false, strings) }
+                            },
+                        ], palette: palette)
+                    }
+                }
+            }
+            if !fit.cantTell.isEmpty {
+                Text(hiding: model.t("fit.cant_tell")).foregroundStyle(palette.textPrimary)
+            }
+            ForEach(fit.cantTell) { row in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(hiding: row.name).foregroundStyle(palette.textPrimary)
+                    Hint(text: row.why, palette: palette)
+                }
+            }
+            if manage {
+                Presses(presses: (fit.needsChange.isEmpty ? [] : [
+                    Press(title: model.t("fit.change"), enabled: ready) { content.openFit(fit) },
+                ]) + [
+                    Press(title: model.t("fit.hide"), enabled: true) { Task { await content.hideFit(strings) } },
+                ], palette: palette)
+            }
+        }
     }
 
     // MARK: - Mods and plugins
@@ -152,12 +651,12 @@ struct ContentView: View {
     @ViewBuilder
     private func mods(_ content: ContentPages, _ kind: ContentKind, _ palette: Palette, now: Double) -> some View {
         let read = content.mods
-        let state = content.serverState
-        let changes = Content.changes(canManage: model.can(Permissions.MODS_MANAGE), serverState: state)
+        let label = content.serverLabel
+        let changes = Content.changes(canManage: model.can(Permissions.MODS_MANAGE), label: label, can: content.serverCan)
         let idle = content.busy == nil
         let strings = model.strings
 
-        changesCard(content, changes, state, palette)
+        changesCard(content, changes, label, palette)
         taskNote(content, palette)
         SaidRow(said: content.said, palette: palette)
 
@@ -166,6 +665,25 @@ struct ContentView: View {
             ProblemCard(problem: problem, palette: palette) { await content.loadMods() }
         }
         if let list = read.value {
+            if list.storedSeparately {
+                Hint(text: model.t("mods.stored_separately"), palette: palette)
+            }
+            if let pack = list.modpack {
+                linkedPackCard(content, pack, ready: changes == .ready && idle, palette)
+            }
+            if model.can(Permissions.MODS_MANAGE) {
+                makeModpackCard(content, ready: idle, palette)
+                downloadLinkCard(content, ready: idle, palette)
+                modrinthCard(content, ready: idle, palette)
+            }
+            antiCheatCard(content, ready: idle, palette)
+            farViewCard(content, ready: idle, palette)
+            if let fit = list.fit {
+                stillFitCard(content, list, fit, kind, ready: changes == .ready && idle, palette)
+            }
+            if !list.overlaps.isEmpty {
+                sameJobCard(content, list, ready: changes == .ready && idle, palette)
+            }
             if changes == .ready {
                 Presses(presses: [
                     Press(
@@ -187,7 +705,7 @@ struct ContentView: View {
                 CardBox(palette: palette) {
                     ForEach(missing, id: \.modId) { dep in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(verbatim: dep.name.isEmpty ? dep.modId : dep.name)
+                            Text(hiding: dep.name.isEmpty ? dep.modId : dep.name)
                                 .foregroundStyle(palette.textPrimary)
                             if let why = dep.reason ?? dep.rangeText {
                                 Hint(text: why, palette: palette)
@@ -208,11 +726,33 @@ struct ContentView: View {
                 text: kind == .plugins ? model.t("page.plugins") + " · \(list.mods.count)" : strings.tn("mods.installed", count: list.mods.count),
                 palette: palette
             )
-            if list.mods.isEmpty {
-                EmptyCard(title: model.t("mods.none"), hint: changes == .ready ? model.t("mods.none_hint") : nil, palette: palette)
+            // Plugins only ever run on the server, so the filter is for mods.
+            if kind == .mods && !list.mods.isEmpty {
+                sidesFilter(content)
             }
-            ForEach(list.mods) { mod in
-                modCard(content, mod, changes, palette)
+            if kind == .mods, let everywhere = content.everywhere {
+                everywhereList(content, everywhere, palette)
+            } else if list.mods.isEmpty {
+                EmptyCard(title: model.t("mods.none"), hint: changes == .ready ? model.t("mods.none_hint") : nil, palette: palette)
+            } else {
+                let shown = Sides.shown(list.mods, content.sideFilter)
+                if shown.isEmpty {
+                    Hint(text: model.t("sides.none_filtered"), palette: palette)
+                }
+                ForEach(shown) { mod in
+                    modCard(content, mod, changes, palette)
+                }
+            }
+            if !list.oddSetups.isEmpty {
+                CardBox(palette: palette) {
+                    Text(hiding: model.t("sides.odd_title")).foregroundStyle(palette.tone(.warning))
+                    ForEach(list.oddSetups, id: \.text) { odd in
+                        Text(hiding: "• " + odd.text).font(.footnote).foregroundStyle(palette.tone(.warning))
+                    }
+                }
+            }
+            if kind != .packs {
+                playersOnly(content, list.playerOnly, list.playerOnlyOptions, kind, changes, palette)
             }
 
             if changes == .ready {
@@ -221,6 +761,9 @@ struct ContentView: View {
                 found(content, palette)
                 addFiles(content, palette)
             }
+
+            jarScan(content, changes, palette, now: now)
+            deepScan(content, palette, word: kind == .plugins ? "plugins" : "mods", now: now)
 
             SectionTitle(text: model.t("mods.change_history"), palette: palette)
             if let problem = content.history.problem {
@@ -240,7 +783,7 @@ struct ContentView: View {
 
     /// Why changes are off now, with Stop right here while the server runs.
     @ViewBuilder
-    private func changesCard(_ content: ContentPages, _ changes: Changes, _ state: String?, _ palette: Palette) -> some View {
+    private func changesCard(_ content: ContentPages, _ changes: Changes, _ label: String?, _ palette: Palette) -> some View {
         switch changes {
         case .ready:
             EmptyView()
@@ -253,7 +796,7 @@ struct ContentView: View {
             CardBox(palette: palette) {
                 Text(model.t("mobile.content.stop_first"))
                     .foregroundStyle(palette.textPrimary)
-                if Content.canStopHere(state, canControl: model.canControl) {
+                if Content.canStopHere(content.serverCan, canControl: model.canControl) {
                     let strings = model.strings
                     Presses(presses: [
                         Press(title: model.t(content.busy == "stop" ? "action.stopping" : "action.stop"), danger: true, enabled: content.busy == nil) {
@@ -267,7 +810,7 @@ struct ContentView: View {
                         },
                     ], palette: palette)
                 } else {
-                    Hint(text: model.t("mods.running_notice", ["state": model.t(Display.state(state).key)]), palette: palette)
+                    Hint(text: model.t("mods.running_notice", ["state": model.t(Display.state(label).key)]), palette: palette)
                 }
             }
         }
@@ -287,6 +830,48 @@ struct ContentView: View {
                 }
             }
             .foregroundStyle(palette.textPrimary)
+        }
+    }
+
+    /// Server / Players / Both, and "On all servers".
+    private func sidesFilter(_ content: ContentPages) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker(model.t("sides.who"), selection: Binding(get: { content.sideFilter }, set: { content.sideFilter = $0 })) {
+                ForEach(Sides.filters, id: \.self) { side in
+                    Text(model.t("sides." + side)).tag(side)
+                }
+            }
+            .pickerStyle(.segmented)
+            Toggle(
+                model.t("sides.all_servers"),
+                isOn: Binding(get: { content.everywhere != nil }, set: { on in Task { await content.showEverywhere(on) } })
+            )
+        }
+        .padding(.horizontal)
+    }
+
+    @ViewBuilder
+    private func everywhereList(_ content: ContentPages, _ read: PageRead<ModSides>, _ palette: Palette) -> some View {
+        if let problem = read.problem {
+            ProblemCard(problem: problem, palette: palette) { await content.showEverywhere(true) }
+        }
+        if let found = read.value {
+            ForEach(found.notRead, id: \.id) { missed in
+                Text(hiding: model.t("sides.not_read", ["name": missed.name, "reason": missed.detail]))
+                    .font(.footnote).foregroundStyle(palette.tone(.warning))
+            }
+            let shown = Sides.shown(found, content.sideFilter)
+            if shown.isEmpty {
+                Hint(text: model.t("sides.none_filtered"), palette: palette)
+            }
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, row in
+                CardBox(palette: palette) {
+                    Text(hiding: row.name).foregroundStyle(palette.textPrimary)
+                    Hint(text: model.t("sides.for", ["side": model.t("sides." + row.side)]) + " · " + Sides.servers(model.strings, row), palette: palette)
+                }
+            }
+        } else if read.problem == nil {
+            Hint(text: model.t("mobile.common.loading"), palette: palette)
         }
     }
 
@@ -311,28 +896,128 @@ struct ContentView: View {
             presses.append(Press(title: model.t("mods.remove"), danger: true, enabled: ready) {
                 Task { await content.askRemove(mod, strings) }
             })
+            if !Sides.picks(mod).isEmpty {
+                presses.append(Press(title: model.t("sides.who"), enabled: idle) {
+                    choosingSide = SideAsk(mod: mod, ready: ready)
+                })
+            }
         }
         return CardBox(palette: palette) {
-            Text(verbatim: mod.name.isEmpty ? mod.filename : mod.name)
+            Text(hiding: mod.name.isEmpty ? mod.filename : mod.name)
                 .font(.headline)
                 .foregroundStyle(palette.textPrimary)
-            Text(verbatim: (mod.version.isEmpty ? model.t("value.unknown") : mod.version) + " · " + model.t(status.key))
+            Text(hiding: (mod.version.isEmpty ? model.t("value.unknown") : mod.version) + " · " + model.t(status.key))
                 .font(.footnote)
                 .foregroundStyle(status.tone == .neutral ? palette.textSecondary : palette.tone(status.tone))
             ForEach(Content.problems(mod), id: \.self) { problem in
-                Text(verbatim: problem)
+                Text(hiding: problem)
                     .font(.footnote)
                     .foregroundStyle(palette.tone(mod.status == "error" ? .danger : .warning))
             }
             if let newer = Content.newer(strings, mod) {
-                Text(verbatim: newer)
+                Text(hiding: newer)
                     .font(.footnote)
                     .foregroundStyle(palette.accentInk)
+            }
+            if mod.addedByYou == true {
+                Text(hiding: model.t("linked.added_by_you"))
+                    .font(.footnote)
+                    .foregroundStyle(palette.textSecondary)
+            }
+            if let side = Sides.words(strings, mod) {
+                Text(hiding: side)
+                    .font(.footnote)
+                    .foregroundStyle(palette.textSecondary)
+            }
+            if let held = Content.held(strings, mod) {
+                Hint(text: held, palette: palette)
             }
             if model.technical {
                 Hint(text: Content.technical(strings, mod), palette: palette)
             }
             Presses(presses: presses, palette: palette)
+        }
+    }
+
+    /// The player-only folder: mods, resource packs and shader packs the server never loads.
+    @ViewBuilder
+    private func playersOnly(
+        _ content: ContentPages, _ files: [PlayerFile], _ options: PlayerOnlyOptions, _ kind: ContentKind, _ changes: Changes, _ palette: Palette
+    ) -> some View {
+        let manage = changes != .notAllowed
+        let idle = content.busy == nil
+        if manage || !files.isEmpty {
+            SectionTitle(text: model.t("sides.players_title"), palette: palette)
+            CardBox(palette: palette) {
+                Hint(text: model.t("sides.players_intro"), palette: palette)
+                if files.isEmpty {
+                    Text(hiding: model.t("sides.players_none")).foregroundStyle(palette.textSecondary)
+                }
+                ForEach(files) { file in
+                    let name = file.name.isEmpty ? file.filename : file.name
+                    Text(hiding: name).font(.headline).foregroundStyle(palette.textPrimary)
+                    Text(hiding: [file.version, model.t(file.kind == "mod" ? "sides.kind_mod" : "sides.kind_pack"), file.filename]
+                        .filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.footnote)
+                        .foregroundStyle(palette.textSecondary)
+                    if file.changed {
+                        Text(hiding: model.t("sides.changed")).font(.footnote).foregroundStyle(palette.tone(.warning))
+                    }
+                    if file.missing {
+                        Text(hiding: model.t("sides.missing")).font(.footnote).foregroundStyle(palette.tone(.warning))
+                        if manage && file.site == "modrinth" {
+                            Presses(presses: [
+                                Press(title: model.t("sides.get_again"), enabled: idle) {
+                                    let strings = model.strings
+                                    Task { await content.fetchForPlayers(file.filename, strings) }
+                                },
+                            ], palette: palette)
+                        }
+                    } else if manage {
+                        Presses(presses: (file.kind == "mod" && kind == .mods ? [
+                            Press(title: model.t("sides.move_to_server"), enabled: changes == .ready && idle) {
+                                let strings = model.strings
+                                Task { await content.setSide(file.filename, name: name, side: "both", strings) }
+                            },
+                        ] : []) + [
+                            Press(title: model.t("mods.remove"), danger: true, enabled: idle) {
+                                let strings = model.strings
+                                asking = ContentConfirm(
+                                    title: strings.t("sides.remove_title", ["name": name]),
+                                    body: strings.t("sides.remove_body"),
+                                    confirm: strings.t("mods.remove")
+                                ) {
+                                    Task { await content.removeForPlayers(file.filename, strings) }
+                                }
+                            },
+                        ], palette: palette)
+                    }
+                }
+                if content.busy == "players" {
+                    Hint(text: model.t("mobile.content.reading"), palette: palette)
+                }
+                if manage {
+                    Presses(presses: [
+                        Press(title: model.t("sides.players_add"), enabled: idle) { picking = .players },
+                    ], palette: palette)
+                }
+                if model.can(Permissions.SETTINGS_SERVER) {
+                    Toggle(model.t("sides.option_backup"), isOn: Binding(get: { options.backup }, set: { on in
+                        var changed = options
+                        changed.backup = on
+                        let strings = model.strings
+                        Task { await content.setPlayerOnlyOptions(changed, strings) }
+                    }))
+                    .disabled(!idle)
+                    Toggle(model.t("sides.option_skip_listed"), isOn: Binding(get: { options.skipListed }, set: { on in
+                        var changed = options
+                        changed.skipListed = on
+                        let strings = model.strings
+                        Task { await content.setPlayerOnlyOptions(changed, strings) }
+                    }))
+                    .disabled(!idle || !options.backup)
+                }
+            }
         }
     }
 
@@ -397,7 +1082,7 @@ struct ContentView: View {
             HStack(alignment: .top, spacing: 12) {
                 ModIcon(icons: model.icons, url: hit.iconUrl, palette: palette)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(verbatim: hit.title.isEmpty ? hit.slug : hit.title)
+                    Text(hiding: hit.title.isEmpty ? hit.slug : hit.title)
                         .font(.headline)
                         .foregroundStyle(palette.textPrimary)
                     ForEach(details, id: \.self) { line in
@@ -428,6 +1113,176 @@ struct ContentView: View {
                 Press(title: model.t("mobile.content.modpack_choose"), enabled: busy == nil) { picking = .modpack },
             ], palette: palette)
             Hint(text: model.t("pack.into_intro"), palette: palette)
+            TextField(model.t("pack.find_placeholder"), text: Binding(get: { packQuery }, set: { packQuery = String($0.prefix(100)) }))
+                .textFieldStyle(.roundedBorder)
+            Presses(presses: [
+                Press(title: model.t(busy == "find_pack" ? "mods.searching" : "pack.find"),
+                      enabled: busy == nil && !packQuery.trimmingCharacters(in: .whitespaces).isEmpty) {
+                    let strings = model.strings
+                    let query = packQuery
+                    Task { await content.findPacks(query, strings) }
+                },
+            ], palette: palette)
+            if let found = content.packsFound {
+                ForEach(found.problems, id: \.self) { Hint(text: $0, palette: palette) }
+                Hint(text: model.t(found.hits.isEmpty ? "mods.nothing_found" : "pack.find_pick"), palette: palette)
+                ForEach(found.hits) { hit in
+                    Button {
+                        let strings = model.strings
+                        Task { await content.readFound(hit, strings) }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(hit.title).foregroundStyle(palette.textPrimary)
+                            Hint(text: Modpacks.about(model.strings, hit), palette: palette)
+                        }
+                    }
+                    .disabled(busy != nil)
+                }
+            }
+        }
+    }
+
+    private func said(_ words: JarScanWords) -> String {
+        let values: [String: CustomStringConvertible] = words.values.mapValues { $0 }
+        let text = model.strings.t(words.words, values)
+        return words.scanner.map { "\($0): \(text)" } ?? text
+    }
+
+    /// The jar check: what each jar's checks found, and the jars in quarantine with Put back.
+    @ViewBuilder
+    private func jarScan(_ content: ContentPages, _ changes: Changes, _ palette: Palette, now: Double) -> some View {
+        let strings = model.strings
+        let idle = content.busy == nil
+        SectionTitle(text: model.t("jarscan.title"), palette: palette)
+        if let problem = content.scan.problem {
+            Hint(text: problem.message(strings), palette: palette)
+        }
+        if let report = content.scan.value {
+            CardBox(palette: palette) {
+                Hint(text: model.t("jarscan.intro"), palette: palette)
+                Text(verbatim: report.checkedAt.map {
+                    strings.t("jarscan.summary", [
+                        "when": Display.ago(strings, $0, now: now),
+                        "checked": report.summary.checked,
+                        "jars": report.summary.jars,
+                        "found": report.summary.found,
+                    ])
+                } ?? strings.t("jarscan.not_yet"))
+                    .foregroundStyle(palette.textPrimary)
+                if model.can(Permissions.MODS_MANAGE) {
+                    Toggle(model.t("jarscan.weekly"), isOn: Binding(
+                        get: { report.weekly },
+                        set: { on in Task { await content.scanOptions(strings, weekly: on) } }
+                    ))
+                    .disabled(!idle)
+                    Toggle(model.t("jarscan.on_change"), isOn: Binding(
+                        get: { report.onChange },
+                        set: { on in Task { await content.scanOptions(strings, onChange: on) } }
+                    ))
+                    .disabled(!idle)
+                    Toggle(model.t("jarscan.before_start"), isOn: Binding(
+                        get: { report.beforeStart },
+                        set: { on in Task { await content.scanOptions(strings, beforeStart: on) } }
+                    ))
+                    .disabled(!idle)
+                    if model.me?.isOwner == true {
+                        Toggle(model.t("jarscan.ask_first"), isOn: Binding(
+                            get: { report.askFirst },
+                            set: { on in Task { await content.scanOptions(strings, askFirst: on) } }
+                        ))
+                        .disabled(!idle)
+                        Stepper(value: Binding(
+                            get: { report.updateHoldDays },
+                            set: { days in Task { await content.scanOptions(strings, updateHoldDays: days) } }
+                        ), in: 0...14) {
+                            Text(verbatim: model.t("jarscan.hold_days") + ": \(report.updateHoldDays)")
+                        }
+                        .disabled(!idle)
+                    }
+                    Presses(presses: [
+                        Press(title: model.t(content.busy == "jar_scan" ? "jarscan.checking" : "jarscan.check_again"), enabled: idle) {
+                            Task { await content.scanJars(strings) }
+                        },
+                    ], palette: palette)
+                }
+            }
+            ForEach(report.jars) { jar in
+                CardBox(palette: palette) {
+                    Text(verbatim: jar.filename).foregroundStyle(palette.textPrimary)
+                    Hint(text: strings.t(jar.words, jar.values.mapValues { $0 as CustomStringConvertible }), palette: palette)
+                    ForEach(Array(jar.findings.enumerated()), id: \.offset) { _, finding in
+                        Text(verbatim: said(finding)).font(.footnote).foregroundStyle(palette.tone(.danger))
+                    }
+                    ForEach(Array(jar.notes.enumerated()), id: \.offset) { _, note in
+                        Hint(text: said(note), palette: palette)
+                    }
+                    if jar.changedOutside {
+                        Text(model.t("jarscan.changed")).font(.footnote).foregroundStyle(palette.tone(.danger))
+                        if model.can(Permissions.MODS_MANAGE) {
+                            Presses(presses: [
+                                Press(title: model.t("jarscan.changed_ok"), enabled: idle) {
+                                    Task { await content.changedOk(jar.filename, strings) }
+                                },
+                            ], palette: palette)
+                        }
+                    }
+                }
+            }
+            if !report.quarantine.isEmpty {
+                SectionTitle(text: model.t("jarscan.quarantine"), palette: palette)
+            }
+            ForEach(report.quarantine) { jar in
+                CardBox(palette: palette) {
+                    Text(verbatim: jar.filename).foregroundStyle(palette.textPrimary)
+                    Hint(text: strings.t("jarscan.quarantined", ["when": Display.ago(strings, jar.at, now: now)]), palette: palette)
+                    ForEach(Array(jar.findings.enumerated()), id: \.offset) { _, finding in
+                        Text(verbatim: said(finding)).font(.footnote).foregroundStyle(palette.tone(.danger))
+                    }
+                    if changes != .notAllowed {
+                        Presses(presses: [
+                            Press(title: model.t("jarscan.undo"), enabled: changes == .ready && idle) {
+                                Task { await content.putBack(jar.id, jar.filename, strings) }
+                            },
+                        ], palette: palette)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The deep scan: pick the checks and what to look at, run it, and see what it listed.
+    @ViewBuilder
+    private func deepScan(_ content: ContentPages, _ palette: Palette, word: String, now: Double) -> some View {
+        let strings = model.strings
+        let allowed = model.can(Permissions.DEEP_SCAN)
+        SectionTitle(text: model.t("deepscan.title"), palette: palette)
+        if let problem = content.deep.problem {
+            Hint(text: problem.message(strings), palette: palette)
+        }
+        if let report = content.deep.value {
+            DeepScanCard(content: content, report: report, word: word, palette: palette, now: now)
+            if allowed {
+                DeepScanPlan(content: content, options: report.options, word: word, palette: palette)
+            }
+            ForEach(report.last?.found ?? []) { item in
+                CardBox(palette: palette) {
+                    let where_ = item.root == "java" ? strings.t("deepscan.in_java", ["where": item.path]) : item.path
+                    Text(verbatim: where_).foregroundStyle(palette.textPrimary)
+                    Hint(text: model.t("deepscan.kind." + item.kind), palette: palette)
+                    ForEach(Array(item.findings.enumerated()), id: \.offset) { _, finding in
+                        Text(verbatim: said(finding)).font(.footnote)
+                            .foregroundStyle(palette.tone(item.kind == "known_bad" ? .danger : .warning))
+                    }
+                    Hint(text: model.t("deepscan.state." + item.state), palette: palette)
+                    if allowed && item.kind == "worth_a_look" && item.state == "found" {
+                        Presses(presses: [
+                            Press(title: model.t("deepscan.quarantine"), enabled: content.busy == nil) {
+                                Task { await content.deepQuarantine(item, strings) }
+                            },
+                        ], palette: palette)
+                    }
+                }
+            }
         }
     }
 
@@ -444,10 +1299,10 @@ struct ContentView: View {
             result += ": " + detail
         }
         return CardBox(palette: palette) {
-            Text(verbatim: Content.action(strings, row) + ": " + Content.historyName(strings, row))
+            Text(hiding: Content.action(strings, row) + ": " + Content.historyName(strings, row))
                 .foregroundStyle(palette.textPrimary)
             Hint(text: details.joined(separator: " · "), palette: palette)
-            Text(verbatim: result)
+            Text(hiding: result)
                 .font(.footnote)
                 .foregroundStyle(palette.tone(Content.historyTone(row)))
         }
@@ -498,6 +1353,14 @@ struct ContentView: View {
             if list.running && changes == .ready {
                 Hint(text: model.t("addons.running"), palette: palette)
             }
+            CardBox(palette: palette) {
+                Toggle(model.t("make.required"), isOn: Binding(
+                    get: { list.required },
+                    set: { on in Task { await content.setAddonsRequired(on, strings) } }
+                ))
+                .disabled(!idle || changes != .ready)
+                Hint(text: model.t("addons.required_hint"), palette: palette)
+            }
             SectionTitle(text: strings.tn("addons.installed", count: list.addons.count), palette: palette)
             if list.addons.isEmpty {
                 EmptyCard(title: model.t("addons.none"), hint: model.t("addons.none_hint"), palette: palette)
@@ -535,12 +1398,12 @@ struct ContentView: View {
             model.t(addon.enabled ? "addons.on" : "addons.off"),
         ]
         return CardBox(palette: palette) {
-            Text(verbatim: addon.name.isEmpty ? addon.folder : addon.name)
+            Text(hiding: addon.name.isEmpty ? addon.folder : addon.name)
                 .font(.headline)
                 .foregroundStyle(palette.textPrimary)
             Hint(text: details.joined(separator: " · "), palette: palette)
             if let description = addon.description, !description.isEmpty {
-                Text(verbatim: String(description.prefix(200)))
+                Text(hiding: String(description.prefix(200)))
                     .font(.footnote)
                     .foregroundStyle(palette.textPrimary)
             }
@@ -587,6 +1450,12 @@ struct ContentView: View {
         case .pack:
             fits = Content.accepts(.packs, name)
             expected = Content.PACK_FILES.joined(separator: ", ")
+        case .players:
+            fits = Sides.accepts(name)
+            expected = ".jar, .zip"
+        case .resourcePack:
+            fits = name.lowercased().hasSuffix(".zip")
+            expected = ".zip"
         }
         guard fits else {
             content.said = Said(text: strings.t("mobile.content.wrong_file", ["kind": expected]), good: false)
@@ -604,6 +1473,8 @@ struct ContentView: View {
             case .jar: await content.uploadMod(file, strings)
             case .modpack: await content.inspectModpack(file, strings)
             case .pack: await content.uploadAddon(file, strings)
+            case .players: await content.uploadForPlayers(file, strings)
+            case .resourcePack: await content.uploadPack(file, strings)
             }
         }
     }
@@ -621,6 +1492,10 @@ struct ContentView: View {
             MissingSheet(content: content)
         case .modpack:
             ModpackSheet(content: content)
+        case .packUpdate:
+            PackUpdateSheet(content: content)
+        case .make:
+            MakeModpackSheet(content: content)
         }
     }
 }
@@ -707,7 +1582,7 @@ private struct VersionsSheet: View {
 
     var body: some View {
         let strings = model.strings
-        let canChange = Content.changes(canManage: model.can(Permissions.MODS_MANAGE), serverState: content.serverState) == .ready
+        let canChange = Content.changes(canManage: model.can(Permissions.MODS_MANAGE), label: content.serverLabel, can: content.serverCan) == .ready
         let read = content.versions?.versions ?? ask.versions
         NavigationStack {
             List {
@@ -718,8 +1593,8 @@ private struct VersionsSheet: View {
                     }
                     ForEach(list) { version in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(verbatim: version.version ?? version.filename)
-                            Text(verbatim: details(version, strings))
+                            Text(hiding: version.version ?? version.filename)
+                            Text(hiding: details(version, strings))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             if canChange && Content.canRollBack(version) {
@@ -786,7 +1661,7 @@ private struct UpdateAllSheet: View {
                         Text(model.t("mobile.content.update_all_none"))
                     }
                     if let blocked = blocked {
-                        Text(verbatim: blocked).foregroundStyle(.orange)
+                        Text(hiding: blocked).foregroundStyle(.orange)
                     }
                 }
                 Section {
@@ -798,8 +1673,8 @@ private struct UpdateAllSheet: View {
                             }
                         )) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(verbatim: row.name.isEmpty ? row.filename : row.name)
-                                Text(verbatim: Content.change(strings, row.installedVersion, row.latestVersion))
+                                Text(hiding: row.name.isEmpty ? row.filename : row.name)
+                                Text(hiding: Content.change(strings, row.installedVersion, row.latestVersion))
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                                 if !row.enabled {
@@ -807,8 +1682,18 @@ private struct UpdateAllSheet: View {
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
                                 }
+                                if let saved = row.saved {
+                                    Text(saved).font(.footnote).foregroundStyle(.secondary)
+                                }
+                                if let until = row.heldUntil {
+                                    Text(model.t("mobile.content.update_all_held", ["when": Display.dateTime(until)]))
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
+                        // A held one is listed but can't be ticked; Update now on its card skips the wait.
+                        .disabled(row.heldUntil != nil)
                     }
                 }
                 if !plan.unchecked.isEmpty {
@@ -860,7 +1745,7 @@ private struct InstallSheet: View {
                 if let version = version {
                     Section {
                         ForEach(Install.facts(strings, project, version), id: \.self) { fact in
-                            Text(verbatim: fact)
+                            Text(hiding: fact)
                         }
                         Text(model.t("mods.install_checked"))
                             .font(.footnote)
@@ -922,7 +1807,7 @@ private struct MissingSheet: View {
                 if !plan.items.isEmpty {
                     Section(strings.tn("mobile.content.missing_plan", count: plan.items.count)) {
                         ForEach(Array(plan.items.enumerated()), id: \.offset) { _, item in
-                            Text(verbatim: line(item, strings))
+                            Text(hiding: line(item, strings))
                         }
                     }
                 }
@@ -958,6 +1843,305 @@ private struct MissingSheet: View {
     }
 }
 
+/// What Modpack update changes, then Modpack update.
+private struct PackUpdateSheet: View {
+    let content: ContentPages
+
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var usePackConfigs = false
+
+    var body: some View {
+        let strings = model.strings
+        if let read = content.packUpdate {
+            let problems = read.changes.problems
+            List {
+                if !problems.isEmpty {
+                    Section(model.t("pack.cant_import")) {
+                        ForEach(problems, id: \.self) { problem in
+                            Text(hiding: problem).foregroundStyle(.red)
+                        }
+                    }
+                } else {
+                    Section {
+                        ForEach(LinkedPacks.changes(strings, read.changes), id: \.self) { line in
+                            Text(hiding: line)
+                        }
+                        if !read.changes.configsChangedByYou.isEmpty {
+                            Toggle(model.t("linked.use_pack_configs"), isOn: $usePackConfigs)
+                        }
+                    }
+                    Section {
+                        ForEach(LinkedPacks.steps(strings, read), id: \.self) { step in
+                            Text(hiding: step)
+                        }
+                    }
+                }
+            }
+            .navigationTitle(strings.t("linked.update_title", ["name": read.pack.name, "version": read.changes.toVersion]))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(model.t("mobile.common.cancel")) { dismiss() }
+                }
+                if problems.isEmpty {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(model.t("linked.update")) {
+                            Task { await content.updatePack(usePackConfigs: usePackConfigs, strings) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Name, version, "Leave out server-only mods", the players' loader on a
+/// plugin server, the config files to put in, "Required to join" and the
+/// chat line (both need the Companion mod on the server).
+private struct MakeModpackSheet: View {
+    let content: ContentPages
+
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var version = ""
+    @State private var leaveOut = true
+    @State private var loader = "fabric"
+    @State private var configs: Set<String> = []
+    @State private var required = false
+    @State private var chatOn = true
+    @State private var chatText = ""
+    @State private var buttonOn = false
+    @State private var address = ""
+    @State private var flavorOn = false
+    @State private var flavor = ""
+    @State private var backgroundOn = false
+    @State private var pickingBackground = false
+
+    var body: some View {
+        let strings = model.strings
+        if let options = content.makeOptions {
+            let hasBackground = options.titleScreen.backgroundSet || content.backgroundSet
+            Form {
+                Section {
+                    TextField(model.t("make.name"), text: $name)
+                    TextField(model.t("make.version"), text: $version)
+                    if !options.playersLoaders.isEmpty {
+                        Picker(model.t("make.loader"), selection: $loader) {
+                            ForEach(options.playersLoaders, id: \.id) { choice in
+                                Text(hiding: choice.name).tag(choice.id)
+                            }
+                        }
+                    }
+                }
+                Section {
+                    Toggle(model.t("make.leave_out"), isOn: $leaveOut)
+                    Text(hiding: model.t("make.leave_out_hint")).font(.footnote).foregroundStyle(.secondary)
+                }
+                Section {
+                    // Needs the Companion mod on the server, which does the join check.
+                    Toggle(model.t("make.required"), isOn: $required).disabled(!options.requiredToJoin)
+                    if options.needsFabric {
+                        // Vanilla can't run the Companion: Fabric with no other mods plays the same.
+                        Text(hiding: model.t("make.required_vanilla")).font(.footnote).foregroundStyle(.secondary)
+                        Button(model.t("make.change_type")) {
+                            dismiss()
+                            model.serversPath.append(.settings(content.serverId))
+                        }
+                    } else {
+                        Text(hiding: model.t(options.requiredToJoin ? "make.required_hint" : "make.required_later"))
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if options.requiredToJoin {
+                        Toggle(model.t("make.chat_line"), isOn: $chatOn).disabled(required)
+                        TextField(model.t("make.chat_line"), text: $chatText).disabled(required)
+                            .onChange(of: chatText) { _, new in chatText = String(new.prefix(300)) }
+                        Text(hiding: model.t("make.chat_line_hint")).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                if options.requiredToJoin {
+                    // What friends with the Companion see when Minecraft starts.
+                    Section(model.t("make.title_screen")) {
+                        Text(hiding: model.t("make.title_screen_hint")).font(.footnote).foregroundStyle(.secondary)
+                        Toggle(model.t("make.title_button"), isOn: $buttonOn)
+                        TextField(model.t("make.title_address"), text: $address).disabled(!buttonOn)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .onChange(of: address) { _, new in address = String(new.prefix(260)) }
+                        Toggle(model.t("make.flavor_text"), isOn: $flavorOn)
+                        TextField(model.t("make.flavor_text"), text: $flavor).disabled(!flavorOn)
+                            .onChange(of: flavor) { _, new in flavor = String(new.prefix(60)) }
+                        Toggle(model.t("make.background"), isOn: $backgroundOn).disabled(!hasBackground)
+                        Button(model.t("make.background_pick")) { pickingBackground = true }
+                            .disabled(content.busy != nil)
+                    }
+                }
+                Section(model.t(options.configs.isEmpty ? "make.no_configs" : "make.configs")) {
+                    ForEach(options.configs, id: \.path) { config in
+                        Toggle(config.path, isOn: Binding(
+                            get: { configs.contains(config.path) },
+                            set: { on in if on { configs.insert(config.path) } else { configs.remove(config.path) } }
+                        ))
+                    }
+                }
+            }
+            .navigationTitle(model.t("make.title"))
+            .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                name = options.name
+                version = options.version
+                loader = options.playersLoaders.first?.id ?? "fabric"
+                required = options.requiredToJoin && options.requiredOn
+                chatOn = options.chatLine.on
+                chatText = options.chatLine.text
+                buttonOn = options.titleScreen.button.on
+                address = options.titleScreen.button.address
+                flavorOn = options.titleScreen.flavorText.on
+                flavor = options.titleScreen.flavorText.text
+                backgroundOn = options.titleScreen.background.on
+            }
+            .fileImporter(isPresented: $pickingBackground, allowedContentTypes: [.png]) { result in
+                guard case .success(let url) = result else { return }
+                Task {
+                    do {
+                        let file = try await Task.detached { try PickedCopy.make(url) }.value
+                        await content.uploadTitleBackground(file, strings)
+                    } catch {
+                        content.said = Said(text: strings.t("mobile.error.failed", ["reason": error.localizedDescription]), good: false)
+                    }
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(model.t("mobile.common.cancel")) { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(model.t("make.title")) {
+                        let answers = MakeModpack(
+                            name: String(name.trimmingCharacters(in: .whitespaces).prefix(64)),
+                            version: String(version.trimmingCharacters(in: .whitespaces).prefix(32)),
+                            leaveOutServerOnly: leaveOut,
+                            configs: options.configs.map(\.path).filter { configs.contains($0) },
+                            playersLoader: loader,
+                            required: required,
+                            // Left empty: the agent's own wording.
+                            chatLine: options.requiredToJoin && !chatText.trimmingCharacters(in: .whitespaces).isEmpty
+                                ? ChatLine(on: chatOn, text: chatText.trimmingCharacters(in: .whitespaces)) : nil,
+                            titleScreen: TitleScreen(
+                                button: .init(on: buttonOn, address: address.trimmingCharacters(in: .whitespaces)),
+                                flavorText: .init(on: flavorOn, text: flavor.trimmingCharacters(in: .whitespaces)),
+                                background: .init(on: backgroundOn && hasBackground)
+                            )
+                        )
+                        Task { await content.makeModpack(answers, strings) }
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || version.isEmpty)
+                }
+            }
+        }
+    }
+}
+
+/// A resource pack someone else hosts: its link, and its SHA-1 if the site gives one.
+/// The Modrinth address and one-line summary of a new project.
+private struct ModrinthProjectSheet: View {
+    let content: ContentPages
+    let ask: ModrinthAsk
+
+    @Environment(AppModel.self) private var model
+    @State private var slug = ""
+    @State private var summary = ""
+
+    var body: some View {
+        let strings = model.strings
+        Form {
+            if ask.jar != nil { Text(hiding: model.t("modrinth.own_jar_pick")) }
+            TextField(model.t("modrinth.slug_prompt"), text: $slug)
+                .textInputAutocapitalization(.never)
+            TextField(model.t("modrinth.summary_prompt"), text: $summary)
+        }
+        .onAppear { slug = ModrinthCards.slug(ask.name) }
+        .navigationTitle(ask.jar?.name ?? model.t("modrinth.title"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(model.t("mobile.common.cancel")) { content.askingModrinth = nil }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(model.t("modrinth.upload")) {
+                    let s = String(slug.trimmingCharacters(in: .whitespaces).prefix(64))
+                    let line = String(summary.trimmingCharacters(in: .whitespaces).prefix(256))
+                    Task { await content.uploadToModrinth(s, line, strings) }
+                }
+                .disabled(slug.isEmpty || summary.trimmingCharacters(in: .whitespaces).count < 3)
+            }
+        }
+    }
+}
+
+private struct ServerProjectSheet: View {
+    let content: ContentPages
+
+    @Environment(AppModel.self) private var model
+    @State private var link = ""
+
+    var body: some View {
+        let strings = model.strings
+        Form {
+            TextField(model.t("modrinth.server_paste_prompt"), text: $link)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+        }
+        .navigationTitle(model.t("modrinth.server_title"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(model.t("mobile.common.cancel")) { content.askingServerLink = false }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(model.t("modrinth.server_paste")) {
+                    let value = String(link.trimmingCharacters(in: .whitespaces).prefix(200))
+                    Task { await content.setServerProject(value, strings) }
+                }
+            }
+        }
+    }
+}
+
+private struct PackLinkSheet: View {
+    let content: ContentPages
+
+    @Environment(AppModel.self) private var model
+    @State private var url = ""
+    @State private var sha1 = ""
+
+    var body: some View {
+        let strings = model.strings
+        Form {
+            TextField(model.t("pack.link_prompt"), text: $url)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+            TextField(model.t("pack.sha1_prompt"), text: $sha1)
+                .textInputAutocapitalization(.never)
+        }
+        .navigationTitle(model.t("pack.title"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(model.t("mobile.common.cancel")) { content.askingPackLink = false }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(model.t("pack.use_link")) {
+                    let link = String(url.trimmingCharacters(in: .whitespaces).prefix(1000))
+                    let hash = String(sha1.trimmingCharacters(in: .whitespaces).prefix(40))
+                    Task { await content.setPackLink(link, hash, strings) }
+                }
+                .disabled(url.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+    }
+}
+
 /// What importing a modpack here would do, then Import.
 private struct ModpackSheet: View {
     let content: ContentPages
@@ -973,9 +2157,9 @@ private struct ModpackSheet: View {
             let loader = [pack.typeName, pack.loaderVersion].compactMap { $0 }.joined(separator: " ")
             List {
                 Section {
-                    Text(verbatim: model.t("pack.minecraft") + ": " + (pack.minecraftVersion ?? unknown))
-                    Text(verbatim: model.t("pack.loader") + ": " + (loader.isEmpty ? unknown : loader))
-                    Text(verbatim: model.t("pack.files") + ": " + model.t("pack.files_value", [
+                    Text(hiding: model.t("pack.minecraft") + ": " + (pack.minecraftVersion ?? unknown))
+                    Text(hiding: model.t("pack.loader") + ": " + (loader.isEmpty ? unknown : loader))
+                    Text(hiding: model.t("pack.files") + ": " + model.t("pack.files_value", [
                         "count": pack.downloadCount, "size": Display.bytes(strings, pack.downloadBytes),
                     ]))
                     if inspected.versionChange {
@@ -986,7 +2170,7 @@ private struct ModpackSheet: View {
                 if !pack.problems.isEmpty {
                     Section(model.t("pack.cant_import")) {
                         ForEach(pack.problems, id: \.self) { problem in
-                            Text(verbatim: problem).foregroundStyle(.red)
+                            Text(hiding: problem).foregroundStyle(.red)
                         }
                     }
                 }
@@ -996,17 +2180,18 @@ private struct ModpackSheet: View {
                 if !pack.skippedOverrides.isEmpty {
                     Text(model.t("pack.skipped_extras", ["names": pack.skippedOverrides.joined(separator: ", ")]))
                 }
+                ForEach(Modpacks.notes(strings, pack), id: \.self) { Text(hiding: $0).foregroundStyle(.orange) }
                 if pack.canImport {
                     Section(model.t("mobile.content.modpack_failed_note")) {
                         ForEach(Modpacks.steps(strings, inspected), id: \.self) { step in
-                            Text(verbatim: step)
+                            Text(hiding: step)
                         }
                     }
                 }
                 Section(model.t("pack.all_files", ["count": pack.files.count])) {
                     ForEach(Array(pack.files.prefix(200).enumerated()), id: \.offset) { _, file in
                         let status = Modpacks.fileStatus(file)
-                        Text(verbatim: "\(file.name) · \(model.t(status.key))" + (file.reason.map { " (\($0))" } ?? ""))
+                        Text(hiding: "\(file.name) · \(model.t(status.key))" + (file.reason.map { " (\($0))" } ?? ""))
                             .font(.footnote)
                             .foregroundStyle(status.tone == .danger ? Color.red : Color.secondary)
                     }
@@ -1025,6 +2210,200 @@ private struct ModpackSheet: View {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// The deep scan's checks, what to look at, the Run press and the last result.
+private struct DeepScanCard: View {
+    let content: ContentPages
+    let report: DeepScanReport
+    let word: String
+    let palette: Palette
+    let now: Double
+
+    @Environment(AppModel.self) private var model
+    @State private var picked: Set<String> = ["behaviour"]
+    @State private var scope = "mods"
+    @State private var jar = ""
+
+    var body: some View {
+        let strings = model.strings
+        let allowed = model.can(Permissions.DEEP_SCAN)
+        let jars = content.scan.value?.jars.map(\.filename) ?? []
+        CardBox(palette: palette) {
+            Hint(text: model.t("deepscan.intro"), palette: palette)
+            ForEach(report.shown) { scanner in
+                Toggle(isOn: Binding(
+                    get: { picked.contains(scanner.id) },
+                    set: { on in if on { picked.insert(scanner.id) } else { picked.remove(scanner.id) } }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: "\(model.t(scanner.words)) (\(model.t(scanner.speed)))")
+                            .foregroundStyle(palette.textPrimary)
+                        Hint(text: about(scanner, strings), palette: palette)
+                    }
+                }
+                .disabled(!allowed || !scanner.available)
+                if let hasKey = scanner.key {
+                    VirusTotalKey(content: content, hasKey: hasKey, palette: palette)
+                }
+            }
+            if allowed {
+                Picker(model.t("deepscan.scope"), selection: $scope) {
+                    ForEach(["jar", "mods", "folder"], id: \.self) { option in
+                        Text(verbatim: strings.t("deepscan.scope." + option, ["word": word])).tag(option)
+                    }
+                }
+                .pickerStyle(.inline)
+                if scope == "jar" {
+                    Picker(model.t("deepscan.pick_jar"), selection: $jar) {
+                        ForEach(jars, id: \.self) { Text(verbatim: $0).tag($0) }
+                    }
+                }
+                if scope == "folder" {
+                    Hint(text: model.t("deepscan.folder_note"), palette: palette)
+                }
+            }
+            status(strings)
+            if allowed {
+                let chosen = picked.filter { id in report.shown.contains { $0.id == id && $0.available } }
+                let ready = report.running == nil && content.busy == nil && !chosen.isEmpty && (scope != "jar" || jars.contains(jar))
+                Presses(presses: [
+                    Press(title: model.t("deepscan.run"), enabled: ready) {
+                        Task { await content.runDeepScan(scope, chosen.sorted(), scope == "jar" ? jar : nil, strings) }
+                    },
+                ], palette: palette)
+            }
+        }
+    }
+
+    private func about(_ scanner: DeepScanScanner, _ strings: Strings) -> String {
+        var lines = [strings.t(scanner.what)]
+        if let took = scanner.took {
+            lines.append(strings.t("deepscan.took", ["seconds": took.seconds, "files": took.files]))
+        } else {
+            lines.append(strings.t("deepscan.not_timed"))
+        }
+        if !scanner.installed, let size = scanner.size {
+            lines.append(strings.t("deepscan.first_download", ["size": Int((Double(size) / 1e6).rounded())]))
+        }
+        if let got = scanner.downloaded {
+            lines.append(strings.t("deepscan.downloaded", ["tag": got.tag, "when": Display.ago(strings, got.at, now: now)]))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    @ViewBuilder
+    private func status(_ strings: Strings) -> some View {
+        if let running = report.running {
+            Text(verbatim: strings.t("deepscan.running", ["done": Int(running.done ?? 0), "total": Int(running.total ?? 0)]))
+                .foregroundStyle(palette.textPrimary)
+        } else if let last = report.last {
+            Text(verbatim: strings.t("deepscan.result", [
+                "when": Display.ago(strings, last.finished, now: now), "files": last.files, "count": last.found.count,
+            ]))
+                .foregroundStyle(palette.textPrimary)
+            if last.skipped > 0 {
+                Hint(text: strings.t("deepscan.result_skipped", ["count": last.skipped]), palette: palette)
+            }
+            ForEach(Array(last.errors.enumerated()), id: \.offset) { _, error in
+                let values: [String: CustomStringConvertible] = error.values.mapValues { $0 }
+                let text = strings.t(error.words, values)
+                Text(verbatim: error.scanner.map { "\($0): \(text)" } ?? text)
+                    .font(.footnote).foregroundStyle(palette.tone(.warning))
+            }
+        } else {
+            Text(verbatim: strings.t("deepscan.never_run")).foregroundStyle(palette.textPrimary)
+        }
+    }
+}
+
+/// The owner's own VirusTotal key: pasted once, never shown again.
+private struct VirusTotalKey: View {
+    let content: ContentPages
+    let hasKey: Bool
+    let palette: Palette
+
+    @Environment(AppModel.self) private var model
+    @State private var key = ""
+
+    var body: some View {
+        if model.me?.isOwner != true {
+            Hint(text: model.t(hasKey ? "deepscan.vt_key_saved" : "deepscan.vt_key_owner"), palette: palette)
+        } else if hasKey {
+            Hint(text: model.t("deepscan.vt_key_saved"), palette: palette)
+            Button(model.t("deepscan.vt_key_remove"), role: .destructive) {
+                Task { await content.removeVirusTotalKey(model.strings) }
+            }
+            .disabled(content.busy != nil)
+        } else {
+            SecureField(model.t("deepscan.vt_key"), text: Binding(get: { key }, set: { key = String($0.prefix(128)) }))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Hint(text: model.t("deepscan.vt_key_note"), palette: palette)
+            Button(model.t("deepscan.vt_key_save")) {
+                let typed = key
+                Task { if await content.saveVirusTotalKey(typed, model.strings) { key = "" } }
+            }
+            .disabled(content.busy != nil || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+}
+
+/// Deep scan before each start, and the daily or weekly run.
+private struct DeepScanPlan: View {
+    let content: ContentPages
+    let options: DeepScanOptions
+    let word: String
+    let palette: Palette
+    @Environment(AppModel.self) private var model
+
+    private static let schedules = ["off", "daily", "weekly"]
+    private static let days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    private static let hours = (0..<24).map { String(format: "%02d:00", $0) }
+
+    var body: some View {
+        let strings = model.strings
+        let idle = content.busy == nil
+        // Whole hours here; a time set on the desktop app with minutes is kept and shown.
+        let times = Self.hours.contains(options.time) ? Self.hours : Self.hours + [options.time]
+        CardBox(palette: palette) {
+            Toggle(strings.t("deepscan.before_start", ["word": word]), isOn: Binding(
+                get: { options.beforeStart },
+                set: { on in Task { await content.deepOptions(strings, beforeStart: on) } }
+            ))
+            .disabled(!idle)
+            Picker(model.t("deepscan.schedule"), selection: Binding(
+                get: { options.schedule },
+                set: { pick in Task { await content.deepOptions(strings, schedule: pick) } }
+            )) {
+                ForEach(Self.schedules, id: \.self) { Text(model.t("deepscan.schedule." + $0)).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .disabled(!idle)
+            if options.schedule == "weekly" {
+                Picker(model.t("deepscan.schedule_day"), selection: Binding(
+                    get: { options.day },
+                    set: { pick in Task { await content.deepOptions(strings, day: pick) } }
+                )) {
+                    ForEach(Self.days, id: \.self) { Text(model.t("deepscan.day." + $0)).tag($0) }
+                }
+                .disabled(!idle)
+            }
+            if options.schedule != "off" {
+                Picker(model.t("deepscan.schedule_time"), selection: Binding(
+                    get: { options.time },
+                    set: { pick in Task { await content.deepOptions(strings, time: pick) } }
+                )) {
+                    ForEach(times, id: \.self) { Text(verbatim: $0).tag($0) }
+                }
+                .disabled(!idle)
+                if let next = options.next {
+                    Hint(text: strings.t("deepscan.next", ["when": Display.dateTime(strings, next)]), palette: palette)
+                }
+                Hint(text: model.t("deepscan.schedule_note"), palette: palette)
             }
         }
     }

@@ -1,0 +1,4 @@
+name: CommandBlockCompanion
+version: '${version}'
+main: io.github.peyoteheadlights.companion.waterdog.AllowListPlugin
+author: peyoteheadlights

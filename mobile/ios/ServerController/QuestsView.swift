@@ -86,7 +86,7 @@ struct QuestsView: View {
         }
         ForEach(page.quests) { quest in
             CardBox(palette: palette) {
-                Text(verbatim: "\(quest.id). \(quest.title)")
+                Text(hiding: "\(quest.id). \(quest.title)")
                     .font(.headline)
                     .foregroundStyle(palette.textPrimary)
                 Hint(text: Community.questLine(model.strings, quest, roles: roles), palette: palette)
@@ -122,7 +122,7 @@ struct QuestsView: View {
         }
         ForEach(page.suggestions) { idea in
             CardBox(palette: palette) {
-                Text(verbatim: idea.title).foregroundStyle(palette.textPrimary)
+                Text(hiding: idea.title).foregroundStyle(palette.textPrimary)
                 Hint(text: model.t("quests.idea_from", ["name": idea.discordName, "details": idea.details]), palette: palette)
                 Presses(presses: [
                     Press(title: model.t("quests.make_it"), enabled: !busy) {
@@ -159,7 +159,7 @@ struct QuestsView: View {
         }
         ForEach(events.events) { event in
             CardBox(palette: palette) {
-                Text(verbatim: event.title)
+                Text(hiding: event.title)
                     .font(.headline)
                     .foregroundStyle(palette.textPrimary)
                 Hint(text: Community.eventLine(model.strings, event, roles: roles), palette: palette)
@@ -185,7 +185,7 @@ struct QuestsView: View {
         }
         ForEach(events.polls) { poll in
             CardBox(palette: palette) {
-                Text(verbatim: poll.question).foregroundStyle(palette.textPrimary)
+                Text(hiding: poll.question).foregroundStyle(palette.textPrimary)
                 Hint(text: Community.pollCounts(poll), palette: palette)
                 Hint(text: Community.pollState(model.strings, poll), palette: palette)
                 if poll.open {
@@ -301,7 +301,7 @@ private struct NewQuestCard: View {
                 if page.bot && !roles.isEmpty {
                     Picker(model.t("quests.reward_role"), selection: $form.roleId) {
                         Text(model.t("quests.reward_none")).tag(String?.none)
-                        ForEach(roles, id: \.key) { role in Text(verbatim: role.value).tag(Optional(role.key)) }
+                        ForEach(roles, id: \.key) { role in Text(hiding: role.value).tag(Optional(role.key)) }
                     }
                 }
                 field("quests.reward_item", $form.item, 100)
@@ -373,7 +373,7 @@ private struct NewEventCard: View {
                 if page?.bot == true && !roles.isEmpty {
                     Picker(model.t("quests.reward_role"), selection: $form.roleId) {
                         Text(model.t("quests.reward_none")).tag(String?.none)
-                        ForEach(roles, id: \.key) { role in Text(verbatim: role.value).tag(Optional(role.key)) }
+                        ForEach(roles, id: \.key) { role in Text(hiding: role.value).tag(Optional(role.key)) }
                     }
                 }
                 field("quests.reward_item", $form.item, 100)

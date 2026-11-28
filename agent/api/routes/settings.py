@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ... import serveruser
 from ...config import ConfigError
 from ...events import Event
+from ...minecraft.java import jvm_args_problem
+from ...mods import store
 from ...security.auth import Principal
 from ...security.permissions import PC_SETTINGS, require
 from ..deps import audit, get_core
@@ -61,7 +63,9 @@ async def get_settings(
 ):
     """The PC's own settings, the owner's alone. A moderator's screens read
     each server's settings (/api/servers/{id}/settings) instead."""
+    usage = await asyncio.to_thread(store.for_config(core.db, core.config).usage)
     return {
+        "mod_storage": usage,
         "config": core.config.as_dict(redact_secrets=True),
         "editable": list(SETTABLE_PREFIXES),
         "secrets": {
@@ -84,6 +88,11 @@ async def update_settings(
         if not any(key == p or key.startswith(p) for p in SETTABLE_PREFIXES):
             rejected[key] = "This setting can't be changed here."
             continue
+        if key == "server.jvm_args":
+            found = jvm_args_problem(value, owner=True)
+            if found:
+                rejected[key] = found
+                continue
         previous = core.config.get(key)
         core.config.set(key, value)
         try:
@@ -101,6 +110,9 @@ async def update_settings(
                 status_code=500, detail=f"Settings could not be written to disk: {exc}"
             ) from exc
         audit(core, request, "settings_update", detail=", ".join(applied))
+        if "maintenance.enabled" in applied:
+            # Through the one switch, so running servers follow it now.
+            core.set_maintenance(core.config.maintenance.enabled, user=principal.user)
         if "power.keep_awake" in applied:
             # Turned off or on while a server runs: Windows is told now, not
             # at the next start or stop.

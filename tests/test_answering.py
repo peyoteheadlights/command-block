@@ -194,6 +194,83 @@ async def test_no_backup_means_no_automatic_restart(core, monkeypatch):
     assert ctx.server.state.value == "ONLINE"  # still running: the owner decides
 
 
+async def test_the_watchdog_obeys_the_crash_loop_block(core, monkeypatch):
+    ctx = await online(core)
+    core.config.set("monitor.auto_restart", True)
+    ctx.server.auto_restart_blocked = True
+    ctx.server.auto_restart_block_reason = "5 crashes within 10 minutes"
+    monkeypatch.setattr(answering, "ping", answers(False))
+    for _ in range(answering.MISSES):
+        status = await ctx.answering.check()
+    assert "5 crashes within 10 minutes" in status["problem"]["fix"]
+    assert ctx.backups.list_backups() == []  # nothing was done
+
+
+async def test_a_server_stopped_during_the_backup_is_not_started_again(core, monkeypatch):
+    ctx = await online(core)
+    core.config.set("monitor.auto_restart", True)
+    monkeypatch.setattr(answering, "ping", answers(False))
+
+    async def someone_presses_stop(**_kwargs):
+        await ctx.server.stop(actor="owner")
+
+    monkeypatch.setattr(ctx.backups, "create", someone_presses_stop)
+    for _ in range(answering.MISSES):
+        status = await ctx.answering.check()
+    assert "stopped" in status["problem"]["fix"]
+    await asyncio.sleep(1.5)
+    assert ctx.server.state.value == "OFFLINE"
+
+
+async def test_a_server_that_answers_after_the_backup_is_left_running(core, monkeypatch):
+    ctx = await online(core)
+    core.config.set("monitor.auto_restart", True)
+    monkeypatch.setattr(answering, "ping", answers(False))
+    first_pid = ctx.server.pid
+
+    async def backup_then_it_answers(**_kwargs):
+        monkeypatch.setattr(answering, "ping", answers(True))
+
+    monkeypatch.setattr(ctx.backups, "create", backup_then_it_answers)
+    for _ in range(answering.MISSES):
+        status = await ctx.answering.check()
+    assert "answers again" in status["problem"]["fix"]
+    await asyncio.sleep(1.5)
+    assert ctx.server.pid == first_pid
+
+
+async def test_a_failed_watchdog_restart_is_alerted(core, monkeypatch):
+    ctx = await online(core)
+    core.config.set("monitor.auto_restart", True)
+    monkeypatch.setattr(answering, "ping", answers(False))
+    seen = watch_events(ctx)
+
+    async def backup(**_kwargs):
+        return None
+
+    async def no_luck(**_kwargs):
+        return {"restarted": False, "error": "Server did not come back up"}
+
+    monkeypatch.setattr(ctx.backups, "create", backup)
+    monkeypatch.setattr(ctx.server, "restart", no_luck)
+    for _ in range(answering.MISSES):
+        await ctx.answering.check()
+    for _ in range(50):
+        if any(e.type == "server_restart_failed" for e in seen):
+            break
+        await asyncio.sleep(0.05)
+    failed = [e for e in seen if e.type == "server_restart_failed"]
+    assert failed and "did not come back up" in failed[0].message
+
+
+async def test_a_manual_start_after_a_crash_wins_over_the_countdown(core):
+    ctx = await online(core)  # someone pressed Start right after a crash
+    core.config.set("monitor.auto_restart", True)
+    await ctx.server._maybe_auto_restart()  # the crash's restart task runs late
+    assert ctx.server.state.value == "ONLINE"
+    assert ctx.server.restart_at is None
+
+
 async def test_an_offline_server_is_not_judged(core, monkeypatch):
     ctx = core.get_server("survival")
     monkeypatch.setattr(answering, "ping", answers(False))
@@ -203,8 +280,18 @@ async def test_an_offline_server_is_not_judged(core, monkeypatch):
 
 
 def test_the_apps_never_say_online_for_a_stuck_server(qapp):
-    from desktop.server_tab import state_words
+    from desktop.server_tab import main_action, state_words
 
-    stuck = {"state": "ONLINE", "answering": {"ok": False}}
-    assert state_words(stuck) == "Not answering"
-    assert state_words({"state": "ONLINE", "answering": {"ok": None}}) == "Online"
+    # The desktop shows the agent's label and buttons, and decides neither.
+    assert state_words({"state": "ONLINE", "label": "not_answering"}) == "Not answering"
+    assert state_words({"state": "ONLINE", "label": "online"}) == "Online"
+    assert state_words({"state": "ONLINE"}) == "Unknown"
+    # A countdown to an automatic restart: the agent refuses Start.
+    assert main_action({"state": "RESTART_PENDING", "label": "crashed", "can": []}) == (
+        "start",
+        False,
+    )
+    assert main_action({"label": "online", "can": ["stop", "restart"]}) == ("stop", True)
+    assert main_action({"label": "online", "can": ["force_stop"]}) == ("force_stop", True)
+    assert main_action({"label": "starting", "can": ["stop"]}) == ("stop", True)
+    assert main_action({"label": "stopping", "can": []}) == ("stop", False)

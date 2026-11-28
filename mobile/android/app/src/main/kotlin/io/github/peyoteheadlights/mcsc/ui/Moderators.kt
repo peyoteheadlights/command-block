@@ -25,7 +25,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -178,6 +177,7 @@ class AccountPages(
 
     fun changePassword(current: String, new: String, strings: Strings, onChanged: () -> Unit) {
         val c = client() ?: return
+        if (busy != null) return
         busy = "password"
         said = null
         scope.launch {
@@ -291,7 +291,7 @@ fun AddModeratorScreen(vm: AppViewModel, onBack: () -> Unit, onAdded: (String) -
                     Card {
                         Item(
                             t("mobile.mod.all_servers"),
-                            subtitle = t("mobile.mod.all_servers_hint"),
+                            info = t("mobile.mod.all_servers_hint"),
                             trailing = { Switch(checked = all, onCheckedChange = { all = it }) },
                         )
                         if (!all) {
@@ -334,7 +334,7 @@ private fun LevelChoices(catalogue: PermissionCatalogue, selected: String, onPic
 @Composable
 private fun Radio(title: String, subtitle: String?, selected: Boolean, enabled: Boolean = true, onSelect: () -> Unit) {
     Box(Modifier.selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onSelect)) {
-        Item(title, subtitle = subtitle, trailing = { RadioButton(selected = selected, onClick = null, enabled = enabled) })
+        Item(title, info = subtitle, trailing = { RadioButton(selected = selected, onClick = null, enabled = enabled) })
     }
 }
 
@@ -364,7 +364,7 @@ fun ModeratorScreen(vm: AppViewModel, name: String, onBack: () -> Unit, onServer
                             mod.invite?.let { Item(t("mobile.mod.invite_expires", "time" to Display.dateTime(vm.strings, it.expiresAt))) }
                             Item(
                                 t("mobile.mod.invite_new"),
-                                subtitle = t("mobile.mod.invite_new_hint"),
+                                info = t("mobile.mod.invite_new_hint"),
                                 onClick = { pages.newInvite(name, false, vm.strings, onInvite) },
                             )
                             Item(t("mobile.mod.invite_cancel"), onClick = { pages.cancelInvite(name, vm.strings) })
@@ -380,7 +380,7 @@ fun ModeratorScreen(vm: AppViewModel, name: String, onBack: () -> Unit, onServer
                     Card {
                         Item(
                             t("mobile.mod.all_servers"),
-                            subtitle = t("mobile.mod.all_servers_hint"),
+                            info = t("mobile.mod.all_servers_hint"),
                             trailing = {
                                 Switch(
                                     checked = mod.allServers,
@@ -490,6 +490,9 @@ fun ModeratorServerScreen(vm: AppViewModel, name: String, serverId: String, onBa
                     item { SectionTitle(t("mobile.mod.group_${group.id}")) }
                     item {
                         Card {
+                            Tick(t("mobile.mod.all_in_group"), perms.containsAll(shown)) { on ->
+                                perms = Moderators.toggleAll(perms, shown, on, catalogue)
+                            }
                             for (permission in shown) {
                                 Tick(t(Moderators.switchKey(permission)), permission in perms) { on ->
                                     perms = Moderators.toggle(perms, permission, on, catalogue)

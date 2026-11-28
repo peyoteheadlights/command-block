@@ -43,6 +43,9 @@ from .security.tls import pinned_context
 log = logging.getLogger("msc.yourpcs")
 
 LINK_SECONDS = 10 * 60
+# A new PC that can't reach the PC it asked gives up after a day. Before
+# that, only the PC it asked says when the request ran out.
+GIVE_UP_SECONDS = 24 * 60 * 60
 RETRY = (5, 30, 120, 600)
 HELLO_EVERY = 3
 PC_HEADER = "X-Command-Block-PC"
@@ -272,9 +275,11 @@ class YourPCs:
 
     async def _run(self) -> None:
         assert self._wake is not None
-        for peer in self.peers():
-            await self._pull(peer)
-        self.pulled.set()
+        try:
+            for peer in self.peers():
+                await self._pull(peer)
+        finally:
+            self.pulled.set()
         while True:
             try:
                 await self._round()
@@ -387,10 +392,15 @@ class YourPCs:
         if answer.status_code != 200:
             self._failed(pc, f"answered {answer.status_code}")
             return
-        found = answer.json()
-        for row in found.get("records") or []:
-            self.records.apply(row)
-        state["pulled"] = int(found.get("seq") or 0)
+        try:
+            found = answer.json()
+            for row in found.get("records") or []:
+                self.records.apply(row)
+            state["pulled"] = int(found.get("seq") or 0)
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            log.warning("PC %s sent account changes this PC can't read: %s", pc, exc)
+            self._failed(pc, "bad answer")
+            return
         self._reached(pc)
 
     async def ping_from(
@@ -439,6 +449,10 @@ class YourPCs:
     def changes_for(self, pc: str, since: int) -> dict[str, Any]:
         rows = [r for r in self.records.since(since) if r["pc"] != pc]
         return {"records": rows, "seq": self.records.last_seq()}
+
+    def join_waiting(self, pc: str) -> bool:
+        """A new PC's join request is still waiting for Allow here."""
+        return any(j["pc"] == pc for j in self._joins())
 
     def hello(self, pc: str) -> dict[str, Any]:
         """A PC the owner allowed asks for the account: the signing key and
@@ -554,7 +568,8 @@ class YourPCs:
             raise PcError("This PC's own address isn't known yet, so the new PC can't reach it.")
         body = {k: found[k] for k in ("name", "address", "port", "fingerprint", "sync_key_hash")}
         self.records.put("pc", found["pc"], body)
-        self.core.botpc.update_soon()  # the first bot of a joined account picks its PC
+        self.core.botpc.elect()
+        self.core.botpc.update_soon()
         self.db.audit("pc_joined", user=principal.user, target=found["name"])
         self.core.bus.publish_soon(
             Event(
@@ -607,29 +622,29 @@ class YourPCs:
             raise PcError(str(said or f"The other PC said no ({answer.status_code})."))
         self.db.set_setting(
             "pcs_joining",
-            {**target, "pc": answer.json().get("pc"), "until": time.time() + LINK_SECONDS},
+            {**target, "pc": answer.json().get("pc"), "until": time.time() + GIVE_UP_SECONDS},
         )
         self._soon()
         return {"ok": True, "waiting": True}
 
     async def _hello(self, joining: dict[str, Any]) -> None:
         if time.time() > float(joining.get("until") or 0):
-            self.db.set_setting("pcs_joining", None)
-            self.core.bus.publish_soon(
-                Event(
-                    type="pc_join_ran_out",
-                    level="warn",
-                    message="Nobody pressed Allow in time, so this PC didn't join. Try again.",
-                )
-            )
+            self._join_ran_out("Couldn't reach the other PC for a day, so this PC didn't join.")
             return
         try:
             answer = await self._call(joining, "GET", "/api/sync/hello")
         except (OSError, httpx.HTTPError):
+            return  # keep asking: it may have pressed Allow
+        if answer.status_code == 404:
+            self._join_ran_out("Nobody pressed Allow in time, or it was refused. Try again.")
             return
         if answer.status_code != 200:
             return  # not allowed yet
         self._adopt(answer.json())
+
+    def _join_ran_out(self, message: str) -> None:
+        self.db.set_setting("pcs_joining", None)
+        self.core.bus.publish_soon(Event(type="pc_join_ran_out", level="warn", message=message))
 
     def _adopt(self, found: dict[str, Any]) -> None:
         """Allowed: take the account's key and copy. This PC's own owner
@@ -655,6 +670,7 @@ class YourPCs:
         self._reached(other)
         self.db.set_setting("pcs_joining", None)
         self._record_me()
+        self.core.botpc.elect()
         self.core.botpc.update_soon()
         self.core.bus.publish_soon(
             Event(

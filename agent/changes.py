@@ -11,6 +11,12 @@ its top the highest id; rows with ``undone = 1`` are the redo stack, its top
 the lowest id (the change undone last). Every undone row is newer than every
 row still done, so the two never interleave.
 
+While Undo or Redo runs, its row is marked as moving (``undone`` -1 or 2),
+which puts it on neither stack. If the agent stops in the middle, ``settle``
+at the next start puts it back where it was when the files were put back,
+or drops it when the move had finished, so the same backup is never put
+back twice.
+
 An entry can only be reversed while its backup exists. Backups made before a
 change are kept 14 days (BackupManager.apply_retention), so that is how far
 back Undo reaches: an entry whose backup has gone drops off its stack, with
@@ -25,6 +31,11 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .backups.manager import BackupManager
+
+
+# ``undone`` while Undo or Redo of the row runs.
+UNDOING = -1
+REDOING = 2
 
 
 class ChangeError(RuntimeError):
@@ -132,8 +143,8 @@ class ChangeHistory:
         if not stack:
             raise ChangeError("There is nothing to undo on this server.")
         top = self._expected(stack[0], change_id)
-        result = await self._put_back(top, user, start_after, "undoing")
-        self.db.execute(
+        result = await self._move(top, user, start_after, "undoing", UNDOING, 0)
+        self._moved(
             "UPDATE changes SET undone = 1, after_backup_id = ?, moved_at = ?, moved_by = ? "
             "WHERE id = ?",
             (result["safety_backup"]["id"], time.time(), user, top["id"]),
@@ -147,15 +158,47 @@ class ChangeHistory:
         if not stack:
             raise ChangeError("There is nothing to redo on this server.")
         top = self._expected(stack[0], change_id)
-        result = await self._put_back(top, user, start_after, "redoing")
+        result = await self._move(top, user, start_after, "redoing", REDOING, 1)
         # The backup just made is from before the change again, so it is
         # what the next Undo of this change puts back.
-        self.db.execute(
+        self._moved(
             "UPDATE changes SET undone = 0, before_backup_id = ?, moved_at = ?, moved_by = ? "
             "WHERE id = ?",
             (result["safety_backup"]["id"], time.time(), user, top["id"]),
         )
         return {**result, "change": top}
+
+    async def _move(
+        self, entry: dict[str, Any], user: str, start_after: bool, doing: str, mark: int, was: int
+    ) -> dict[str, Any]:
+        """Mark the row as moving first, then put the files back. A failure
+        puts the row back on its stack."""
+        self.db.execute("UPDATE changes SET undone = ? WHERE id = ?", (mark, entry["id"]))
+        try:
+            return await self._put_back(entry, user, start_after, doing)
+        except BaseException:
+            self.db.execute("UPDATE changes SET undone = ? WHERE id = ?", (was, entry["id"]))
+            raise
+
+    def _moved(self, sql: str, params: tuple[Any, ...]) -> None:
+        self.db.execute(sql, params)
+
+    def settle(self, interrupted: bool) -> None:
+        """At agent start, for a row left moving: when the change it was in
+        was cut off (its files were put back), it goes back on its stack;
+        when the files had already moved, it is dropped, as its new backup
+        isn't known."""
+        if interrupted:
+            for mark, was in ((UNDOING, 0), (REDOING, 1)):
+                self.db.execute(
+                    "UPDATE changes SET undone = ? WHERE server_id = ? AND undone = ?",
+                    (was, self.server_id, mark),
+                )
+        else:
+            self.db.execute(
+                "DELETE FROM changes WHERE server_id = ? AND undone IN (?, ?)",
+                (self.server_id, UNDOING, REDOING),
+            )
 
     async def _put_back(
         self, entry: dict[str, Any], user: str, start_after: bool, doing: str
@@ -166,7 +209,6 @@ class ChangeHistory:
             entry["backup_id"],
             user=user,
             start_after=start_after,
-            safety_backup=True,
             only=scope,
             history="none",
             note=f"Before {doing}: {entry['title'][:1].lower()}{entry['title'][1:]}",

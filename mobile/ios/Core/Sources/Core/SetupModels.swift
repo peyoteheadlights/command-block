@@ -763,9 +763,11 @@ public struct CrossplayInfo: Decodable, Equatable, Sendable {
     public var differences: [String]
     public var address: String?
     public var addressUnknown: String?
+    public var consoleFriends: ConsoleFriends?
 
     enum CodingKeys: String, CodingKey {
         case available, enabled, port, ready, differences, address
+        case consoleFriends = "console_friends"
         case unavailableReason = "unavailable_reason"
         case defaultPort = "default_port"
         case suggestedPort = "suggested_port"
@@ -774,7 +776,8 @@ public struct CrossplayInfo: Decodable, Equatable, Sendable {
         case addressUnknown = "address_unknown"
     }
 
-    public init(available: Bool = false, unavailableReason: String? = nil, enabled: Bool = false, port: Int? = nil, defaultPort: Int = 19132, suggestedPort: Int? = nil, usernamePrefix: String = "", missingMod: String? = nil, ready: Bool = false, differences: [String] = [], address: String? = nil, addressUnknown: String? = nil) {
+    public init(available: Bool = false, unavailableReason: String? = nil, enabled: Bool = false, port: Int? = nil, defaultPort: Int = 19132, suggestedPort: Int? = nil, usernamePrefix: String = "", missingMod: String? = nil, ready: Bool = false, differences: [String] = [], address: String? = nil, addressUnknown: String? = nil, consoleFriends: ConsoleFriends? = nil) {
+        self.consoleFriends = consoleFriends
         self.available = available
         self.unavailableReason = unavailableReason
         self.enabled = enabled
@@ -803,6 +806,7 @@ public struct CrossplayInfo: Decodable, Equatable, Sendable {
         differences = c.value(.differences, [])
         address = c.maybe(.address)
         addressUnknown = c.maybe(.addressUnknown)
+        consoleFriends = c.maybe(.consoleFriends)
     }
 }
 
@@ -1050,6 +1054,10 @@ public struct NewServerOptions: Decodable, Equatable, Sendable {
     public var color: String?
     public var palette: [PaletteColor]
     public var eulaUrl: String
+    /// This PC's first-run answer to "Who's this server for?"; empty: not picked.
+    public var playedBy: String
+    /// Kinds whose tips to show: vanilla, mods, plugins, bedrock.
+    public var kindTips: [String]
     public var bedrock: BedrockNewOptions
 
     enum CodingKeys: String, CodingKey {
@@ -1057,9 +1065,13 @@ public struct NewServerOptions: Decodable, Equatable, Sendable {
         case memoryMb = "memory_mb"
         case totalMb = "total_mb"
         case eulaUrl = "eula_url"
+        case playedBy = "played_by"
+        case kindTips = "kind_tips"
     }
 
-    public init(types: [ServerTypeInfo] = [], recommended: String = "", memoryMb: Int? = nil, totalMb: Int? = nil, color: String? = nil, palette: [PaletteColor] = [], eulaUrl: String = "", bedrock: BedrockNewOptions = BedrockNewOptions()) {
+    public init(types: [ServerTypeInfo] = [], recommended: String = "", memoryMb: Int? = nil, totalMb: Int? = nil, color: String? = nil, palette: [PaletteColor] = [], eulaUrl: String = "", playedBy: String = "", kindTips: [String] = [], bedrock: BedrockNewOptions = BedrockNewOptions()) {
+        self.playedBy = playedBy
+        self.kindTips = kindTips
         self.types = types
         self.recommended = recommended
         self.memoryMb = memoryMb
@@ -1079,8 +1091,15 @@ public struct NewServerOptions: Decodable, Equatable, Sendable {
         color = c.maybe(.color)
         palette = c.each(.palette)
         eulaUrl = c.value(.eulaUrl, "")
+        playedBy = c.value(.playedBy, "")
+        kindTips = c.value(.kindTips, [])
         bedrock = c.value(.bedrock, BedrockNewOptions())
     }
+}
+
+/// The warnings and tips this account hid.
+public struct Hidden: Decodable, Equatable, Sendable {
+    public var hidden: [String]
 }
 
 /// A brand-new server, set up and not started.
@@ -1119,8 +1138,14 @@ public struct NewServerRequest: Equatable, Sendable {
     public var memoryMb: Int?
     public var color: String?
     public var eulaAccepted: Bool
+    /// "Who's this server for?": friends, kids, community or empty.
+    public var playedBy: String
+    /// Friends' names for the whitelist (friends or kids only), added on the first start.
+    public var players: [String]
 
-    public init(name: String, directory: String, type: String, minecraft: String, loader: String?, memoryMb: Int?, color: String?, eulaAccepted: Bool) {
+    public init(name: String, directory: String, type: String, minecraft: String, loader: String?, memoryMb: Int?, color: String?, eulaAccepted: Bool, playedBy: String = "", players: [String] = []) {
+        self.playedBy = playedBy
+        self.players = players
         self.name = name
         self.directory = directory
         self.type = type
@@ -1129,5 +1154,38 @@ public struct NewServerRequest: Equatable, Sendable {
         self.memoryMb = memoryMb
         self.color = color
         self.eulaAccepted = eulaAccepted
+    }
+}
+
+/// "Let console friends join": the MCXboxBroadcast add-on.
+public struct ConsoleFriends: Decodable, Equatable, Sendable {
+    public var available: Bool
+    public var on: Bool
+    /// Owner only: Microsoft's page and the code to type there.
+    public var signIn: SignInCode?
+    public var gamertag: String?
+    public var problem: String?
+
+    enum CodingKeys: String, CodingKey {
+        case available, on, gamertag, problem
+        case signIn = "sign_in"
+    }
+
+    public init(available: Bool = false, on: Bool = false, signIn: SignInCode? = nil, gamertag: String? = nil, problem: String? = nil) {
+        self.available = available
+        self.on = on
+        self.signIn = signIn
+        self.gamertag = gamertag
+        self.problem = problem
+    }
+}
+
+public struct SignInCode: Decodable, Equatable, Sendable {
+    public var url: String
+    public var code: String
+
+    public init(url: String, code: String) {
+        self.url = url
+        self.code = code
     }
 }

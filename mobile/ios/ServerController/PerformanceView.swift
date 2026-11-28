@@ -25,6 +25,10 @@ struct PerformanceView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    Button(model.t("perf.save_csv")) { Task { await world.shareCsv() } }
+                    if let problem = world.csvProblem {
+                        ProblemCard(problem: problem, palette: palette) { await world.shareCsv() }
+                    }
                     content(world, palette)
                     health(world, palette)
                 }
@@ -35,6 +39,12 @@ struct PerformanceView: View {
             .refreshable { await world.loadPerformance() }
         }
         .task(id: serverId) { await world.loadPerformance() }
+        .sheet(
+            item: Binding(get: { world.sharingCsv }, set: { _ in }),
+            onDismiss: { world.finishSharingCsv() }
+        ) { done in
+            ShareSheet(file: done.file)
+        }
     }
 
     @ViewBuilder
@@ -163,17 +173,17 @@ private struct ValueRow: View {
                     .accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: title)
+                Text(hiding: title)
                     .foregroundStyle(palette.textPrimary)
                 if let note = note {
-                    Text(verbatim: note)
+                    Text(hiding: note)
                         .font(.footnote)
                         .foregroundStyle(palette.textSecondary)
                 }
             }
             Spacer(minLength: 8)
             if let value = value {
-                Text(verbatim: value)
+                Text(hiding: value)
                     .fontWeight(.medium)
                     .foregroundStyle(palette.textPrimary)
                     .multilineTextAlignment(.trailing)
@@ -201,7 +211,7 @@ private struct GraphCard: View {
                     .fontWeight(.medium)
                     .foregroundStyle(palette.textPrimary)
                 Spacer()
-                Text(verbatim: graph.unit)
+                Text(hiding: graph.unit)
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
             }
@@ -209,7 +219,7 @@ private struct GraphCard: View {
                 Hint(text: empty, palette: palette)
             } else {
                 let point = touched.flatMap { Graphs.nearest(graph.points, $0.timeIntervalSince1970) }
-                Text(verbatim: point.map(reading) ?? " ")
+                Text(hiding: point.map(reading) ?? " ")
                     .font(.footnote)
                     .foregroundStyle(palette.textSecondary)
                 chart(point)
@@ -255,7 +265,7 @@ private struct GraphCard: View {
                     .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
                     .foregroundStyle(palette.textSecondary)
                     .annotation(position: .top, alignment: .trailing) {
-                        Text(verbatim: guide.label)
+                        Text(hiding: guide.label)
                             .font(.caption2)
                             .foregroundStyle(palette.textSecondary)
                     }
@@ -276,7 +286,7 @@ private struct GraphCard: View {
                 AxisGridLine()
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        Text(verbatim: graph.format(v, true))
+                        Text(hiding: graph.format(v, true))
                     }
                 }
             }
@@ -286,7 +296,7 @@ private struct GraphCard: View {
                 AxisGridLine()
                 AxisValueLabel {
                     if let date = value.as(Date.self) {
-                        Text(verbatim: Graphs.axisLabel(date.timeIntervalSince1970, days: graph.days))
+                        Text(hiding: Graphs.axisLabel(date.timeIntervalSince1970, days: graph.days))
                     }
                 }
             }

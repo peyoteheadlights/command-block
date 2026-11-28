@@ -219,6 +219,7 @@ async def test_threshold_breach_publishes_a_warning(parts):
     config, bus, db, server = parts
     config.set("thresholds.cpu_percent", 0.0)
     config.set("thresholds.disk_free_gb", 10_000_000.0)
+    config.set("thresholds.high_minutes", 0)  # CPU alerts wait 5 minutes by default
     seen = []
     bus.subscribe(lambda event: seen.append(event.type))
     metrics = MetricsMonitor(config, bus, db, server)

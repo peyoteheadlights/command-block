@@ -1,0 +1,886 @@
+[
+ {
+  "theme": "light",
+  "base": null,
+  "tokens": {
+   "--accent": "#C8794A",
+   "--accent-band": "#EEEEF2",
+   "--accent-edge": "#8E8E93",
+   "--accent-ink": "#824F30",
+   "--accent-ring": "#B46D43",
+   "--accent-text": "#111111",
+   "--band": "#D3D3D7",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#D4D4DA",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#1967D4",
+  "tokens": {
+   "--accent": "#1967D4",
+   "--accent-band": "#B0C9ED",
+   "--accent-edge": "#1967D4",
+   "--accent-ink": "#134D9F",
+   "--accent-ring": "#1967D4",
+   "--accent-text": "#FFFFFF",
+   "--band": "#86AEE6",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#B3C6E3",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#F87906",
+  "tokens": {
+   "--accent": "#F87906",
+   "--accent-band": "#F7CFAB",
+   "--accent-edge": "#F87906",
+   "--accent-ink": "#884303",
+   "--accent-ring": "#C66105",
+   "--accent-text": "#111111",
+   "--band": "#F7B77D",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#E9CAB2",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#30C067",
+  "tokens": {
+   "--accent": "#30C067",
+   "--accent-band": "#B7E5CA",
+   "--accent-edge": "#30C067",
+   "--accent-ink": "#1A6A39",
+   "--accent-ring": "#24904D",
+   "--accent-text": "#111111",
+   "--band": "#91DBAE",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#B9DBC9",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#D7213E",
+  "tokens": {
+   "--accent": "#D7213E",
+   "--accent-band": "#EDB3BD",
+   "--accent-edge": "#D7213E",
+   "--accent-ink": "#97172B",
+   "--accent-ring": "#D7213E",
+   "--accent-text": "#FFFFFF",
+   "--band": "#E78A99",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#E1B5BF",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#B78AF6",
+  "tokens": {
+   "--accent": "#B78AF6",
+   "--accent-band": "#E3D4F8",
+   "--accent-edge": "#B78AF6",
+   "--accent-ink": "#6E5394",
+   "--accent-ring": "#926EC5",
+   "--accent-text": "#111111",
+   "--band": "#D7BFF7",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#D9CEEB",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#F7E10D",
+  "tokens": {
+   "--accent": "#F7E10D",
+   "--accent-band": "#F7F0AD",
+   "--accent-edge": "#F7E10D",
+   "--accent-ink": "#6F6506",
+   "--accent-ring": "#948708",
+   "--accent-text": "#111111",
+   "--band": "#F7EC80",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#E9E3B3",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#0D4B48",
+  "tokens": {
+   "--accent": "#0D4B48",
+   "--accent-band": "#ACC0C0",
+   "--accent-edge": "#0D4B48",
+   "--accent-ink": "#0D4B48",
+   "--accent-ring": "#0D4B48",
+   "--accent-text": "#FFFFFF",
+   "--band": "#7F9F9E",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#B0BFC2",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#A61888",
+  "tokens": {
+   "--accent": "#A61888",
+   "--accent-band": "#DDB0D5",
+   "--accent-edge": "#A61888",
+   "--accent-ink": "#8D1474",
+   "--accent-ring": "#A61888",
+   "--accent-text": "#FFFFFF",
+   "--band": "#CE85BF",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#D5B3D1",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#54E7F0",
+  "tokens": {
+   "--accent": "#54E7F0",
+   "--accent-band": "#C3F2F6",
+   "--accent-edge": "#54E7F0",
+   "--accent-ink": "#26686C",
+   "--accent-ring": "#37969C",
+   "--accent-text": "#111111",
+   "--band": "#A4EFF4",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#C1E5EA",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#4F610A",
+  "tokens": {
+   "--accent": "#4F610A",
+   "--accent-band": "#C1C7AD",
+   "--accent-edge": "#4F610A",
+   "--accent-ink": "#475709",
+   "--accent-ring": "#4F610A",
+   "--accent-text": "#FFFFFF",
+   "--band": "#A1AA7F",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#C0C5B3",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#FCA1B1",
+  "tokens": {
+   "--accent": "#FCA1B1",
+   "--accent-band": "#F9DBE2",
+   "--accent-edge": "#FCA1B1",
+   "--accent-ink": "#7E5159",
+   "--accent-ring": "#B0717C",
+   "--accent-text": "#111111",
+   "--band": "#FACBD4",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#EAD4DB",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "light",
+  "base": "#18185F",
+  "tokens": {
+   "--accent": "#18185F",
+   "--accent-band": "#B0B0C8",
+   "--accent-edge": "#18185F",
+   "--accent-ink": "#18185F",
+   "--accent-ring": "#18185F",
+   "--accent-text": "#FFFFFF",
+   "--band": "#8585AB",
+   "--band-text": "#1D1D1F",
+   "--paper": "#FFFFFF",
+   "--tab-fill": "#B3B3C7",
+   "--tab-text": "#1D1D1F"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": null,
+  "tokens": {
+   "--accent": "#C8794A",
+   "--accent-band": "#242428",
+   "--accent-edge": "#8E8E93",
+   "--accent-ink": "#D69B77",
+   "--accent-ring": "#C8794A",
+   "--accent-text": "#111111",
+   "--band": "#424246",
+   "--band-text": "#F5F5F7",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#2B2B30",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#1967D4",
+  "tokens": {
+   "--accent": "#1967D4",
+   "--accent-band": "#1B3355",
+   "--accent-edge": "#1967D4",
+   "--accent-ink": "#6A9CE3",
+   "--accent-ring": "#3C7EDA",
+   "--accent-text": "#FFFFFF",
+   "--band": "#1A4279",
+   "--band-text": "#F5F5F7",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#142D51",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#F87906",
+  "tokens": {
+   "--accent": "#F87906",
+   "--accent-band": "#5E3818",
+   "--accent-edge": "#F87906",
+   "--accent-ink": "#F99438",
+   "--accent-ring": "#F87906",
+   "--accent-text": "#111111",
+   "--band": "#894A13",
+   "--band-text": "#F5F5F7",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#5B320F",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#30C067",
+  "tokens": {
+   "--accent": "#30C067",
+   "--accent-band": "#224D35",
+   "--accent-edge": "#30C067",
+   "--accent-ink": "#4FC97E",
+   "--accent-ring": "#30C067",
+   "--accent-text": "#111111",
+   "--band": "#266D43",
+   "--band-text": "#F5F5F7",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#1B492E",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#D7213E",
+  "tokens": {
+   "--accent": "#D7213E",
+   "--accent-band": "#541E28",
+   "--accent-edge": "#D7213E",
+   "--accent-ink": "#E77A8B",
+   "--accent-ring": "#DD425B",
+   "--accent-text": "#FFFFFF",
+   "--band": "#791F2E",
+   "--band-text": "#F5F5F7",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#501621",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#B78AF6",
+  "tokens": {
+   "--accent": "#B78AF6",
+   "--accent-band": "#4B3D60",
+   "--accent-edge": "#B78AF6",
+   "--accent-ink": "#C5A1F8",
+   "--accent-ring": "#B78AF6",
+   "--accent-text": "#111111",
+   "--band": "#69538A",
+   "--band-text": "#F5F5F7",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#46385C",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#F7E10D",
+  "tokens": {
+   "--accent": "#F7E10D",
+   "--accent-band": "#5E571A",
+   "--accent-edge": "#F7E10D",
+   "--accent-ink": "#F7E10D",
+   "--accent-ring": "#F7E10D",
+   "--accent-text": "#111111",
+   "--band": "#897E16",
+   "--band-text": "#0C0C0C",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#5B5411",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#0D4B48",
+  "tokens": {
+   "--accent": "#0D4B48",
+   "--accent-band": "#182A2B",
+   "--accent-edge": "#0D4B48",
+   "--accent-ink": "#7A9C9A",
+   "--accent-ring": "#56817F",
+   "--accent-text": "#FFFFFF",
+   "--band": "#153333",
+   "--band-text": "#F5F5F7",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#102424",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#A61888",
+  "tokens": {
+   "--accent": "#A61888",
+   "--accent-band": "#451B3F",
+   "--accent-edge": "#A61888",
+   "--accent-ink": "#CE80BE",
+   "--accent-ring": "#BC52A6",
+   "--accent-text": "#FFFFFF",
+   "--band": "#601A53",
+   "--band-text": "#F5F5F7",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#411338",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#54E7F0",
+  "tokens": {
+   "--accent": "#54E7F0",
+   "--accent-band": "#2D595E",
+   "--accent-edge": "#54E7F0",
+   "--accent-ink": "#54E7F0",
+   "--accent-ring": "#54E7F0",
+   "--accent-text": "#111111",
+   "--band": "#388187",
+   "--band-text": "#000000",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#26555A",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#4F610A",
+  "tokens": {
+   "--accent": "#4F610A",
+   "--accent-band": "#2B3119",
+   "--accent-edge": "#4F610A",
+   "--accent-ink": "#95A06C",
+   "--accent-ring": "#72813B",
+   "--accent-text": "#FFFFFF",
+   "--band": "#353E15",
+   "--band-text": "#F5F5F7",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#252B10",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#FCA1B1",
+  "tokens": {
+   "--accent": "#FCA1B1",
+   "--accent-band": "#5F444B",
+   "--accent-edge": "#FCA1B1",
+   "--accent-ink": "#FCA1B1",
+   "--accent-ring": "#FCA1B1",
+   "--accent-text": "#111111",
+   "--band": "#8B5E68",
+   "--band-text": "#F5F5F7",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#5C3F46",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "dark",
+  "base": "#18185F",
+  "tokens": {
+   "--accent": "#18185F",
+   "--accent-band": "#1B1B32",
+   "--accent-edge": "#18185F",
+   "--accent-ink": "#9797B7",
+   "--accent-ring": "#74749F",
+   "--accent-text": "#FFFFFF",
+   "--band": "#1A1A3F",
+   "--band-text": "#F5F5F7",
+   "--paper": "#1C1C1F",
+   "--tab-fill": "#13132B",
+   "--tab-text": "#F5F5F7"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": null,
+  "tokens": {
+   "--accent": "#C8794A",
+   "--accent-band": "#31373F",
+   "--accent-edge": "#8E8E93",
+   "--accent-ink": "#DEAF92",
+   "--accent-ring": "#CB8053",
+   "--accent-text": "#111111",
+   "--band": "#4B4F57",
+   "--band-text": "#ECEFF3",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#2E333A",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#1967D4",
+  "tokens": {
+   "--accent": "#1967D4",
+   "--accent-band": "#254065",
+   "--accent-edge": "#1967D4",
+   "--accent-ink": "#8CB3EA",
+   "--accent-ring": "#538DDF",
+   "--accent-text": "#FFFFFF",
+   "--band": "#224B84",
+   "--band-text": "#ECEFF3",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#1C385E",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#F87906",
+  "tokens": {
+   "--accent": "#F87906",
+   "--accent-band": "#684528",
+   "--accent-edge": "#F87906",
+   "--accent-ink": "#FBAF6A",
+   "--accent-ring": "#F87906",
+   "--accent-text": "#111111",
+   "--band": "#90541E",
+   "--band-text": "#ECEFF3",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#643E1C",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#30C067",
+  "tokens": {
+   "--accent": "#30C067",
+   "--accent-band": "#2C5B45",
+   "--accent-edge": "#30C067",
+   "--accent-ink": "#83D9A4",
+   "--accent-ring": "#30C067",
+   "--accent-text": "#111111",
+   "--band": "#2D774F",
+   "--band-text": "#ECEFF3",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#24553B",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#D7213E",
+  "tokens": {
+   "--accent": "#D7213E",
+   "--accent-band": "#5E2B38",
+   "--accent-edge": "#D7213E",
+   "--accent-ink": "#EB909F",
+   "--accent-ring": "#E1596E",
+   "--accent-text": "#FFFFFF",
+   "--band": "#80283A",
+   "--band-text": "#ECEFF3",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#59222E",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#B78AF6",
+  "tokens": {
+   "--accent": "#B78AF6",
+   "--accent-band": "#544A70",
+   "--accent-edge": "#B78AF6",
+   "--accent-ink": "#D4B9FA",
+   "--accent-ring": "#B78AF6",
+   "--accent-text": "#111111",
+   "--band": "#705C96",
+   "--band-text": "#ECEFF3",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#4F4369",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#F7E10D",
+  "tokens": {
+   "--accent": "#F7E10D",
+   "--accent-band": "#68642A",
+   "--accent-edge": "#F7E10D",
+   "--accent-ink": "#F7E10D",
+   "--accent-ring": "#F7E10D",
+   "--accent-text": "#111111",
+   "--band": "#908722",
+   "--band-text": "#181818",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#635F1F",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#0D4B48",
+  "tokens": {
+   "--accent": "#0D4B48",
+   "--accent-band": "#21373B",
+   "--accent-edge": "#0D4B48",
+   "--accent-ink": "#92AEAD",
+   "--accent-ring": "#6E9391",
+   "--accent-text": "#FFFFFF",
+   "--band": "#1B3D3F",
+   "--band-text": "#ECEFF3",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#192F32",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#A61888",
+  "tokens": {
+   "--accent": "#A61888",
+   "--accent-band": "#4F284F",
+   "--accent-edge": "#A61888",
+   "--accent-ink": "#D797C9",
+   "--accent-ring": "#C569B2",
+   "--accent-text": "#FFFFFF",
+   "--band": "#67245F",
+   "--band-text": "#ECEFF3",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#4A1F46",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#54E7F0",
+  "tokens": {
+   "--accent": "#54E7F0",
+   "--accent-band": "#37666E",
+   "--accent-edge": "#54E7F0",
+   "--accent-ink": "#6EEBF2",
+   "--accent-ring": "#54E7F0",
+   "--accent-text": "#111111",
+   "--band": "#3F8A92",
+   "--band-text": "#0C0C0C",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#2F6167",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#4F610A",
+  "tokens": {
+   "--accent": "#4F610A",
+   "--accent-band": "#353E29",
+   "--accent-edge": "#4F610A",
+   "--accent-ink": "#A7B085",
+   "--accent-ring": "#849054",
+   "--accent-text": "#FFFFFF",
+   "--band": "#3C4820",
+   "--band-text": "#ECEFF3",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#2E361E",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#FCA1B1",
+  "tokens": {
+   "--accent": "#FCA1B1",
+   "--accent-band": "#69515B",
+   "--accent-edge": "#FCA1B1",
+   "--accent-ink": "#FDBDC8",
+   "--accent-ring": "#FCA1B1",
+   "--accent-text": "#111111",
+   "--band": "#926773",
+   "--band-text": "#F7F9FA",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#654B53",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "graphite",
+  "base": "#18185F",
+  "tokens": {
+   "--accent": "#18185F",
+   "--accent-band": "#252842",
+   "--accent-edge": "#18185F",
+   "--accent-ink": "#A3A3BF",
+   "--accent-ring": "#8080A7",
+   "--accent-text": "#FFFFFF",
+   "--band": "#21244A",
+   "--band-text": "#ECEFF3",
+   "--paper": "#2A2F36",
+   "--tab-fill": "#1C1F39",
+   "--tab-text": "#ECEFF3"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": null,
+  "tokens": {
+   "--accent": "#C8794A",
+   "--accent-band": "#000000",
+   "--accent-edge": "#8E8E93",
+   "--accent-ink": "#C8794A",
+   "--accent-ring": "#C8794A",
+   "--accent-text": "#111111",
+   "--band": "#282829",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#1A1A1A",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#1967D4",
+  "tokens": {
+   "--accent": "#1967D4",
+   "--accent-band": "#05152A",
+   "--accent-edge": "#1967D4",
+   "--accent-ink": "#3C7EDA",
+   "--accent-ring": "#1967D4",
+   "--accent-text": "#FFFFFF",
+   "--band": "#0B2C5A",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#082144",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#F87906",
+  "tokens": {
+   "--accent": "#F87906",
+   "--accent-band": "#321801",
+   "--accent-edge": "#F87906",
+   "--accent-ink": "#F87906",
+   "--accent-ring": "#F87906",
+   "--accent-text": "#111111",
+   "--band": "#693302",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#4F2702",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#30C067",
+  "tokens": {
+   "--accent": "#30C067",
+   "--accent-band": "#0A2615",
+   "--accent-edge": "#30C067",
+   "--accent-ink": "#30C067",
+   "--accent-ring": "#30C067",
+   "--accent-text": "#111111",
+   "--band": "#15512C",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#0F3D21",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#D7213E",
+  "tokens": {
+   "--accent": "#D7213E",
+   "--accent-band": "#2B070C",
+   "--accent-edge": "#D7213E",
+   "--accent-ink": "#DF4D65",
+   "--accent-ring": "#D7213E",
+   "--accent-text": "#FFFFFF",
+   "--band": "#5B0E1A",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#450B14",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#B78AF6",
+  "tokens": {
+   "--accent": "#B78AF6",
+   "--accent-band": "#251C31",
+   "--accent-edge": "#B78AF6",
+   "--accent-ink": "#B78AF6",
+   "--accent-ring": "#B78AF6",
+   "--accent-text": "#111111",
+   "--band": "#4E3B68",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#3B2C4F",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#F7E10D",
+  "tokens": {
+   "--accent": "#F7E10D",
+   "--accent-band": "#312D03",
+   "--accent-edge": "#F7E10D",
+   "--accent-ink": "#F7E10D",
+   "--accent-ring": "#F7E10D",
+   "--accent-text": "#111111",
+   "--band": "#685F06",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#4F4804",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#0D4B48",
+  "tokens": {
+   "--accent": "#0D4B48",
+   "--accent-band": "#030F0E",
+   "--accent-edge": "#0D4B48",
+   "--accent-ink": "#628A88",
+   "--accent-ring": "#3D6F6D",
+   "--accent-text": "#FFFFFF",
+   "--band": "#06201E",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#041817",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#A61888",
+  "tokens": {
+   "--accent": "#A61888",
+   "--accent-band": "#21051B",
+   "--accent-edge": "#A61888",
+   "--accent-ink": "#C15DAC",
+   "--accent-ring": "#AA248E",
+   "--accent-text": "#FFFFFF",
+   "--band": "#460A3A",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#35082C",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#54E7F0",
+  "tokens": {
+   "--accent": "#54E7F0",
+   "--accent-band": "#112E30",
+   "--accent-edge": "#54E7F0",
+   "--accent-ink": "#54E7F0",
+   "--accent-ring": "#54E7F0",
+   "--accent-text": "#111111",
+   "--band": "#246266",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#1B4A4D",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#4F610A",
+  "tokens": {
+   "--accent": "#4F610A",
+   "--accent-band": "#101302",
+   "--accent-edge": "#4F610A",
+   "--accent-ink": "#7B8947",
+   "--accent-ring": "#586916",
+   "--accent-text": "#FFFFFF",
+   "--band": "#222904",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#191F03",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#FCA1B1",
+  "tokens": {
+   "--accent": "#FCA1B1",
+   "--accent-band": "#322023",
+   "--accent-edge": "#FCA1B1",
+   "--accent-ink": "#FCA1B1",
+   "--accent-ring": "#FCA1B1",
+   "--accent-text": "#111111",
+   "--band": "#6B444B",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#513439",
+   "--tab-text": "#FFFFFF"
+  }
+ },
+ {
+  "theme": "contrast",
+  "base": "#18185F",
+  "tokens": {
+   "--accent": "#18185F",
+   "--accent-band": "#050513",
+   "--accent-edge": "#18185F",
+   "--accent-ink": "#8080A7",
+   "--accent-ring": "#5D5D8F",
+   "--accent-text": "#FFFFFF",
+   "--band": "#0A0A28",
+   "--band-text": "#FFFFFF",
+   "--paper": "#000000",
+   "--tab-fill": "#08081E",
+   "--tab-text": "#FFFFFF"
+  }
+ }
+]

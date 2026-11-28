@@ -4,6 +4,10 @@ The colors are the ones the phone apps use (``shared/theme.json``), so
 every app looks the same. Qt
 style sheets have no ``var()``, so the sheet below is filled in from them.
 The installer uses the same look.
+
+The page is plain paper in every server: a server's color goes on its tab,
+the band behind the sheet, the buttons and the edges. Where no server is
+open, the app icon's copper takes its place.
 """
 
 from __future__ import annotations
@@ -15,7 +19,24 @@ from pathlib import Path
 from agent import colors
 
 SHARED = Path(__file__).resolve().parent.parent / "shared"
-RADIUS = {"radius-sm": "6px", "radius": "8px", "radius-lg": "12px"}
+FONTS = SHARED / "fonts"
+IMAGES = Path(__file__).resolve().parent / "images"
+RADIUS = {"radius-sm": "8px", "radius": "8px", "radius-lg": "14px"}
+COPPER = "#C8794A"
+HEADING = '"Archivo", "Segoe UI Variable Display", "Segoe UI", sans-serif'
+# What a server's color (or the copper) sets. The rest stays the theme's.
+ACCENT = ("accent", "accent-text", "accent-hover", "accent-hover-text", "accent-ink", "accent-ring")
+SERVER = ("accent-band", "accent-edge", "tab-fill", "tab-text")
+
+
+def load_fonts() -> None:
+    """Archivo, the heading font, from the app's own folder (no download).
+    Qt keeps one font list per program, so this only works once."""
+    from PySide6.QtGui import QFontDatabase  # here, so the colors load without Qt
+
+    if "Archivo" not in QFontDatabase.families():
+        for file in sorted(FONTS.glob("*.ttf")):
+            QFontDatabase.addApplicationFont(str(file))
 
 
 def _qt(value) -> str:
@@ -33,20 +54,34 @@ def _theme(dark: bool) -> dict:
 
 
 def tokens(dark: bool, server_color: str | None = None) -> dict[str, str]:
-    """The theme's colors, tinted with a server's color when one is given
-    (the same tinting as the phone apps)."""
+    """The theme's colors, with a server's color on the accents, the band
+    and the edges when one is given (copper when not)."""
     theme = _theme(dark)
+    mode = "dark" if dark else "light"
     out = {**{k: _qt(v) for k, v in theme.items()}, **RADIUS}
     out["tab-fill"], out["tab-text"] = out["tab-neutral"], out["text-primary"]
-    tint = (
-        colors.derive_from(server_color, theme, "dark" if dark else "light")
-        if server_color
-        else None
-    )
-    if tint:
-        out.update(tint)
-        out["accent-soft"] = _qt({"rgb": tint["accent-edge"], "alpha": 0.2 if dark else 0.13})
+    tint = colors.derive_from(server_color, theme, mode) if server_color else None
+    keys = ACCENT + SERVER if tint else ACCENT
+    tint = tint or colors.derive_from(COPPER, theme, mode) or {}
+    out.update({k: tint[k] for k in keys})
+    out["accent-soft"] = _qt({"rgb": tint["accent-edge"], "alpha": 0.2 if dark else 0.13})
+    out["paper"] = out["sheet"] if dark else out["surface"]
+    # Edges take the color too. accent-ring is that color made dark (or
+    # light) enough to see as a line: 3 to 1 against the paper.
+    out["border"] = _qt({"rgb": out["accent-ring"], "alpha": 0.5})
+    out["border-strong"] = out["accent-ring"]
+    # The band is stronger than the phones' (their part of the redesign
+    # comes later), and the words on it are moved until they read on it.
+    band = colors.mix(_rgb(out["accent-band"]), _rgb(out["accent-edge"]), 0.28)
+    out["band"] = colors.to_hex(band)
+    out["band-text"] = colors.to_hex(colors.readable(_rgb(out["text-primary"]), [band]))
     return out
+
+
+def _rgb(value: str) -> colors.RGB:
+    found = colors.rgb(value)
+    assert found is not None, value  # theme.json and derive_from only give hex here
+    return found
 
 
 def style_sheet(t: dict[str, str], scale: float = 1.0) -> str:
@@ -59,14 +94,38 @@ def style_sheet(t: dict[str, str], scale: float = 1.0) -> str:
     return re.sub(r"(\d+(?:\.\d+)?)pt", lambda m: f"{float(m[1]) * scale:g}pt", sheet)
 
 
+def row_sheet(t: dict[str, str]) -> str:
+    """The buttons of one server's box on All servers, in that server's
+    color (``t`` are its tokens). Everything else stays the window's."""
+    return f"""
+QPushButton {{ border: 1px solid {t["border-strong"]}; }}
+QPushButton:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QPushButton[kind="primary"] {{ background: {t["accent"]}; color: {t["accent-text"]};
+                               border: 1px solid {t["accent-ring"]}; }}
+QPushButton[kind="primary"]:hover {{ background: {t["accent-hover"]}; }}
+QPushButton[kind="primary"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QPushButton[kind="plain"] {{ color: {t["accent-ink"]}; border: 1px solid transparent; }}
+QPushButton[kind="plain"]:hover {{ background: {t["accent-soft"]}; }}
+"""
+
+
+def _tick(t: dict[str, str]) -> str:
+    """The tick mark's picture, white or black like the words on a filled
+    button. A style sheet can only take it from a file."""
+    name = "tick-white.svg" if t["accent-text"] == "#FFFFFF" else "tick-black.svg"
+    return (IMAGES / name).as_posix()
+
+
 def _sheet(t: dict[str, str]) -> str:
     return f"""
 * {{ font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif; font-size: 10pt;
      color: {t["text-primary"]}; }}
 QWidget#desk {{ background: {t["desk"]}; }}
-QFrame#sheet {{ background: {t["sheet"]}; border-radius: {t["radius-lg"]};
-                border: 1px solid {t["border"]}; }}
+QFrame#sheet {{ background: {t["paper"]}; border-radius: 12px;
+                border: 1px solid {t["border-strong"]}; }}
 QLabel {{ background: transparent; }}
+QLabel#appName, QLabel#title, QLabel#h1, QLabel#h2, QTabBar#binder, QToolButton#pageTab {{
+    font-family: {HEADING}; }}
 QLabel#appName {{ font-size: 15pt; font-weight: 600; }}
 QLabel#appVersion, QLabel[kind="sub"] {{ color: {t["text-secondary"]}; }}
 QLabel#title {{ font-size: 13pt; font-weight: 600; }}
@@ -84,21 +143,31 @@ QLabel[kind="good"] {{ background: {t["success-soft"]}; border-radius: {t["radiu
                        padding: 8px 12px; }}
 
 QPushButton {{ background: {t["surface"]}; border: 1px solid {t["border-strong"]};
-               border-radius: {t["radius"]}; padding: 5px 14px; min-height: 20px; }}
+               border-radius: {t["radius"]}; padding: 5px 14px; min-height: 20px; font-weight: 500; }}
 QPushButton:hover {{ background: {t["surface-sunken"]}; }}
+QPushButton:pressed {{ background: {t["surface-selected"]}; }}
 QPushButton:focus {{ border: 2px solid {t["accent-ring"]}; padding: 4px 13px; }}
 QPushButton:disabled {{ color: {t["text-tertiary"]}; background: {t["surface-sunken"]}; }}
+QPushButton:checked {{ background: {t["accent-soft"]}; color: {t["accent-ink"]};
+                       border: 1px solid {t["accent-ring"]}; font-weight: 600; }}
 QPushButton[kind="primary"] {{ background: {t["accent"]}; color: {t["accent-text"]};
-                               border: 1px solid {t["accent"]}; min-width: 96px; font-weight: 600; }}
+                               border: 1px solid {t["accent-ring"]}; min-width: 96px; font-weight: 600; }}
 QPushButton[kind="primary"]:hover {{ background: {t["accent-hover"]}; }}
 QPushButton[kind="primary"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
 QPushButton[kind="primary"]:disabled {{ background: {t["accent-soft"]}; color: {t["text-tertiary"]};
                                         border-color: transparent; }}
-QPushButton[kind="danger"] {{ background: {t["danger"]}; color: #FFFFFF; border: 1px solid {t["danger"]};
+QPushButton[kind="danger"] {{ background: {t["danger"]}; color: {t["on-danger"]}; border: 1px solid {t["danger"]};
                               font-weight: 600; }}
+QPushButton[kind="tonal"] {{ background: {t["accent-soft"]}; border: 1px solid transparent;
+                             color: {t["accent-ink"]}; font-weight: 600; }}
+QPushButton[kind="tonal"]:hover {{ border: 1px solid {t["accent-ring"]}; }}
+QPushButton[kind="tonal"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
 QPushButton[kind="plain"] {{ background: transparent; border: 1px solid transparent;
                              color: {t["accent-ink"]}; padding: 5px 8px; }}
 QPushButton[kind="plain"]:hover {{ background: {t["accent-soft"]}; }}
+QPushButton[kind="dashed"] {{ background: transparent; border: 1px dashed {t["border-strong"]}; }}
+QPushButton[kind="dashed"]:hover {{ background: {t["accent-soft"]}; }}
+QPushButton[kind="dashed"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
 QPushButton[kind="swatch"] {{ border-radius: 11px; min-width: 22px; max-width: 22px;
                               min-height: 22px; max-height: 22px; padding: 0;
                               border: 1px solid {t["border-strong"]}; }}
@@ -111,11 +180,12 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{ border
 
 QListWidget {{ background: {t["surface"]}; border: 1px solid {t["border"]};
                border-radius: {t["radius"]}; padding: 4px; }}
-QListWidget::item {{ padding: 8px; border-bottom: 1px solid {t["border"]}; }}
+QListWidget::item {{ padding: 8px; margin-bottom: 2px; border-radius: {t["radius-sm"]}; }}
 QListWidget::item:selected {{ background: {t["accent-soft"]}; color: {t["text-primary"]}; }}
 
-QFrame[kind="choice"], QFrame[kind="row"] {{ background: {t["surface"]}; border: 1px solid {t["border"]};
-                                             border-radius: {t["radius"]}; }}
+QFrame[kind="choice"] {{ background: {t["surface"]}; border: 1px solid {t["border"]};
+                         border-radius: {t["radius"]}; }}
+QFrame[kind="row"] {{ background: {t["surface-sunken"]}; border: 0; border-radius: {t["radius"]}; }}
 QFrame[kind="choice"][selected="true"] {{ background: {t["accent-soft"]};
                                           border: 1px solid {t["accent-ring"]}; }}
 QFrame[kind="line"] {{ background: {t["border"]}; max-height: 1px; min-height: 1px; }}
@@ -124,9 +194,11 @@ QRadioButton::indicator {{ width: 14px; height: 14px; border-radius: 8px; backgr
                            border: 1px solid {t["border-strong"]}; }}
 QRadioButton::indicator:checked {{ background: {t["accent-text"]}; border: 5px solid {t["accent"]};
                                    width: 6px; height: 6px; }}
-QCheckBox::indicator {{ width: 14px; height: 14px; border-radius: 4px; background: {t["surface"]};
+QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 5px; background: {t["surface"]};
                         border: 1px solid {t["border-strong"]}; }}
-QCheckBox::indicator:checked {{ background: {t["accent"]}; border-color: {t["accent"]}; }}
+QCheckBox::indicator:hover {{ border: 1px solid {t["accent-ring"]}; }}
+QCheckBox::indicator:checked {{ background: {t["accent"]}; border-color: {t["accent-ring"]};
+                                image: url({_tick(t)}); }}
 
 QProgressBar {{ background: {t["surface-sunken"]}; border: 0; border-radius: 4px;
                 max-height: 8px; min-height: 8px; text-align: center; }}
@@ -136,15 +208,10 @@ QPlainTextEdit {{ background: {t["console-bg"]}; border: 1px solid {t["border"]}
                   border-radius: {t["radius"]}; font-family: "Cascadia Mono", Consolas, monospace;
                   font-size: 9pt; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: 0; }}
-QMessageBox {{ background: {t["sheet"]}; }}
+QDialog, QMessageBox {{ background: {t["paper"]}; }}
 QToolTip {{ background: {t["surface"]}; border: 1px solid {t["border-strong"]}; }}
 
-QTabBar#binder::tab {{ background: {t["tab-neutral"]}; color: {t["text-secondary"]}; padding: 7px 16px;
-                       margin-right: 3px; border-top-left-radius: {t["radius"]};
-                       border-top-right-radius: {t["radius"]}; }}
-QTabBar#binder::tab:selected {{ background: {t["accent-band"]}; color: {t["text-primary"]};
-                                font-weight: 600; }}
-QTabBar#binder::tab:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QTabBar#binder {{ font-weight: 500; }}
 QToolButton {{ background: transparent; border: 1px solid transparent; border-radius: {t["radius"]};
                padding: 4px 8px; }}
 QToolButton:hover {{ background: {t["surface-hover"]}; }}
@@ -152,22 +219,46 @@ QToolButton:focus {{ border: 2px solid {t["accent-ring"]}; }}
 QToolButton::menu-indicator {{ image: none; width: 0; }}
 QScrollBar:horizontal {{ height: 8px; background: transparent; }}
 QScrollBar:vertical {{ width: 8px; background: transparent; }}
-QScrollBar::handle {{ background: {t["border-strong"]}; border-radius: 4px; min-width: 24px; min-height: 24px; }}
+QScrollBar::handle {{ background: {t["neutral"]}; border-radius: 4px; min-width: 24px; min-height: 24px; }}
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{ width: 0; height: 0;
                                                                                        background: none; }}
-QToolButton#pageTab {{ border-radius: 14px; padding: 5px 10px; }}
-QToolButton#pageTab:checked {{ background: {t["surface"]}; font-weight: 600; }}
-QFrame#band {{ background: {t["accent-band"]}; border-radius: {t["radius-lg"]};
-               border-top-left-radius: 0; }}
-QFrame[kind="card"] {{ background: {t["surface"]}; border: 1px solid {t["border"]};
-                       border-radius: {t["radius-lg"]}; }}
-QFrame#panel {{ background: {t["sheet"]}; border-radius: {t["radius-lg"]}; }}
-QLabel#h1 {{ font-size: 20pt; font-weight: 600; }}
+QToolButton#pageTab {{ color: {t["band-text"]}; border: 2px solid transparent; border-radius: 9px;
+                       padding: 0 10px; min-height: 32px; font-weight: 500; }}
+QToolButton#pageTab:hover {{ background: transparent; }}
+QToolButton#pageTab:checked {{ color: {t["text-primary"]}; font-weight: 600; }}
+QToolButton#pageTab:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QFrame#band {{ background: {t["band"]}; border-radius: {t["radius-lg"]}; }}
+QFrame#strip {{ background: {t["paper"]}; border: 1px solid {t["border-strong"]}; border-radius: 10px; }}
+QFrame#strip QToolButton {{ padding: 3px 5px; }}
+QFrame#strip QToolButton#close:hover {{ background: {t["danger"]}; }}
+QFrame#gap {{ background: {t["border-strong"]}; max-width: 1px; min-width: 1px; }}
+QLabel[kind="big"] {{ font-size: 19pt; font-weight: 600; }}
+QLabel[kind="group"] {{ color: {t["text-secondary"]}; font-size: 9pt; font-weight: 600; }}
+QFrame#newServer {{ border: 1px dashed {t["border-strong"]}; border-radius: 12px; }}
+QFrame#panel {{ border: 0 solid {t["border-strong"]}; border-left-width: 1px; }}
+QFrame#panel[under="true"] {{ border-left-width: 0; border-top-width: 1px; }}
+QLabel#h1 {{ font-size: 25.5pt; font-weight: 700; }}
 QLabel#h2 {{ font-size: 12pt; font-weight: 600; }}
-QLabel[kind="chip"] {{ background: {t["surface-sunken"]}; color: {t["text-secondary"]};
-                       border-radius: 10px; padding: 2px 10px; }}
-QLabel[kind="chip"][strong="true"] {{ background: {t["accent"]}; color: {t["accent-text"]}; }}
 QPushButton[big="true"] {{ font-size: 12pt; min-width: 110px; min-height: 30px; }}
-QPushButton[kind="segment"]:checked {{ background: {t["accent"]}; color: {t["accent-text"]};
-                                       font-weight: 600; }}
+QToolButton#tool {{ background: {t["paper"]}; border: 1px solid {t["border-strong"]};
+                    border-radius: 10px; padding: 0; min-width: 34px; max-width: 34px;
+                    min-height: 34px; max-height: 34px; }}
+QToolButton#tool:hover {{ background: {t["surface-sunken"]}; }}
+QToolButton#tool:pressed {{ background: {t["surface-selected"]}; }}
+QToolButton#tool:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QToolButton#tool[kind="accent"] {{ background: {t["accent"]}; border-color: {t["accent-ring"]}; }}
+QToolButton#tool[kind="accent"]:hover {{ background: {t["accent-hover"]}; }}
+QToolButton#tool[kind="accent"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QToolButton#tool[kind="danger"] {{ background: transparent; border-color: transparent; }}
+QToolButton#tool[kind="danger"]:hover {{ background: {t["danger"]}; }}
+QToolButton#tool[kind="danger"]:focus {{ border: 2px solid {t["accent-ring"]}; }}
+QPushButton#seg {{ background: transparent; border: 2px solid transparent; border-radius: 7px;
+                   padding: 2px 14px; min-height: 20px; font-weight: 500; }}
+QPushButton#seg:checked {{ font-weight: 600; }}
+QPushButton#seg:focus {{ border: 2px solid {t["accent-ring"]}; padding: 2px 14px; }}
+QLineEdit#bigNumber {{ font-size: 25.5pt; font-weight: 600; background: transparent;
+                       border: 2px solid transparent; padding: 0 4px; min-height: 0; }}
+QLineEdit#bigNumber:hover {{ background: {t["surface-sunken"]}; }}
+QLineEdit#bigNumber:focus {{ background: {t["paper"]}; border: 2px solid {t["accent-ring"]};
+                             padding: 0 4px; }}
 """

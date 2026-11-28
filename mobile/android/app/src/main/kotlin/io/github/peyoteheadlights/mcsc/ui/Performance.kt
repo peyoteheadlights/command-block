@@ -17,7 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
@@ -61,6 +62,8 @@ fun PerformanceScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
     val world = vm.pages(serverId).world
     LaunchedEffect(serverId) { world.loadPerformance() }
     val speed = vm.servers.list.firstOrNull { it.id == serverId }?.capabilities?.speed
+    val context = LocalContext.current
+    val shareTitle = t("perf.save_csv")
 
     ServerFrame(
         vm, serverId,
@@ -70,6 +73,13 @@ fun PerformanceScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
         onRefresh = world::loadPerformance,
     ) {
         item { RangePicker(world.range, world::showRange) }
+        item {
+            TextButton(
+                onClick = { world.shareCsv(sharedFolder(context, "csv")) { shareFile(context, it, shareTitle, "text/csv") } },
+                modifier = Modifier.padding(horizontal = 8.dp),
+            ) { Text(t("perf.save_csv")) }
+        }
+        world.csvProblem?.let { problem -> item { ProblemNote(problem) } }
         val read = world.performance
         val data = read.value
         val problem = read.problem

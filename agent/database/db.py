@@ -728,6 +728,53 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        24,
+        # One copy of each mod and plugin file, hard-linked into every
+        # server that uses it (agent/mods/store.py). sha1 and sha512 are
+        # kept so the sites can be asked by hash without reading the file.
+        """
+        CREATE TABLE stored_files (
+            sha256 TEXT PRIMARY KEY,
+            sha1 TEXT NOT NULL,
+            sha512 TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            first_seen REAL NOT NULL,
+            locked INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX stored_files_sha1 ON stored_files(sha1);
+        CREATE INDEX stored_files_sha512 ON stored_files(sha512);
+        """,
+    ),
+    (
+        25,
+        # "Keep this backup": the clean-up never deletes it. What a backup
+        # left out on purpose (map tiles), so a restore keeps today's copy.
+        """
+        ALTER TABLE backups ADD COLUMN kept INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE backups ADD COLUMN excludes TEXT;
+        """,
+    ),
+    (
+        26,
+        # Where a server sits on All servers (dragged there) and the group
+        # heading it's under. Empty: after the placed ones, no group.
+        """
+        ALTER TABLE servers ADD COLUMN position INTEGER;
+        ALTER TABLE servers ADD COLUMN group_name TEXT;
+        """,
+    ),
+    (
+        27,
+        # The Companion mod's last join check per player: the modpack
+        # version their game said it has (empty: none) and whether it passed.
+        """
+        ALTER TABLE players ADD COLUMN modpack_version TEXT;
+        ALTER TABLE players ADD COLUMN modpack_ok INTEGER;
+        ALTER TABLE players ADD COLUMN modpack_checked REAL;
+        """,
+    ),
 ]
 
 
@@ -832,6 +879,17 @@ class Database:
 
     def set_server_color(self, server_id: str, color: str) -> None:
         self.execute("UPDATE servers SET color = ? WHERE id = ?", (color, server_id))
+
+    def set_server_order(self, server_ids: list[str]) -> None:
+        """The list order on All servers, first to last."""
+        with self._lock, self._conn:
+            for position, server_id in enumerate(server_ids):
+                self._conn.execute(
+                    "UPDATE servers SET position = ? WHERE id = ?", (position, server_id)
+                )
+
+    def set_server_group(self, server_id: str, group: str | None) -> None:
+        self.execute("UPDATE servers SET group_name = ? WHERE id = ?", (group or None, server_id))
 
     def add_event(
         self,

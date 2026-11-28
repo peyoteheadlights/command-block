@@ -1,6 +1,7 @@
 package io.github.peyoteheadlights.mcsc.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -10,7 +11,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -23,12 +23,13 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.Content
-import io.github.peyoteheadlights.mcsc.core.ContentKind
 import io.github.peyoteheadlights.mcsc.core.Display
 import io.github.peyoteheadlights.mcsc.core.ServerForm
 import io.github.peyoteheadlights.mcsc.core.Permissions
 import io.github.peyoteheadlights.mcsc.core.QuickAction
 import io.github.peyoteheadlights.mcsc.core.States
+import io.github.peyoteheadlights.mcsc.core.Store
+import kotlinx.coroutines.delay
 
 /** One server, in its own color: what it's doing, who's playing, Start,
  * Stop and Restart (the last two ask first), its other screens, and the
@@ -41,10 +42,20 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
     val pages = vm.pages(serverId)
     // Not current after a failed read: Unknown, with when it was last read.
     val state = if (ui.problem != null) States.UNKNOWN else status?.state ?: row?.state
+    // The agent's label and buttons; after a failed read, Unknown and none.
+    val label = if (ui.problem != null) "unknown" else status?.label ?: row?.label
+    val can = if (ui.problem != null) emptyList<String>() else status?.can ?: row?.can.orEmpty()
     val now = rememberNow()
     var asking by rememberSaveable { mutableStateOf<String?>(null) }
     val canEdit = vm.canDo(Permissions.SETTINGS_SERVER)
     LaunchedEffect(serverId) { pages.loadCards() }
+    // Read again while the jar checks hold a start, to see when it goes on.
+    LaunchedEffect(serverId, status?.checkingJars) {
+        while (status?.checkingJars == true) {
+            delay(2000)
+            vm.refreshServer(serverId)
+        }
+    }
 
     ServerFrame(
         vm, serverId,
@@ -61,7 +72,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                     title = t("confirm.${action}_title"),
                     body = t("confirm.${action}_body"),
                     confirm = t("action.$action"),
-                    danger = action == "stop",
+                    danger = action == "stop" || action == "force_stop",
                     onConfirm = {
                         asking = null
                         vm.act(serverId, action)
@@ -74,13 +85,29 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
         item {
             val colors = LocalColors.current
             Card(Modifier.padding(top = 8.dp)) {
-                Item(t(Display.state(state, status?.answering?.ok).key), subtitle = Display.uptime(vm.strings, state, status?.uptime))
+                // The status mark (a dot and its word), then for how long.
+                Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
+                    StateText(label)
+                    Display.uptime(vm.strings, state, status?.uptime)?.let {
+                        Text(it, color = colors.text2, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
                 if (state == States.RESTART_PENDING) Note(t("mobile.server.restart_pending"))
+                // Changes that wait for a restart, and "Restart when nobody's on".
+                Display.restartWaiting(vm.strings, status, vm.canControl())?.let { (words, action) ->
+                    Note(words)
+                    action?.let { Actions(listOf(it), busy = ui.busyAction, onAction = { a -> vm.act(serverId, a.action) }) }
+                }
+                if (status?.checkingJars == true) {
+                    Note(t("head.checking_jars"), color = colors.warning)
+                    // Only the owner can skip (agent/api/routes/server.py).
+                    if (vm.me?.isOwner == true) Presses(listOf(Press(t("action.skip_check"), { vm.skipCheck(serverId) })))
+                }
                 listOfNotNull(status?.serverTypeName ?: row?.typeName, status?.minecraftVersion ?: row?.minecraftVersion)
                     .joinToString(" ").takeIf { it.isNotBlank() }
                     ?.let { Note(it, color = colors.text2) }
                 Actions(
-                    Display.actions(state, vm.canControl()),
+                    Display.actions(can, vm.canControl()),
                     busy = ui.busyAction,
                     onAction = { action -> if (action.confirm) asking = action.action else vm.act(serverId, action.action) },
                 )
@@ -96,6 +123,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                 )
             }
         }
+        ui.refused?.let { refused -> item { ProblemNote(refused) } }
         ui.problem?.let { problem -> item { ProblemNote(problem, onRetry = { vm.refreshServer(serverId) }) } }
         item { SectionTitle(t("mobile.server.players_now")) }
         item { Players(vm, state, status) }
@@ -104,6 +132,7 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                 Card {
                     Item(
                         player.username,
+                        leading = { Face() },
                         subtitle = player.sessionSeconds?.takeIf { player.sessionStarted != null }?.let {
                             t("mobile.server.player_since", "duration" to Display.duration(vm.strings, it))
                         },
@@ -120,12 +149,14 @@ fun ServerScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onOpen:
                 for ((page, key) in PAGES) {
                     if (readsConsole || page !in CONSOLE_PAGES) Item(t(key), onClick = { onOpen(page) })
                 }
-                // Mods, Plugins or Packs by server type; none for a type that takes neither.
-                Content.kind(row)?.takeIf { it != ContentKind.NONE }?.let { kind -> Item(t(kind.titleKey), onClick = { onOpen("content") }) }
+                // Mods, Plugins or Packs by server type; vanilla's Mods only makes a modpack.
+                Content.kind(row)?.takeIf { Content.shown(row) }?.let { kind -> Item(t(kind.titleKey), onClick = { onOpen("content") }) }
                 Item(t("page.game_settings"), onClick = { onOpen("game") })
                 if (vm.canDo(Permissions.SERVER_DIAGNOSE)) Item(t("action.diagnose"), onClick = { onOpen("diagnose") })
                 if (vm.canDo(Permissions.QUESTS_MANAGE)) Item(t("page.quests"), onClick = { onOpen("quests") })
                 if (ServerForm.visible(vm.me)) Item(t("page.server_settings"), onClick = { onOpen("settings") })
+                // Only the owner, in Technical, on a community server (agent/store.py).
+                if (Store.shown(row, vm.me, vm.technical)) Item(t("desktop.page.store"), onClick = { onOpen("store") })
             }
         }
         joinCard(vm, pages)

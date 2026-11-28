@@ -27,6 +27,12 @@ enum ServerRoute: Hashable {
     case quests(String)
     /// Diagnose server.
     case diagnose(String)
+    /// The Store tab (owner only, community servers).
+    case store(String)
+    /// A rented server on a host's panel.
+    case rented(String)
+    /// Connect a rented server (owner only).
+    case connectRented
     /// The "+" on All servers.
     case add
 }
@@ -84,6 +90,135 @@ final class ServerPages {
 
     func loadConsole() async {
         await load(\.console) { client, id in ConsoleBuffer.replace(try await client.consoleLog(serverId: id).lines) }
+    }
+
+    /// The running server's own command names, for the chips above the box.
+    var commands: [String] = []
+
+    func loadCommands() async {
+        guard let client = client() else { return }
+        // Nothing to complete is fine: the box works the same without.
+        commands = (try? await client.consoleCommands(serverId: serverId).commands.map(\.name)) ?? []
+    }
+
+    // MARK: Older logs
+
+    var logFiles = PageRead<[LogFile]>()
+    var logText = PageRead<LogFileText>()
+
+    func loadLogFiles() async {
+        await load(\.logFiles) { client, id in try await client.logFiles(serverId: id).files }
+    }
+
+    func openLog(_ name: String) async {
+        logText = PageRead()
+        await load(\.logText) { client, id in try await client.logFile(serverId: id, name: name) }
+    }
+
+    // MARK: Store
+
+    /// The Store tab (owner only, agent/store.py).
+    var store = PageRead<StoreView>()
+    var storeSaid: Said? = nil
+    var storeBusy = false
+
+    func loadStore() async {
+        await load(\.store) { client, id in try await client.store(serverId: id) }
+    }
+
+    /// True once the PC has the key, to empty the box.
+    func connectStore(_ key: String, _ strings: Strings) async -> Bool {
+        var saved = false
+        await storeWork(strings) { client, id in
+            self.store = PageRead(value: try await client.connectStore(serverId: id, key: key))
+            saved = true
+            return Said(text: strings.t("desktop.store.connected_note"), good: true)
+        }
+        return saved
+    }
+
+    /// Reads the packages back; gives the ones the app didn't make, seen for the first time.
+    func checkStore(_ strings: Strings) async -> [String] {
+        var remind: [String] = []
+        await storeWork(strings) { client, id in
+            let checked = try await client.checkStore(serverId: id)
+            self.store = PageRead(value: checked)
+            remind = checked.remind
+            return nil
+        }
+        return remind
+    }
+
+    private func storeWork(_ strings: Strings, _ work: (AgentClient, String) async throws -> Said?) async {
+        guard let client = client(), !storeBusy else { return }
+        storeBusy = true
+        storeSaid = nil
+        defer { storeBusy = false }
+        do {
+            storeSaid = try await work(client, serverId)
+        } catch let problem as AgentError {
+            noted(problem)
+            storeSaid = Said(text: problem.message(strings), good: false)
+        } catch {}
+    }
+
+    // MARK: Server files
+
+    /// The open folder of the server's folder (owner only).
+    var files = PageRead<ServerFiles>()
+    var filesSaid: Said? = nil
+    var filesBusy = false
+    /// A downloaded file waiting in the share sheet.
+    var sharingFile: Downloaded? = nil
+
+    func loadFiles(_ folder: String? = nil) async {
+        let path = folder ?? files.value?.path ?? ""
+        await load(\.files) { client, id in try await client.serverFiles(serverId: id, folder: path) }
+    }
+
+    /// Downloads one file into the app's own folder, then the share sheet
+    /// (save to Files, or send it); the copy goes when the sheet closes.
+    func downloadFile(_ file: String, _ strings: Strings) async {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let name = (file as NSString).lastPathComponent
+        let target = folder.appendingPathComponent(name)
+        await fileWork(strings) { client, id in
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            _ = try await client.downloadServerFile(serverId: id, file: file, to: target)
+            self.sharingFile = Downloaded(name: name, file: target)
+            return nil
+        }
+    }
+
+    /// Puts `file` into the open folder; never over a file that's there.
+    func uploadFile(_ file: PickedFile, _ strings: Strings) async {
+        let folder = files.value?.path ?? ""
+        await fileWork(strings) { client, id in
+            let saved = try await client.uploadServerFile(serverId: id, folder: folder, file: file)
+            await self.loadFiles()
+            return Said(text: strings.t("files.uploaded", ["name": saved.name]), good: true)
+        }
+    }
+
+    func finishSharingFile() {
+        guard let done = sharingFile else { return }
+        sharingFile = nil
+        try? FileManager.default.removeItem(at: done.file.deletingLastPathComponent())
+    }
+
+    private func fileWork(_ strings: Strings, _ work: (AgentClient, String) async throws -> Said?) async {
+        guard let client = client(), !filesBusy else { return }
+        filesBusy = true
+        filesSaid = nil
+        defer { filesBusy = false }
+        do {
+            filesSaid = try await work(client, serverId)
+        } catch let problem as AgentError {
+            noted(problem)
+            filesSaid = Said(text: problem.message(strings), good: false)
+        } catch {
+            filesSaid = Said(text: strings.t("mobile.backups.save_failed", ["reason": error.localizedDescription]), good: false)
+        }
     }
 
     func onConsoleLine(_ line: ConsoleLine) {
@@ -216,8 +351,10 @@ final class ServerPages {
     }
 
     func playerAction(_ action: String, name: String, reason: String?, _ strings: Strings) async {
-        guard let client = client() else { return }
-        playerBusy = "\(action):\(name)"
+        // One press at a time, so the same kick or ban can't go twice.
+        guard let client = client(), playerBusy == nil else { return }
+        let mine = "\(action):\(name)"
+        playerBusy = mine
         playerProblem = nil
         let confirm = PlayerActions.CONFIRM.contains(action)
         do {
@@ -237,7 +374,8 @@ final class ServerPages {
             noted(problem)
             playerProblem = problem.message(strings)
         } catch {}
-        playerBusy = nil
+        // Another action may have started while this one was followed.
+        if playerBusy == mine { playerBusy = nil }
         await loadPlayers()
     }
 

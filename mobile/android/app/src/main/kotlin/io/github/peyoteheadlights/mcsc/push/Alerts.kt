@@ -44,8 +44,9 @@ object Alerts {
         if (graph.vault.token() == null) return
         val fresh: List<AppAlert> = try {
             val next = AlertSync { after, limit -> client.alerts(after, limit) }.catchUp(graph.alerts.read())
-            graph.alerts.write(next)
-            next.alerts.filter { it.id > graph.prefs.notifiedUpTo }
+            // Saved as shown before showing: a second wake-up never repeats one.
+            graph.alerts.update { current -> next.notified().keepingMarks(current) }
+            next.toNotify
         } catch (e: AgentException) {
             graph.prefs.lastProblem = e.key
             show(context, 0, graph.strings.t("mobile.alerts.new"), graph.strings.t("mobile.alerts.open_to_read"), null)
@@ -55,7 +56,6 @@ object Alerts {
             val startRequest = Community.answersStartRequest(alert, System.currentTimeMillis() / 1000.0, mayStart = true)
             show(context, alert.id.toInt(), alert.title, alert.body, alert.serverId, startRequest)
         }
-        fresh.maxOfOrNull { it.id }?.let { graph.prefs.notifiedUpTo = it }
     }
 
     /**

@@ -38,10 +38,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .backups.hold import resume_saving
 from .events import Event
 from .minecraft import nbt
 from .minecraft.properties import FILENAME, PropertiesFile, world_folder
-from .safechange import SafeChange, run_safe_change
+from .safechange import SafeChange, note_moved, run_safe_change
 from .security.paths import (
     PathSafetyError,
     assert_not_symlink,
@@ -390,7 +391,7 @@ def _target_for(relative: str, world: str, split: bool) -> str | None:
     return "/".join([world, *parts])
 
 
-def _move_aside(base: Path, folders: list[str]) -> list[str]:
+def _move_aside(db, base: Path, folders: list[str]) -> list[str]:
     stamp = time.strftime("%Y%m%d-%H%M%S")
     moved = []
     for name in folders:
@@ -401,6 +402,7 @@ def _move_aside(base: Path, folders: list[str]) -> list[str]:
             while retired.exists():
                 retired = base / f"{name}.replaced-{stamp}-{number}"
                 number += 1
+            note_moved(db, live, retired)
             shutil.move(str(live), str(retired))
             moved.append(str(retired))
     return moved
@@ -516,7 +518,7 @@ async def import_world(ctx: ServerContext, token: str, user: str = "system") -> 
     async def change(job: JobHandle | None) -> dict[str, Any]:
         if job:
             job.step("Moving the current world aside")
-        moved.extend(await asyncio.to_thread(_move_aside, base, folders))
+        moved.extend(await asyncio.to_thread(_move_aside, ctx.db, base, folders))
         try:
             written = await asyncio.to_thread(_extract, kind, source, root, base, world, split, job)
         except BaseException:
@@ -658,10 +660,7 @@ async def prepare_download(ctx: ServerContext, user: str = "system") -> dict[str
             raise
         finally:
             if paused:
-                try:
-                    await server.send_command("save-on", internal=True)
-                except Exception:
-                    log.warning("could not turn saving back on", exc_info=True)
+                await resume_saving(server, "save-on", "packing the world to download")
         return {"token": token, "files": files, "size_bytes": target.stat().st_size}
 
     _, result = await ctx.core.jobs.run(

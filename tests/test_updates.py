@@ -117,6 +117,20 @@ def task_runs(monkeypatch):
     return calls
 
 
+@pytest.fixture(autouse=True)
+def quick_installer_check(monkeypatch):
+    monkeypatch.setattr(updates, "INSTALLER_POLL", 0.05)
+
+
+def finished(client, ok: bool, message: str = ""):
+    folder = updates.updates_dir(client.app.state.core.config)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / updates.RESULT_FILE).write_text(
+        json.dumps({"ok": ok, "version": NEXT, "from_app": True, "message": message}),
+        encoding="utf-8",
+    )
+
+
 def wait(client, job_id):
     for _ in range(200):
         job = client.get(f"/api/jobs/{job_id}").json()
@@ -265,7 +279,17 @@ def test_install_downloads_checks_backs_up_and_hands_over(
     assert preflight["players_online"] in (0, None)
     started = multi_client.post("/api/updates/install")
     assert started.status_code == 200, started.text
-    job = wait(multi_client, started.json()["job"]["id"])
+    job_id = started.json()["job"]["id"]
+    for _ in range(200):  # Windows started the installer's task...
+        if task_runs:
+            break
+        time.sleep(0.05)
+    time.sleep(0.3)
+    job = multi_client.get(f"/api/jobs/{job_id}").json()
+    assert job["state"] == "running" and job["step"] == "Waiting for the installer"
+    # ...and the job only ends once the installer says how it went.
+    finished(multi_client, ok=True)
+    job = wait(multi_client, job_id)
     assert job["state"] == "succeeded", job["message"]
     assert task_runs == [True]
     assert updates.APP_CLOSING in seen  # the desktop app on this PC closes first
@@ -436,7 +460,18 @@ def test_health_and_version_name_the_api_version(multi_client):
     assert health["api_version"] == API_VERSION
     assert "version" not in health  # the app's version only after sign-in
     version = multi_client.get("/api/version").json()
-    assert version == {"version": __version__, "api_version": API_VERSION}
+    assert version == {"version": __version__, "api_version": API_VERSION, "agent_only": False}
+
+
+def test_version_says_when_the_pc_is_agent_only(multi_client, monkeypatch, tmp_path):
+    """Apps on other PCs say "run setup there" instead of "open the app there"."""
+    from agent import appinfo
+
+    (tmp_path / appinfo.INSTALL_RECORD).write_text(
+        '{"data_root": "x", "agent_only": true}', encoding="utf-8"
+    )
+    monkeypatch.setattr(appinfo, "program_dir", lambda: tmp_path)
+    assert multi_client.get("/api/version").json()["agent_only"] is True
 
 
 def test_the_pairing_code_holds_the_address_fingerprint_and_api_version(config, monkeypatch):
@@ -541,3 +576,58 @@ def test_a_folder_holding_a_server_is_never_removed(config, old_copy, monkeypatc
     with pytest.raises(oldcopy.OldCopyError, match="server folder"):
         oldcopy.remove(config)
     assert (old_copy / "agent").is_dir()
+
+
+def test_an_update_the_installer_turned_down_fails_the_job(
+    multi_client, github, installed, task_runs
+):
+    multi_client.post("/api/updates/check")
+    job_id = multi_client.post("/api/updates/install").json()["job"]["id"]
+    for _ in range(200):
+        if task_runs:
+            break
+        time.sleep(0.05)
+    finished(multi_client, ok=False, message="Not enough disk space")
+    job = wait(multi_client, job_id)
+    assert job["state"] == "failed" and "Not enough disk space" in job["message"]
+
+
+def test_an_installer_that_never_starts_fails_the_job(
+    multi_client, github, installed, task_runs, monkeypatch
+):
+    monkeypatch.setattr(updates, "INSTALLER_WAIT", 0.3)
+    multi_client.post("/api/updates/check")
+    job = wait(multi_client, multi_client.post("/api/updates/install").json()["job"]["id"])
+    assert job["state"] == "failed" and "installer" in job["message"]
+
+
+async def test_an_update_job_cut_off_by_the_installer_ends_with_its_result(tmp_path):
+    from agent.core import AgentCore
+
+    from .conftest import build_multi_config
+
+    core = AgentCore(build_multi_config(tmp_path))
+    try:
+        now = time.time()
+        core.db.insert(
+            "jobs",
+            {
+                "id": "u1",
+                "kind": "update",
+                "title": "Updating",
+                "state": "interrupted",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        folder = updates.updates_dir(core.config)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / updates.RESULT_FILE).write_text(
+            json.dumps({"ok": True, "version": NEXT, "from_app": True}), encoding="utf-8"
+        )
+        await core.updates._announce_last_result()
+        row = core.db.query_one("SELECT state, message FROM jobs WHERE id = 'u1'")
+        assert row["state"] == "succeeded" and NEXT in row["message"]
+    finally:
+        await core.jobs.stop()
+        core.db.close()

@@ -235,21 +235,50 @@ class WorldTest {
             payload = buildJsonObject { put("note", "keep") }, enabled = true, nextRun = null,
         )
         assertEquals("Every day at 04:00", Schedules.whenText(strings, nightly))
-        assertEquals("cron 0 4 * * *", Schedules.whenText(strings, nightly.copy(kind = "cron", expr = "0 4 * * *")))
+        assertEquals("Cron 0 4 * * *", Schedules.whenText(strings, nightly.copy(kind = "cron", expr = "0 4 * * *")))
+        assertEquals("yearly 01-01", Schedules.whenText(strings, nightly.copy(kind = "yearly", expr = "01-01")))
         assertEquals("Back up", Schedules.taskName(strings, "backup", tasks))
         assertEquals("mystery", Schedules.taskName(strings, "mystery", tasks))
         assertEquals("Off", Schedules.next(strings, nightly.copy(enabled = false)))
         assertEquals("Never", Schedules.next(strings, nightly))
+        assertEquals("When it happens", Schedules.next(strings, nightly.copy(kind = "event")))
 
         val off = Schedules.toggled(nightly)
         assertEquals(false, off["enabled"]?.jsonPrimitive?.content?.toBoolean())
         assertEquals("keep", (off["payload"] as kotlinx.serialization.json.JsonObject)["note"]?.jsonPrimitive?.content)
         assertEquals("04:00", off["expr"]?.jsonPrimitive?.content)
 
-        val added = Schedules.newBody(strings, "  ", "backup", "interval", " 6h ", tasks)
+        val added = Schedules.newBody(strings, "  ", listOf(Schedules.Step("backup")), "interval", " 6h ", tasks)
         assertEquals("Back up", added["name"]?.jsonPrimitive?.content)
         assertEquals("6h", added["expr"]?.jsonPrimitive?.content)
         assertEquals(JsonPrimitive(true), added["enabled"])
+    }
+
+    @Test
+    fun `several steps are sent as steps in a row and one step as its own task`() {
+        val tasks = listOf("backup", "message", "command", "steps")
+        assertEquals(listOf("backup", "message"), Schedules.stepTasks(tasks, technical = false))
+        assertEquals(listOf("backup", "message", "command"), Schedules.stepTasks(tasks, technical = true))
+        assertEquals(false, "cron" in Schedules.kinds(technical = false))
+
+        val one = Schedules.newBody(strings, "Hi", listOf(Schedules.Step("message", " Hello ")), "daily", "04:00", tasks, onlyIfRunning = true)
+        val payload = one["payload"] as kotlinx.serialization.json.JsonObject
+        assertEquals("message", one["task"]?.jsonPrimitive?.content)
+        assertEquals("Hello", payload["text"]?.jsonPrimitive?.content)
+        assertEquals(JsonPrimitive(true), payload["only_if_running"])
+
+        val steps = listOf(Schedules.Step("message", "Backing up"), Schedules.Step("command", "kill @a"), Schedules.Step("backup", "", "Done"))
+        val many = Schedules.newBody(strings, "", steps, "daily", "04:00", tasks, keepGoing = true, confirm = true)
+        val sent = (many["payload"] as kotlinx.serialization.json.JsonObject)
+        val list = sent["steps"] as kotlinx.serialization.json.JsonArray
+        assertEquals("steps", many["task"]?.jsonPrimitive?.content)
+        assertEquals(3, list.size)
+        assertEquals(JsonPrimitive(true), (list[1] as kotlinx.serialization.json.JsonObject)["confirm"])
+        assertEquals("Done", (list[2] as kotlinx.serialization.json.JsonObject)["after"]?.jsonPrimitive?.content)
+        assertEquals(JsonPrimitive(true), sent["keep_going"])
+        val saved = Schedule(id = 1, task = "steps", payload = sent)
+        assertEquals("3 steps", Schedules.summary(strings, saved, tasks))
+        assertEquals("Send a message to players: Hello", Schedules.summary(strings, Schedule(id = 2, task = "message", payload = payload), tasks))
     }
 
     // ------------------------------------------------------------ restore world
@@ -317,13 +346,60 @@ class WorldTest {
             val asked = agent.server.takeRequest()
             assertEquals("/api/servers/survival/backups/4/restore", asked.path)
             val body = asked.body.readUtf8()
-            assertTrue(body, body.contains("\"confirm\":false") && body.contains("\"safety_backup\":true"))
+            assertTrue(body, body.contains("\"confirm\":false"))
 
             agent.server.enqueue(agent.json("""{"ok": true, "restored": "a.zip", "safety_backup": {"id": 9, "name": "pre.zip"}, "undo": {"kind": "restore_backup", "backup_id": 9, "backup": "pre.zip"}, "job_id": "j1"}"""))
             val done = c.restoreBackup("survival", 4, confirm = true, startAfter = true)
             assertEquals("pre.zip", done.safetyBackup?.name)
             val sent = agent.server.takeRequest().body.readUtf8()
             assertTrue(sent, sent.contains("\"confirm\":true") && sent.contains("\"start_after\":true"))
+        }
+    }
+
+    @Test
+    fun `backups and disk - keep, restore as a new server and the clean-up`() = runBlocking {
+        val scheduled = Backup(id = 3, kind = "scheduled", status = "ok", includes = "world,config", createdAt = 1_763_510_400.0)
+        assertTrue(Backups.canKeep(scheduled, canDelete = true))
+        assertFalse(Backups.canKeep(scheduled.copy(kind = "manual"), canDelete = true))
+        assertFalse(Backups.canKeep(scheduled, canDelete = false))
+        assertTrue(Backups.canOpenAsServer(scheduled, canManage = true))
+        assertFalse(Backups.canOpenAsServer(scheduled.copy(includes = "config/a.yml"), canManage = true))
+        assertFalse(Backups.canOpenAsServer(scheduled.copy(status = "unverified"), canManage = true))
+        assertEquals("Survival from 2025-11-19", Backups.copyName(strings, "Survival", scheduled, utc))
+        assertEquals("C:\\Servers\\Survival from 2025-11-19", Backups.besideFolder("C:\\Servers\\Survival copy", "Survival from 2025-11-19"))
+        assertEquals("/srv/b", Backups.besideFolder("/srv/a", "b"))
+
+        val log = CleanupItem("logs/a.log.gz", "old_log", 2048)
+        assertEquals("Old log · 2.0 KB", Backups.cleanupLine(strings, log, technical = false))
+        assertEquals("Old log · logs/a.log.gz · 2.0 KB", Backups.cleanupLine(strings, log, technical = true))
+        assertTrue(Backups.ticked(log))
+        assertFalse(Backups.ticked(CleanupItem("world/dimensions/x", "unused_dimension")))
+        val size = BackupSize(excluded = listOf(SizedFolder("a/b")))
+        assertEquals(listOf("a/b", "c/d"), Backups.excludes(size, add = " c/d "))
+        assertEquals(emptyList<String>(), Backups.excludes(size, remove = "a/b"))
+
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"ok": true, "id": 3, "name": "s.zip", "kept": true}"""))
+            assertTrue(c.keepBackup("survival", 3, keep = true).kept)
+            val kept = agent.server.takeRequest()
+            assertEquals("/api/servers/survival/backups/3/keep", kept.path)
+            assertEquals("""{"keep":true}""", kept.body.readUtf8())
+
+            agent.server.enqueue(agent.json("""{"items": [{"path": "logs/a.log.gz", "kind": "old_log", "size_bytes": 5}], "total_bytes": 5, "dimensions_checked": false, "free_bytes": 9, "bin": []}"""))
+            val found = c.cleanup("survival")
+            assertEquals("old_log", found.items.single().kind)
+            assertFalse(found.dimensionsChecked)
+            agent.server.takeRequest()
+
+            agent.server.enqueue(agent.json("""{"ok": true, "batch": "20261119-120000", "moved": ["logs/a.log.gz"], "skipped": [], "size_bytes": 5, "bin_days": 7}"""))
+            assertEquals("20261119-120000", c.cleanUp("survival", listOf("logs/a.log.gz")).batch)
+            assertEquals("""{"paths":["logs/a.log.gz"]}""", agent.server.takeRequest().body.readUtf8())
+
+            agent.server.enqueue(agent.json("""{"job": {"id": "j1", "kind": "duplicate", "state": "running"}}"""))
+            c.duplicate("survival", "Survival from 2025-11-19", "C:/s2", "fresh", fromBackup = 3)
+            val sent = agent.server.takeRequest().body.readUtf8()
+            assertTrue(sent, sent.contains("\"from_backup\":3"))
         }
     }
 
@@ -394,6 +470,21 @@ class WorldTest {
             val slow = AgentClient(agent.pairing(), { token }, systemTrust = TestAgent.trustingNothing(), slowSeconds = 1)
             assertThrows(AgentException.StillWorking::class.java) { runBlocking { slow.backUp("survival") } }
         }
+    }
+
+    @Test
+    fun `slow work whose connection drops may still be running on the PC`() {
+        TestAgent().use { agent ->
+            agent.server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST))
+            assertThrows(AgentException.StillWorking::class.java) { runBlocking { client(agent).backUp("survival") } }
+        }
+    }
+
+    @Test
+    fun `slow work on a PC that is off is still unreachable`() {
+        val port = TestAgent().use { it.port }
+        val off = AgentClient(Pairing("localhost", port, null), { token }, systemTrust = TestAgent.trustingNothing())
+        assertThrows(AgentException.Unreachable::class.java) { runBlocking { off.backUp("survival") } }
     }
 
     @Test

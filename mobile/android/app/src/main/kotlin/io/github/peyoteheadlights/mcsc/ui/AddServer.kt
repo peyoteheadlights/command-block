@@ -16,7 +16,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -32,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.AddServer
 import io.github.peyoteheadlights.mcsc.core.Display
 import io.github.peyoteheadlights.mcsc.core.Memory
+import io.github.peyoteheadlights.mcsc.core.Modpacks
 import io.github.peyoteheadlights.mcsc.core.NewServerOptions
 
 /**
@@ -84,9 +84,9 @@ fun AddServerScreen(vm: AppViewModel, onBack: () -> Unit, onOpen: (String) -> Un
                 item { SectionTitle(t("add.ways")) }
                 item {
                     Card {
-                        Item(t("add.way_new"), subtitle = t("mobile.add.way_new_hint"), onClick = { adding.begin(AddServer.NEW) })
-                        Item(t("add.way_modpack"), subtitle = t("mobile.add.way_modpack_hint"), onClick = { adding.begin(AddServer.MODPACK) })
-                        Item(t("add.way_have"), subtitle = t("mobile.add.way_have_hint"), onClick = { adding.begin(AddServer.HAVE) })
+                        Item(t("add.way_new"), info = t("mobile.add.way_new_hint"), onClick = { adding.begin(AddServer.NEW) })
+                        Item(t("add.way_modpack"), info = t("mobile.add.way_modpack_hint"), onClick = { adding.begin(AddServer.MODPACK) })
+                        Item(t("add.way_have"), info = t("mobile.add.way_have_hint"), onClick = { adding.begin(AddServer.HAVE) })
                     }
                 }
                 return@LazyColumn
@@ -150,6 +150,8 @@ private fun LazyListScope.newServer(vm: AppViewModel, adding: AddServerPages, op
         item { Note(t("new.bedrock_versions"), color = LocalColors.current.text3) }
     }
     val kind = adding.type ?: return
+    // This kind's tips: always with tips on, else once when it's new to them.
+    AddServer.tip(options, kind, vm.hidden)?.let { key -> item { HideableNote(vm, key) } }
     versionStep(vm, adding)
     detailsStep(vm, adding, options, memory = AddServer.memoryShown(kind), onPickFolder = onPickFolder)
     rulesStep(vm, adding, options, kind.edition)
@@ -213,6 +215,22 @@ private fun LazyListScope.detailsStep(vm: AppViewModel, adding: AddServerPages, 
                     modifier = Modifier.fillMaxWidth(),
                 )
                 folderField(vm, adding, t("new.folder"), t("new.folder_hint"), onPickFolder)
+                Picker(
+                    t("welcome.who_question"),
+                    t(AddServer.PLAYED_BY.firstOrNull { it.first == adding.playedBy }?.second ?: "welcome.for_unset"),
+                    listOf("" to vm.strings.t("welcome.for_unset")) + AddServer.PLAYED_BY.map { (value, key) -> value to vm.strings.t(key) },
+                ) { adding.playedBy = it }
+                if (AddServer.namesAsked(adding.playedBy)) {
+                    OutlinedTextField(
+                        value = adding.players,
+                        onValueChange = { adding.players = it },
+                        label = { Text(t("new.players")) },
+                        placeholder = { Text(t("new.players_placeholder")) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(t("new.players_hint"), color = LocalColors.current.text2)
+                }
                 if (memory) adding.memoryMb?.let { mb ->
                     Text(t("new.memory"), color = LocalColors.current.text)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -275,6 +293,31 @@ private fun LazyListScope.fromModpack(vm: AppViewModel, adding: AddServerPages, 
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Gap) {
                 if (adding.busy == "inspect") Text(t("mobile.content.reading"), color = LocalColors.current.text2)
                 OutlinedButton(onClick = pick, enabled = adding.busy == null) { Text(t("mobile.content.modpack_choose")) }
+                OutlinedTextField(
+                    value = adding.packQuery,
+                    onValueChange = { adding.packQuery = it.take(100) },
+                    label = { Text(t("pack.find_placeholder")) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedButton(onClick = { adding.findPacks(strings) }, enabled = adding.busy == null && adding.packQuery.isNotBlank()) {
+                    Text(t(if (adding.busy == "find") "mods.searching" else "pack.find"))
+                }
+            }
+        }
+    }
+    adding.packsFound?.let { found ->
+        item {
+            val strings = vm.strings
+            Card {
+                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    for (problem in found.problems) Text(problem, color = LocalColors.current.text2, modifier = Modifier.padding(horizontal = 16.dp))
+                    if (found.hits.isEmpty()) Text(t("mods.nothing_found"), color = LocalColors.current.text2, modifier = Modifier.padding(horizontal = 16.dp))
+                    else Text(t("pack.find_pick"), color = LocalColors.current.text2, modifier = Modifier.padding(horizontal = 16.dp))
+                    for (hit in found.hits) {
+                        Item(hit.title, subtitle = Modpacks.about(strings, hit), onClick = { adding.readFound(hit, strings) })
+                    }
+                }
             }
         }
     }
@@ -291,6 +334,7 @@ private fun LazyListScope.fromModpack(vm: AppViewModel, adding: AddServerPages, 
                 Text(t("pack.files") + ": " + t("pack.files_value", "count" to pack.downloadCount, "size" to Display.bytes(strings, pack.downloadBytes)), color = LocalColors.current.text2)
                 for (problem in pack.problems) Text("• $problem", color = LocalColors.current.danger)
                 if (pack.clientOnly.isNotEmpty()) Text(t("pack.client_only", "names" to pack.clientOnly.joinToString(", ")), color = LocalColors.current.text2)
+                for (note in Modpacks.notes(vm.strings, pack)) Text(note, color = LocalColors.current.warning)
             }
         }
     }

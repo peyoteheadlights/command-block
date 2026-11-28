@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from .discord import levels_box
 from .overview import card
+from .parts import Row
 from .ui import Page, clock, label, push, refill
 from .words import mode, text
 
@@ -131,15 +132,15 @@ class QuestsPage(Page):
         self.suggestion: int | None = None  # the idea the form is making into a quest
         self.no_bot = label(text("quests.no_bot"), "sub")
         self.column.addWidget(self.no_bot)
-        self.listed, layout = card(text("quests.list"))
+        self.listed, layout = card(text("quests.list"), box=False)
         self.rows = QVBoxLayout()
         layout.addLayout(self.rows)
         self.column.addWidget(self.listed)
-        self.claims, layout = card(text("quests.claims"))
+        self.claims, layout = card(text("quests.claims"), box=False)
         self.claim_rows = QVBoxLayout()
         layout.addLayout(self.claim_rows)
         self.column.addWidget(self.claims)
-        self.ideas, layout = card(text("quests.ideas"))
+        self.ideas, layout = card(text("quests.ideas"), box=False)
         self.idea_rows = QVBoxLayout()
         layout.addLayout(self.idea_rows)
         self.column.addWidget(self.ideas)
@@ -196,10 +197,8 @@ class QuestsPage(Page):
 
     # ------------------------------------------------------------ rows
     def quest_row(self, q: dict, roles: dict[str, str]) -> QFrame:
-        row = QFrame()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
         words = QVBoxLayout()
         title = f"{q['id']}. {q['title']}"
         words.addWidget(label(title, "step"))
@@ -236,10 +235,8 @@ class QuestsPage(Page):
         return row
 
     def claim_row(self, c: dict) -> QFrame:
-        row = QFrame()
-        row.setProperty("kind", "row")
-        v = QVBoxLayout(row)
-        v.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        v = row.column
         v.addWidget(label(text("quests.claim", name=c["discord_name"], title=c["title"]), "step"))
         if c.get("note"):
             v.addWidget(label(c["note"], "sub"))
@@ -265,10 +262,8 @@ class QuestsPage(Page):
         return row
 
     def idea_row(self, s: dict) -> QFrame:
-        row = QFrame()
-        row.setProperty("kind", "row")
-        h = QHBoxLayout(row)
-        h.setContentsMargins(12, 8, 8, 8)
+        row = Row()
+        h = row.line
         words = QVBoxLayout()
         words.addWidget(label(s["title"], "step"))
         words.addWidget(

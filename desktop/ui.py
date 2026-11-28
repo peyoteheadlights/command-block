@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .parts import arrive
 from .words import text
 
 if TYPE_CHECKING:
@@ -105,6 +106,43 @@ def push(words: str, kind: str = "") -> QPushButton:
     return widget
 
 
+# "Don't show again": the warnings and tips this account hid, by their words'
+# key. The agent keeps them (/account/hidden); the window fills these in after
+# signing in and sends each new one with ``on_hide``.
+hidden: set[str] = set()
+on_hide: Callable[[str], None] | None = None
+
+
+def notice(key: str, words: str = "", kind: str = "notice") -> QWidget:
+    """A warning or tip with "Don't show again" under it. ``key`` is its
+    words' key; a hidden one comes back hidden. Never for questions that
+    protect a world (removing a server, restoring over a world)."""
+    box = QWidget()
+    box.setObjectName("warning")
+    box.setProperty("key", key)
+    column = QVBoxLayout(box)
+    column.setContentsMargins(0, 0, 0, 0)
+    column.setSpacing(2)
+    column.addWidget(label(words or text(key), kind))
+    button = push(text("tips.dont_show"), "plain")
+    button.setObjectName("dontShowAgain")
+
+    def hide() -> None:
+        hidden.add(key)
+        box.hide()
+        if on_hide is not None:
+            on_hide(key)
+
+    button.clicked.connect(lambda _checked=False: hide())
+    row = QHBoxLayout()
+    row.addWidget(button)
+    row.addStretch()
+    column.addLayout(row)
+    if key in hidden:
+        box.hide()
+    return box
+
+
 def field(words: str, widget: QWidget, hint: str = "") -> QWidget:
     """A form field: its name above, a hint under it when there is one."""
     box = QWidget()
@@ -157,10 +195,13 @@ class Note(QWidget):
         self.hide()
 
     def say(self, words: str, undo: Callable[[], None] | None = None) -> None:
+        new = words != self.words.text() or self.isHidden()
         self.words.setText(words)
         self.then = undo
         self.undo.setVisible(undo is not None)
         self.setVisible(bool(words))
+        if words and new:
+            arrive(self)
 
     def undo_clicked(self) -> None:
         then, self.then = self.then, None
@@ -191,6 +232,13 @@ class Page(QScrollArea):
         self.note = Note()
         self.column.addWidget(self.note)
         self.setWidget(body)
+        # Slow work running, as (server, kind): kept here, not in a button,
+        # so a page built again (or another server's) never offers it twice.
+        self.working: set[tuple[str, str]] = set()
+
+    def busy(self, kind: str) -> bool:
+        """Slow work of ``kind`` is running for the open server."""
+        return (self.row.get("id", ""), kind) in self.working
 
     def say(self, words: str, undo: Callable[[], None] | None = None) -> None:
         self.note.say(words, undo)
@@ -213,16 +261,42 @@ class Page(QScrollArea):
         body: dict | None = None,
         always: Callable[[], None] | None = None,
         slow: bool = False,
+        busy: str = "",
     ) -> None:
         """Call one of this server's routes off the window's thread. An
         answer that comes back after another server was opened is dropped.
         What went wrong shows under the server's name, unless ``failed``.
-        ``slow`` for work the agent answers only once done (AgentClient.call)."""
-        sid, agent = self.row["id"], self.window_.agent
-        here = self.window_.still_on(sid)
-        self.window_.run(
+        ``slow`` for work the agent answers only once done (AgentClient.call);
+        if that work ends after another server was opened, a Windows alert
+        says how it went, as nothing on this page would. ``busy``: the kind
+        of work (see busy()); a second one while it runs is not sent."""
+        sid, window = self.row["id"], self.window_
+        name, agent = self.row.get("name") or sid, window.agent
+        tell = slow and method != "GET"
+
+        def answer(then: Callable[[Any], None], words: Callable[[Any], str]):
+            def got(result: Any) -> None:
+                if window.server_id == sid:
+                    then(result)
+                elif tell:
+                    window.pc.show_alert(name, words(result))
+
+            return got
+
+        key = (sid, busy)
+        if busy:
+            if key in self.working:
+                return
+            self.working.add(key)
+
+        def ended() -> None:
+            self.working.discard(key)
+            if always:
+                always()
+
+        window.run(
             lambda: agent.on(sid, method, path, body, slow),
-            here(done),
-            here(failed or self.window_.page_problem),
-            always,
+            answer(done, lambda _r: text("desktop.finished_elsewhere")),
+            answer(failed or window.page_problem, str),
+            ended,
         )

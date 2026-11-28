@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -20,6 +19,8 @@ from PySide6.QtWidgets import (
 from .fixes import run_fix
 from .graphs import Graph
 from .overview import card
+from .parts import Segmented
+from .pc import PCError
 from .ui import Page, clock, label, push, refill
 from .words import text
 
@@ -53,15 +54,16 @@ class PerformancePage(Page):
         self.hours = 6
         top = QHBoxLayout()
         top.addWidget(label(words("perf.range"), "sub"))
-        self.ranges = QButtonGroup(self)
-        for hours in RANGES:
-            button = push(words(f"perf.range_{hours}"), "segment")
-            button.setCheckable(True)
-            button.setChecked(hours == self.hours)
-            button.clicked.connect(lambda _=False, h=hours: self.pick_range(h))
-            self.ranges.addButton(button)
-            top.addWidget(button)
+        self.ranges = Segmented(
+            [(str(hours), words(f"perf.range_{hours}")) for hours in RANGES],
+            str(self.hours),
+            lambda key: self.pick_range(int(key)),
+        )
+        top.addWidget(self.ranges)
         top.addStretch()
+        csv = push(words("perf.save_csv"), "plain")
+        csv.clicked.connect(self.save_csv)
+        top.addWidget(csv)
         self.column.addLayout(top)
 
         tiles = QHBoxLayout()
@@ -173,6 +175,20 @@ class PerformancePage(Page):
     def pick_range(self, hours: int) -> None:
         self.hours = hours
         self.ask("GET", f"/performance?hours={hours}", self.show_performance)
+
+    def save_csv(self) -> None:
+        """The graphs' points for the time shown, as a CSV file for a spreadsheet."""
+
+        def save(found: dict) -> None:
+            try:
+                place = self.window_.pc.save_file(found["filename"], found["text"].encode("utf-8"))
+            except PCError as exc:
+                self.say(str(exc))
+                return
+            if place:
+                self.say(words("perf.csv_saved", place=place))
+
+        self.ask("GET", f"/performance/csv?hours={self.hours}", save)
 
     def style_graphs(self, look: dict[str, str]) -> None:
         colors = {

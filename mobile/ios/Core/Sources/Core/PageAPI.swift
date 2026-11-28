@@ -99,6 +99,74 @@ extension AgentClient {
         try await call("GET", server(serverId) + "/join", as: JoinInfo.self)
     }
 
+    /// "Let friends join from the internet": its state, the switch and the outside tests.
+    public func internet(serverId: String) async throws -> InternetReach {
+        try await call("GET", server(serverId) + "/internet", as: InternetReach.self)
+    }
+
+    public func setInternet(serverId: String, on: Bool) async throws -> InternetReach {
+        try await call("PUT", server(serverId) + "/internet", body: try AgentClient.encode(["on": on]), slow: true, as: InternetReach.self)
+    }
+
+    /// mcsrvstat.us pings it; `allow` once the owner said yes to sending the address there.
+    public func testInternet(serverId: String, allow: Bool) async throws -> InternetReach {
+        try await call("POST", server(serverId) + "/internet/test", body: try AgentClient.encode(["allow_mcsrvstat": allow]), slow: true, as: InternetReach.self)
+    }
+
+    /// playit.gg on the server's PC, for this server's tunnels (agent/playit.py).
+    public func playit(serverId: String) async throws -> PlayitState {
+        try await call("GET", server(serverId) + "/playit", as: PlayitState.self)
+    }
+
+    /// `action` is use, reconnect or stop. Installing it is the desktop app's job.
+    public func playitAction(serverId: String, action: String) async throws -> PlayitState {
+        try await call("POST", server(serverId) + "/playit/\(action)", body: try AgentClient.encode([String: String]()), slow: true, as: PlayitState.self)
+    }
+
+    /// mcsrvstat.us pings the tunnel's address; `allow` as for testInternet.
+    /// A plain Bedrock server behind WaterdogPE: playit's config.yml box (holds the tunnel's token).
+    public func setUpWaterdog(serverId: String, box: String) async throws -> PlayitState {
+        try await call("POST", server(serverId) + "/playit-bedrock", body: try AgentClient.encode(["box": box]), slow: true, as: PlayitState.self)
+    }
+
+    public func stopWaterdog(serverId: String) async throws -> PlayitState {
+        try await call("DELETE", server(serverId) + "/playit-bedrock", slow: true, as: PlayitState.self)
+    }
+
+    public func testPlayit(serverId: String, allow: Bool) async throws -> PlayitState {
+        try await call("POST", server(serverId) + "/playit-test", body: try AgentClient.encode(["allow_mcsrvstat": allow]), slow: true, as: PlayitState.self)
+    }
+
+    /// This PC's DuckDNS and No-IP names (agent/ddns.py). Saved only after the site said yes.
+    public func ddns() async throws -> DdnsState {
+        try await call("GET", "/api/ddns", as: DdnsState.self)
+    }
+
+    public func saveDuckDns(name: String, token: String) async throws -> DdnsState {
+        try await call("PUT", "/api/ddns/duckdns", body: try AgentClient.encode(["name": name, "token": token]), slow: true, as: DdnsState.self)
+    }
+
+    public func saveNoIp(name: String, username: String, password: String) async throws -> DdnsState {
+        let body = ["name": name, "username": username, "password": password]
+        return try await call("PUT", "/api/ddns/noip", body: try AgentClient.encode(body), slow: true, as: DdnsState.self)
+    }
+
+    /// The owner confirmed the No-IP name on noip.com: 30 more days.
+    public func noIpConfirmed() async throws -> DdnsState {
+        try await call("POST", "/api/ddns/noip/confirmed", body: try AgentClient.encode([String: String]()), as: DdnsState.self)
+    }
+
+    /// `kind` is duckdns or noip.
+    public func removeDdns(kind: String) async throws -> DdnsState {
+        try await call("DELETE", "/api/ddns/\(kind)", as: DdnsState.self)
+    }
+
+    /// What this phone's own ping over mobile data found.
+    public func phoneTest(serverId: String, address: String, port: Int, works: Bool) async throws -> InternetReach {
+        let body: [String: JSONValue] = ["address": .string(address), "port": .number(Double(port)), "works": .bool(works)]
+        return try await call("POST", server(serverId) + "/internet/phone-test", body: try AgentClient.encode(body), as: InternetReach.self)
+    }
+
     private func server(_ id: String) -> String {
         "/api/servers/" + AgentClient.pathSegment(id)
     }

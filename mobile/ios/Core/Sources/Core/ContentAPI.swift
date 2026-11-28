@@ -24,9 +24,38 @@ extension AgentClient {
         try await call("GET", content(serverId) + "/mods", as: ModList.self)
     }
 
+    /// "On all servers": who needs each mod on every server this account sees.
+    public func modSides() async throws -> ModSides {
+        try await call("GET", "/api/mod-sides", as: ModSides.self)
+    }
+
     /// Turns a mod or plugin on or off without removing it.
     public func setModEnabled(serverId: String, filename: String, enabled: Bool) async throws -> ModChanged {
         try await call("POST", content(serverId) + "/mods/" + (enabled ? "enable" : "disable"), body: try fileBody(filename), as: ModChanged.self)
+    }
+
+    /// Server, Players or Both. Players moves the jar out of the mods folder.
+    public func setModSide(serverId: String, filename: String, side: String) async throws {
+        let body = try AgentClient.encode(["filename": filename, "side": side])
+        _ = try await call("POST", content(serverId) + "/mods/side", body: body, as: Ok.self)
+    }
+
+    /// A mod, resource pack or shader pack for players only.
+    public func uploadForPlayers(serverId: String, file: PickedFile) async throws {
+        _ = try await upload(content(serverId) + "/mods/player-only/upload?confirm=true", file, as: Ok.self)
+    }
+
+    /// A missing player-only file, downloaded again from Modrinth and checked by its hash.
+    public func fetchForPlayers(serverId: String, filename: String) async throws {
+        _ = try await call("POST", content(serverId) + "/mods/player-only/fetch", body: try fileBody(filename), as: Ok.self)
+    }
+
+    public func setPlayerOnlyOptions(serverId: String, options: PlayerOnlyOptions) async throws {
+        _ = try await call("POST", content(serverId) + "/mods/player-only/options", body: try AgentClient.encode(options), as: PlayerOnlyOptions.self)
+    }
+
+    public func removeForPlayers(serverId: String, filename: String) async throws {
+        _ = try await call("POST", content(serverId) + "/mods/player-only/remove", body: try fileBody(filename), as: Ok.self)
     }
 
     /// What else needs a mod, asked before removing it.
@@ -59,10 +88,109 @@ extension AgentClient {
         return try await call("GET", content(serverId) + "/mods/history?limit=\(count)", as: ModHistory.self)
     }
 
+    /// The jar check's last results. Checks nothing.
+    public func jarScan(serverId: String) async throws -> JarScanReport {
+        try await call("GET", content(serverId) + "/mods/scan", as: JarScanReport.self)
+    }
+
+    /// Checks every jar again, on Modrinth and CurseForge too.
+    public func scanJars(serverId: String) async throws -> JarScanReport {
+        try await call("POST", content(serverId) + "/mods/scan", body: Data("{}".utf8), slow: true, as: JarScanReport.self)
+    }
+
+    public func putBackJar(serverId: String, id: String) async throws -> JarScanUndone {
+        let body = try AgentClient.encode(["id": id])
+        return try await call("POST", content(serverId) + "/mods/scan/undo", body: body, as: JarScanUndone.self)
+    }
+
+    public func jarScanOptions(
+        serverId: String,
+        weekly: Bool? = nil,
+        onChange: Bool? = nil,
+        beforeStart: Bool? = nil,
+        askFirst: Bool? = nil,
+        updateHoldDays: Int? = nil
+    ) async throws -> JarScanReport {
+        var change: [String: JSONValue] = [:]
+        if let weekly { change["weekly"] = .bool(weekly) }
+        if let onChange { change["on_change"] = .bool(onChange) }
+        if let beforeStart { change["before_start"] = .bool(beforeStart) }
+        if let askFirst { change["ask_first"] = .bool(askFirst) }
+        if let updateHoldDays { change["update_hold_days"] = .number(Double(updateHoldDays)) }
+        return try await call("POST", content(serverId) + "/mods/scan/options", body: try AgentClient.encode(change), as: JarScanReport.self)
+    }
+
+    /// Clears the "changed outside the app" line on one jar, or on all when `filename` is nil.
+    public func jarChangedOk(serverId: String, filename: String?) async throws -> JarScanReport {
+        let body = try AgentClient.encode(filename.map { ["filename": $0] } ?? [:])
+        return try await call("POST", content(serverId) + "/mods/scan/changed", body: body, as: JarScanReport.self)
+    }
+
+    /// The deep scan's checks, the scan running now and its last results. Scans nothing.
+    public func deepScan(serverId: String) async throws -> DeepScanReport {
+        try await call("GET", content(serverId) + "/mods/deepscan", as: DeepScanReport.self)
+    }
+
+    private struct DeepScanAsk: Encodable {
+        var scope: String
+        var scanners: [String]
+        var filename: String?
+    }
+
+    /// Starts a deep scan: `scope` is "jar" (with `filename`), "mods" or "folder".
+    public func runDeepScan(serverId: String, scope: String, scanners: [String], filename: String? = nil) async throws -> DeepScanReport {
+        let body = try AgentClient.encode(DeepScanAsk(scope: scope, scanners: scanners, filename: filename))
+        return try await call("POST", content(serverId) + "/mods/deepscan", body: body, as: DeepScanReport.self)
+    }
+
+    /// Saves the owner's own VirusTotal key once VirusTotal takes it. The key is never sent back.
+    public func saveVirusTotalKey(serverId: String, key: String) async throws -> DeepScanReport {
+        let body = try AgentClient.encode(["key": key])
+        return try await call("POST", content(serverId) + "/mods/deepscan/virustotal", body: body, as: DeepScanReport.self)
+    }
+
+    public func removeVirusTotalKey(serverId: String) async throws -> DeepScanReport {
+        try await call("DELETE", content(serverId) + "/mods/deepscan/virustotal", as: DeepScanReport.self)
+    }
+
+    public func deepScanQuarantine(serverId: String, root: String, path: String) async throws -> DeepScanReport {
+        let body = try AgentClient.encode(["root": root, "path": path])
+        return try await call("POST", content(serverId) + "/mods/deepscan/quarantine", body: body, as: DeepScanReport.self)
+    }
+
+    private struct DeepScanChange: Encodable {
+        var beforeStart: Bool?
+        var schedule: String?
+        var time: String?
+        var day: String?
+
+        enum CodingKeys: String, CodingKey {
+            case schedule, time, day
+            case beforeStart = "before_start"
+        }
+    }
+
+    /// Deep scan before each start, and the schedule (off, daily or weekly at `time`).
+    public func deepScanOptions(
+        serverId: String,
+        beforeStart: Bool? = nil,
+        schedule: String? = nil,
+        time: String? = nil,
+        day: String? = nil
+    ) async throws -> DeepScanReport {
+        let body = try AgentClient.encode(DeepScanChange(beforeStart: beforeStart, schedule: schedule, time: time, day: day))
+        return try await call("POST", content(serverId) + "/mods/deepscan/options", body: body, as: DeepScanReport.self)
+    }
+
     /// What Update all would change, checked on Modrinth now (a mod at a
     /// time on the PC, so it can take a while with many).
     public func updateAllPlan(serverId: String) async throws -> UpdateAllPlan {
         try await call("GET", content(serverId) + "/mods/update-all", slow: true, as: UpdateAllPlan.self)
+    }
+
+    /// Hides the "Still fit?" card until the next change checks again.
+    public func hideFit(serverId: String) async throws {
+        _ = try await call("POST", content(serverId) + "/mods/fit/hide", body: Data("{}".utf8), as: Ok.self)
     }
 
     /// Updates the ticked ones as one change (one backup, all or nothing).
@@ -99,10 +227,10 @@ extension AgentClient {
         try await call("POST", content(serverId) + "/mods/dependencies/install", body: Data("{}".utf8), slow: true, as: DependencyInstall.self)
     }
 
-    /// Adds a mod or plugin file (.jar) picked on the phone. Picking it counts as the
-    /// yes for a file no site lists (the phone has no "Install anyway?" screen yet).
-    public func uploadMod(serverId: String, file: PickedFile) async throws -> ModUploaded {
-        try await upload(content(serverId) + "/mods/upload?confirm=true", file, as: ModUploaded.self)
+    /// Adds a mod or plugin file (.jar) picked on the phone. A file no site lists is
+    /// refused with a "confirm" problem (the warning) until `confirm` is true.
+    public func uploadMod(serverId: String, file: PickedFile, confirm: Bool = false) async throws -> ModUploaded {
+        try await upload(content(serverId) + "/mods/upload?confirm=\(confirm)", file, as: ModUploaded.self)
     }
 
     /// Reads a modpack (.mrpack); with `serverId`, also what importing it there would do.
@@ -111,14 +239,152 @@ extension AgentClient {
         return try await upload(path, file, as: ModpackInspected.self)
     }
 
+    /// Modrinth's and CurseForge's modpacks side by side, each named.
+    public func searchModpacks(query: String) async throws -> ModSearch {
+        let path = "/api/modpacks/search?q=" + AgentClient.pathSegment(query) + "&limit=\(AgentClient.SEARCH_PAGE)"
+        return try await call("GET", path, as: ModSearch.self)
+    }
+
+    /// Downloads a found modpack's newest release and reads it like a picked file.
+    public func fetchModpack(_ hit: ModrinthHit, serverId: String?) async throws -> ModpackInspected {
+        let body = try AgentClient.encode(FetchBody(project: hit.projectId ?? "", server_id: serverId ?? ""))
+        return try await call("POST", "/api/modpacks/" + Modpacks.site(hit), body: body, slow: true, as: ModpackInspected.self)
+    }
+
     /// Throws away a modpack read but not imported.
     public func forgetModpack(token: String) async throws {
         _ = try await call("DELETE", "/api/modpacks/" + AgentClient.pathSegment(token), as: Ok.self)
     }
 
-    public func importModpack(serverId: String, token: String) async throws -> ModpackImported {
-        let body = try AgentClient.encode(ImportBody(token: token, confirm: true))
+    /// `ownJars`: the pack's own jars were shown and said yes to.
+    public func importModpack(serverId: String, token: String, ownJars: Bool = false) async throws -> ModpackImported {
+        let body = try AgentClient.encode(ImportBody(token: token, confirm: true, ownJars: ownJars))
         return try await call("POST", content(serverId) + "/modpack", body: body, slow: true, as: ModpackImported.self)
+    }
+
+    /// Downloads the linked modpack's new version and says what Modpack update changes.
+    public func previewModpackUpdate(serverId: String, versionId: String?) async throws -> ModpackUpdatePreview {
+        let body = try AgentClient.encode(PreviewBody(versionId: versionId))
+        return try await call("POST", content(serverId) + "/modpack/update/preview", body: body, slow: true, as: ModpackUpdatePreview.self)
+    }
+
+    /// Modpack update: one backup, all or nothing, one Undo.
+    public func updateModpack(serverId: String, token: String, usePackConfigs: Bool, ownJars: Bool = false) async throws {
+        let body = try AgentClient.encode(ModpackUpdateBody(token: token, usePackConfigs: usePackConfigs, confirm: true, ownJars: ownJars))
+        _ = try await call("POST", content(serverId) + "/modpack/update", body: body, slow: true, as: Ok.self)
+    }
+
+    /// Unlink: the server keeps its mods and stops following the modpack.
+    public func unlinkModpack(serverId: String) async throws {
+        _ = try await call("DELETE", content(serverId) + "/modpack/link", as: Ok.self)
+    }
+
+    /// What Make a modpack offers: name, next version, config files, players' loaders.
+    public func makeModpackOptions(serverId: String) async throws -> ModpackMakeOptions {
+        try await call("GET", content(serverId) + "/modpack/make", as: ModpackMakeOptions.self)
+    }
+
+    /// Makes a modpack from this server, as a task; `downloadModpack` fetches it.
+    public func makeModpack(serverId: String, _ answers: MakeModpack) async throws -> ModpackMade {
+        let body = try AgentClient.encode(answers)
+        return try await call("POST", content(serverId) + "/modpack/make", body: body, slow: true, as: ModpackMade.self)
+    }
+
+    /// Writes the made modpack to `destination`, for the share sheet.
+    public func downloadModpack(serverId: String, made: ModpackMade, to destination: URL) async throws -> Int64 {
+        try await downloadZip(content(serverId) + "/modpack/made/" + AgentClient.pathSegment(made.token), to: destination, progress: { _, _ in })
+    }
+
+    /// The Discord bot posts the made modpack in this server's chat channels.
+    public func postModpack(serverId: String, token: String) async throws -> ModpackPosted {
+        let body = try AgentClient.encode(["token": token])
+        return try await call("POST", content(serverId) + "/modpack/made/discord", body: body, as: ModpackPosted.self)
+    }
+
+    /// The download link and the server resource pack.
+    public func downloadLink(serverId: String) async throws -> DownloadLink {
+        try await call("GET", content(serverId) + "/download-link", as: DownloadLink.self)
+    }
+
+    /// Turns the download link on (a new link) or off (the old link stops). Owner only.
+    public func setDownloadLink(serverId: String, on: Bool) async throws -> DownloadLink {
+        let body = try AgentClient.encode(["on": on])
+        return try await call("POST", content(serverId) + "/download-link", body: body, slow: true, as: DownloadLink.self)
+    }
+
+    /// A new link: the old one stops working at once.
+    public func newDownloadLink(serverId: String) async throws -> DownloadLink {
+        try await call("POST", content(serverId) + "/download-link/new", body: Data("{}".utf8), slow: true, as: DownloadLink.self)
+    }
+
+    /// A resource pack (.zip) picked on the phone, served by the download link.
+    /// The title-screen background (a PNG picked on the phone) for the next modpacks.
+    public func uploadTitleBackground(serverId: String, file: PickedFile) async throws -> ModpackMakeOptions {
+        try await upload(content(serverId) + "/modpack/title-background", file, as: ModpackMakeOptions.self)
+    }
+
+    public func uploadResourcePack(serverId: String, file: PickedFile, required: Bool) async throws -> DownloadLink {
+        try await upload(content(serverId) + "/resource-pack/upload?required=\(required)", file, as: DownloadLink.self)
+    }
+
+    /// A resource pack someone else hosts, with the site's SHA-1 when it gives one.
+    public func setResourcePackLink(serverId: String, url: String, sha1: String, required: Bool) async throws -> DownloadLink {
+        let body = try AgentClient.encode(PackLink(url: url, sha1: sha1, required: required))
+        return try await call("POST", content(serverId) + "/resource-pack", body: body, slow: true, as: DownloadLink.self)
+    }
+
+    /// "Players must accept the resource pack".
+    public func setResourcePackRequired(serverId: String, required: Bool) async throws -> DownloadLink {
+        let body = try AgentClient.encode(["required": required])
+        return try await call("POST", content(serverId) + "/resource-pack", body: body, slow: true, as: DownloadLink.self)
+    }
+
+    public func removeResourcePack(serverId: String) async throws -> DownloadLink {
+        try await call("DELETE", content(serverId) + "/resource-pack", slow: true, as: DownloadLink.self)
+    }
+
+    /// The anti-cheat picker. Installing goes through `installMod` and `uploadMod`.
+    public func antiCheat(serverId: String) async throws -> AntiCheat {
+        try await call("GET", content(serverId) + "/anticheat", as: AntiCheat.self)
+    }
+
+    /// The "Put it on Modrinth" card.
+    public func modrinth(serverId: String) async throws -> ModrinthShare {
+        try await call("GET", content(serverId) + "/modrinth", as: ModrinthShare.self)
+    }
+
+    /// Modrinth's sign-in page; it comes back to the app as mcsc://modrinth. Owner only.
+    public func modrinthSignIn() async throws -> ModrinthSignInStarted {
+        let body = try AgentClient.encode(["return_to": "phone"])
+        return try await call("POST", "/api/modrinth/sign-in", body: body, as: ModrinthSignInStarted.self)
+    }
+
+    /// The code Modrinth gave: the PC swaps it and keeps the sign-in.
+    public func modrinthFinish(code: String, state: String) async throws -> ModrinthAccount {
+        let body = try AgentClient.encode(["code": code, "state": state])
+        return try await call("POST", "/api/modrinth/sign-in/finish", body: body, slow: true, as: ModrinthAccount.self)
+    }
+
+    public func modrinthSignOut() async throws -> ModrinthAccount {
+        try await call("POST", "/api/modrinth/sign-out", body: Data("{}".utf8), as: ModrinthAccount.self)
+    }
+
+    /// The newest modpack up as a draft; `slug` and `summary` only the first time.
+    public func modrinthUpload(serverId: String, slug: String, summary: String) async throws -> ModrinthShare {
+        let body = try AgentClient.encode(["slug": slug, "summary": summary])
+        return try await call("POST", content(serverId) + "/modrinth/upload", body: body, slow: true, as: ModrinthShare.self)
+    }
+
+    /// One own jar of the newest modpack as its own Modrinth mod (a draft).
+    public func modrinthOwnJar(serverId: String, path: String, slug: String, summary: String) async throws -> ModrinthShare {
+        let body = try AgentClient.encode(["path": path, "slug": slug, "summary": summary])
+        return try await call("POST", content(serverId) + "/modrinth/own-jar", body: body, slow: true, as: ModrinthShare.self)
+    }
+
+    /// The Modrinth Server Project's link (empty: forget it).
+    public func modrinthServerProject(serverId: String, link: String) async throws -> ModrinthShare {
+        let body = try AgentClient.encode(["link": link])
+        return try await call("POST", content(serverId) + "/modrinth/server-project", body: body, slow: true, as: ModrinthShare.self)
     }
 
     /// A Bedrock server's behavior and resource packs.
@@ -128,6 +394,11 @@ extension AgentClient {
 
     public func uploadAddon(serverId: String, file: PickedFile) async throws -> AddonResult {
         try await upload(content(serverId) + "/addons/upload", file, as: AddonResult.self)
+    }
+
+    public func setAddonsRequired(serverId: String, required: Bool) async throws -> AddonResult {
+        let body = try AgentClient.encode(["required": required])
+        return try await call("PUT", content(serverId) + "/addons/required", body: body, as: AddonResult.self)
     }
 
     public func setAddonEnabled(serverId: String, uuid: String, enabled: Bool) async throws -> AddonResult {
@@ -155,6 +426,21 @@ extension AgentClient {
     public func saveGameSettingsText(serverId: String, text: String) async throws -> GameSettingsSaved {
         let body = try AgentClient.encode(["text": JSONValue.string(text)])
         return try await call("PUT", content(serverId) + "/game-settings/raw", body: body, as: GameSettingsSaved.self)
+    }
+
+    /// The server icon as base64 PNG, or nil when there is none.
+    public func serverIcon(serverId: String) async throws -> String? {
+        try await call("GET", content(serverId) + "/server-icon", as: ServerIcon.self).png
+    }
+
+    /// A new server icon: a 64 x 64 PNG in base64 (the app resizes it first).
+    public func saveServerIcon(serverId: String, png: String) async throws -> ServerIconSaved {
+        let body = try AgentClient.encode(["png": JSONValue.string(png)])
+        return try await call("PUT", content(serverId) + "/server-icon", body: body, as: ServerIconSaved.self)
+    }
+
+    public func removeServerIcon(serverId: String) async throws -> ServerIconSaved {
+        try await call("DELETE", content(serverId) + "/server-icon", as: ServerIconSaved.self)
     }
 
     // MARK: - Plumbing
@@ -228,6 +514,39 @@ extension AgentClient {
         }
     }
 
+    /// The Far view card.
+    public func farView(serverId: String) async throws -> FarView {
+        try await call("GET", content(serverId) + "/far-view", as: FarView.self)
+    }
+
+    /// Far view "off", "distanthorizons" or "voxy": installs what it needs. The server must be stopped.
+    public func chooseFarView(serverId: String, choice: String) async throws -> FarViewChanged {
+        let body = try AgentClient.encode(["choice": choice])
+        return try await call("POST", content(serverId) + "/far-view", body: body, slow: true, as: FarViewChanged.self)
+    }
+
+    public func farViewOptions(serverId: String, unvisited: Bool, loadAhead: Bool, radius: Int, world: String) async throws -> FarView {
+        let body = try AgentClient.encode(FarViewBody(unvisited: unvisited, loadAhead: loadAhead, radius: radius, world: world))
+        return try await call("POST", content(serverId) + "/far-view/options", body: body, as: FarView.self)
+    }
+
+    /// Deletes the far-view data; it's built again from the world.
+    public func rebuildFarView(serverId: String) async throws -> FarViewRebuilt {
+        try await call("POST", content(serverId) + "/far-view/rebuild", body: try AgentClient.encode([String: String]()), slow: true, as: FarViewRebuilt.self)
+    }
+
+    private struct FarViewBody: Encodable {
+        let unvisited: Bool
+        let loadAhead: Bool
+        let radius: Int
+        let world: String
+
+        enum CodingKeys: String, CodingKey {
+            case unvisited, radius, world
+            case loadAhead = "load_ahead"
+        }
+    }
+
     private struct InstallBody: Encodable {
         let project: String
         let versionId: String?
@@ -247,9 +566,36 @@ extension AgentClient {
         }
     }
 
+    private struct PreviewBody: Encodable {
+        let versionId: String?
+        enum CodingKeys: String, CodingKey { case versionId = "version_id" }
+    }
+
+    private struct ModpackUpdateBody: Encodable {
+        let token: String
+        let usePackConfigs: Bool
+        let confirm: Bool
+        let ownJars: Bool
+        enum CodingKeys: String, CodingKey {
+            case token, confirm
+            case usePackConfigs = "use_pack_configs"
+            case ownJars = "own_jars"
+        }
+    }
+
     private struct ImportBody: Encodable {
         let token: String
         let confirm: Bool
+        let ownJars: Bool
+        enum CodingKeys: String, CodingKey {
+            case token, confirm
+            case ownJars = "own_jars"
+        }
+    }
+
+    private struct FetchBody: Encodable {
+        let project: String
+        let server_id: String
     }
 }
 
@@ -273,4 +619,10 @@ public struct UpdateAllBody: Encodable, Equatable, Sendable {
     }
 
     public let mods: [Item]
+}
+
+private struct PackLink: Encodable {
+    var url: String
+    var sha1: String
+    var required: Bool
 }

@@ -75,6 +75,8 @@ data class KnownPlayer(
     val online: Int? = null,
     val edition: String? = null,
     @SerialName("total_seconds_live") val totalSecondsLive: Double? = null,
+    @SerialName("modpack_version") val modpackVersion: String? = null,
+    @SerialName("modpack_ok") val modpackOk: Int? = null,
 )
 
 /** A name on one of Minecraft's own lists. On Bedrock an operator can have
@@ -266,12 +268,60 @@ data class JoinWay(
     @SerialName("own_server") val ownServer: Boolean? = null,
 )
 
-/** GET /join. The internet is never tested, so it is never claimed. */
+/** GET /join. Reaching it from the internet is "not known" until an outside test answered. */
 @Serializable
 data class JoinInfo(
     val java: JoinWay? = null,
     val bedrock: JoinWay? = null,
     val running: Boolean? = null,
+    val internet: InternetReach? = null,
+)
+
+/** One port the router is asked to open. */
+@Serializable
+data class RouterPort(val protocol: String = "", val port: Int = 0)
+
+/** GET /internet: "Let friends join from the internet" (agent/internet.py). */
+@Serializable
+data class InternetReach(
+    val on: Boolean = false,
+    val busy: Boolean = false,
+    val known: Boolean = false,
+    val works: Boolean? = null,
+    @SerialName("tested_by") val testedBy: String? = null,
+    val reason: String? = null,
+    val address: String? = null,
+    val port: Int? = null,
+    val ports: List<RouterPort> = emptyList(),
+    @SerialName("local_address") val localAddress: String? = null,
+    val detail: String? = null,
+    @SerialName("mcsrvstat_ok") val mcsrvstatOk: Boolean = false,
+    val playit: String? = null,
+    val names: List<DdnsNameShort> = emptyList(),
+)
+
+/** A DuckDNS or No-IP name that works right now. */
+@Serializable
+data class DdnsNameShort(val provider: String = "", val name: String = "")
+
+/** One saved name. The token or password never comes back. */
+@Serializable
+data class DdnsName(
+    val name: String = "",
+    val ip: String? = null,
+    @SerialName("updated_at") val updatedAt: Double? = null,
+    val problem: String? = null,
+    @SerialName("confirm_by") val confirmBy: Double? = null,
+    @SerialName("confirm_soon") val confirmSoon: Boolean = false,
+)
+
+/** GET /api/ddns: this PC's DuckDNS and No-IP names. */
+@Serializable
+data class DdnsState(
+    val duckdns: DdnsName? = null,
+    val noip: DdnsName? = null,
+    @SerialName("duckdns_site") val duckdnsSite: String = "",
+    @SerialName("noip_site") val noipSite: String = "",
 )
 
 @Serializable

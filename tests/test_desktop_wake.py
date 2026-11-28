@@ -105,6 +105,16 @@ def test_the_helper_listens_and_answers_a_real_request():
     assert sent == [("aa:bb:cc:dd:ee:ff", "192.168.1.255")]
 
 
+def test_a_listener_whose_socket_broke_says_so_and_can_start_again():
+    helper = helper_with_key([])
+    helper.listen("127.0.0.1", 0)
+    helper._sock.close()  # what a socket error does to it
+    deadline = time.monotonic() + 5
+    while helper.listening and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not helper.listening  # so the next sync listens again
+
+
 def test_the_wake_signal_is_the_mac_sixteen_times():
     packet = wake.magic_packet("aa:bb:cc:dd:ee:ff")
     assert packet[:6] == b"\xff" * 6 and packet[6:] == bytes.fromhex("aabbccddeeff") * 16
@@ -182,3 +192,69 @@ def test_no_wake_button_without_a_way_to_wake(qapp, agent_http, cable):
     window = window_on(qapp, agent_http, pc, place="100.64.0.1")
     window.agent_down()
     assert not any(t.startswith("Wake") for t in shown_buttons(window))
+
+
+def test_a_pc_that_was_replaced_as_helper_stops_and_never_removes_the_new_one(
+    qapp, agent_http, cable
+):
+    setup_wake(agent_http)
+    pc = FakePC()
+    window = window_on(qapp, agent_http, pc, place="100.64.0.1")
+    page = pc_settings(qapp, window)
+    words = "Listen for wake requests for " + socket.gethostname()
+    wait_for(qapp, lambda: any(b.text() == words for b in page.findChildren(QtWidgets.QCheckBox)))
+    box = next(b for b in page.findChildren(QtWidgets.QCheckBox) if b.text() == words)
+    box.click()
+    wait_for(qapp, lambda: pc.helping == "100.64.0.9")
+    # Another PC (another sign-in) takes over.
+    other = owner(agent_http)
+    taken = agent_http.put(
+        "/api/wake/helper", json={"address": "100.64.0.2", "port": wake.PORT}, headers=other
+    )
+    assert taken.status_code == 200, taken.text
+    window.sync_helper()
+    wait_for(qapp, lambda: pc.helping is None and not pc.setting("help_wake"))
+    assert not pc.setting("help_wake_list")
+    # Unticking here later leaves the new helper alone.
+    gone = agent_http.delete("/api/wake/helper?mine=true", headers=owner(agent_http))
+    assert gone.status_code == 200
+    state = agent_http.get("/api/wake/setup", headers=owner(agent_http)).json()
+    assert state["helper"]["address"] == "100.64.0.2"
+
+
+def test_turning_wake_on_lan_off_stops_the_helping_pc(qapp, agent_http, cable):
+    setup_wake(agent_http)
+    pc = FakePC()
+    window = window_on(qapp, agent_http, pc, place="100.64.0.1")
+    page = pc_settings(qapp, window)
+    words = "Listen for wake requests for " + socket.gethostname()
+    wait_for(qapp, lambda: any(b.text() == words for b in page.findChildren(QtWidgets.QCheckBox)))
+    next(b for b in page.findChildren(QtWidgets.QCheckBox) if b.text() == words).click()
+    wait_for(qapp, lambda: pc.helping == "100.64.0.9")
+    off = agent_http.put("/api/wake/setup", json={"on": False}, headers=owner(agent_http))
+    assert off.status_code == 200, off.text
+    window.sync_helper()
+    wait_for(qapp, lambda: pc.helping is None and not pc.setting("help_wake"))
+
+
+def test_a_kept_wake_key_the_agent_no_longer_has_is_replaced(qapp, agent_http, cable):
+    setup_wake(agent_http)
+    pc = FakePC()
+    window = window_on(qapp, agent_http, pc, place="100.64.0.1")
+    taken = agent_http.put(
+        "/api/wake/helper",
+        json={"address": "100.64.0.2", "port": wake.PORT},
+        headers=owner(agent_http),
+    )
+    assert taken.status_code == 200, taken.text
+    window.load_wake()
+    wait_for(qapp, lambda: window.wake_kept().get("key"))
+    first = window.wake_kept()["key"]
+    # A new key was made, but its answer never arrived: this PC still has the old one.
+    agent = window.agent
+    agent.call("POST", "/wake/key")
+    window.load_wake()
+    wait_for(qapp, lambda: window.wake_kept().get("key") not in (None, first))
+    info = agent.call("GET", "/wake")
+    key = window.wake_kept()["key"]
+    assert hashlib.sha256(key.encode()).hexdigest() == info["key_hash"]

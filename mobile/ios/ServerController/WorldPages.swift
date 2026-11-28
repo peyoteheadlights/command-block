@@ -152,6 +152,97 @@ final class WorldPages {
         }
     }
 
+    /// Keep this backup (or stop keeping it): the clean-up never deletes a kept one.
+    func keep(_ backup: Backup, _ keep: Bool, _ strings: Strings) async {
+        await work("keep:\(backup.id)", strings, reload: loadBackups) { client, id in
+            _ = try await client.keepBackup(serverId: id, backupId: backup.id, keep: keep)
+            return Said(text: strings.t(keep ? "backups.kept_toast" : "backups.unkept_toast"), good: true)
+        }
+    }
+
+    /// Restore as a new server: Duplicate with the backup's world, settings
+    /// and add-ons, next to this server's folder. This server stays as it is.
+    func openAsServer(_ backup: Backup, serverName: String, _ strings: Strings) async {
+        await work("open:\(backup.id)", strings) { client, id in
+            let options = try await client.duplicateOptions(serverId: id)
+            let name = Backups.copyName(strings, serverName: serverName, backup: backup)
+            _ = try await client.duplicate(
+                serverId: id, name: name, directory: Backups.besideFolder(options.directory, name: name),
+                world: "fresh", fromBackup: backup.id
+            )
+            return Said(text: strings.t("dup.started", ["name": name]), good: true)
+        }
+    }
+
+    // MARK: - Left out of backups
+
+    /// What a backup would hold now, with what is left out. Walks the world.
+    private(set) var size = PageRead<BackupSize>()
+
+    func loadSize() async {
+        await read(\.size) { client, id in try await client.backupSize(serverId: id) }
+    }
+
+    func saveExcludes(_ paths: [String], _ strings: Strings) async {
+        await work("exclude", strings, reload: loadSize) { client, id in
+            let saved = try await client.saveServerSettings(
+                serverId: id, updates: ["backups.exclude": .array(paths.map { .string($0) })]
+            )
+            if let refused = saved.rejected["backups.exclude"] { return Said(text: refused, good: false) }
+            return Said(text: strings.t("leftout.saved"), good: true)
+        }
+    }
+
+    // MARK: - Clean-up
+
+    /// What the clean-up offers and what's in its bin; empty until looked for.
+    private(set) var cleanup = PageRead<CleanupList>()
+    /// The paths ticked to go. Logs and crash reports start ticked.
+    var picked: Set<String> = []
+    /// Undo for the clean-up just done.
+    private(set) var lastBatch: String? = nil
+
+    func loadCleanup() async {
+        let before = cleanup.value
+        await read(\.cleanup) { client, id in try await client.cleanup(serverId: id) }
+        if let found = cleanup.value, found != before {
+            picked = Set(found.items.filter(Backups.ticked).map(\.path))
+        }
+    }
+
+    func cleanUp(_ strings: Strings) async {
+        let paths = Array(picked)
+        await work("cleanup", strings, reload: loadCleanup) { [weak self] client, id in
+            let done = try await client.cleanUp(serverId: id, paths: paths)
+            self?.lastBatch = done.batch
+            var words = strings.t(
+                "cleanup.done",
+                ["count": "\(done.moved.count)", "size": Display.bytes(strings, done.sizeBytes), "days": "\(done.binDays)"]
+            )
+            if !done.skipped.isEmpty { words += " " + strings.t("cleanup.skipped", ["count": "\(done.skipped.count)"]) }
+            return Said(text: words, good: true)
+        }
+    }
+
+    func cleanupUndo(_ batch: String, _ strings: Strings) async {
+        await work("cleanup", strings, reload: loadCleanup) { [weak self] client, id in
+            let back = try await client.cleanupUndo(serverId: id, batch: batch)
+            self?.lastBatch = nil
+            if !back.leftInBin.isEmpty {
+                return Said(text: strings.t("cleanup.left", ["count": "\(back.leftInBin.count)"]), good: false)
+            }
+            return Said(text: strings.t("cleanup.undone"), good: true)
+        }
+    }
+
+    func cleanupEmpty(_ strings: Strings) async {
+        await work("cleanup", strings, reload: loadCleanup) { [weak self] client, id in
+            let emptied = try await client.cleanupEmpty(serverId: id)
+            self?.lastBatch = nil
+            return Said(text: strings.t("cleanup.emptied", ["size": Display.bytes(strings, emptied.freedBytes)]), good: true)
+        }
+    }
+
     /// A task finished on another device (or here) may have added a change:
     /// read the lists again while Backups is open.
     func onTask(_ job: Job) {
@@ -407,21 +498,68 @@ final class WorldPages {
         }
     }
 
+    /// A command the console asks "are you sure?" about, in the agent's
+    /// words, while the screen asks the person; nil otherwise.
+    private(set) var scheduleDanger: String?
+    @ObservationIgnored private var pendingSchedule: ((Bool) -> ScheduleBody)?
+
     /// Adds a schedule; true once the agent took it, to empty the form.
-    func addSchedule(name: String, task: String, kind: String, expr: String, _ strings: Strings) async -> Bool {
-        let tasks = schedules.value?.tasks ?? []
+    /// `body` makes what is sent, with or without "confirm" on its commands.
+    func addSchedule(_ body: @escaping (Bool) -> ScheduleBody, _ strings: Strings, confirm: Bool = false) async -> Bool {
         var added = false
         await work("add", strings, reload: loadSchedules) { client, id in
-            _ = try await client.addSchedule(
-                serverId: id, Schedules.newBody(strings, name: name, task: task, kind: kind, expr: expr, tasks: tasks)
-            )
+            do {
+                _ = try await client.addSchedule(serverId: id, body(confirm))
+            } catch AgentError.failed(let status, let reason, _, _) where status == 409 && !confirm {
+                pendingSchedule = body
+                scheduleDanger = reason ?? strings.t("value.unknown")
+                return nil
+            }
             added = true
             return Said(text: strings.t("schedules.created"), good: true)
         }
         return added
     }
 
+    /// The person answered the "are you sure?" about a scheduled command.
+    func answerDanger(_ yes: Bool, _ strings: Strings) async -> Bool {
+        let body = pendingSchedule
+        scheduleDanger = nil
+        pendingSchedule = nil
+        guard yes, let body else { return false }
+        return await addSchedule(body, strings, confirm: true)
+    }
+
     // MARK: - Performance
+
+    /// The graphs as a CSV file waiting in the share sheet, and why it couldn't be made.
+    var sharingCsv: Downloaded? = nil
+    var csvProblem: AgentError? = nil
+
+    /// The graphs' points for the time shown, as a CSV file for a spreadsheet.
+    func shareCsv() async {
+        guard let client = client() else { return }
+        csvProblem = nil
+        do {
+            let csv = try await client.performanceCsv(serverId: serverId, hours: range)
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let file = folder.appendingPathComponent((csv.filename as NSString).lastPathComponent)
+            try csv.text.write(to: file, atomically: true, encoding: .utf8)
+            sharingCsv = Downloaded(name: file.lastPathComponent, file: file)
+        } catch let problem as AgentError {
+            noted(problem)
+            csvProblem = problem
+        } catch {
+            csvProblem = nil
+        }
+    }
+
+    func finishSharingCsv() {
+        guard let done = sharingCsv else { return }
+        sharingCsv = nil
+        try? FileManager.default.removeItem(at: done.file.deletingLastPathComponent())
+    }
 
     private(set) var range = Graphs.DEFAULT_RANGE
     private(set) var performance = PageRead<Performance>()

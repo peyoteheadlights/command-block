@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import shutil
 import subprocess
@@ -30,8 +31,11 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import psutil
+
 from .. import serveruser
 from ..events import Event, EventBus
+from ..safechange import blocked_message, unfinished
 from . import cpu
 from .console import ConsoleBuffer, ConsoleLine, extract_signals
 from .state import NORMAL_REASONS, ExitReason, ServerState
@@ -44,6 +48,19 @@ log = logging.getLogger("msc.process")
 
 # The only programs a Bedrock server is launched as (house rule 2).
 EXE_NAMES = frozenset({"bedrock_server.exe", "bedrock_server"})
+
+# Written in the server's folder while the agent runs it: which process it
+# is, so an agent that died without stopping it finds it again instead of
+# starting a second copy on the same world.
+PID_FILE = ".command-block.pid"
+NO_CONSOLE = (
+    "This server was still running when the agent started, so the agent can't reach its "
+    "console until it is restarted."
+)
+STOP_IN_GAME = (
+    f"{NO_CONSOLE} To stop it cleanly, type /stop in the game. Force stop works too, but "
+    "loses what changed since Minecraft last saved by itself."
+)
 
 
 class ServerError(RuntimeError):
@@ -78,8 +95,12 @@ class MinecraftServer:
         self.state_verified_at: float | None = None
         self.process: asyncio.subprocess.Process | None = None
         self.pid: int | None = None
+        # A server an earlier agent started and never stopped (it died, or
+        # the PC's power was cut). Its console went with that agent.
+        self.left_behind: psutil.Process | None = None
 
         self.started_at: float | None = None
+        self.started_as_account = False  # started as the separate Windows user
         self.online_at: float | None = None
         self.startup_seconds: float | None = None
         self.last_exit_code: int | None = None
@@ -145,23 +166,84 @@ class MinecraftServer:
         # change its files (a restore, for example): starting then would load
         # a half-changed world, so every start is refused until it clears.
         self.held_by: str | None = None
+        # What is changing this server's files (ServerContext.busy): a held
+        # change, a risky job or a backup. None here means only held_by.
+        self.busy: Callable[[str | None], str | None] | None = None
         self.maintenance = False
         # True when auto-sleep stopped this server because nobody was
         # playing, so the apps can say why it is off. Cleared on start.
-        self.stopped_for_sleep = False
+        self._stopped_for_sleep = False
         # Join protection (agent/joinguard.py): called as the server starts,
         # gives extra start arguments (["--port", private] behind the guard).
         # behind_guard is then the public port the guard holds, and
         # launch_args what this run was started with.
         self.before_launch: Callable[[], Awaitable[list[str]]] | None = None
+        # True while a start waits for the jar checks before start.
+        self.checking_jars = False
+        # True from a Start or Restart that waits for those checks until
+        # that start is over (agent/api/routes/server.py).
+        self.start_queued = False
         self.behind_guard: int | None = None
         self.launch_args: list[str] = []
+        # Less downtime (agent/downtime.py). What changed since this run
+        # started that Minecraft only reads at start ("mods", "settings"...),
+        # the command this run was started with (a memory or Java change
+        # shows as a different command), and "Restart when nobody's on".
+        # All three are about one run, so a start clears them.
+        self.waiting: set[str] = set()
+        self.launched_command: list[str] | None = None
+        self.restart_when_empty = False
+        self._slow_task: asyncio.Task | None = None
+        # server.properties as the server read it, taken at "Done"
+        # (gamesettings.waiting_for_restart compares the file with it).
+        self.properties_at_start: dict[str, str] | None = None
+        self._load_kept()
+
+    # -- kept in the database, so an agent restart doesn't forget them -----
+    def _load_kept(self) -> None:
+        kept = (self.db.get_setting("lifecycle") if self.db is not None else None) or {}
+        self._stopped_for_sleep = bool(kept.get("stopped_for_sleep"))
+        self._crash_times.extend(float(t) for t in kept.get("crash_times") or [])
+        self.auto_restart_block_reason = kept.get("blocked_reason")
+        self.auto_restart_blocked = self.auto_restart_block_reason is not None
+
+    def remember(self) -> None:
+        if self.db is None:
+            return
+        self.db.set_setting(
+            "lifecycle",
+            {
+                "stopped_for_sleep": self._stopped_for_sleep,
+                "crash_times": list(self._crash_times),
+                "blocked_reason": (
+                    (self.auto_restart_block_reason or "blocked")
+                    if self.auto_restart_blocked
+                    else None
+                ),
+            },
+        )
+
+    @property
+    def stopped_for_sleep(self) -> bool:
+        return self._stopped_for_sleep
+
+    @stopped_for_sleep.setter
+    def stopped_for_sleep(self, value: bool) -> None:
+        if value != self._stopped_for_sleep:
+            self._stopped_for_sleep = value
+            self.remember()
+
+    def record_crash(self) -> None:
+        self._crash_times.append(time.time())
+        self.remember()
 
     # ------------------------------------------------------------------
     # info
     # ------------------------------------------------------------------
     @property
     def running(self) -> bool:
+        if self.left_behind is not None:
+            return True
         return self.process is not None and self.process.returncode is None
 
     @property
@@ -179,6 +261,11 @@ class MinecraftServer:
         so the apps never have to guess how much to trust it."""
         if self.state is ServerState.UNKNOWN:
             return "not checked"
+        if self.left_behind is not None:
+            return (
+                "process found still running from before the agent started "
+                "(its id is saved in the server folder); no console"
+            )
         if self.state is ServerState.ONLINE:
             return "process running + startup line detected in console"
         if self.state in (ServerState.STARTING, ServerState.STOPPING, ServerState.RESTARTING):
@@ -223,16 +310,97 @@ class MinecraftServer:
         Called at agent startup so the very first state the apps see has
         actually been verified rather than assumed.
         """
-        if self.process is not None and self.process.returncode is None:
+        if self.running:
             # a child we launched and are still tracking
             self.state_verified_at = time.time()
             return self.state
+        found = self._find_left_behind()
+        if found is not None:
+            self.left_behind, saved = found
+            self.pid = self.left_behind.pid
+            self.started_at = saved.get("created")
+            self.behind_guard = saved.get("behind_guard")
+            self.launch_args = [str(a) for a in saved.get("launch_args") or []]
+            self._exited_event.clear()
+            self.state = ServerState.ONLINE
+            self.state_verified_at = time.time()
+            return self.state
+        self._clear_pid()
         if self.state in (ServerState.CRASHED, ServerState.RESTART_PENDING):
             self.state_verified_at = time.time()
             return self.state
         self.state = ServerState.OFFLINE
         self.state_verified_at = time.time()
         return self.state
+
+    # -- the process id file ------------------------------------------------
+    def _pid_path(self) -> Path | None:
+        return self.config.server_dir / PID_FILE if self.config.server_dir_configured else None
+
+    def _write_pid(self) -> None:
+        path = self._pid_path()
+        if path is None or self.pid is None:
+            return
+        try:
+            created = psutil.Process(self.pid).create_time()
+            path.write_text(
+                json.dumps(
+                    {
+                        "pid": self.pid,
+                        "created": created,
+                        "behind_guard": self.behind_guard,
+                        "launch_args": self.launch_args,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        except (OSError, psutil.Error):
+            log.warning("could not save the server's process id", exc_info=True)
+
+    def _clear_pid(self) -> None:
+        path = self._pid_path()
+        if path is not None:
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+
+    def _find_left_behind(self) -> tuple[psutil.Process, dict[str, Any]] | None:
+        """The process the id file names, only when it is still the same
+        process (same start time, so not a reused number) running in this
+        server's folder."""
+        path = self._pid_path()
+        if path is None:
+            return None
+        try:
+            saved: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+            proc = psutil.Process(int(saved["pid"]))
+            same = abs(proc.create_time() - float(saved["created"])) < 1.0
+            here = Path(proc.cwd()).resolve() == self.config.server_dir.resolve()
+            alive = proc.status() != psutil.STATUS_ZOMBIE
+        except (OSError, ValueError, TypeError, KeyError, psutil.Error):
+            return None
+        return (proc, saved) if same and here and alive else None
+
+    async def watch_left_behind(self) -> None:
+        """Notice when a left-behind server ends, like _wait_exit does for
+        our own child."""
+        if self.left_behind is None or (self._waiter_task and not self._waiter_task.done()):
+            return
+        self._waiter_task = asyncio.create_task(self._wait_left_behind(), name="mc-wait")
+
+    async def _wait_left_behind(self) -> None:
+        proc = self.left_behind
+        assert proc is not None
+        while True:
+            try:
+                # Short waits, so no thread outlives the agent.
+                code = await asyncio.to_thread(proc.wait, 1)
+                break
+            except psutil.TimeoutExpired:
+                continue
+            except psutil.Error:
+                code = None
+                break
+        await self._on_exit(code)
 
     def detect_java(self):
         """Detect the Java runtime. Source of truth: `java -version` output."""
@@ -326,13 +494,18 @@ class MinecraftServer:
             return f"The server file isn't there: {jar}"
         return None
 
-    def preflight(self) -> PreflightResult:
+    def preflight(self, job_id: str | None = None) -> PreflightResult:
         result = PreflightResult()
-        if self.held_by:
+        doing = self.busy(job_id) if self.busy else self.held_by
+        if doing:
             result.problems.append(
-                f"Wait for '{self.held_by}' to finish first. The server's files are being "
+                f"Wait for '{doing}' to finish first. The server's files are being "
                 "changed, so it cannot start until that is done."
             )
+            return result
+        left = unfinished(self.db) if self.db is not None else None
+        if left:
+            result.problems.append(blocked_message(left))
             return result
         if not self.config.server_dir_configured:
             result.problems.append(
@@ -443,12 +616,14 @@ class MinecraftServer:
             "restart_at": self.restart_at,
             "restart_delay": self.restart_delay,
             "restart_in": max(0.0, self.restart_at - time.time()) if self.restart_at else None,
+            "restart_when_empty": self.restart_when_empty,
             "auto_restart_cancelled": self.auto_restart_cancelled,
             "maintenance": self.maintenance,
             "stopped_for_sleep": self.stopped_for_sleep,
             "autosleep": self.config.server.autosleep,
             "autosleep_minutes": self.config.server.autosleep_minutes,
             "recent_crashes": self.recent_crash_count(),
+            "checking_jars": self.checking_jars,
         }
 
     # ------------------------------------------------------------------
@@ -478,7 +653,9 @@ class MinecraftServer:
     # ------------------------------------------------------------------
     # start
     # ------------------------------------------------------------------
-    async def start(self, actor: str = "system", _from_pending: bool = False) -> dict[str, Any]:
+    async def start(
+        self, actor: str = "system", _from_pending: bool = False, job_id: str | None = None
+    ) -> dict[str, Any]:
         async with self._lock:
             if self.state in (ServerState.STARTING, ServerState.ONLINE, ServerState.STOPPING):
                 raise ServerError(
@@ -496,7 +673,7 @@ class MinecraftServer:
             self.restart_at = None
             self.restart_delay = None
             self.auto_restart_cancelled = False
-            pre = self.preflight()
+            pre = self.preflight(job_id)
             if not pre.ok:
                 await self._set_state(
                     ServerState.OFFLINE,
@@ -517,6 +694,10 @@ class MinecraftServer:
             self.online_at = None
             self.startup_confirmed = False
             self.stopped_for_sleep = False
+            self.waiting.clear()
+            self.restart_when_empty = False
+            self.properties_at_start = None
+            self.launched_command = cmd
             self.started_at = time.time()
             await self._set_state(ServerState.STARTING, "Starting Minecraft", command=cmd)
             self._emit_console(f"[agent] launching: {' '.join(cmd)}")
@@ -531,6 +712,14 @@ class MinecraftServer:
             try:
                 # As the owner, or as the separate Windows user when that's
                 # on (agent/serveruser.py). Never the owner as a fallback.
+                self.started_as_account = serveruser.is_on(self.config)
+                if self.started_as_account:
+                    from ..mods import store
+
+                    await asyncio.to_thread(store.for_config(self.db, self.config).lock_missing)
+                    from ..mods import sides
+
+                    await asyncio.to_thread(sides.lock, self.config)
                 self.process = await serveruser.start(
                     self.config,
                     cmd,
@@ -558,10 +747,16 @@ class MinecraftServer:
                 raise ServerError(words) from exc
 
             self.pid = self.process.pid
+            self._write_pid()
             if self.config.server.cpu_cores:
                 await self.apply_cpu_cores()
+            if self.config.server.low_priority:
+                self.apply_priority()
             self._reader_task = asyncio.create_task(self._pump_output(), name="mc-console")
             self._waiter_task = asyncio.create_task(self._wait_exit(), name="mc-wait")
+            self._slow_task = asyncio.create_task(
+                self._watch_slow_start(self.started_at), name="mc-slow-start"
+            )
             if self.db:
                 self.db.add_event(
                     self.server_id, "server_start_requested", f"Start requested by {actor}"
@@ -595,6 +790,62 @@ class MinecraftServer:
                 )
             )
         return result
+
+    def apply_priority(self) -> None:
+        """Below normal priority when server.low_priority is on, normal when
+        it's off. A refusal (the separate Windows user's process) is said in
+        the console; the server runs on either way."""
+        if not self.running or not self.pid:
+            return
+        why = cpu.set_low_priority(self.pid, self.config.server.low_priority)
+        if why:
+            self._emit_console(f"[agent] couldn't change the server's priority: {why}")
+
+    def start_limit(self) -> float:
+        """How long a start may take before the "Starting too long" alert:
+        twice the last measured start, or server.start_timeout before this
+        server has ever been measured."""
+        last = self.db.get_setting("startup_seconds") if self.db else None
+        if isinstance(last, int | float) and last > 0:
+            return 2 * float(last)
+        return float(self.config.server.start_timeout)
+
+    async def _watch_slow_start(self, started_at: float | None) -> None:
+        """Only an alert: the server is never stopped for starting slowly
+        (a big modpack can take long, and stopping it would only lose more time)."""
+        limit = self.start_limit()
+        if await self.wait_online(limit):
+            return
+        if self.state != ServerState.STARTING or self.started_at != started_at:
+            return  # it stopped or crashed meanwhile; that has its own alert
+        await self.bus.publish(
+            Event(
+                type="start_slow",
+                level="warn",
+                message=f"Starting is taking longer than {limit:.0f} seconds. "
+                "It keeps trying; watch the console.",
+                data={"limit_seconds": round(limit)},
+            )
+        )
+
+    def _read_properties(self) -> dict[str, str]:
+        from .properties import FILENAME, PropertiesFile
+
+        path = self.config.server_dir / FILENAME
+        try:
+            return PropertiesFile.read(path).values() if path.is_file() else {}
+        except (OSError, ValueError):
+            return {}
+
+    def command_changed(self) -> bool:
+        """True when this run was started with a different command than the
+        settings make now (memory, Java, Java arguments)."""
+        if not self.running or self.launched_command is None:
+            return False
+        try:
+            return self.build_command() != self.launched_command
+        except Exception:  # a broken setting is the start's business, not this check's
+            return False
 
     async def wait_online(self, timeout: float | None = None) -> bool:
         timeout = timeout or self.config.server.start_timeout
@@ -662,7 +913,8 @@ class MinecraftServer:
             self.mod_count = sig.mod_count
         if sig.tps is not None:
             self.tps, self.tps_updated = sig.tps, time.time()
-            self.tps_source = self.config.monitor.tps_command
+            # Keeps the command detection found; the setting can say "auto".
+            self.tps_source = self.tps_source or str(self.config.monitor.tps_command)
         if sig.target_tps is not None:
             self._target_tps = sig.target_tps
         if sig.mspt is not None:
@@ -690,6 +942,9 @@ class MinecraftServer:
         if sig.done_seconds is not None and self.state == ServerState.STARTING:
             self.startup_seconds = sig.done_seconds
             self.online_at = time.time()
+            if self.db:
+                self.db.set_setting("startup_seconds", sig.done_seconds)
+            self.properties_at_start = self._read_properties()
             self.startup_confirmed = True
             self._online_event.set()
             await self._set_state(
@@ -725,6 +980,8 @@ class MinecraftServer:
     ) -> dict[str, Any]:
         if not self.running:
             raise ServerError("The server isn't running.")
+        if self.left_behind is not None:
+            raise ServerError(STOP_IN_GAME)
         timeout = timeout if timeout is not None else self.config.server.stop_timeout
         self._stop_requested = True
         self._stop_reason = reason
@@ -749,6 +1006,15 @@ class MinecraftServer:
         return {"graceful": not forced, "command_sent": sent}
 
     async def _terminate(self) -> None:
+        if self.left_behind is not None:
+            proc = self.left_behind
+            with contextlib.suppress(psutil.Error):
+                proc.terminate()
+                try:
+                    await asyncio.to_thread(proc.wait, 20)
+                except psutil.TimeoutExpired:  # pragma: no cover
+                    proc.kill()
+            return
         if not self.process:
             return
         with contextlib.suppress(ProcessLookupError, OSError):
@@ -768,10 +1034,18 @@ class MinecraftServer:
         self._stop_requested = True
         self._stop_reason = ExitReason.FORCE_KILLED
         self._emit_console(f"[agent] force kill requested by {actor}")
+        await self.watch_left_behind()
         await self._terminate()
         await self.wait_exit(timeout=30)
 
     async def restart(self, actor: str = "system", delay: float = 0.0) -> dict[str, Any]:
+        doing = self.busy(None) if self.busy else None
+        if self.running and doing:
+            # Checked before the stop: the start after it would be refused,
+            # and the server left off.
+            raise ServerError(f"Wait for '{doing}' to finish first.")
+        if self.left_behind is not None:
+            raise ServerError(STOP_IN_GAME)
         if self.running:
             await self._set_state(ServerState.RESTARTING, f"Restart requested by {actor}")
             await self.stop(actor=actor, reason=ExitReason.USER_STOP, restart=True)
@@ -807,7 +1081,7 @@ class MinecraftServer:
         )
         return any(any(mk in ln.raw for mk in markers) for ln in self.console.tail(60))
 
-    def _classify_exit(self, code: int) -> ExitReason:
+    def _classify_exit(self, code: int | None) -> ExitReason:
         if self._stop_requested:
             return (
                 self._stop_reason
@@ -816,16 +1090,29 @@ class MinecraftServer:
             )
         if self._stop_reason == ExitReason.CLEAN_EXIT:
             return ExitReason.CLEAN_EXIT
+        if self.left_behind is not None:
+            # No console to read: only the exit code tells (/stop in the game
+            # ends with 0). Without one, nothing is claimed.
+            if code is None:
+                return ExitReason.UNKNOWN
+            return ExitReason.CLEAN_EXIT if code == 0 else ExitReason.CRASH
         if self.state == ServerState.STARTING:
             return ExitReason.STARTUP_FAILURE
+        try:
+            if code in cpu.exit_codes(self.config.monitor.ignored_exit_codes):
+                return ExitReason.CLEAN_EXIT
+        except ValueError:
+            pass  # a bad setting is refused when saved; never blocks a crash alert
         if code == 0 and self._saw_clean_shutdown():
             return ExitReason.CLEAN_EXIT
         return ExitReason.CRASH
 
-    async def _on_exit(self, code: int) -> None:
+    async def _on_exit(self, code: int | None) -> None:
         self.last_exit_code = code
         reason = self._classify_exit(code)
         self.last_exit_reason = reason
+        self.left_behind = None
+        self._clear_pid()
         pid, self.pid = self.pid, None
         uptime = self.uptime
         restart_wanted = self._restart_after_stop
@@ -838,7 +1125,7 @@ class MinecraftServer:
         self.tps_asked_at = None
         self._emit_console(f"[agent] process {pid} exited with code {code} ({reason.value})")
 
-        if reason in NORMAL_REASONS or reason == ExitReason.FORCE_KILLED:
+        if reason in NORMAL_REASONS or reason in (ExitReason.FORCE_KILLED, ExitReason.UNKNOWN):
             self.started_at = None
             await self._set_state(
                 ServerState.OFFLINE,
@@ -878,15 +1165,16 @@ class MinecraftServer:
             return
 
         # ---------------- crash path ----------------
-        self.started_at = None
-        self._crash_times.append(time.time())
-        await self._set_state(
-            ServerState.CRASHED,
-            "Server crashed" if reason == ExitReason.CRASH else "Server failed to start",
-            level="error",
-            exit_code=code,
-            reason=reason.value,
-        )
+        async with self._lock:  # never between a Start's check and its launch
+            self.started_at = None
+            self.record_crash()
+            await self._set_state(
+                ServerState.CRASHED,
+                "Server crashed" if reason == ExitReason.CRASH else "Server failed to start",
+                level="error",
+                exit_code=code,
+                reason=reason.value,
+            )
         context: dict[str, Any] = {"exit_code": code, "reason": reason.value, "uptime": uptime}
         if self.crash_hook:
             try:
@@ -914,10 +1202,24 @@ class MinecraftServer:
         cutoff = time.time() - window
         return len([t for t in self._crash_times if t >= cutoff])
 
+    def may_restart_by_itself(self) -> str | None:
+        """Why the agent must not restart this server by itself (crash
+        restart and the not-answering watchdog), or None when it may."""
+        if not self.config.monitor.auto_restart:
+            return "Automatic restart is off. Press Restart to fix it."
+        if self.auto_restart_blocked:
+            return (
+                f"Automatic restart is stopped after {self.auto_restart_block_reason}. "
+                "Press Restart after looking at the reason."
+            )
+        if self.maintenance and self.config.maintenance.block_auto_restart:
+            return "Maintenance mode is on, so it wasn't restarted by itself. Press Restart."
+        return None
+
     async def _maybe_auto_restart(self) -> None:
         if not self.config.monitor.auto_restart or self.auto_restart_blocked:
             return
-        if self.maintenance and self.config.maintenance.block_auto_restart:
+        if self.may_restart_by_itself():
             await self.bus.publish(
                 Event(
                     type="auto_restart_skipped",
@@ -932,6 +1234,7 @@ class MinecraftServer:
         if recent >= max_crashes:
             self.auto_restart_blocked = True
             self.auto_restart_block_reason = f"{recent} crashes within {window_min:.0f} minutes"
+            self.remember()
             await self.bus.publish(
                 Event(
                     type="crash_loop",
@@ -946,15 +1249,19 @@ class MinecraftServer:
             )
             return
         delay = self.config.monitor.restart_delay
-        self.restart_delay = delay
-        self.restart_at = time.time() + delay
-        await self._set_state(
-            ServerState.RESTART_PENDING,
-            f"Restarting automatically in {delay:.0f}s",
-            level="warn",
-            restart_at=self.restart_at,
-            delay=delay,
-        )
+        async with self._lock:
+            # A Start pressed since the crash has already won.
+            if self.state is not ServerState.CRASHED:
+                return
+            self.restart_delay = delay
+            self.restart_at = time.time() + delay
+            await self._set_state(
+                ServerState.RESTART_PENDING,
+                f"Restarting automatically in {delay:.0f}s",
+                level="warn",
+                restart_at=self.restart_at,
+                delay=delay,
+            )
         log.info("restart_scheduled delay=%.0fs crash=%d/%d", delay, recent, max_crashes)
         await self.bus.publish(
             Event(
@@ -1066,6 +1373,7 @@ class MinecraftServer:
         self._crash_times.clear()
         self.auto_restart_blocked = False
         self.auto_restart_block_reason = None
+        self.remember()
 
     # ------------------------------------------------------------------
     # console commands
@@ -1077,6 +1385,8 @@ class MinecraftServer:
         this method; here we additionally refuse embedded newlines so one call
         can never become two commands.
         """
+        if self.left_behind is not None:
+            raise ServerError(NO_CONSOLE)
         if not self.running or not self.process or not self.process.stdin:
             raise ServerError("The server isn't running.")
         if "\n" in command or "\r" in command:
@@ -1091,8 +1401,9 @@ class MinecraftServer:
         return True
 
     async def shutdown(self) -> None:
-        """Called when the agent itself stops. Minecraft is left running."""
-        for task in (self._reader_task, self._waiter_task, self._restart_task):
+        """Called when the agent itself stops, after agent/downtime.py has
+        stopped Minecraft (a server it couldn't stop is left running)."""
+        for task in (self._reader_task, self._waiter_task, self._restart_task, self._slow_task):
             if task and not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):

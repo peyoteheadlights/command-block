@@ -2,7 +2,7 @@
 
 Nothing is filled in on a guess: no adapter means no home address, no
 Tailscale means no Tailscale address, and whether the server can be
-reached from the internet is always "not known".
+reached from the internet is "not known" until an outside test answered.
 """
 
 from __future__ import annotations
@@ -75,7 +75,8 @@ def test_the_api_reports_what_it_read_and_says_internet_is_unknown(
         {"address": "192.168.1.20", "adapter": "Ethernet", "virtual": False}
     ]
     assert body["java"]["tailscale"]["address"] is None
-    assert body["internet"] == {"known": False, "reason": "not_tested"}
+    assert body["internet"]["known"] is False and body["internet"]["works"] is None
+    assert body["internet"]["reason"] == "off"  # "Let friends join from the internet" is off
     assert body["bedrock"] is None  # crossplay is off
 
 
@@ -99,7 +100,7 @@ def test_tailscales_own_address_is_shown_when_it_reports_one(multi_client, adapt
     assert body["java"]["default_port"] is True
 
 
-def test_bedrock_players_get_the_home_address_too(adapters, monkeypatch):
+def test_bedrock_players_get_the_home_address_too(adapters, monkeypatch, tmp_path):
     """Geyser listens on every adapter, so a phone on the same Wi-Fi joins
     on the home address; only addresses read from the PC are listed."""
     from agent import crossplay
@@ -114,10 +115,18 @@ def test_bedrock_players_get_the_home_address_too(adapters, monkeypatch):
         bedrock_port_of=lambda ctx: SimpleNamespace(port=19132),
     )
     ctx = SimpleNamespace(
-        core=SimpleNamespace(ports=ports, db=SimpleNamespace(get_setting=lambda key, d=None: d)),
+        core=SimpleNamespace(
+            ports=ports,
+            db=SimpleNamespace(get_setting=lambda key, d=None: d),
+            ddns=SimpleNamespace(names=list),
+        ),
         server_id="survival",
         server=SimpleNamespace(running=False),
-        config=SimpleNamespace(server_type=servertypes.get("paper")),
+        config=SimpleNamespace(
+            server_type=servertypes.get("paper"),
+            server_dir=tmp_path,
+            server=SimpleNamespace(internet=False),
+        ),
     )
     bedrock = joininfo.join_info(ctx)["bedrock"]
     assert bedrock["port"] == 19132 and bedrock["protocol"] == "udp"

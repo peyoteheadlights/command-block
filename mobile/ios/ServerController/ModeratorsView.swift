@@ -66,11 +66,13 @@ final class ModeratorPages {
         }
     }
 
-    func save(_ name: String, _ body: [String: JSONValue]) async {
+    @discardableResult
+    func save(_ name: String, _ body: [String: JSONValue]) async -> Bool {
         let saved = await run("save") { client in
             _ = try await client.saveModerator(username: name, body: body)
         }
         if saved { said = Said(text: strings.t("mobile.mod.saved"), good: true) }
+        return saved
     }
 
     /// A new invite; with `forgetPassword` the owner's Reset password.
@@ -128,7 +130,7 @@ final class AccountPages {
     }
 
     func changePassword(current: String, new: String) async -> Bool {
-        guard let client = client() else { return false }
+        guard let client = client(), busy == nil else { return false }
         busy = "password"
         said = nil
         defer { busy = nil }
@@ -551,6 +553,11 @@ struct ModeratorServerView: View {
                     let shown = Moderators.shown(group, technical: model.technical, catalogue)
                     if !shown.isEmpty {
                         Section(model.t("mobile.mod.group_\(group.id)")) {
+                            Toggle(model.t("mobile.mod.all_in_group"), isOn: Binding(
+                                get: { current.isSuperset(of: shown) },
+                                set: { on in perms = Moderators.toggleAll(current, shown, on: on, catalogue) }
+                            ))
+                            .frame(minHeight: 44)
                             ForEach(shown, id: \.self) { permission in
                                 Toggle(model.t(Moderators.switchKey(permission)), isOn: Binding(
                                     get: { current.contains(permission) },
@@ -607,10 +614,10 @@ struct ModeratorServerView: View {
         }
     }
 
-    /// Saved: the screen shows what the agent now has.
+    /// Saved: the screen shows what the agent now has. Not saved: the ticks
+    /// stay, so they can be saved again (as on Android).
     private func save(_ pages: ModeratorPages, _ body: [String: JSONValue]) async {
-        await pages.save(name, body)
-        perms = nil
+        if await pages.save(name, body) { perms = nil }
     }
 }
 

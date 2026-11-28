@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -168,6 +167,8 @@ fun DiscordScreen(vm: AppViewModel, onBack: () -> Unit) {
                 if (pages.status.problem == null) item { Note(t("mobile.common.loading")) }
             } else {
                 item { SectionTitle(t("discord.bot")) }
+                // Discord is 13+: said when a server is for "My kids and their friends".
+                if (vm.servers.list.any { it.playedBy == "kids" }) item { HideableNote(vm, "discord.kids_age") }
                 item {
                     Card {
                         val connected = status.state == "connected"
@@ -239,7 +240,7 @@ fun DiscordScreen(vm: AppViewModel, onBack: () -> Unit) {
                             Tick(
                                 t("discord.remove_on_leave"),
                                 checked = guild.removeOnLeave,
-                                subtitle = t("discord.remove_on_leave_hint"),
+                                info = t("discord.remove_on_leave_hint"),
                                 enabled = pages.busy == null,
                             ) { pages.removeOnLeave(guild.id, it, strings) }
                         }
@@ -294,7 +295,7 @@ private fun GuildSetup(pages: DiscordPages, guild: DiscordGuild, servers: List<P
         }
         Item(
             t("discord.set_up"),
-            subtitle = t("discord.set_up_hint"),
+            info = t("discord.set_up_hint"),
             onClick = if (pages.busy == null && ticked.isNotEmpty()) ({ pages.setUp(guild.id, servers.map { it.first }.filter { it in ticked }, strings) }) else null,
         )
     }

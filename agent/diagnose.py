@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import joinbot
 from .crossplay import USERNAME_PREFIX
+from .minecraft import nethernet
 from .minecraft.playeractions import read_list
 from .minecraft.properties import PropertiesFile
 from .minecraft.state import ServerState
@@ -59,6 +60,13 @@ STEP_WORDS = {
 LEAVE_GRACE = 5.0
 SERVER_GROUP = "The server"
 SIGN_IN_FIRST = "Not checked: this join needs your Microsoft account. Sign in with Microsoft first."
+# The test player (bedrock-protocol) can find NetherNet servers only on the
+# LAN or through Xbox, not by address, so a Bedrock 1.26.50+ server isn't joined.
+NETHERNET_NOT_CHECKED = (
+    "Not checked: this server uses Bedrock's new connection (NetherNet), which the test "
+    "player can't join yet. Also, iPhone and iPad players can't join NetherNet servers "
+    "right now (a Mojang bug, BDS-23108)."
+)
 
 
 @dataclass
@@ -254,6 +262,11 @@ def _not_checked(ctx: ServerContext, join: Join) -> str | None:
 
 async def _join(ctx: ServerContext, run: Run, job: JobHandle, join: Join) -> None:
     host = server_ip(ctx)
+    if ctx.config.server_type.edition == "bedrock" and await asyncio.to_thread(
+        nethernet.ping, host, join.port
+    ):
+        run.line(join.group, "Join", None, NETHERNET_NOT_CHECKED)
+        return
     name = player_name(ctx, join)
     added = False
     if name:

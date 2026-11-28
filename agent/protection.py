@@ -30,8 +30,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import downloads, gamesettings, notes
+from . import anticheat, downloads, gamesettings, notes
 from .minecraft.properties import FILENAME, FormError, PropertiesFile
+from .security import antivirus
 from .security import permissions as P
 
 if TYPE_CHECKING:
@@ -100,9 +101,9 @@ class ProtectionError(RuntimeError):
 # ---------------------------------------------------------------- the router port
 @dataclass
 class RouterHooks:
-    """The router port while the server runs. UPnP fills these
-    in; until then they are None and the hooks do nothing. ``open`` decides
-    itself whether "Let friends join from the internet" is on."""
+    """The router port while the server runs, filled in by agent/internet.py
+    (UPnP). ``open`` decides itself whether "Let friends join from the
+    internet" is on."""
 
     open: Callable[[ServerContext], Awaitable[bool]] | None = None
     close: Callable[[ServerContext], Awaitable[None]] | None = None
@@ -110,7 +111,18 @@ class RouterHooks:
     mapped: Callable[[ServerContext], bool | None] | None = None
 
 
-ROUTER = RouterHooks()
+def _internet_hooks() -> RouterHooks:
+    from . import internet
+
+    return RouterHooks(
+        open=internet.open_port,
+        close=internet.close_port,
+        outside_test=internet.outside_test,
+        mapped=internet.mapped,
+    )
+
+
+ROUTER = _internet_hooks()
 
 
 async def router_open(ctx: ServerContext) -> None:
@@ -163,7 +175,7 @@ class Facts:
     addons: set[str] = field(default_factory=set)  # add-ons that are on, by id
     home: bool = False
     tailscale: bool | None = None
-    router: bool | None = None  # None: this app doesn't open router ports yet
+    router: bool | None = None  # None: "Let friends join from the internet" is off
     played_by: str = ""
     shared_address: str = ""
     minecraft: str | None = None
@@ -175,6 +187,13 @@ class Facts:
     join: dict[str, Any] | None = None  # Join protection's status (agent/joinguard.py)
     join_burst_seen: bool = False  # 15+ new names in one minute within 7 days
     proxy: list[dict[str, Any]] = field(default_factory=list)  # proxy add-ons for the type
+    anticheat: list[str] | None = None  # anti-cheats in; None: none runs on this type
+    jar_scan: dict[str, Any] | None = None  # the jar check's summary; None: no jars here
+    antivirus: str = "off_windows"  # agent/security/antivirus.py status()
+    deep_scan: dict[str, Any] | None = None  # the last deep scan's summary; None: never run
+    # The separate Windows user: on, ok, and running_as (how the running
+    # server started; None when stopped). None off Windows.
+    windows_user: dict[str, Any] | None = None
 
     def prop(self, key: str, default: str) -> str:
         return ((self.properties or {}).get(key) or default).strip().lower()
@@ -197,6 +216,16 @@ def facts(ctx: ServerContext) -> Facts:
         values = PropertiesFile.read(path).values() if path.is_file() else None
     except (OSError, ValueError):
         values = None
+    behind = ctx.core.waterdog.of(ctx)
+    if values is not None and behind:
+        # Behind WaterdogPE the file says online-mode and allow-list off, but
+        # WaterdogPE checks every Xbox sign-in and its plugin keeps the allow
+        # list (agent/waterdog.py).
+        values = {
+            **values,
+            "online-mode": "true",
+            "allow-list": "true" if behind.get("list_on") else "false",
+        }
     port = ctx.core.ports.port_of(ctx)
     plugins = server_type.content == "plugins" and server_type.changes_farms
     paper = None
@@ -209,6 +238,7 @@ def facts(ctx: ServerContext) -> Facts:
     offered = [e for e in notes.RECOMMENDED if server_type.id in e["types"]]
     ops = read_list(directory, "ops")["players"] if server_type.dialect == "java" else None
     security = ctx.core.config.security
+    addons = whitelist.installed(ctx)
     return Facts(
         edition=server_type.edition,
         type_id=server_type.id,
@@ -220,7 +250,7 @@ def facts(ctx: ServerContext) -> Facts:
         if port.port == server_type.default_port
         else None,
         ops=[o["name"] for o in ops] if ops is not None else None,
-        addons=whitelist.installed(ctx),
+        addons=addons,
         home=bool(joininfo.local_addresses()),
         tailscale=bool(joininfo.tailscale_address().get("connected")),
         router=ROUTER.mapped(ctx) if ROUTER.mapped else None,
@@ -239,7 +269,27 @@ def facts(ctx: ServerContext) -> Facts:
         join=ctx.core.guard.status(ctx),
         join_burst_seen=_burst_seen(ctx),
         proxy=[_addon(e) for e in offered if e.get("role") == "proxy"],
+        anticheat=anticheat.installed(addons) if anticheat.supported(server_type.id) else None,
+        jar_scan=ctx.jarscan.summary() if server_type.has_content else None,
+        antivirus=antivirus.status(),
+        deep_scan=ctx.deepscan.summary(),
+        windows_user=_windows_user_facts(ctx),
     )
+
+
+def _windows_user_facts(ctx: ServerContext) -> dict[str, Any] | None:
+    from . import serveruser
+
+    if not serveruser.IS_WINDOWS:
+        return None
+    if not serveruser.is_on(ctx.core.config):  # no need to ask the service
+        return {"on": False, "ok": True, "running_as": None}
+    status = serveruser.status(ctx.core.config)
+    return {
+        "on": status["on"],
+        "ok": status["ok"],
+        "running_as": ctx.server.started_as_account if ctx.server.running else None,
+    }
 
 
 def _burst_seen(ctx: ServerContext) -> bool:
@@ -384,12 +434,84 @@ def lines(f: Facts) -> list[dict[str, Any]]:
     elif row:
         found.append(_line("log4shell", "worst", "log4shell", version=f.minecraft))
 
+    found += _jar_scan(f.jar_scan)
+    if f.jar_scan is not None:
+        found.append(_antivirus(f.antivirus))
+    found += _deep_scan(f.deep_scan)
+    found += _windows_user(f.windows_user)
     found += _join(f)
+    found += _anticheat(f)
     found.append(_line("big_attacks", "info", "stop_and_close"))
     if java and f.spam.get("on"):
         found.append(_line("chat_spam", "info", technical=True, **f.spam))
     order = {level: i for i, level in enumerate(LEVELS)}
     return sorted(found, key=lambda line: order[line["level"]])
+
+
+def _anticheat(f: Facts) -> list[dict[str, Any]]:
+    """Which anti-cheat is in. The line's button opens the picker
+    (agent/anticheat.py); it names what's installed, never a verdict."""
+    if f.anticheat is None:
+        return []
+    if len(f.anticheat) > 1:
+        return [_line("anticheat_two", "problem", names=", ".join(f.anticheat))]
+    if f.anticheat:
+        return [_line("anticheat_on", "info", name=f.anticheat[0])]
+    community = f.played_by == "community"
+    return [_line("anticheat_none", "suggest" if community else "info")]
+
+
+def _jar_scan(scan: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The jar check's lines: what it found, or what it checked."""
+    if scan is None:
+        return []
+    if not scan["checked_at"]:
+        return [_line("jar_scan_not_yet", "info")]
+    found = []
+    if scan.get("recent", scan["found"]):
+        found.append(_line("jar_scan_found", "worst", count=scan.get("recent", scan["found"])))
+    else:
+        found.append(
+            _line("jar_scan_done", "info", checked=scan["checked"], unknown=scan["unknown"])
+        )
+    if scan["couldnt"]:
+        found.append(_line("jar_scan_couldnt", "info", count=scan["couldnt"]))
+    if scan.get("changed"):
+        found.append(_line("jar_changed", "problem", count=scan["changed"]))
+    return found
+
+
+def _deep_scan(scan: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The last deep scan's line, once one has run."""
+    if scan is None:
+        return []
+    if scan["worth_a_look"]:
+        return [_line("deep_scan_look", "problem", count=scan["worth_a_look"])]
+    return [_line("deep_scan_done", "info", files=scan["files"])]
+
+
+def _windows_user(user: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Whether the server runs as its own Windows user (Windows only)."""
+    if user is None:
+        return []
+    if not user["on"]:
+        return [_line("windows_user_off", "suggest")]
+    if not user["ok"]:
+        return [_line("windows_user_broken", "problem")]
+    if user["running_as"] is False:
+        return [_line("windows_user_restart", "problem")]
+    return [_line("windows_user_on", "info")]
+
+
+def _antivirus(status: str) -> dict[str, Any]:
+    """Whether Windows antivirus checks jars here, and the test for it."""
+    if status == "off_windows":
+        return _line("antivirus_off", "info")
+    if status == "untested":
+        return _line("antivirus_untested", "suggest", "antivirus_test")
+    if status == "not_flagging":
+        return _line("antivirus_not_flagging", "suggest", "antivirus_test")
+    return _line("antivirus_on", "info", "antivirus_test")
 
 
 def _join(f: Facts) -> list[dict[str, Any]]:
@@ -458,6 +580,9 @@ def _props(values: dict[str, str], title: str):
 
 async def _whitelist_on(ctx: ServerContext, user: str, body: dict[str, Any]) -> dict[str, Any]:
     key = "allow-list" if ctx.config.server_type.edition == "bedrock" else "white-list"
+    if await ctx.core.waterdog.set_list(ctx, True):  # behind WaterdogPE: its plugin's list
+        ctx.db.audit("game_settings", user=user, target=ctx.server_id, detail=key)
+        return {"changed": {key: "true"}, "keys": [key], "undo": None, **gamesettings._after(ctx)}
     result = await gamesettings.set_values(ctx, {key: "true"}, "Turning the whitelist on", user)
     await live_whitelist_on(ctx)
     return result
@@ -469,6 +594,8 @@ async def live_whitelist_on(ctx: ServerContext) -> bool:
     from .minecraft.commands import validate
     from .minecraft.process import ServerError
 
+    if await ctx.core.waterdog.set_list(ctx, True):  # behind WaterdogPE: at once, by its plugin
+        return True
     if not ctx.server.running or ctx.server.state.value != "ONLINE":
         return False
     command = "allowlist on" if ctx.config.server_type.edition == "bedrock" else "whitelist on"
@@ -539,6 +666,16 @@ async def _stop_and_close(ctx: ServerContext, user: str, body: dict[str, Any]) -
     return await stop_and_close(ctx, user)
 
 
+async def _antivirus_test(ctx: ServerContext, user: str, body: dict[str, Any]) -> dict[str, Any]:
+    result = await asyncio.to_thread(antivirus.run_test, ctx.core.db)
+    if result["status"] in ("off_windows", "couldnt"):
+        raise ProtectionError(
+            "Windows antivirus couldn't be asked on this PC, so nothing was tested."
+        )
+    ctx.db.audit("antivirus_test", user=user, target=ctx.server_id, detail=result["status"])
+    return {"changed": {"antivirus": result["status"]}, "restart_needed": False, "undo": None}
+
+
 FixFunction = Callable[["ServerContext", str, dict[str, Any]], Awaitable[dict[str, Any]]]
 # fix id -> (the permission it needs, what it does)
 FIXES: dict[str, tuple[str, FixFunction]] = {
@@ -557,6 +694,7 @@ FIXES: dict[str, tuple[str, FixFunction]] = {
     "log4shell": (P.SETTINGS_SERVER, _log4shell),
     "stop_and_close": (P.SERVER_CONTROL, _stop_and_close),
     "join_on": (P.SETTINGS_SERVER, _join_on),
+    "antivirus_test": (P.SETTINGS_SERVER, _antivirus_test),
 }
 
 

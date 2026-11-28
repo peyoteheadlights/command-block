@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import motion, streamer, ui
 from .agent import AgentError
 from .fixes import get_help
 from .overview import card
@@ -51,6 +52,7 @@ TAILSCALE_MACHINES = "https://login.tailscale.com/admin/machines"
 THRESHOLDS = [
     ("thresholds.cpu_percent", "appset.cpu_alert"),
     ("thresholds.ram_percent", "appset.ram_alert"),
+    ("thresholds.high_minutes", "appset.high_minutes"),
     ("thresholds.disk_free_gb", "appset.disk_alert"),
     ("thresholds.tps_min", "appset.tps_alert"),
     ("thresholds.mspt_max", "appset.mspt_alert"),
@@ -68,6 +70,13 @@ def said(widget: QLabel, words: str, kind: str = "ok") -> None:
 def three(value: Any, yes: str, no: str, unknown: str = "value.unknown") -> str:
     """Words for True, False, or not known (None)."""
     return text(yes if value is True else no if value is False else unknown)
+
+
+def mod_files_words(usage: dict) -> str:
+    """Real disk use of the shared mod files, read from the agent."""
+    if not usage.get("files"):
+        return text("modfiles.none")
+    return text("modfiles.usage", used=size(usage["on_disk"]), saved=size(usage["saved"]))
 
 
 def yes_no(value: Any) -> str:
@@ -194,6 +203,7 @@ class ListScreen(QWidget):
         self.list.setAccessibleName(text("desktop.tool.help") if name == "Help" else name)
         self.list.setFixedWidth(220)
         self.pages = QStackedWidget()
+        self.pages.currentChanged.connect(lambda: motion.turn(self.pages))
         for key, section in sections.items():
             item = QListWidgetItem(text(section.WORDS))
             item.setData(Qt.ItemDataRole.UserRole, key)
@@ -240,8 +250,10 @@ class PCSettings(Section):
             window,
             [
                 "look",
+                "welcome",
                 "alerts",
                 "awake",
+                "mod_files",
                 "server_user",
                 "maintenance",
                 "tailscale",
@@ -257,6 +269,7 @@ class PCSettings(Section):
 
     def load(self) -> None:
         self.fill("look", self.look_card())
+        self.call("GET", "/account/welcome", lambda a: self.fill("welcome", self.welcome_card(a)))
         self.fill("help", self.help_card())
         self.fill("startup", self.startup_card())
         agent = self.window_.agent
@@ -279,7 +292,12 @@ class PCSettings(Section):
             self.call("GET", "/tailscale", self.show_tailscale)
         else:
             frame, layout = card(text("security.tailscale"))
-            layout.addWidget(label(text("desktop.tailscale.not_here", pc=agent.place), "sub"))
+            words = (
+                "desktop.tailscale.agent_only"
+                if self.window_.agent_only
+                else "desktop.tailscale.not_here"
+            )
+            layout.addWidget(label(text(words, pc=agent.place), "sub"))
             self.fill("tailscale", frame)
         self.fill("wake")
         if mode["technical"]:  # never suggested in Simple
@@ -303,6 +321,7 @@ class PCSettings(Section):
         data, power = found
         self.fill("alerts", self.alerts_card(data))
         self.fill("awake", self.awake_card(data, power) if power else QWidget())
+        self.fill("mod_files", self.mod_files_card(data.get("mod_storage")))
         self.fill("maintenance", self.maintenance_card(data))
 
     # -------------------------------------------------------- look and detail
@@ -333,11 +352,73 @@ class PCSettings(Section):
             choice.toggled.connect(lambda on, t=technical: self.set_mode(t) if on else None)
             details.addButton(choice)
             layout.addWidget(choice)
+        layout.addWidget(label(text("streamer.title"), name="h2"))
+        hide = QCheckBox(text("streamer.switch"))
+        hide.setChecked(streamer.state["on"])
+        hide.toggled.connect(window.set_streamer)
+        layout.addWidget(hide)
+        layout.addWidget(label(text("streamer.hint"), "sub"))
+        show_all = push(text("tips.show_all"))
+        show_all.setObjectName("showAllWarnings")
+
+        def shown_again(_answer: dict) -> None:
+            ui.hidden.clear()
+            self.say(text("tips.show_all_done"))
+
+        show_all.clicked.connect(lambda: self.call("DELETE", "/account/hidden", shown_again))
+        layout.addLayout(buttons(show_all))
+        layout.addWidget(label(text("tips.show_all_hint"), "sub"))
         return frame
 
     def set_mode(self, technical: bool) -> None:
         self.window_.set_mode(technical)
         self.load()  # Technical opens the extra details here too
+
+    def welcome_card(self, answers: dict) -> QFrame:
+        """The first-run answers, changed here (the mode is just above)."""
+        from .welcome import PLAYED_BY, kind_boxes
+
+        frame, layout = card(text("welcome.settings"))
+        tips = QCheckBox(text("welcome.tips"))
+        tips.setChecked(self.window_.tips_on)
+
+        def set_tips(on: bool) -> None:
+            self.window_.tips_on = on
+            prefs = {"tips": "on" if on else "off"}
+            self.call("PUT", "/account/preferences", lambda _r: None, body=prefs)
+
+        tips.toggled.connect(set_tips)
+        layout.addWidget(tips)
+        layout.addWidget(label(text("welcome.who_question"), name="h2"))
+        who = QButtonGroup(frame)
+        boxes = kind_boxes(answers.get("kinds") or [])
+        for value, words in PLAYED_BY:
+            choice = QRadioButton(text(words))
+            choice.setChecked(answers.get("played_by") == value)
+            who.addButton(choice)
+            choice.setProperty("value", value)
+            layout.addWidget(choice)
+        layout.addWidget(label(text("welcome.kinds_question"), name="h2"))
+        for kind, box in boxes.items():
+            layout.addWidget(box)
+            layout.addWidget(label(text(f"welcome.kind_{kind}_names"), "sub"))
+
+        def save(*_args) -> None:
+            picked = who.checkedButton()
+            body = {
+                "kinds": [k for k, b in boxes.items() if b.isChecked()],
+                "played_by": picked.property("value") if picked else "",
+                "set_defaults": False,
+            }
+            self.call(
+                "PUT", "/account/welcome", lambda _r: self.say(text("welcome.saved")), body=body
+            )
+
+        who.buttonToggled.connect(lambda _b, on: save() if on else None)
+        for box in boxes.values():
+            box.toggled.connect(save)
+        layout.addWidget(label(text("welcome.pc_on"), "sub"))
+        return frame
 
     # -------------------------------------------------------- alerts
     def alerts_card(self, data: dict) -> QFrame:
@@ -488,6 +569,14 @@ class PCSettings(Section):
             )
         return frame
 
+    # -------------------------------------------------------- shared mod files
+    def mod_files_card(self, usage: dict | None) -> QWidget:
+        if usage is None:  # an older agent doesn't say
+            return QWidget()
+        frame, layout = card(text("modfiles.title"))
+        layout.addWidget(label(mod_files_words(usage), "sub"))
+        return frame
+
     # -------------------------------------------------------- separate Windows user
     def server_user_card(self, state: dict) -> QFrame:
         frame, layout = card(text("serveruser.title"))
@@ -508,7 +597,8 @@ class PCSettings(Section):
         if not action:
             return frame
         if agent.place != "this PC":
-            layout.addWidget(label(text("serveruser.not_here", pc=agent.place), "sub"))
+            words = "serveruser.agent_only" if self.window_.agent_only else "serveruser.not_here"
+            layout.addWidget(label(text(words, pc=agent.place), "sub"))
             return frame
         layout.addWidget(label(text("serveruser.restarts"), "sub"))
         button = push(text(f"serveruser.{'turn_' + action if action != 'repair' else action}"))
@@ -1182,6 +1272,15 @@ class Account(Section):
         here.setChecked(pc.setting("show_alerts") not in (False, "false"))
         here.toggled.connect(lambda on: pc.set_setting("show_alerts", on))
         layout.addWidget(here)
+        # A sound on this PC only (off unless picked), whatever the alert list says.
+        for key, words in (
+            ("sound_crash", "desktop.device_alerts.sound_crash"),
+            ("sound_join", "desktop.device_alerts.sound_join"),
+        ):
+            sound = QCheckBox(text(words))
+            sound.setChecked(pc.setting(key) in (True, "true"))
+            sound.toggled.connect(lambda on, k=key: pc.set_setting(k, on))
+            layout.addWidget(sound)
         own = QCheckBox(text("desktop.device_alerts.own"))
         own.setChecked(bool(found.get("own")))
         layout.addWidget(own)

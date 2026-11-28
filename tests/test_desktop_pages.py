@@ -23,6 +23,8 @@ from .test_desktop_app import (
 
 QtWidgets = pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is in requirements-dev")
 
+from desktop import parts  # noqa: E402
+
 
 def running(qapp, agent_http, server_id="survival") -> dict:
     headers = owner(agent_http)
@@ -307,16 +309,23 @@ def test_speed_readings_say_how_tps_is_read_and_can_change_it(qapp, agent_http):
 
 def test_the_health_checks_show_with_their_overall_result(qapp, agent_http):
     window, page = technical_page(qapp, agent_http, "Performance")
-    wait_for(qapp, lambda: "VERIFIED" in shown_text(page) or "ATTENTION" in shown_text(page))
+    results = ("All checks verified", "Partially verified", "Attention needed")
+    wait_for(qapp, lambda: any(r in shown_text(page) for r in results))
+    assert "VERIFIED" not in shown_text(page)  # sentence case, never capitals
 
 
 # ---------------------------------------------------------------- Schedules
 def row_of(page, name):
     """The schedule's row on the page, found by its name."""
+    return next(r for r in page.findChildren(parts.Row) if name in shown_text(r))
+
+
+def row_part(page, words, name):
+    """The row's switch or icon button, by the name Narrator reads."""
     return next(
-        r
-        for r in page.findChildren(QtWidgets.QFrame)
-        if r.property("kind") == "row" and name in shown_text(r)
+        b
+        for b in row_of(page, name).findChildren(QtWidgets.QAbstractButton)
+        if b.accessibleName() == f"{words}: {name}"
     )
 
 
@@ -365,10 +374,12 @@ def test_editing_a_schedule_changes_it_and_keeps_it_on(qapp, agent_http):
 
 def test_turning_a_schedule_off_and_on(qapp, agent_http):
     window, page = schedules_page(qapp, agent_http)
-    buttons_named(row_of(page, "Nightly backup"), "Turn off")[0].click()
+    assert row_part(page, "Turn off", "Nightly backup").isChecked()
+    row_part(page, "Turn off", "Nightly backup").click()
     wait_for(qapp, lambda: "Next run: Off" in shown_text(row_of(page, "Nightly backup")))
     wait_for(qapp, lambda: "Nightly backup" not in shown_text(window.server_screen.panel))
-    buttons_named(row_of(page, "Nightly backup"), "Turn on")[0].click()
+    assert not row_part(page, "Turn on", "Nightly backup").isChecked()
+    row_part(page, "Turn on", "Nightly backup").click()
     wait_for(qapp, lambda: "Next run: Off" not in shown_text(row_of(page, "Nightly backup")))
 
 
@@ -382,11 +393,48 @@ def test_delete_asks_first(qapp, agent_http):
     window, page = schedules_page(qapp, agent_http)
     asked = []
     window.confirm = lambda title, body, yes: asked.append(title) or False
-    buttons_named(row_of(page, "Log cleanup"), "Delete")[0].click()
+    row_part(page, "Delete", "Log cleanup").click()
     assert asked == ["Delete Log cleanup?"]
     window.confirm = lambda title, body, yes: True
-    buttons_named(row_of(page, "Log cleanup"), "Delete")[0].click()
+    row_part(page, "Delete", "Log cleanup").click()
     wait_for(qapp, lambda: "Log cleanup" not in shown_text(page))
+
+
+def test_steps_in_a_row_are_saved_as_one_schedule(qapp, agent_http):
+    window, page = schedules_page(qapp, agent_http)
+    page.name.setText("Tidy up")
+    page.task.setCurrentIndex(page.task.findData("message"))
+    page.step_rows()[0].words.setText("Clearing items")
+    page.add_step.click()
+    second = page.step_rows()[1]
+    second.task.setCurrentIndex(second.task.findData("clear_items"))
+    assert page.keep_going.isVisibleTo(page) and not second.words.isVisibleTo(page)
+    assert page.task.findData("command") < 0  # any command is Technical
+    page.options["only_if_running"].setChecked(True)
+    page.expr.setText("04:00")
+    page.save.click()
+    wait_for(qapp, lambda: "Tidy up" in shown_text(page))
+    assert "2 steps" in shown_text(row_of(page, "Tidy up"))
+    saved = agent_http.get("/api/schedules", headers=owner(agent_http)).json()["schedules"]
+    tidy = next(s for s in saved if s["name"] == "Tidy up")
+    assert tidy["task"] == "steps" and tidy["payload"]["only_if_running"] is True
+    assert [s["task"] for s in tidy["payload"]["steps"]] == ["message", "clear_items"]
+
+
+def test_a_risky_scheduled_command_is_asked_about_first(qapp, agent_http):
+    window, page = technical_page(qapp, agent_http, "Schedules")
+    wait_for(qapp, lambda: page.task.findData("command") >= 0)
+    asked = []
+    window.confirm = lambda title, body, yes: asked.append(body) or True
+    page.name.setText("Clear mobs")
+    page.task.setCurrentIndex(page.task.findData("command"))
+    page.step_rows()[0].words.setText("kill @e[type=zombie]")
+    page.kind.setCurrentIndex(page.kind.findData("cron"))
+    page.expr.setText("0 * * * *")
+    page.save.click()
+    wait_for(qapp, lambda: "Clear mobs" in shown_text(page))
+    assert asked and "kills entities" in asked[0]
+    assert "0 * * * *" in shown_text(row_of(page, "Clear mobs"))
 
 
 def test_a_moderator_without_schedules_manage_only_sees_the_list(qapp, agent_http):
@@ -409,6 +457,8 @@ def test_a_moderator_without_schedules_manage_only_sees_the_list(qapp, agent_htt
     page = open_page(qapp, window, "Schedules")
     wait_for(qapp, lambda: "Nightly backup" in shown_text(page))
     assert not buttons_named(page, "Run now")
+    row = row_of(page, "Nightly backup")  # no switch and no Delete on it either
+    assert not row.findChildren(parts.Switch) and not row.findChildren(parts.IconButton)
     assert not page.form.isVisible()
 
 

@@ -125,10 +125,15 @@ public struct KnownPlayer: Decodable, Equatable, Sendable {
     public var username: String
     public var lastSeen: Double?
     public var edition: String?
+    /// From the Companion's last check; empty: none. nil: never checked.
+    public var modpackVersion: String?
+    public var modpackOk: Int?
 
     enum CodingKeys: String, CodingKey {
         case username, edition
         case lastSeen = "last_seen"
+        case modpackVersion = "modpack_version"
+        case modpackOk = "modpack_ok"
     }
 }
 
@@ -494,10 +499,11 @@ public struct JoinWay: Decodable, Equatable, Sendable {
     }
 }
 
-/// GET /join. The internet is never tested, so it is never claimed.
+/// GET /join. Reaching it from the internet is "not known" until an outside test answered.
 public struct JoinInfo: Decodable, Equatable, Sendable {
     public var java: JoinWay?
     public var bedrock: JoinWay?
+    public var internet: InternetReach?
 }
 
 public struct Ok: Decodable, Equatable, Sendable {
@@ -700,6 +706,13 @@ public struct PlayerActionWatch: Sendable {
 
 /// Which player buttons show.
 public enum PlayerButtons {
+    /// The Companion's last check of this player, or nil if never checked.
+    public static func modpack(_ strings: Strings, _ known: KnownPlayer) -> String? {
+        guard let ok = known.modpackOk else { return nil }
+        guard let version = known.modpackVersion, !version.isEmpty else { return strings.t("players.modpack_none") }
+        return strings.t(ok == 1 ? "players.modpack" : "players.modpack_bad", ["version": version])
+    }
+
     /// The most a reason for kick or ban can be.
     public static let REASON_LENGTH = 100
 

@@ -352,8 +352,16 @@ def test_the_window_takes_the_servers_color(qapp, agent_http):
     rows = agent_http.get("/api/servers", headers=owner(agent_http)).json()["servers"]
     color = {r["name"]: r["color"] for r in rows}
     themes = json.loads((theme.SHARED / "theme.json").read_text(encoding="utf-8"))
-    survival = colors.derive_from(color["Survival"], themes["light"], "light")["accent-band"]
-    creative = colors.derive_from(color["Creative"], themes["light"], "light")["accent-band"]
+
+    def band(name):
+        """The band behind the sheet: the server's band color with more of
+        the server's own color mixed in."""
+        tint = colors.derive_from(color[name], themes["light"], "light")
+        mixed = colors.mix(colors.rgb(tint["accent-band"]), colors.rgb(tint["accent-edge"]), 0.28)
+        return colors.to_hex(mixed)
+
+    survival, creative = band("Survival"), band("Creative")
+    assert survival != creative
     assert survival in window.styleSheet()
     open_server(qapp, window, "Creative")
     assert creative in window.styleSheet() and survival not in window.styleSheet()
@@ -368,11 +376,14 @@ def test_start_stop_and_restart_work_from_the_header(qapp, agent_http):
 
     def press(words):
         window.refresh()
-        wait_for(qapp, lambda: any(b.text() == words and b.isEnabled() for b in header_buttons()))
-        next(b for b in header_buttons() if b.text() == words).click()
+        wait_for(qapp, lambda: any(named(b) == words and b.isEnabled() for b in header_buttons()))
+        next(b for b in header_buttons() if named(b) == words).click()
+
+    def named(b):
+        return b.text() or b.accessibleName()  # Restart is an icon button: its name is on hover
 
     def header_buttons():
-        return window.server_screen.header.findChildren(QtWidgets.QPushButton)
+        return window.server_screen.header.findChildren(QtWidgets.QAbstractButton)
 
     window = signed_in_on(qapp, agent_http)
     press("Start")
@@ -410,6 +421,36 @@ def test_a_restart_countdown_shows_with_cancel_and_restart_now(qapp, agent_http)
     assert header.notice.text() == "Restarting in 30 seconds."
     shown = [a for a, b in header.notice_buttons.items() if b.isVisibleTo(window)]
     assert shown == ["cancel-restart", "restart-now"]
+    header.show_status({})
+    assert not header.notice.isVisibleTo(window)
+
+
+def test_changes_waiting_offer_restart_when_nobody_is_on(qapp, agent_http):
+    window = signed_in_on(qapp, agent_http)
+    header = window.server_screen.header
+    header.show_status({"restart_waiting": ["mods", "settings"]})
+    assert header.notice.text() == "Changes are waiting for a restart: mods, game settings."
+    shown = [a for a, b in header.notice_buttons.items() if b.isVisibleTo(window)]
+    assert shown == ["restart-when-empty"]
+    header.show_status({"restart_waiting": ["mods"], "restart_when_empty": True})
+    assert header.notice.text() == "It restarts as soon as nobody's playing."
+    shown = [a for a, b in header.notice_buttons.items() if b.isVisibleTo(window)]
+    assert shown == ["cancel-restart-when-empty"]
+    # A countdown after a crash says more than waiting changes.
+    header.show_status({"restart_in": 30, "restart_waiting": ["mods"]})
+    assert header.notice.text() == "Restarting in 30 seconds."
+
+
+def test_checking_jars_before_a_start_shows_with_skip_for_the_owner(qapp, agent_http):
+    window = signed_in_on(qapp, agent_http)
+    header = window.server_screen.header
+    header.show_status({"checking_jars": True})
+    assert header.notice.text() == "Checking jars before the start…"
+    shown = [a for a, b in header.notice_buttons.items() if b.isVisibleTo(window)]
+    assert shown == ["skip-check"]
+    window.role = "moderator"
+    header.show_notice()
+    assert not header.notice_buttons["skip-check"].isVisibleTo(window)
     header.show_status({})
     assert not header.notice.isVisibleTo(window)
 
@@ -472,9 +513,19 @@ def test_a_narrow_window_puts_the_right_panel_under_the_overview(qapp, agent_htt
         lambda: panel.isVisibleTo(window) and panel.mapTo(window, panel.rect().topLeft()).x() > 900,
     )
     window.resize(900, 800)
+    # Under the Overview: at the page's left edge (the page list is left of that).
+    page = window.server_screen.pages
     wait_for(
         qapp,
-        lambda: panel.isVisibleTo(window) and panel.mapTo(window, panel.rect().topLeft()).x() < 100,
+        lambda: (
+            panel.isVisibleTo(window)
+            and panel.mapTo(window, QtCore.QPoint(0, 0)).x()
+            == page.mapTo(window, QtCore.QPoint(0, 0)).x()
+        ),
+    )
+    assert window.width() == 900
+    assert (
+        panel.mapTo(window, QtCore.QPoint(0, 0)).y() > page.mapTo(window, QtCore.QPoint(0, 0)).y()
     )
 
 
@@ -640,27 +691,42 @@ def test_the_bell_counts_what_the_account_has_not_read(qapp, agent_http):
     core.auth.mark_alerts_read("admin", ids[0])
     window = signed_in_on(qapp, agent_http)
     wait_for(qapp, lambda: window.unread == 2)
+    # Read on a phone: the next catch up lowers the count here too.
+    core.auth.mark_alerts_read("admin", ids[1])
+    window.caught_up_with(window.agent.alerts(window.last_alert))
+    assert window.unread == 1
     window.tools["bell"].click()
     wait_for(qapp, lambda: core.auth.alerts_read("admin") == ids[-1])
+    assert window.unread == 0
+    # A hidden window on the Notifications screen hasn't shown anything.
+    window.hide()
+    window.alerts_loaded([{"id": ids[-1] + 1, "title": "Crash 3", "body": "b"}], pop=True)
+    assert window.unread == 1
+    qapp.processEvents()
+    assert core.auth.alerts_read("admin") == ids[-1]
 
 
 def test_a_hint_shows_on_hover_on_tab_and_space_and_to_narrator(qapp, agent_http):
-    window = signed_in_on(qapp, agent_http)
-    hint = next(
-        h for h in window.findChildren(QtWidgets.QToolButton, "hint") if h.isVisibleTo(window)
-    )
-    words = hint.toolTip()
-    assert len(words) > 20
-    assert hint.accessibleDescription() == words
-    assert hint.focusPolicy() & QtCore.Qt.FocusPolicy.TabFocus
-    hint.setFocus()
     from PySide6.QtGui import QKeyEvent
 
+    from desktop.parts import Bubble, InfoDot
+
+    window = signed_in_on(qapp, agent_http)
+    wait_for(qapp, lambda: "Server address" in shown_text(window))
+    hint = next(h for h in window.findChildren(InfoDot) if h.isVisibleTo(window))
+    words = hint.accessibleDescription()
+    assert len(words) > 20
+    assert hint.focusPolicy() & QtCore.Qt.FocusPolicy.TabFocus
+    QtWidgets.QApplication.sendEvent(hint, QtCore.QEvent(QtCore.QEvent.Type.Enter))
+    wait_for(qapp, lambda: Bubble.words() == words)
+    QtWidgets.QApplication.sendEvent(hint, QtCore.QEvent(QtCore.QEvent.Type.Leave))
+    assert Bubble.words() == ""
+    hint.setFocus()
     for kind in (QtCore.QEvent.Type.KeyPress, QtCore.QEvent.Type.KeyRelease):
         QtWidgets.QApplication.sendEvent(
             hint, QKeyEvent(kind, QtCore.Qt.Key.Key_Space, QtCore.Qt.KeyboardModifier.NoModifier)
         )
-    assert QtWidgets.QToolTip.text() == words
+    wait_for(qapp, lambda: Bubble.words() == words)
 
 
 def test_technical_mode_has_no_suggestions_card(qapp, agent_http):
@@ -873,16 +939,20 @@ def test_the_feed_comes_back_after_the_agent_restarts_without_repeats(qapp, agen
     headers = owner(agent_http)
     run_on_agent(agent_http, "survival", "start", headers)
     wait_for(qapp, lambda: len(pc.alerts) == 1, 30)
+    # Stopped first: an agent that stops now stops its running servers and
+    # starts them again (test_less_downtime), which would be real new alerts.
+    run_on_agent(agent_http, "survival", "stop", headers)
+    wait_for(qapp, lambda: len(pc.alerts) == 2, 30)  # "Survival stopped"
     agent_http.agent.stop()
     agent_http.agent.start()
     headers = owner(agent_http)
     wait_for(qapp, lambda: window.feed.connected, 30)
     run_on_agent(agent_http, "creative", "start", headers)
-    wait_for(qapp, lambda: len(pc.alerts) >= 2, 30)
+    wait_for(qapp, lambda: len(pc.alerts) >= 3, 30)
     time.sleep(1.0)
     qapp.processEvents()
     titles = [title for title, _body in pc.alerts]
-    assert len(titles) == len(set(titles)) and len(titles) == 2, titles
+    assert len(titles) == len(set(titles)) and len(titles) == 3, titles
 
 
 # ------------------------------------------------------------- the notification area
@@ -1080,6 +1150,40 @@ def test_a_different_api_version_stops_the_app(qapp, agent_http, monkeypatch):
     assert "Update Command Block to keep using it" in shown_text(window)
 
 
+def test_update_needed_carries_on_once_the_versions_match(qapp, agent_http, monkeypatch):
+    from agent import API_VERSION
+
+    monkeypatch.setattr("desktop.window.API_VERSION", API_VERSION + 1)
+    window = open_window(qapp, agent_http)
+    wait_for(qapp, lambda: window.screen_name == "Update needed")
+    monkeypatch.setattr("desktop.window.API_VERSION", API_VERSION)  # the update went in
+    wait_for(qapp, lambda: window.screen_name == "Sign-in", 30)
+    sign_in(qapp, window)
+    on_all_servers(qapp, window)
+
+
+def test_another_pc_that_is_off_or_signed_out_leaves_this_pc_alone(qapp, agent_http, monkeypatch):
+    from desktop.agent import SignedOut, Unreachable
+
+    pc = FakePC()
+    window = open_window(qapp, agent_http, pc)
+    sign_in(qapp, window, remember=True)
+    on_all_servers(qapp, window)
+    away = {"id": "b", "name": "Bedroom", "address": "x", "port": 1, "fingerprint": "f"}
+    for problem in (Unreachable("Can't reach x:1."), SignedOut("Signed out.")):
+
+        def refuse(_window, _pc, problem=problem):
+            raise problem
+
+        monkeypatch.setattr(MainWindow, "_servers_of", refuse)
+        window.pcs_loaded({"pcs": [away]})
+        wait_for(qapp, lambda problem=problem: window.elsewhere.get("b") == str(problem))
+        qapp.processEvents()
+        assert window.screen_name == "All servers"
+        assert window.agent.token and pc.saved_sign_in(window.agent.place)
+        window.elsewhere.clear()
+
+
 # ------------------------------------------------------------- the Tailscale step
 def tailscale_is(
     monkeypatch,
@@ -1246,7 +1350,7 @@ def a_windows_pc(monkeypatch, signer, code=0):
 
     pc = WindowsPC()
     ran: list[str] = []
-    monkeypatch.setattr(pc, "download_tailscale", lambda folder: folder / "tailscale-setup.msi")
+    monkeypatch.setattr(pc, "download_msi", lambda url, folder, words: folder / "setup.msi")
     monkeypatch.setattr(pc, "msi_signer", lambda path: signer)
     monkeypatch.setattr(pc, "install_msi", lambda path: ran.append(path.name) or code)
     return pc, ran
@@ -1262,7 +1366,19 @@ def test_a_setup_not_signed_by_tailscale_is_refused_and_nothing_runs(monkeypatch
         assert ran == []
     pc, ran = a_windows_pc(monkeypatch, "Tailscale Inc.")
     pc.install_tailscale()
-    assert ran == ["tailscale-setup.msi"]
+    assert ran == ["setup.msi"]
+
+
+def test_playits_setup_must_be_signed_by_its_maker(monkeypatch):
+    from desktop.pc import PCError
+
+    pc, ran = a_windows_pc(monkeypatch, "Tailscale Inc.")
+    with pytest.raises(PCError, match="Developed Methods LLC"):
+        pc.install_playit()
+    assert ran == []
+    pc, ran = a_windows_pc(monkeypatch, "Developed Methods LLC")
+    pc.install_playit()
+    assert ran == ["setup.msi"]
 
 
 def test_saying_no_to_windows_is_its_own_message(monkeypatch):
@@ -1556,3 +1672,56 @@ def test_an_unchecked_player_count_is_shown_as_unknown(qapp, agent_http):
     qapp.processEvents()
     assert panel.online_title.text() == "Online now (? of 20)"
     assert "Unknown" in shown_text(panel) and "Nobody" not in shown_text(panel)
+
+
+def test_opening_another_server_clears_the_last_ones_notes_undo_and_console(qapp, agent_http):
+    window = signed_in_on(qapp, agent_http, "Survival")
+    screen = window.server_screen
+    undone: list = []
+    mods = screen.page_widgets["Mods"]
+    mods.say("Turned off Survival's mod.", lambda: undone.append(True))
+    screen.simple_overview.fixed.say("Fixed on Survival.", lambda: undone.append(True))
+    console = screen.page_widgets["Console"]
+    console.lines = ["[Server thread/INFO]: Survival's line"]
+    window.open_server("creative")
+    qapp.processEvents()
+    assert not mods.note.isVisibleTo(window) and mods.note.then is None
+    assert screen.simple_overview.fixed.then is None
+    assert console.lines == []
+    assert not screen.header.undo.isVisibleTo(window)
+
+
+def test_slow_work_that_ends_after_another_server_opened_still_says_how_it_went(qapp, agent_http):
+    pc = FakePC()
+    window = signed_in_on(qapp, agent_http, "Survival", pc)
+    page = window.server_screen.page_widgets["Backups"]
+    shown: list = []
+    page.ask("POST", "/backups", shown.append, body={}, slow=True)
+    page.ask("POST", "/no-such-thing", shown.append, shown.append, slow=True)
+    window.open_server("creative")
+    told = lambda: [body for title, body in pc.alerts if title == "Survival"]  # noqa: E731
+    wait_for(qapp, lambda: len(told()) == 2)
+    assert shown == []  # nothing about Survival lands on Creative's page
+    assert sorted(told())[0].startswith("Finished")
+
+
+def test_a_fixs_undo_never_undoes_someone_elses_newer_change(qapp, agent_http, monkeypatch):
+    from desktop.fixes import run_fix
+
+    window = signed_in_on(qapp, agent_http, "Survival")
+    monkeypatch.setattr(window, "confirm", lambda *_a, **_k: True)
+    said: list = []
+    fix = {"kind": "game_settings", "values": {"view-distance": 6, "simulation-distance": 6}}
+    run_fix(window, "survival", fix, lambda words, undo=None: said.append((words, undo)))
+    wait_for(qapp, lambda: said)
+    words, undo = said[-1]
+    assert undo is not None, words
+    newer = agent_http.put(
+        "/api/servers/survival/game-settings",
+        headers=owner(agent_http),
+        json={"values": {"pvp": False}},
+    )
+    assert newer.status_code == 200, newer.text
+    undo()
+    wait_for(qapp, lambda: len(said) == 2)
+    assert "moved on" in said[-1][0]

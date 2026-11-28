@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "styled-chat",
+  "addon": {
+    "content": "mods",
+    "names": [
+      "styledchat"
+    ],
+    "modrinth": "styled-chat"
+  },
+  "versions": ">=2.0.0 <3",
+  "title": "Styled Chat",
+  "what": "Changes how chat looks: name colours, formats and chat messages.",
+  "steps": [
+    "Its settings file is in the config folder. Read settings again after you change it."
+  ],
+  "source": "https://github.com/Patbox/StyledChat",
+  "checked": "2026-11-20",
+  "buttons": [
+    {
+      "id": "reload",
+      "label": "Read settings again",
+      "command": "styledchat reload"
+    }
+  ]
+}

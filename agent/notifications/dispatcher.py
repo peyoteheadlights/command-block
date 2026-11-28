@@ -34,6 +34,8 @@ log = logging.getLogger("msc.notify")
 PUSH_TEST_TITLE = "Test alert"
 # Its own kind, so no alert list (shared or a device's own) can hold it back.
 TEST_EVENT = "test_alert"
+# Alerts the Discord bot also sends the owner as a private message.
+OWNER_DM = frozenset({"jar_scan_found", "jar_changed"})
 
 # event type -> (settings key, colour, title). "{server}" in a title is
 # replaced with the server's name, so an alert reads "Survival crashed".
@@ -45,12 +47,16 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "rented_started": ("server_started", 0x3BA55D, "{server} is online"),
     "rented_stopped": ("server_stopped", 0x9AA0A6, "{server} stopped"),
     "rented_unreachable": ("server_crashed", 0xED4245, "{server}: the host's panel didn't answer"),
+    "start_failed": ("server_crashed", 0xED4245, "{server} didn't start"),
     "server_restarted": ("server_restarted", 0x5865F2, "{server} restarted"),
     "server_recovered": ("server_recovered", 0x3BA55D, "{server} recovered"),
     "crash_loop": ("server_crashed", 0xED4245, "{server}: automatic restart disabled"),
     # Same switch as crashes: a stuck server is as down as a crashed one.
     "server_not_answering": ("server_crashed", 0xED4245, "{server} isn't answering"),
     "server_answering_again": ("server_recovered", 0x3BA55D, "{server} answers again"),
+    # Only an alert: the server is never stopped for starting slowly.
+    "start_slow": ("server_crashed", 0xFAA61A, "{server} is taking long to start"),
+    "server_left_running": ("server_crashed", 0xFAA61A, "{server} runs without its console"),
     "restart_scheduled": (
         "server_restarted",
         0xFAA61A,
@@ -66,12 +72,21 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "high_ram": ("high_ram", 0xFAA61A, "High memory use"),
     "high_cpu": ("high_cpu", 0xFAA61A, "High CPU use"),
     "low_disk": ("low_disk", 0xFAA61A, "Low disk space for {server}"),
+    # The same switch as the alert they end.
+    "high_ram_ended": ("high_ram", 0x3BA55D, "Memory use is back to normal"),
+    "high_cpu_ended": ("high_cpu", 0x3BA55D, "CPU use is back to normal"),
+    "low_disk_ended": ("low_disk", 0x3BA55D, "{server}: disk space is back"),
     "low_tps": ("low_tps", 0xFAA61A, "{server}: game running slow"),
     "high_mspt": ("high_mspt", 0xFAA61A, "{server}: game falling behind"),
     "backup_completed": ("backup_completed", 0x3BA55D, "{server}: backup finished"),
     "backup_failed": ("backup_failed", 0xED4245, "{server}: backup failed"),
+    # Same switch as a failed backup: both are about the world being safe.
+    "change_interrupted": ("backup_failed", 0xED4245, "{server}: a change didn't finish"),
+    "saving_off": ("backup_failed", 0xED4245, "{server}: world saving is off"),
     "mod_installed": ("mod_installed", 0x3BA55D, "{server}: mod installed"),
     "mod_removed": ("mod_removed", 0xFAA61A, "{server}: mod removed"),
+    "jar_scan_found": ("jar_scan_found", 0xED4245, "{server}: jar check found something"),
+    "jar_changed": ("jar_changed", 0xFAA61A, "{server}: a jar changed outside the app"),
     "mod_updated": ("mod_updated", 0x3BA55D, "{server}: mod updated"),
     "mod_rolled_back": ("mod_updated", 0xFAA61A, "{server}: mod rolled back"),
     "mod_dependency_problem": (
@@ -124,6 +139,10 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "phones_can_reach": ("tailscale", 0x3BA55D, "Phones can now reach this PC"),
     "tailscale_stopped": ("tailscale", 0xED4245, "Phones can't reach this PC: Tailscale stopped"),
     "tailscale_key_expiring": ("tailscale", 0xFAA61A, "The Tailscale key runs out soon"),
+    "noip_confirm": ("tailscale", 0xFAA61A, "Confirm your No-IP name this week"),
+    "ddns_failed": ("tailscale", 0xED4245, "Your server's name stopped updating"),
+    "playit_stopped": ("tailscale", 0xED4245, "Friends can't join through playit.gg"),
+    "waterdog_stopped": ("tailscale", 0xED4245, "Bedrock friends can't join through playit.gg"),
     "discord_token_rejected": ("discord_bot", 0xED4245, "Discord refused the bot's token"),
     "discord_link_request": ("discord_bot", 0x5865F2, "{server}: a Discord member asks to link"),
     "start_request": ("start_requests", 0xFAA61A, "{server}: start request"),
@@ -144,6 +163,12 @@ EVENT_MAP: dict[str, tuple[str, int, str]] = {
     "ops_changed": ("ops_changed", 0xED4245, "{server}: operators changed outside the app"),
     "lists_changed": ("lists_changed", 0xFAA61A, "{server}: player list changed outside the app"),
     "chat_spam": ("chat_spam", 0xED4245, "{server}: chat spam from new names"),
+    # The Companion mod: one player failed the modpack check 3 times in a day.
+    "companion_checks_failing": (
+        "companion_checks",
+        0xFAA61A,
+        "{server}: a player keeps failing the modpack check",
+    ),
     "join_protection_off": ("join_protection", 0xFAA61A, "{server}: Join protection stepped aside"),
     "launch_mode_ended": ("join_protection", 0x5865F2, "{server}: Launch mode ended"),
     # Your PCs (agent/yourpcs.py) and the account records' safety checks.
@@ -176,11 +201,16 @@ THROTTLED = {
 ALERT_PAGES = {
     "server_crashed": "crashes",
     "crash_loop": "crashes",
+    "start_slow": "crashes",
     "backup_completed": "backups",
     "backup_failed": "backups",
+    "change_interrupted": "backups",
+    "saving_off": "backups",
     "backup_copy_failed": "backups",
     "mod_installed": "mods",
     "mod_removed": "mods",
+    "jar_scan_found": "mods",
+    "jar_changed": "mods",
     "mod_updated": "mods",
     "mod_dependency_problem": "mods",
     "player_joined": "players",
@@ -191,6 +221,9 @@ ALERT_PAGES = {
     "high_ram": "performance",
     "high_cpu": "performance",
     "low_disk": "performance",
+    "high_ram_ended": "performance",
+    "high_cpu_ended": "performance",
+    "low_disk_ended": "performance",
     "game_settings_changed": "game-settings",
     "world_imported": "world",
     "auth_failure": "security",
@@ -214,6 +247,7 @@ ALERT_PAGES = {
     "ops_changed": "players",
     "lists_changed": "players",
     "chat_spam": "players",
+    "companion_checks_failing": "players",
     "pc_join_request": "your-pcs",
     "pc_joined": "your-pcs",
     "pc_removed": "your-pcs",
@@ -271,7 +305,7 @@ class Notifier:
         self.apns = apns.Sender(config)
         # Whether an account may see a server's alerts (user, server id);
         # set by AgentCore from the accounts. None: everyone sees everything.
-        self.can_see: Callable[[str, str | None], bool] | None = None
+        self.can_see: Callable[[str, str | None, str], bool] | None = None
         # This PC's name once it shares its accounts (agent/yourpcs.py).
         self.pc_label: Callable[[], str | None] = lambda: None
         # The Discord bot, when there is one (set by AgentCore).
@@ -485,6 +519,17 @@ class Notifier:
             await self._report_failure("Discord", str(exc))
             return False
 
+    async def dm_owner(self, bot: Any, event: Event) -> bool:
+        """A private Discord message to the owner, for the alerts in OWNER_DM."""
+        title = self.title(event)[1]
+        try:
+            sent = await bot.tell_owner(f"**{title}**\n{event.message}")
+        except Exception as exc:
+            sent = False
+            log.info("owner DM failed: %s", exc)
+        self._log("discord_dm", event.type, "sent" if sent else "failed")
+        return sent
+
     async def send_bot(self, bot: Any, event: Event) -> bool:
         try:
             sent = await bot.post_alert(event, self.embed(event))
@@ -629,7 +674,7 @@ class Notifier:
         targets: dict[str, list[str]] = {"android": [], "ios": []}
         for phone in fcm.phones(self.db):
             if (
-                self.can_see is None or self.can_see(phone["user"], event.server_id)
+                self.can_see is None or self.can_see(phone["user"], event.server_id, event.type)
             ) and self.device_wants(phone["session"], event.type):
                 targets[phone["platform"]].append(phone["token"])
         results: dict[str, fcm.SendResult] = {}
@@ -735,6 +780,8 @@ class Notifier:
                 tasks.append(self.send_discord(event))
             if shared and self.config.notifications.email_enabled:
                 tasks.append(self.send_email(event))
+            if shared and bot is not None and event.type in OWNER_DM:
+                tasks.append(self.dm_owner(bot, event))
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
         except Exception:

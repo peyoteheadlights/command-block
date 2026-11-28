@@ -26,6 +26,7 @@ def main() -> int:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from fastapi.testclient import TestClient
     from PySide6.QtCore import QThreadPool
+    from PySide6.QtGui import QColor, QImage, QLinearGradient, QPainter
     from PySide6.QtWidgets import QApplication, QPushButton
 
     from agent.main import create_app
@@ -51,7 +52,20 @@ def main() -> int:
     def snap(window: MainWindow, name: str, dark: bool) -> None:
         settle()
         path = OUT / f"{name}-{'dark' if dark else 'light'}.png"
-        window.grab().save(str(path))
+        shot = window.grab().toImage()
+        # The window is see-through around the binder: put a pretend
+        # desktop behind it, so the picture shows that.
+        desktop = QImage(shot.size(), QImage.Format.Format_RGB32)
+        painter = QPainter(desktop)
+        wallpaper = QLinearGradient(0, 0, shot.width(), shot.height())
+        for at, color in (
+            ((0, "#27466B"), (1, "#6B3F52")) if dark else ((0, "#7FB3D6"), (1, "#E9B48A"))
+        ):
+            wallpaper.setColorAt(at, QColor(color))
+        painter.fillRect(desktop.rect(), wallpaper)
+        painter.drawImage(0, 0, shot)
+        painter.end()
+        desktop.save(str(path))
         print(f"wrote {path.relative_to(ROOT)}")
 
     with tempfile.TemporaryDirectory() as folder:
@@ -130,6 +144,9 @@ def main() -> int:
                 for technical in (False, True):
                     window.set_mode(technical)
                     snap(window, f"03-server-{'technical' if technical else 'simple'}", dark)
+                window.top_view.step(1)  # the top view, as Ctrl+Tab opens it
+                snap(window, "06-top-view", dark)
+                window.top_view.shut()
                 window.resize(900, 760)
                 snap(window, "04-server-narrow", dark)
                 window.set_mode(False)
@@ -154,6 +171,13 @@ def main() -> int:
                     )
                 window.refresh()
                 settle()
+                window.go_to_server(sid)
+                for technical in (False, True):
+                    window.set_mode(technical)
+                    settle(2)
+                    snap(window, f"03-running-{'technical' if technical else 'simple'}", dark)
+                window.show_screen("All servers")
+                snap(window, "02-all-servers-running", dark)
                 window.go_to_server(sid)
                 for page, name, technical in (
                     ("Players and chat", "07-players", False),
@@ -207,6 +231,9 @@ def main() -> int:
                     window.open_page("Settings")
                     settle(2)
                     snap(window, name, dark)
+                    window.server_screen.page.jump("game")  # type: ignore[attr-defined]
+                    snap(window, f"{name}-game", dark)
+                    window.server_screen.page.jump("server")  # type: ignore[attr-defined]
                 window.set_mode(False)
                 window.show_screen("New server")
                 settle(2)

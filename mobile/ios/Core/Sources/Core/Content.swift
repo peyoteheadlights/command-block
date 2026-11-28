@@ -42,15 +42,20 @@ public enum Content {
         return ContentKind.none
     }
 
+    /// Whether the server screen links to it: vanilla's only makes a modpack.
+    public static func shown(_ row: ServerRow?) -> Bool {
+        guard let kind = kind(row) else { return false }
+        return kind != ContentKind.none || row?.edition != "bedrock"
+    }
+
     /// Which change buttons a mod or plugin row offers. Only someone with
-    /// mods.manage sees any; they work only while the server is stopped (or
-    /// crashed); a state not known is not guessed
-    /// to be stopped.
-    public static func changes(canManage: Bool, serverState: String?) -> Changes {
+    /// mods.manage sees any; they work only when the agent lists "change"
+    /// (the server is stopped and nothing else is changing it); a state not
+    /// known is not guessed to be stopped.
+    public static func changes(canManage: Bool, label: String?, can: [String]) -> Changes {
         if !canManage { return .notAllowed }
-        guard let state = serverState, state != States.UNKNOWN else { return .unknown }
-        if state == States.OFFLINE || state == States.CRASHED { return .ready }
-        return .stopFirst
+        guard let label = label, label != "unknown" else { return .unknown }
+        return can.contains("change") ? .ready : .stopFirst
     }
 
     /// Bedrock packs change while the server runs too; they take effect
@@ -60,8 +65,8 @@ public enum Content {
     }
 
     /// "Stop the server first" offers Stop only while Stop would work.
-    public static func canStopHere(_ serverState: String?, canControl: Bool) -> Bool {
-        canControl && serverState == States.ONLINE
+    public static func canStopHere(_ can: [String], canControl: Bool) -> Bool {
+        canControl && can.contains("stop")
     }
 
     public static func status(_ mod: Mod) -> StateWords {
@@ -99,6 +104,11 @@ public enum Content {
         mod.updateAvailable.map { strings.t("mods.update_to", ["version": $0.latestVersion]) }
     }
 
+    /// Why Update all leaves this one for now, or nil when it doesn't.
+    public static func held(_ strings: Strings, _ mod: Mod, zone: TimeZone = .current) -> String? {
+        mod.updateAvailable?.heldUntil.map { strings.t("mods.update_held", ["when": Display.dateTime($0, zone: zone)]) }
+    }
+
     /// "1.0 → 2.0"; Unknown for a side the agent didn't say.
     public static func change(_ strings: Strings, _ old: String?, _ new: String?) -> String {
         let unknown = strings.t("value.unknown")
@@ -107,7 +117,10 @@ public enum Content {
         return "\(from) → \(to)"
     }
 
-    private static let actions: Set<String> = ["install", "upload", "remove", "update", "rollback", "enable", "disable"]
+    private static let actions: Set<String> = [
+        "install", "upload", "remove", "update", "rollback", "enable", "disable", "side", "players_add", "players_remove",
+        "quarantine", "quarantine_undo",
+    ]
 
     /// What a history row did, in words; the agent's own name for an action the app doesn't know.
     public static func action(_ strings: Strings, _ row: ModHistoryRow) -> String {
@@ -230,17 +243,129 @@ public enum Install {
     }
 }
 
+/// The "Doing the same job" rows.
+public enum SameJob {
+    /// The mods that get a Turn off button: with a pick, the others; with
+    /// none, each one no other mod needs, so the owner keeps the one they use.
+    public static func turnOff(_ overlap: Overlap) -> [OverlapMod] {
+        overlap.mods.filter { $0.neededBy.isEmpty && (overlap.keep.isEmpty || $0.turnOff) }
+    }
+}
+
 /// Update all's list and what is sent.
+/// Server / Players / Both: the words under a mod and the picks offered.
+public enum Sides {
+    public static let all = ["server", "players", "both"]
+    private static let plugins: Set<String> = ["paper", "bukkit"]
+    private static let from: Set<String> = ["you", "unknown", "modpack", "file"]
+    private static let sites = ["modrinth": "Modrinth", "curseforge": "CurseForge"]
+
+    /// "For: Both (not sure, the mod doesn't say)"; nil for plugins, which only run on the server.
+    public static func words(_ strings: Strings, _ mod: Mod) -> String? {
+        guard let side = mod.side, !plugins.contains(mod.loader ?? "") else { return nil }
+        let words = strings.t("sides.for", ["side": strings.t("sides." + side)])
+        guard let source = mod.sideFrom else { return words }
+        let said = from.contains(source)
+            ? strings.t("sides.from_" + source)
+            : strings.t("sides.from_site", ["site": sites[source] ?? source])
+        return words + " " + said
+    }
+
+    /// The marks a mod can be changed to. Players stays offered while the jar
+    /// is still in the mods folder, since picking it moves the jar out.
+    public static func picks(_ mod: Mod) -> [String] {
+        guard let side = mod.side, !plugins.contains(mod.loader ?? "") else { return [] }
+        return all.filter { $0 == "players" || $0 != side }
+    }
+
+    /// The Server / Players / Both filter; "all" keeps every mod.
+    public static let filters = ["all"] + all
+
+    public static func shown(_ mods: [Mod], _ filter: String) -> [Mod] {
+        mods.filter { filter == "all" || $0.side == filter }
+    }
+
+    public static func shown(_ found: ModSides, _ filter: String) -> [ModSideRow] {
+        found.mods.filter { filter == "all" || $0.side == filter }
+    }
+
+    /// "On: Survival, Creative (not sure)", the servers a mod is on with this mark.
+    public static func servers(_ strings: Strings, _ row: ModSideRow) -> String {
+        let names = row.servers.map { $0.sideFrom == "unknown" ? $0.name + " " + strings.t("sides.not_sure") : $0.name }
+        return strings.t("sides.on_servers", ["servers": names.joined(separator: ", ")])
+    }
+
+    /// A file the Players only list takes: a mod (.jar) or a pack (.zip).
+    public static func accepts(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return lower.hasSuffix(".jar") || lower.hasSuffix(".zip")
+    }
+}
+
+/// The linked modpack card and Modpack update's question.
+public enum LinkedPacks {
+    public static func lines(_ strings: Strings, _ pack: LinkedModpack) -> [String] {
+        var lines = [strings.t("linked.from", ["name": pack.name, "version": pack.version, "site": pack.site])]
+        if let update = pack.update {
+            lines.append(update.version.isEmpty
+                ? strings.t("linked.update_ready_unnamed")
+                : strings.t("linked.update_ready", ["version": update.version]))
+        }
+        if pack.addedByYou > 0 { lines.append(strings.tn("linked.yours", count: pack.addedByYou)) }
+        return lines
+    }
+
+    public static func changes(_ strings: Strings, _ changes: ModpackChanges) -> [String] {
+        [
+            ("linked.newer", changes.newer.map { "\($0.from) → \($0.to)" }),
+            ("linked.added", changes.added),
+            ("linked.removed", changes.removed),
+            ("linked.kept", changes.addedByYou),
+            ("linked.configs", changes.configsChangedByYou),
+            ("pack.own_jars", changes.newOwnJars),
+        ].filter { !$0.1.isEmpty }.map { strings.t($0.0, ["names": $0.1.joined(separator: ", ")]) }
+    }
+
+    public static func steps(_ strings: Strings, _ preview: ModpackUpdatePreview) -> [String] {
+        var steps = [strings.t("pack.step_stop"), strings.t("linked.step_one_backup")]
+        if preview.changes.versionChange {
+            steps.append(strings.t("pack.step_version", [
+                "type": preview.pack.typeName ?? strings.t("value.unknown"),
+                "version": preview.changes.minecraftVersion,
+            ]))
+        }
+        return steps
+    }
+}
+
+/// The "Still fit?" card: its first line, and "Change these" as an Update all.
+public enum StillFit {
+    public static func lead(_ strings: Strings, _ fit: ModFit, plugins: Bool) -> String {
+        let word = plugins ? "plugin" : "mod"
+        let count = fit.needsChange.count
+        return count > 0
+            ? strings.tn("fit.lead", count: count, ["word": word, "about": fit.about])
+            : strings.t("fit.lead_none", ["word": word, "about": fit.about])
+    }
+
+    /// The mods to change, shown and sent the way Update all's own list is (all ticked).
+    public static func plan(_ fit: ModFit) -> UpdateAllPlan {
+        UpdateAllPlan(updates: fit.needsChange.map {
+            UpdateAllRow(modId: $0.modId, name: $0.name, filename: $0.filename, installedVersion: $0.from, latestVersion: $0.to, versionId: $0.versionId)
+        })
+    }
+}
+
 public enum UpdateAll {
     /// Offered when the last check found a newer version of any mod.
     public static func offered(_ list: ModList?) -> Bool {
         list?.mods.contains { $0.updateAvailable != nil } == true
     }
 
-    /// Ticked at first: every one that is on. Turned-off ones are listed
-    /// but left for the person to tick.
+    /// Ticked at first: every one that is on and not held. Turned-off and
+    /// held ones are listed but left for the person to tick.
     public static func ticked(_ plan: UpdateAllPlan) -> Set<String> {
-        Set(plan.updates.filter(\.enabled).map(\.filename))
+        Set(plan.updates.filter { $0.enabled && $0.heldUntil == nil }.map(\.filename))
     }
 
     /// The ticked ones, in the plan's order, with the version the plan showed.
@@ -258,7 +383,9 @@ public enum UpdateAll {
     }
 
     public static func done(_ strings: Strings, _ result: UpdateAllResult) -> String {
-        strings.tn("mobile.content.update_all_done", count: result.updated.count, ["backup": result.safetyBackup?.name ?? strings.t("value.unknown")])
+        let done = strings.tn("mobile.content.update_all_done", count: result.updated.count, ["backup": result.safetyBackup?.name ?? strings.t("value.unknown")])
+        if result.held.isEmpty { return done }
+        return done + "\n" + strings.t("mobile.content.update_all_held_done", ["names": result.held.joined(separator: ", ")])
     }
 
     /// The step a running Update all is on, from the live feed.
@@ -270,6 +397,13 @@ public enum UpdateAll {
 
 /// A modpack import's steps, as the confirmation lists them.
 public enum Modpacks {
+    /// What another owner's pack asks of you: plugins to get by hand, and its
+    /// own jars no site checked. Shown in the question; a yes sends own_jars.
+    public static func notes(_ strings: Strings, _ pack: Modpack) -> [String] {
+        [("pack.plugins_to_get", pack.pluginsToGet), ("pack.own_jars", pack.ownJars)]
+            .filter { !$0.1.isEmpty }.map { strings.t($0.0, ["names": $0.1.joined(separator: ", ")]) }
+    }
+
     public static func steps(_ strings: Strings, _ inspected: ModpackInspected) -> [String] {
         let pack = inspected.pack
         let unknown = strings.t("value.unknown")
@@ -280,6 +414,26 @@ public enum Modpacks {
         out.append(strings.t("pack.step_aside"))
         out.append(strings.t("pack.step_files", ["count": pack.downloadCount]))
         return out
+    }
+
+    /// Where a found modpack is read from.
+    public static func site(_ hit: ModrinthHit) -> String {
+        hit.source == "curseforge" ? "curseforge" : "modrinth"
+    }
+
+    /// A found modpack on one line under its name: site, loader and newest Minecraft
+    /// version, downloads, and what Modrinth was told it holds.
+    public static func about(_ strings: Strings, _ hit: ModrinthHit) -> String {
+        let madeFor = (hit.loaders + [hit.minecraftVersion].compactMap { $0 }).joined(separator: " ")
+        var parts = [hit.sourceName ?? "", madeFor]
+        if let downloads = hit.downloads {
+            let grouped = NumberFormatter()
+            grouped.numberStyle = .decimal
+            grouped.locale = Locale(identifier: "en_US")
+            parts.append(strings.t("pack.downloads", ["count": grouped.string(from: NSNumber(value: downloads)) ?? "\(downloads)"]))
+        }
+        if hit.serverSide == "unsupported" { parts.append(strings.t("pack.players_only")) }
+        return (parts + hit.disclosures).filter { !$0.isEmpty }.joined(separator: "  ·  ")
     }
 
     public static func fileStatus(_ file: ModpackFile) -> StateWords {
@@ -493,5 +647,170 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
         completionHandler(nil)
+    }
+}
+
+/// What a made modpack says on the Make a modpack card: ready, the trust
+/// note when own files are inside, and what isn't inside and why.
+public enum MadeModpacks {
+    public static func lines(_ strings: Strings, _ made: ModpackMade) -> [String] {
+        var lines = [strings.t("make.made", ["name": made.filename, "size": Display.bytes(strings, made.sizeBytes)])]
+        if made.trustNote != nil { lines.append(strings.t("make.trust")) }
+        lines += [
+            ("make.get_yourself", made.getYourself.map(\.name)),
+            ("make.plugins_to_get", made.pluginsToGet),
+            ("make.left_out", made.leftOut),
+        ].filter { !$0.1.isEmpty }.map { strings.t($0.0, ["names": $0.1.joined(separator: ", ")]) }
+        return lines
+    }
+}
+
+/// What the Download link card says: the modpack's link and the speed cap
+/// while it's on, why it can't run, and the resource pack. `owner`: may turn it on.
+public enum DownloadLinks {
+    public static func lines(_ strings: Strings, _ link: DownloadLink, owner: Bool) -> [String] {
+        var lines: [String] = []
+        if link.on, !link.listening, let why = link.whyNot {
+            lines.append(strings.t("link.not_listening", ["why": why]))
+        } else if link.on {
+            lines.append(link.modpackUrl.map { strings.t("link.modpack", ["url": $0]) } ?? strings.t("link.no_modpack"))
+            lines.append(strings.t("link.speed", ["speed": Display.bytes(strings, link.speedCapBytes)]))
+            lines.append(strings.t("link.new_hint"))
+        } else if let why = link.whyNot {
+            lines.append(why)
+        }
+        if !owner { lines.append(strings.t("link.owner_only")) }
+        return lines
+    }
+
+    public static func packLines(_ strings: Strings, _ link: DownloadLink) -> [String] {
+        guard let pack = link.resourcePack else { return [strings.t("pack.none")] }
+        let name = pack.filename ?? ""
+        let size = Display.bytes(strings, pack.sizeBytes)
+        var lines: [String]
+        if !pack.served {
+            lines = [strings.t("pack.outside", ["url": pack.url ?? ""])]
+        } else if pack.url != nil {
+            lines = [strings.t("pack.file", ["name": name, "size": size])]
+        } else {
+            lines = [strings.t("pack.file_off", ["name": name, "size": size])]
+        }
+        if pack.sha1 == nil { lines.append(strings.t("pack.no_sha1")) }
+        if link.restartNeeded { lines.append(strings.t("pack.restart")) }
+        return lines
+    }
+}
+
+/// What the "Put it on Modrinth" card says. `owner`: may sign in and out.
+public enum ModrinthCards {
+    public static func lines(_ strings: Strings, _ share: ModrinthShare, owner: Bool) -> [String] {
+        var lines: [String] = []
+        if let account = share.account {
+            if !account.available {
+                lines.append(strings.t("modrinth.not_available"))
+            } else if account.signedIn {
+                lines.append(strings.t("modrinth.signed_in", ["name": account.username ?? "?"]))
+            } else {
+                lines.append(strings.t(account.ranOut ? "modrinth.ran_out" : "modrinth.signed_out"))
+            }
+        }
+        if !owner { lines.append(strings.t("modrinth.owner_only")) }
+        if let project = share.project {
+            lines.append(strings.t("modrinth.project", ["url": project.url, "version": share.uploads.first?.version ?? "-"]))
+        }
+        if share.made == nil { lines.append(strings.t("modrinth.make_first")) }
+        for jar in share.ownJars {
+            if let url = jar.url { lines.append(strings.t("modrinth.jar_up", ["name": jar.name, "url": url])) }
+        }
+        return lines
+    }
+
+    public static func serverLines(_ strings: Strings, _ share: ModrinthShare) -> [String] {
+        var lines: [String] = []
+        if share.address == nil {
+            lines.append(strings.t("modrinth.server_no_address"))
+        } else if let project = share.serverProject {
+            lines.append(strings.t("modrinth.server_listed", ["url": project.url]))
+        }
+        if let older = share.older {
+            lines.append(strings.t("modrinth.server_older", ["listed": older.listed, "newest": older.newest]))
+        }
+        return lines
+    }
+
+    public static func steps(_ strings: Strings, _ share: ModrinthShare) -> String {
+        let title = share.project?.title ?? ""
+        return strings.t("modrinth.server_steps", [
+            "address": share.address ?? "",
+            "project": title.isEmpty ? strings.t("modrinth.your_modpack") : title,
+            "version": share.uploads.first?.version ?? "-",
+        ])
+    }
+
+    /// A first try at the Modrinth address, which the person can change.
+    public static func slug(_ name: String) -> String {
+        let dashed = String(name.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        return String(dashed.split(separator: "-").joined(separator: "-").prefix(64))
+    }
+
+    /// (code, state) from mcsc://modrinth?state=..&code=.., or nil when
+    /// Modrinth sent no code (the person said no) or it isn't that link.
+    public static func cameBack(_ url: URL) -> (code: String, state: String)? {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme?.lowercased() == DeepLink.scheme, parts.host == "modrinth",
+              let code = parts.queryItems?.first(where: { $0.name == "code" })?.value,
+              let state = parts.queryItems?.first(where: { $0.name == "state" })?.value
+        else { return nil }
+        return (code, state)
+    }
+}
+
+/// What the anti-cheat picker says above its buttons.
+public enum AntiCheats {
+    public static func status(_ strings: Strings, _ picker: AntiCheat) -> String {
+        let names = picker.installed.joined(separator: ", ")
+        if !picker.supported { return strings.t("anticheat.none_here") }
+        if picker.installed.count > 1 { return strings.t("anticheat.two", ["names": names]) }
+        if !picker.installed.isEmpty { return strings.t("anticheat.in_now", ["names": names]) }
+        return strings.t("anticheat.nothing_in")
+    }
+
+    public static func free(_ strings: Strings, _ item: AntiCheatFree) -> [String] {
+        var lines = [strings.t("anticheat.about." + item.id)]
+        if item.warning { lines.append(strings.t("anticheat.fabric_warning")) }
+        if item.on { lines.append(strings.t("anticheat.is_in", ["name": item.name])) }
+        return lines
+    }
+
+    /// Never a guessed price: no checked price sends people to the seller's page.
+    public static func paid(_ strings: Strings, _ item: AntiCheatPaid) -> [String] {
+        var lines = [strings.t("anticheat.about." + item.id)]
+        lines.append(item.price.map { strings.t("anticheat.price", ["price": $0, "day": item.checked ?? ""]) } ?? strings.t("anticheat.price_unknown"))
+        if item.on { lines.append(strings.t("anticheat.is_in", ["name": item.name])) }
+        return lines
+    }
+}
+
+/// What the Far view card says.
+public enum FarViews {
+    public static func status(_ strings: Strings, _ card: FarView) -> String {
+        if !card.supported { return strings.t("farview.none_here") }
+        if let on = card.choices.first(where: { $0.id == card.choice }) {
+            return strings.t("farview.is_on", ["name": on.name])
+        }
+        return strings.t("farview.is_off")
+    }
+
+    /// A choice's lines: what it is, then why it can't, or what it adds here.
+    public static func lines(_ strings: Strings, _ item: FarViewChoice, now: String) -> [String] {
+        var lines = [strings.t("farview.about." + item.id)]
+        if !item.available {
+            if let why = item.why { lines.append(why) }
+        } else if item.id != now {
+            if item.server.isEmpty && item.players.isEmpty { lines.append(strings.t("farview.all_here")) }
+            if !item.server.isEmpty { lines.append(strings.t("farview.server_gets", ["names": item.server.joined(separator: ", ")])) }
+            if !item.players.isEmpty { lines.append(strings.t("farview.players_get", ["names": item.players.joined(separator: ", ")])) }
+        }
+        return lines
     }
 }

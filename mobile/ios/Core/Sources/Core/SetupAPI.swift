@@ -75,19 +75,38 @@ extension AgentClient {
         return try await call("PUT", setup(serverId) + "/crossplay", body: try AgentClient.encode(body), slow: true, as: CrossplayInfo.self)
     }
 
+    /// The MCXboxBroadcast add-on; on only after the risks were shown.
+    public func setConsoleFriends(serverId: String, enabled: Bool) async throws -> CrossplayInfo {
+        let body: [String: JSONValue] = ["enabled": .bool(enabled), "accept_risks": .bool(enabled)]
+        return try await call("PUT", setup(serverId) + "/crossplay/console-friends", body: try AgentClient.encode(body), slow: true, as: CrossplayInfo.self)
+    }
+
     public func duplicateOptions(serverId: String) async throws -> DuplicateOptions {
         try await call("GET", setup(serverId) + "/duplicate", as: DuplicateOptions.self)
     }
 
     /// Starts the copy as a task; the new server appears once it is checked.
-    public func duplicate(serverId: String, name: String, directory: String, world: String) async throws -> DuplicateStarted {
-        let body = try AgentClient.encode(["name": name, "directory": directory, "world": world])
+    public func duplicate(serverId: String, name: String, directory: String, world: String, fromBackup: Int64? = nil) async throws -> DuplicateStarted {
+        var fields: [String: JSONValue] = ["name": .string(name), "directory": .string(directory), "world": .string(world)]
+        // Restore as a new server: the backup's world, settings and add-ons.
+        if let fromBackup = fromBackup { fields["from_backup"] = .number(Double(fromBackup)) }
+        let body = try AgentClient.encode(fields)
         return try await call("POST", setup(serverId) + "/duplicate", body: body, as: DuplicateStarted.self)
     }
 
     /// Takes a server off the list. Nothing on the PC is deleted.
     public func removeServer(serverId: String) async throws -> ServerRemoved {
         try await call("DELETE", setup(serverId), as: ServerRemoved.self)
+    }
+
+    /// "Don't show again" on a warning or tip, for this account on every device.
+    public func hide(_ key: String) async throws -> Hidden {
+        try await call("POST", "/api/account/hidden", body: try AgentClient.encode(["key": key]), as: Hidden.self)
+    }
+
+    /// Settings' "Show all warnings again".
+    public func showAllAgain() async throws -> Hidden {
+        try await call("DELETE", "/api/account/hidden", as: Hidden.self)
     }
 
     public func newServerOptions() async throws -> NewServerOptions {
@@ -99,6 +118,7 @@ extension AgentClient {
         var body: [String: JSONValue] = [
             "name": .string(new.name), "directory": .string(new.directory), "type": .string(new.type),
             "minecraft_version": .string(new.minecraft), "eula_accepted": .bool(new.eulaAccepted),
+            "played_by": .string(new.playedBy), "players": .array(new.players.map { .string($0) }),
         ]
         if let loader = new.loader { body["loader_version"] = .string(loader) }
         if let memory = new.memoryMb { body["memory_mb"] = .number(Double(memory)) }
@@ -113,8 +133,11 @@ extension AgentClient {
     }
 
     /// Makes a new server from a pack already read by `inspectModpack`.
-    public func modpackServer(token: String, name: String, directory: String, memoryMb: Int?, color: String?, eulaAccepted: Bool) async throws -> ServerCreated {
-        var body: [String: JSONValue] = ["name": .string(name), "directory": .string(directory), "eula_accepted": .bool(eulaAccepted)]
+    /// `ownJars`: its own jars were shown and said yes to.
+    public func modpackServer(token: String, name: String, directory: String, memoryMb: Int?, color: String?, eulaAccepted: Bool, ownJars: Bool = false) async throws -> ServerCreated {
+        var body: [String: JSONValue] = [
+            "name": .string(name), "directory": .string(directory), "eula_accepted": .bool(eulaAccepted), "own_jars": .bool(ownJars),
+        ]
         if let memory = memoryMb { body["memory_mb"] = .number(Double(memory)) }
         if let color { body["color"] = .string(color) }
         return try await call("POST", "/api/modpacks/" + AgentClient.pathSegment(token) + "/new-server", body: try AgentClient.encode(body), slow: true, as: ServerCreated.self)

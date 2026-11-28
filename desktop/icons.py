@@ -1,4 +1,4 @@
-"""Line icons (24x24, stroked) and the server badge.
+"""Line icons (24x24, stroked) and the notification area's icon.
 
 Drawn with QtSvg in the color asked for, so they follow the theme and the
 server's tint.
@@ -11,9 +11,6 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QWidget
-
-from agent import colors
 
 IMAGES = Path(__file__).resolve().parent / "images"
 
@@ -35,11 +32,20 @@ SHAPES = {
     "bell": '<path d="M12 3.5a5.5 5.5 0 0 1 5.5 5.5v3l1.5 3H5l1.5-3V9A5.5 5.5 0 0 1 12 3.5z"/><path d="M9.8 18a2.2 2.2 0 0 0 4.4 0"/>',
     "undo": '<path d="M4 10.5h9.5a5 5 0 1 1 0 10H8"/><path d="M7.5 6 4 10.5 7.5 15"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',
+    "minimize": '<path d="M6 12h12"/>',
+    "maximize": '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
+    "restore": '<rect x="5.5" y="8.5" width="10" height="10" rx="2"/><path d="M9 5.5h7.5a2 2 0 0 1 2 2V15"/>',
+    "close": '<path d="M7 7l10 10M17 7L7 17"/>',
+    "restart": '<path d="M19.5 12a7.5 7.5 0 1 1-2.4-5.5"/><path d="M19.5 4.5v4.2h-4.2"/>',
+    "search": '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/>',
+    "update": '<path d="M12 19V5.5"/><path d="M6 11l6-6 6 6"/>',
+    "remove": '<path d="M4.5 7h15"/><path d="M9.5 7V4.8h5V7"/><path d="M6.5 7l.8 12a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4l.8-12"/><path d="M10 11v5.5M14 11v5.5"/>',
+    "more": '<path d="M6 12h.01M12 12h.01M18 12h.01"/>',
     "store": '<path d="M5 8h14l-1.2 11.2a1.5 1.5 0 0 1-1.5 1.3H7.7a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/>',
 }
 
 
-def icon(name: str, color: str, size: int = 18) -> QIcon:
+def _picture(name: str, color: str, size: int) -> QPixmap:
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
         f'stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
@@ -51,50 +57,19 @@ def icon(name: str, color: str, size: int = 18) -> QIcon:
     painter = QPainter(picture)
     QSvgRenderer(QByteArray(svg.encode())).render(painter, QRectF(0, 0, size, size))
     painter.end()
-    return QIcon(picture)
+    return picture
 
 
-def paint_badge(painter: QPainter, rect, color: str, letter: str) -> None:
-    fill, text = colors.fill_with_text(colors.rgb(color) or (60, 60, 67))
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(colors.to_hex(fill)))
-    radius = rect.height() * 0.22
-    painter.drawRoundedRect(rect, radius, radius)
-    font = painter.font()
-    font.setPixelSize(max(1, int(rect.height() * 0.5)))
-    font.setBold(True)
-    painter.setFont(font)
-    painter.setPen(QColor(colors.to_hex(text)))
-    painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, letter)
-
-
-def badge_icon(color: str, letter: str, size: int = 18) -> QIcon:
-    """A server's icon: its first letter on its color."""
-    picture = QPixmap(size * 2, size * 2)
-    picture.fill(Qt.GlobalColor.transparent)
-    picture.setDevicePixelRatio(2)
-    painter = QPainter(picture)
-    paint_badge(painter, QRectF(0, 0, size, size), color, letter)
-    painter.end()
-    return QIcon(picture)
-
-
-class Badge(QWidget):
-    """The big server icon on the header card."""
-
-    def __init__(self, size: int) -> None:
-        super().__init__()
-        self.color, self.letter = "#8E8E93", ""
-        self.setFixedSize(size, size)
-
-    def show_server(self, color: str, letter: str) -> None:
-        self.color, self.letter = color, letter
-        self.update()
-
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        paint_badge(painter, QRectF(self.rect()), self.color, self.letter)
+def icon(name: str, color: str, size: int = 18, on: str = "", hover: str = "") -> QIcon:
+    """``on`` is its color on a checked button, ``hover`` under the mouse
+    (Qt picks that one only on a button set to auto-raise)."""
+    made = QIcon(_picture(name, color, size))
+    if on:
+        made.addPixmap(_picture(name, on, size), QIcon.Mode.Normal, QIcon.State.On)
+        made.addPixmap(_picture(name, on, size), QIcon.Mode.Active, QIcon.State.On)
+    if hover:
+        made.addPixmap(_picture(name, hover, size), QIcon.Mode.Active, QIcon.State.Off)
+    return made
 
 
 def tray_icon(dot: str | None = None) -> QIcon:

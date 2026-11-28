@@ -183,6 +183,36 @@ final class PcSettingsTests: XCTestCase {
         XCTAssertEqual(PcSettings.exportSaid(strings, PcSettings.exporting(noFolder)), strings.t("export.failed"))
     }
 
+    func testAnExportReadThatLosesThePCTriesAgainAsThePCGoesOnWriting() async throws {
+        let job = try JSONDecoder().decode(ExportJob.self, from: Data(#"{"id": "j", "state": "running", "step": "Copying", "progress": 0.4}"#.utf8))
+        var reads = 0
+        let state = try await PcSettings.readExport({
+            reads += 1
+            if reads < 3 { throw AgentError.unreachable }
+            return job
+        }, pause: {})
+        XCTAssertEqual(state, .running(step: "Copying", progress: 0.4))
+        XCTAssertEqual(reads, 3)
+        // A refusal is the PC's answer: not tried again.
+        reads = 0
+        do {
+            _ = try await PcSettings.readExport({ reads += 1; throw AgentError.notAllowed(reason: "No") }, pause: {})
+            XCTFail("A refusal was tried again")
+        } catch {
+            XCTAssertEqual(error as? AgentError, .notAllowed(reason: "No"))
+        }
+        XCTAssertEqual(reads, 1)
+        // Gone for good: the problem shows after the last try.
+        reads = 0
+        do {
+            _ = try await PcSettings.readExport({ reads += 1; throw AgentError.unreachable }, tries: 4, pause: {})
+            XCTFail("A PC that never came back read as an export")
+        } catch {
+            XCTAssertEqual(error as? AgentError, .unreachable)
+        }
+        XCTAssertEqual(reads, 4)
+    }
+
     func testGetHelpListsItsFilesThenMakesOne() async throws {
         let c = client()
         StubAgent.json("{\"files\": [{\"name\": \"logs/agent.log\", \"size\": 1200}, {\"name\": \"system-check.json\", \"size\": null}]}")
@@ -284,5 +314,19 @@ final class PcSettingsTests: XCTestCase {
         XCTAssertEqual(old.oldCopy?.offer, true)
         let removed = try await c.removeOldCopy()
         XCTAssertEqual(PcUpdate.oldCopyRemoved(strings, removed), strings.t("oldcopy.removed_kept", ["count": 2]))
+    }
+
+    func testSharedModFilesSayTheirRealDiskUse() throws {
+        XCTAssertNil(PcSettings.modFiles(strings, view)) // an older agent doesn't say
+        let shared = try JSONDecoder().decode(PcSettingsView.self, from: Data("""
+            {"config": {}, "secrets": {}, "mod_storage": {"files": 3, "on_disk": 1048576, "saved": 2097152}}
+            """.utf8))
+        XCTAssertEqual(PcSettings.modFiles(strings, shared), strings.t("modfiles.usage", ["used": "1.0 MB", "saved": "2.0 MB"]))
+        let empty = try JSONDecoder().decode(PcSettingsView.self, from: Data("""
+            {"config": {}, "secrets": {}, "mod_storage": {"files": 0, "on_disk": 0, "saved": 0}}
+            """.utf8))
+        XCTAssertEqual(PcSettings.modFiles(strings, empty), strings.t("modfiles.none"))
+        let list = try JSONDecoder().decode(ModList.self, from: Data(#"{"mods": [], "server_state": "OFFLINE", "stored_separately": true}"#.utf8))
+        XCTAssertTrue(list.storedSeparately)
     }
 }

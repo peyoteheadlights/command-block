@@ -225,6 +225,7 @@ class Moderators(Section):
         column = QVBoxLayout(box)
         chosen = set(held)
         ticks: dict[str, QCheckBox] = {}
+        whole: list[tuple[QCheckBox, list[str]]] = []
         warn = label(text("mobile.mod.warn"), "problem")
 
         def sync() -> None:
@@ -232,11 +233,21 @@ class Moderators(Section):
                 tick.blockSignals(True)
                 tick.setChecked(permission in chosen)
                 tick.blockSignals(False)
+            for tick, members in whole:
+                tick.blockSignals(True)
+                tick.setChecked(all(p in chosen for p in members))
+                tick.blockSignals(False)
             warn.setVisible(any(p in catalogue["warn"] for p in chosen))
 
         def flip(permission: str, on: bool) -> None:
             nonlocal chosen
             chosen = toggle(chosen, permission, on, catalogue)
+            sync()
+
+        def flip_group(members: list[str], on: bool) -> None:
+            nonlocal chosen
+            for permission in members:
+                chosen = toggle(chosen, permission, on, catalogue)
             sync()
 
         for group in catalogue["groups"]:
@@ -247,7 +258,11 @@ class Moderators(Section):
             ]
             if not shown:
                 continue
-            column.addWidget(label(text(f"mobile.mod.group_{group['id']}"), "step"))
+            group_tick = QCheckBox(text(f"mobile.mod.group_{group['id']}"))
+            group_tick.setProperty("kind", "step")
+            group_tick.toggled.connect(lambda on, m=shown: flip_group(m, on))
+            whole.append((group_tick, shown))
+            column.addWidget(group_tick)
             for permission in shown:
                 tick = QCheckBox(switch_words(permission))
                 tick.toggled.connect(lambda on, p=permission: flip(p, on))

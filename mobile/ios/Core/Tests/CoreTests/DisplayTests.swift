@@ -4,21 +4,22 @@ import XCTest
 final class DisplayTests: XCTestCase {
     private let s = Strings(Shared.strings)
 
-    func testARunningServerThatDoesNotAnswerNeverReadsOnline() throws {
-        XCTAssertEqual(s.t(Display.state("ONLINE", answering: false).key), "Not answering")
-        XCTAssertEqual(s.t(Display.state("ONLINE", answering: nil).key), "Online")
-        XCTAssertEqual(s.t(Display.state("OFFLINE", answering: false).key), "Offline")
+    func testTheAgentsLabelReadsTheSameInEveryApp() {
+        XCTAssertEqual(s.t(Display.state("online").key), "Online")
+        XCTAssertEqual(s.t(Display.state("not_answering").key), "Not answering")
+        XCTAssertEqual(Display.state("not_answering").tone, .danger)
+        XCTAssertEqual(s.t(Display.state("crashed").key), "Crashed")
+        XCTAssertEqual(s.t(Display.state("something_new").key), "Unknown")
+        XCTAssertEqual(s.t(Display.state(nil).key), "Unknown")
+        XCTAssertTrue(Display.state("starting").busy)
+    }
+
+    func testARentedServersPanelStateReadsTheSameWords() throws {
+        XCTAssertEqual(s.t(Display.state("ONLINE").key), "Online")
+        XCTAssertEqual(s.t(Display.state("OFFLINE").key), "Offline")
         let json = #"{"id": "s", "name": "S", "state": "ONLINE", "answering": {"ok": false, "checked_at": 1.0}}"#
         let row = try JSONDecoder().decode(ServerRow.self, from: Data(json.utf8))
         XCTAssertEqual(row.answering?.ok, false)
-    }
-
-    func testStatesReadTheSameInEveryApp() {
-        XCTAssertEqual(s.t(Display.state("ONLINE").key), "Online")
-        XCTAssertEqual(s.t(Display.state("RESTART_PENDING").key), "Crashed")
-        XCTAssertEqual(s.t(Display.state("SOMETHING_NEW").key), "Unknown")
-        XCTAssertEqual(s.t(Display.state(nil).key), "Unknown")
-        XCTAssertTrue(Display.state("STARTING").busy)
     }
 
     func testDurationsAndPlayers() {
@@ -35,16 +36,17 @@ final class DisplayTests: XCTestCase {
         XCTAssertNil(Display.uptime(s, "OFFLINE", 300.0))
     }
 
-    func testStartingAsksNothingStoppingAndRestartingAskFirst() {
-        XCTAssertEqual(Display.actions("OFFLINE", canControl: true).map { $0.action }, ["start"])
-        XCTAssertEqual(Display.actions("CRASHED", canControl: true).first?.confirm, false)
-        let online = Display.actions("ONLINE", canControl: true)
+    func testTheButtonsAreTheAgentsListStartingAsksNothingTheRestAskFirst() {
+        XCTAssertEqual(Display.actions(["start", "change"], canControl: true).map { $0.action }, ["start"])
+        XCTAssertEqual(Display.actions(["start"], canControl: true).first?.confirm, false)
+        let online = Display.actions(["stop", "restart"], canControl: true)
         XCTAssertEqual(online.map { $0.action }, ["restart", "stop"])
         XCTAssertTrue(online.allSatisfy { $0.confirm })
-        for busy in ["STARTING", "STOPPING", "RESTARTING", "RESTART_PENDING", "UNKNOWN"] {
-            XCTAssertEqual(Display.actions(busy, canControl: true), [], busy)
-        }
-        XCTAssertEqual(Display.actions("OFFLINE", canControl: false), [])
+        let left = Display.actions(["force_stop"], canControl: true)
+        XCTAssertEqual(left.map { $0.labelKey }, ["action.force_stop"])
+        XCTAssertTrue(left.allSatisfy { $0.confirm && $0.danger })
+        XCTAssertEqual(Display.actions([], canControl: true), [])
+        XCTAssertEqual(Display.actions(["start"], canControl: false), [])
     }
 
     func testValuesTheAgentDidntGiveReadUnknown() {
@@ -80,5 +82,19 @@ final class DisplayTests: XCTestCase {
         let utc = TimeZone(identifier: "UTC")!
         XCTAssertEqual(Display.clock(1_700_000_000, zone: utc), "22:13:20")
         XCTAssertEqual(Display.dateTime(1_700_000_000, zone: utc), "2023-11-14 22:13:20")
+    }
+
+    func testChangesWaitingForARestartOfferRestartWhenNobodysOn() throws {
+        let json = #"{"state": "ONLINE", "restart_waiting": ["mods", "settings"], "restart_when_empty": false}"#
+        var status = try JSONDecoder().decode(ServerStatus.self, from: Data(json.utf8))
+        let waiting = try XCTUnwrap(Display.restartWaiting(s, status, canControl: true))
+        XCTAssertEqual(waiting.words, "Changes are waiting for a restart: mods, game settings.")
+        XCTAssertEqual(waiting.action?.action, "restart-when-empty")
+        XCTAssertNil(Display.restartWaiting(s, status, canControl: false)?.action)
+        status.restartWhenEmpty = true
+        XCTAssertEqual(Display.restartWaiting(s, status, canControl: true)?.action?.action, "cancel-restart-when-empty")
+        // An older agent sends neither field: nothing shows.
+        let old = try JSONDecoder().decode(ServerStatus.self, from: Data(#"{"state": "ONLINE"}"#.utf8))
+        XCTAssertNil(Display.restartWaiting(s, old, canControl: true))
     }
 }

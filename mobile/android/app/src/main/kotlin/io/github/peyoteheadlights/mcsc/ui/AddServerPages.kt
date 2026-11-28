@@ -7,7 +7,9 @@ import io.github.peyoteheadlights.mcsc.core.AddServer
 import io.github.peyoteheadlights.mcsc.core.AgentClient
 import io.github.peyoteheadlights.mcsc.core.AgentException
 import io.github.peyoteheadlights.mcsc.core.Job
+import io.github.peyoteheadlights.mcsc.core.ModSearch
 import io.github.peyoteheadlights.mcsc.core.ModpackInspected
+import io.github.peyoteheadlights.mcsc.core.ModrinthHit
 import io.github.peyoteheadlights.mcsc.core.NewServerOptions
 import io.github.peyoteheadlights.mcsc.core.NewServerRequest
 import io.github.peyoteheadlights.mcsc.core.OfferedVersion
@@ -56,8 +58,15 @@ class AddServerPages(
     /** Technical mode's typed folder, used as it is. */
     var typedFolder: String? by mutableStateOf(null)
     var ruled: Boolean by mutableStateOf(false)
+    /** "Who's this server for?", from this PC's first-run answer; and friends' names. */
+    var playedBy: String by mutableStateOf("")
+    var players: String by mutableStateOf("")
     var jar: String by mutableStateOf("")
     var pack: ModpackInspected? by mutableStateOf(null)
+        private set
+    var packQuery: String by mutableStateOf("")
+    /** Modpacks found by name; picking one reads it like a picked file. */
+    var packsFound: ModSearch? by mutableStateOf(null)
         private set
     var task: Job? by mutableStateOf(null)
         private set
@@ -99,6 +108,8 @@ class AddServerPages(
         typedFolder = null
         ruled = false
         jar = ""
+        packQuery = ""
+        packsFound = null
         said = null
         addedLines = emptyList()
         added = null
@@ -122,6 +133,7 @@ class AddServerPages(
                 val read = c.newServerOptions()
                 color = color ?: read.color
                 memoryMb = memoryMb ?: read.memoryMb
+                playedBy = read.playedBy
                 Read(read)
             } catch (e: AgentException) {
                 noted(e)
@@ -136,7 +148,8 @@ class AddServerPages(
         val c = client() ?: return
         scope.launch {
             try {
-                AddServer.creating(c.runningJobs().jobs)?.let { task = it }
+                // None running: a missed "done" must not keep Create locked.
+                task = AddServer.creating(c.runningJobs().jobs)
             } catch (e: AgentException) {
                 noted(e)
             }
@@ -206,6 +219,7 @@ class AddServerPages(
         val request = NewServerRequest(
             name.trim(), folder, kind.id, chosen.minecraft, loader.takeIf { kind.picksLoader },
             memoryMb.takeIf { AddServer.memoryShown(kind) }, color, eulaAccepted = ruled,
+            playedBy = playedBy, players = AddServer.players(playedBy, players),
         )
         scope.launch {
             try {
@@ -214,6 +228,8 @@ class AddServerPages(
             } catch (e: AgentException) {
                 noted(e)
                 said = Said(Message.of(e).text(strings), good = false)
+                // Lost track of it: the PC may still be making it, so read what it's doing.
+                if (e is AgentException.StillWorking) resume()
             } finally {
                 busy = null
                 task = null
@@ -261,6 +277,42 @@ class AddServerPages(
         }
     }
 
+    fun findPacks(strings: Strings) {
+        val c = client() ?: return
+        if (busy != null || packQuery.isBlank()) return
+        busy = "find"
+        said = null
+        scope.launch {
+            try {
+                packsFound = c.searchModpacks(packQuery.trim())
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
+    }
+
+    fun readFound(hit: ModrinthHit, strings: Strings) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = "inspect"
+        said = null
+        scope.launch {
+            try {
+                dropPack()
+                pack = c.fetchModpack(hit, null).also { if (name.isBlank()) name = it.pack.name }
+                packsFound = null
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
+    }
+
     fun createFromPack(strings: Strings) {
         val c = client() ?: return
         val read = pack ?: return
@@ -269,12 +321,14 @@ class AddServerPages(
         said = null
         scope.launch {
             try {
-                val made = c.modpackServer(read.token, name.trim(), folder, memoryMb, color, eulaAccepted = ruled)
+                val made = c.modpackServer(read.token, name.trim(), folder, memoryMb, color, eulaAccepted = ruled, ownJars = read.pack.ownJars.isNotEmpty())
                 pack = null
                 done(strings, made.serverId, made.name)
             } catch (e: AgentException) {
                 noted(e)
                 said = Said(Message.of(e).text(strings), good = false)
+                // Lost track of it: the PC may still be making it, so read what it's doing.
+                if (e is AgentException.StillWorking) resume()
             } finally {
                 busy = null
                 task = null

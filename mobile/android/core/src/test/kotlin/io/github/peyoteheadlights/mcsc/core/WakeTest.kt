@@ -36,7 +36,7 @@ class WakeTest {
         TestAgent().use { agent ->
             agent.server.enqueue(agent.json(withHelper))
             agent.server.enqueue(agent.json("""{"key": "secret-key"}"""))
-            agent.server.enqueue(agent.json(withHelper.replace("\"has_key\": false", "\"has_key\": true")))
+            agent.server.enqueue(agent.json(withHelper.replace("\"has_key\": false", "\"has_key\": true, \"key_hash\": \"85dbe15d75ef9308c7ae0f33c7a324cc6f4bf519a2ed2f3027bd33c140a4f9aa\"")))
             val c = client(agent)
             val kept = Wake.keep(c, null)
             assertEquals("secret-key", kept.key)
@@ -46,6 +46,19 @@ class WakeTest {
             assertEquals("secret-key", Wake.keep(c, kept).key)
             assertEquals(3, agent.server.requestCount)
             assertTrue(kept.offered(canSignal = false))
+        }
+    }
+
+    @Test
+    fun `a kept key the agent no longer has is replaced`() = runBlocking {
+        TestAgent().use { agent ->
+            // A new key was made but its answer was lost: the agent has another one.
+            agent.server.enqueue(agent.json(withHelper.replace("\"has_key\": false", "\"has_key\": true, \"key_hash\": \"85dbe15d75ef9308c7ae0f33c7a324cc6f4bf519a2ed2f3027bd33c140a4f9aa\"")))
+            agent.server.enqueue(agent.json("""{"key": "newer-key"}"""))
+            val kept = Wake.keep(client(agent), KeptWake(WakeInfo(), "lost-key"))
+            assertEquals("newer-key", kept.key)
+            assertEquals(2, agent.server.requestCount)
+            assertEquals("85dbe15d75ef9308c7ae0f33c7a324cc6f4bf519a2ed2f3027bd33c140a4f9aa", Wake.keyHash("secret-key"))
         }
     }
 

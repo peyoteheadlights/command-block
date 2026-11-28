@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from . import downtime
 from .events import Event
 from .minecraft import properties
 from .ports import is_free
@@ -39,13 +41,17 @@ def port_problem(ctx: ServerContext, port: int) -> str | None:
     """Why this server can't use ``port``, or None. Another server on the
     list using it, or another program holding it now, both count."""
     protocol = ctx.config.server_type.game_protocol
-    owner = ctx.core.ports.used(exclude=ctx.server_id).get((protocol, int(port)))
+    bedrock = ctx.config.server_type.edition == "bedrock"
+    # A Bedrock game port is UDP (RakNet) and TCP (NetherNet's join page).
+    protocols = (protocol, "tcp") if bedrock else (protocol,)
+    used = ctx.core.ports.used(exclude=ctx.server_id)
+    owner = next((used[(p, int(port))] for p in protocols if (p, int(port)) in used), None)
     if owner:
         return (
             f"The server '{ctx.core.servers[owner].name}' already uses port {port}. "
             "Pick another one."
         )
-    if ctx.config.server_type.edition == "bedrock":
+    if bedrock:
         # A Bedrock server also listens on server-portv6, which this page
         # doesn't change; the two can't be the same port.
         from .ports import bedrock_v6_port
@@ -55,37 +61,158 @@ def port_problem(ctx: ServerContext, port: int) -> str | None:
                 f"This server already uses port {port} for IPv6 (server-portv6). Pick another one."
             )
     current = ctx.core.ports.port_of(ctx).port
-    if int(port) != current and not is_free(int(port), protocol):
+    if int(port) != current and not all(is_free(int(port), p) for p in protocols):
         return f"Another program on this PC is using port {port}. Pick another one."
     return None
 
 
-def waiting_for_restart(ctx: ServerContext, modified_at: float | None) -> bool:
-    """True when the file was changed after the running server finished
-    starting, so what it is using now is not what the file says. Measured
-    from the file's own time and the moment the console said "Done".
+# Keys a running server takes at once, by a console command (with the
+# command). Minecraft also writes these back to the file itself.
+LIVE = {
+    "difficulty": lambda value, java: f"difficulty {value}",
+    "white-list": lambda value, java: (
+        f"whitelist {'on' if value == 'true' else 'off'}" if java else None
+    ),
+}
+DIFFICULTIES = ("peaceful", "easy", "normal", "hard")
 
-    Not from the moment the process started: Minecraft rewrites
-    server.properties itself early in every start, so that would make every
-    running server look as if it were waiting for a restart. While it is
-    still starting nothing is claimed."""
-    online = ctx.server.online_at
-    return bool(
-        ctx.server.running
-        and ctx.server.state.value == "ONLINE"
-        and online
-        and modified_at
-        and modified_at > online
-    )
+
+def waiting_for_restart(ctx: ServerContext) -> bool:
+    """True when server.properties now says something different from what
+    the running server read when it started (taken when the console said
+    "Done"), apart from the keys it takes at once (LIVE).
+
+    By the values, not the file's time: Minecraft rewrites the file early
+    in every start and again after /difficulty, and neither is a change
+    waiting for a restart. While it is still starting nothing is claimed."""
+    server = ctx.server
+    started = server.properties_at_start
+    if not (server.running and server.state.value == "ONLINE" and started is not None):
+        return False
+    path = ctx.config.server_dir / properties.FILENAME
+    try:
+        now = properties.PropertiesFile.read(path).values() if path.is_file() else {}
+    except OSError:
+        return False
+    keys = (set(now) | set(started)) - set(LIVE)
+    return any(now.get(key) != started.get(key) for key in keys)
+
+
+async def apply_live(ctx: ServerContext, changed: dict[str, str]) -> None:
+    """Send the console commands for the changed keys a running server
+    takes at once (difficulty, whitelist on or off)."""
+    if not ctx.server.running:
+        return
+    java = ctx.config.server_type.edition != "bedrock"
+    for key, value in changed.items():
+        if key not in LIVE or (key == "difficulty" and value not in DIFFICULTIES):
+            continue
+        command = LIVE[key](value, java)
+        if command:
+            await ctx.server.send_command(command, internal=True)
 
 
 def view(ctx: ServerContext) -> dict[str, Any]:
     directory = ctx.config.server_dir
     data = properties.form_view(directory, ctx.config.server_type)
+    behind = ctx.core.waterdog.of(ctx)
+    if behind:
+        # Behind WaterdogPE the file's allow-list stays false; the
+        # Companion's plugin keeps the real one (agent/waterdog.py).
+        on = bool(behind.get("list_on"))
+        for f in data["fields"]:
+            if f["key"] == "allow-list":
+                f.update(value=on, raw="true" if on else "false", set=True, problem=None)
     return {
         **data,
         "running": ctx.server.running,
-        "restart_needed": waiting_for_restart(ctx, data["modified_at"]),
+        "restart_needed": waiting_for_restart(ctx),
+        "icon": None if _bedrock(ctx) else (directory / ICON).is_file(),
+    }
+
+
+# ----------------------------------------------------------------- server icon
+# The picture Java servers show next to their name in the server list. The
+# apps resize the picked picture to 64 x 64 and send a PNG; Minecraft only
+# reads it when the server starts, and ignores any other size.
+ICON = "server-icon.png"
+ICON_SIZE = 64
+ICON_MAX_BYTES = 256 * 1024
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _bedrock(ctx: ServerContext) -> bool:
+    return ctx.config.server_type.edition == "bedrock"
+
+
+def check_icon(data: bytes) -> None:
+    """Raise PropertiesError unless ``data`` is a 64 x 64 PNG. Read from the
+    PNG's own header (its first chunk, IHDR, holds the width and height)."""
+    if len(data) > ICON_MAX_BYTES:
+        raise properties.PropertiesError("The picture is too big. A server icon is a few KB.")
+    if not data.startswith(PNG_SIGNATURE) or data[12:16] != b"IHDR":
+        raise properties.PropertiesError("This isn't a PNG picture.")
+    width, height = struct.unpack(">II", data[16:24])
+    if (width, height) != (ICON_SIZE, ICON_SIZE):
+        raise properties.PropertiesError(
+            f"A server icon has to be {ICON_SIZE} x {ICON_SIZE} pixels. "
+            f"This one is {width} x {height}."
+        )
+
+
+def icon_path(ctx: ServerContext) -> Path | None:
+    path = ctx.config.server_dir / ICON
+    return path if not _bedrock(ctx) and path.is_file() else None
+
+
+async def save_icon(ctx: ServerContext, data: bytes | None, user: str = "system") -> dict[str, Any]:
+    """Put ``data`` in as server-icon.png, or take the icon away (None).
+    Through the safe-change routine, so Undo puts the old icon back."""
+    if _bedrock(ctx):
+        raise properties.PropertiesError("Bedrock servers don't show a server icon.")
+    if data is not None:
+        check_icon(data)
+    path = ctx.config.server_dir / ICON
+    title = "Changing the server icon" if data is not None else "Removing the server icon"
+
+    async def change(job: JobHandle | None) -> dict[str, Any]:
+        def write() -> None:
+            if data is None:
+                path.unlink(missing_ok=True)
+                return
+            temporary = path.with_name(ICON + ".tmp")
+            temporary.write_bytes(data)
+            os.replace(temporary, path)
+
+        await asyncio.to_thread(write)
+        return {}
+
+    async def check(_result: dict[str, Any]) -> tuple[bool, str]:
+        now = path.read_bytes() if path.is_file() else None
+        return (now == data), ("Read back as saved" if now == data else "Didn't read back")
+
+    plan = SafeChange(
+        title=title,
+        change=change,
+        check=check,
+        stop_server=False,
+        take_backup=path.is_file(),
+        backup_name="pre-server-icon",
+        backup_includes=[ICON],
+    )
+
+    async def run(job: JobHandle | None) -> dict[str, Any]:
+        return await run_safe_change(ctx.server, ctx.backups, plan, job=job, user=user)
+
+    _, outcome = await ctx.core.jobs.run(
+        "server_icon", f"{title} on {ctx.name}", run, server_id=ctx.server_id, risky=True, user=user
+    )
+    downtime.mark(ctx, "icon")
+    return {
+        "ok": True,
+        "icon": data is not None,
+        "undo": outcome.get("undo"),
+        "running": ctx.server.running,
     }
 
 
@@ -101,6 +228,39 @@ async def save(
     path = directory / properties.FILENAME
     server_type = ctx.config.server_type
     known = properties.fields_for(server_type.dialect)
+    behind = ctx.core.waterdog.of(ctx)
+    list_said: dict[str, str] = {}
+    if behind and raw_text is not None:
+        from .waterdog import SERVER_KEYS
+
+        before = properties.PropertiesFile.read(path).values() if path.is_file() else {}
+        after = properties.check_raw_text(raw_text, server_type.dialect).values()
+        kept = {
+            k: "WaterdogPE needs this as it is. Stop using WaterdogPE to change it."
+            for k in SERVER_KEYS
+            if before.get(k) != after.get(k)
+        }
+        if kept:
+            raise properties.FormError(kept)
+    elif behind:
+        updates = dict(updates or {})
+        port = updates.get("server-port")
+        if port is not None and str(port).strip() != str(behind["server_port"]):
+            raise properties.FormError(
+                {
+                    "server-port": "WaterdogPE sends players to this port. "
+                    "Stop using WaterdogPE to change it."
+                }
+            )
+        wanted = updates.pop("allow-list", None)
+        if wanted is not None:
+            try:
+                on = properties.check_value(known["allow-list"], wanted) == "true"
+            except properties.PropertiesError as exc:
+                raise properties.FormError({"allow-list": str(exc)}) from exc
+            if on != bool(behind.get("list_on")):
+                await ctx.core.waterdog.set_list(ctx, on)
+                list_said = {"allow-list": "true" if on else "false"}
     if raw_text is not None:
         edited = properties.check_raw_text(raw_text, server_type.dialect)
         before = properties.PropertiesFile.read(path).values() if path.is_file() else {}
@@ -126,14 +286,36 @@ async def save(
         if edited.text() == current_text:
             return {"changed": {}, "keys": [], "nothing_changed": True, **_after(ctx)}
     else:
+        before_file = properties.PropertiesFile.read(path) if path.is_file() else None
+        old_port = ((before_file and before_file.get("server-port")) or "").strip()
         edited, changed = properties.apply_form(
             directory, updates or {}, lambda port: port_problem(ctx, port), server_type
         )
+        # server-udp-ports set to the game port's number (agent/ports.py
+        # set_udp_ports) moves with it; an owner's own value stays.
+        new_port = changed.get("server-port")
+        if (
+            new_port
+            and server_type.edition == "bedrock"
+            and old_port
+            and (edited.get("server-udp-ports") or "").strip() == old_port
+            and edited.set("server-udp-ports", str(new_port))
+        ):
+            changed["server-udp-ports"] = str(new_port)
         others = sorted(changed)
         if not changed:
-            return {"changed": {}, "keys": [], "nothing_changed": True, **_after(ctx)}
+            return {
+                "changed": list_said,
+                "keys": sorted(list_said),
+                "nothing_changed": not list_said,
+                **_after(ctx),
+            }
 
-    return await write_properties(ctx, edited, changed, others, user)
+    result = await write_properties(ctx, edited, changed, others, user)
+    if list_said:
+        result["changed"] = {**result["changed"], **list_said}
+        result["keys"] = sorted({*result["keys"], *list_said})
+    return result
 
 
 async def set_values(
@@ -198,6 +380,7 @@ async def write_properties(
         user=user,
     )
     _follow(ctx, edited.values())
+    await apply_live(ctx, changed)
     ctx.core.db.audit(
         "game_settings",
         user=user,
@@ -211,7 +394,7 @@ async def write_properties(
             level="info",
             message=(
                 f"Game settings changed on {ctx.name}"
-                + (". They take effect after a restart." if ctx.server.running else ".")
+                + (". They take effect after a restart." if waiting_for_restart(ctx) else ".")
             ),
             data={"changed": changed, "keys": others[:20], "running": ctx.server.running},
         )
@@ -226,11 +409,9 @@ async def write_properties(
 
 
 def _after(ctx: ServerContext) -> dict[str, Any]:
-    path = ctx.config.server_dir / properties.FILENAME
-    modified = path.stat().st_mtime if path.is_file() else None
     return {
         "running": ctx.server.running,
-        "restart_needed": waiting_for_restart(ctx, modified),
+        "restart_needed": waiting_for_restart(ctx),
     }
 
 

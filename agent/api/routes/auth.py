@@ -10,9 +10,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ... import API_VERSION
 from ...events import Event
-from ...security.auth import AccountError, InviteError, Principal, token_hash
+from ...security.auth import (
+    PLAYED_BY_DEFAULT,
+    AccountError,
+    InviteError,
+    Principal,
+    token_hash,
+)
 from ...security.permissions import (
     ACCOUNT,
+    PC_SETTINGS,
     SERVER_PERMISSIONS,
     can_see_server,
     held_anywhere,
@@ -21,14 +28,27 @@ from ...security.permissions import (
     require,
 )
 from ..deps import audit, client_ip, get_core
-from ..responses import DeviceList, Health, InviteCheck, LoginResult, Me, Ok, Preferences, Rotated
+from ..responses import (
+    DeviceList,
+    Health,
+    Hidden,
+    InviteCheck,
+    LoginResult,
+    Me,
+    Ok,
+    Preferences,
+    Rotated,
+    Welcome,
+)
 from .models import (
+    HideRequest,
     InviteAcceptRequest,
     InviteCheckRequest,
     LoginRequest,
     OneTimeSignInRequest,
     PasswordChangeRequest,
     PreferencesRequest,
+    WelcomeRequest,
 )
 
 router = APIRouter()
@@ -168,6 +188,7 @@ async def me(principal: Principal = Depends(require(ACCOUNT)), core=Depends(get_
             if can_see_server(principal, sid)
         },
         "preferences": core.auth.preferences(principal.user),
+        "hidden": core.auth.hidden(principal.user),
     }
 
 
@@ -200,3 +221,60 @@ async def set_preferences(
 ):
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
     return core.auth.set_preferences(principal.user, updates)
+
+
+# The first-run questions. The answers only set defaults; "played_by" is
+# this PC's default for new servers, so answering is the owner's.
+
+
+def _account(core, principal: Principal) -> str:
+    # The installer on an "Agent only" PC answers with the API token, for the owner.
+    return core.auth.owner_username if principal.kind == "api_token" else principal.user
+
+
+def _welcome(core, user: str) -> dict:
+    return {
+        **core.auth.welcome(user),
+        "played_by": core.db.get_setting(PLAYED_BY_DEFAULT, "") or "",
+    }
+
+
+@router.get("/account/welcome", response_model=Welcome)
+async def get_welcome(principal: Principal = Depends(require(ACCOUNT)), core=Depends(get_core)):
+    return _welcome(core, _account(core, principal))
+
+
+@router.put("/account/welcome", response_model=Welcome)
+async def set_welcome(
+    payload: WelcomeRequest,
+    request: Request,
+    principal: Principal = Depends(require(PC_SETTINGS)),
+    core=Depends(get_core),
+):
+    """Saves the answers. First run (``set_defaults``) also picks the mode
+    and tips from them; PC settings changes only the answers."""
+    user = _account(core, principal)
+    core.auth.set_welcome(user, payload.first_time, payload.kinds, payload.set_defaults)
+    core.db.set_setting(PLAYED_BY_DEFAULT, payload.played_by)
+    audit(core, request, "welcome_answered")
+    return _welcome(core, user)
+
+
+# "Don't show again" on a warning or tip, and PC settings' "Show all warnings
+# again". /auth/me lists the hidden ones. Questions that protect a world
+# never use this.
+
+
+@router.post("/account/hidden", response_model=Hidden)
+async def hide(
+    payload: HideRequest,
+    principal: Principal = Depends(require(ACCOUNT)),
+    core=Depends(get_core),
+):
+    return {"hidden": core.auth.hide(principal.user, payload.key)}
+
+
+@router.delete("/account/hidden", response_model=Hidden)
+async def show_all_again(principal: Principal = Depends(require(ACCOUNT)), core=Depends(get_core)):
+    core.auth.show_all_again(principal.user)
+    return {"hidden": []}

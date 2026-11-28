@@ -26,6 +26,7 @@ import io.github.peyoteheadlights.mcsc.core.Pairing
 import io.github.peyoteheadlights.mcsc.core.PairingLink
 import io.github.peyoteheadlights.mcsc.core.PairingParseException
 import io.github.peyoteheadlights.mcsc.core.Permissions
+import io.github.peyoteheadlights.mcsc.core.ServerListing
 import io.github.peyoteheadlights.mcsc.core.ServerRow
 import io.github.peyoteheadlights.mcsc.core.ServerStatus
 import io.github.peyoteheadlights.mcsc.core.Strings
@@ -68,14 +69,19 @@ data class ServersUi(
     val checkedAt: Double? = null,
     val problem: Message? = null,
     val refreshing: Boolean = false,
+    /** What Start all, Stop all or a move just did, in words. */
+    val said: List<Message> = emptyList(),
 )
 
 data class ServerUi(
     val status: ServerStatus? = null,
     val checkedAt: Double? = null,
+    /** The last status read failed: the state is unknown. */
     val problem: Message? = null,
     val busyAction: String? = null,
     val done: Message? = null,
+    /** The PC refused the last action, in its words. A later read keeps it. */
+    val refused: Message? = null,
 )
 
 data class PhoneUi(
@@ -126,6 +132,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The signed-in account, from /auth/me. */
     private var account: Me? by mutableStateOf(null)
 
+    /** Warnings and tips this account hid with "Don't show again", from /auth/me. */
+    var hidden: Set<String> by mutableStateOf(emptySet())
+        private set
+
     /** The account on the server whose screen is open: what it may do there. */
     val me: Me? get() = account?.forServer(watching)
     var servers: ServersUi by mutableStateOf(ServersUi())
@@ -151,6 +161,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** A server to open (from a shortcut, the widget or an alert). */
     var pendingServer: String? by mutableStateOf(null)
 
+    /** mcsc://modrinth?..., the browser coming back from Sign in with Modrinth. */
+    var modrinthReturn: String? by mutableStateOf(null)
+
     /** Scanning the code again from Settings, still signed in. */
     var rescanning: Boolean by mutableStateOf(false)
         private set
@@ -169,15 +182,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val watchers = mutableListOf<String>()
     private val pagesBy = mutableMapOf<String, ServerPages>()
 
-    /** The PC folder picker's listing, shared by every screen that chooses a folder. */
-    val folders by lazy { FolderBrowser(viewModelScope, { client() }, { prefs.lastProblem = it.key }) }
-
-    /** The "+" on All servers, kept while the app runs so setting up shows its progress again. */
-    val adding by lazy { AddServerPages(viewModelScope, { client() }, { prefs.lastProblem = it.key }, ::refreshServers) }
     // The pages that belong to the signed-in account. Made again when it signs
     // out, with their own scope, so nothing of one PC or account shows on the
     // next and an update wait doesn't go on polling the old PC.
     private var accountScope = newAccountScope()
+
+    /** The PC folder picker's listing, shared by every screen that chooses a folder. */
+    var folders = FolderBrowser(accountScope, { client() }, { prefs.lastProblem = it.key })
+        private set
+
+    /** The "+" on All servers, kept while signed in so setting up shows its progress again. */
+    var adding = AddServerPages(accountScope, { client() }, { prefs.lastProblem = it.key }, ::refreshServers)
+        private set
 
     /** Settings > Moderators (owner only). */
     var moderators = ModeratorPages(accountScope, { client() }, { prefs.lastProblem = it.key })
@@ -195,6 +211,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var discord = DiscordPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         private set
 
+    /** Rented servers on a host's panel (All servers). */
+    var rented = RentedPages(accountScope, { client() }, { prefs.lastProblem = it.key })
+        private set
+
     private fun newAccountScope() = CoroutineScope(viewModelScope.coroutineContext + SupervisorJob(viewModelScope.coroutineContext[Job]))
 
     /** Drops every page of the account that was signed in. */
@@ -202,10 +222,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         pagesBy.clear()
         accountScope.cancel()
         accountScope = newAccountScope()
+        folders = FolderBrowser(accountScope, { client() }, { prefs.lastProblem = it.key })
+        adding = AddServerPages(accountScope, { client() }, { prefs.lastProblem = it.key }, ::refreshServers)
         moderators = ModeratorPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         yourAccount = AccountPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         pcSettings = PcPages(accountScope, { client() }, { prefs.lastProblem = it.key })
         discord = DiscordPages(accountScope, { client() }, { prefs.lastProblem = it.key })
+        rented = RentedPages(accountScope, { client() }, { prefs.lastProblem = it.key })
     }
 
     /** An invite scanned or pasted: opened once the phone is paired with its PC. */
@@ -215,6 +238,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var refreshJob: Job? = null
 
     init {
+        StreamerMode.rules = shared.streamer
+        StreamerMode.on = prefs.streamer
         viewModelScope.launch {
             graph.signedOut.collect {
                 // The widget stops showing servers at once, not at its next refresh.
@@ -399,9 +424,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun leave(tellPc: Boolean) {
         val client = graph.client()
         viewModelScope.launch {
+            var heard = true
             if (tellPc) {
                 if (prefs.lockAlerts) runCatching { client?.forgetPhone() }
-                client?.logout()
+                heard = client?.logout() ?: true
             }
             stopLive()
             graph.forgetSignIn()
@@ -412,7 +438,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             wake = WakeUi()
             alerts = AlertState()
             forgetAccountPages()
-            stage = Stage.SignIn()
+            // The PC still has this phone signed in: say where to end it.
+            stage = Stage.SignIn(if (heard) null else Message("mobile.settings.sign_out_not_heard"))
         }
     }
 
@@ -495,7 +522,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val list = client.servers()
                 val at = now()
-                servers = ServersUi(list.servers, loaded = true, checkedAt = at)
+                servers = ServersUi(list.servers, loaded = true, checkedAt = at, said = servers.said)
                 graph.widget.write(WidgetSnapshot.read(list, at))
                 Widgets.refresh(getApplication())
                 Widgets.shortcuts(getApplication(), list.servers)
@@ -505,6 +532,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // is passed off as current.
                 servers = servers.copy(problem = Message.of(e), refreshing = false)
             }
+        }
+    }
+
+    /** Start all or Stop all for [ids], the servers shown. */
+    fun allServers(action: String, ids: List<String>) {
+        val client = client() ?: return
+        servers = servers.copy(said = emptyList())
+        viewModelScope.launch {
+            val said = try {
+                val rows = client.allServers(action, ids).servers
+                val done = rows.count { it.result in setOf("started", "stopped", "stopping") }
+                listOf(
+                    if (done > 0) Message("servers.all_done_$action", mapOf("n" to done.toString()))
+                    else Message("servers.all_none_$action"),
+                ) + rows.filter { it.result == "failed" }.map {
+                    Message("servers.all_failed", mapOf("name" to it.name, "reason" to it.detail.orEmpty()))
+                }
+            } catch (e: AgentException) {
+                prefs.lastProblem = e.key
+                listOf(Message.of(e))
+            }
+            servers = servers.copy(said = said)
+            refreshServers()
+        }
+    }
+
+    /** Moves [id] one place up or down among [shown] (its group's servers). */
+    fun moveServer(id: String, shown: List<String>, up: Boolean) {
+        val order = ServerListing.moved(servers.list.map { it.id }, shown, id, up) ?: return
+        arrangeServers { it.saveServerOrder(order) }
+    }
+
+    fun groupServer(id: String, group: String) = arrangeServers { it.saveServerGroup(id, group.trim()) }
+
+    private fun arrangeServers(call: suspend (AgentClient) -> Unit) {
+        val client = client() ?: return
+        viewModelScope.launch {
+            try {
+                call(client)
+                servers = servers.copy(said = emptyList())
+            } catch (e: AgentException) {
+                prefs.lastProblem = e.key
+                servers = servers.copy(said = listOf(Message.of(e)))
+            }
+            refreshServers()
         }
     }
 
@@ -552,17 +624,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun act(serverId: String, action: String) {
         val client = client() ?: return
-        update(serverId) { it.copy(busyAction = action, done = null, problem = null) }
+        // A fast second tap doesn't send it twice.
+        if (server[serverId]?.busyAction != null) return
+        update(serverId) { it.copy(busyAction = action, done = null, refused = null) }
         viewModelScope.launch {
             try {
                 client.serverAction(serverId, action)
-                update(serverId) { it.copy(busyAction = null, done = Message("mobile.server.done_$action")) }
+                update(serverId) { it.copy(busyAction = null, done = Message("mobile.server.done_${action.replace('-', '_')}")) }
             } catch (e: AgentException) {
                 prefs.lastProblem = e.key
-                update(serverId) { it.copy(busyAction = null, problem = Message.of(e)) }
+                update(serverId) { it.copy(busyAction = null, refused = Message.of(e)) }
             }
             refreshServer(serverId)
             refreshServers()
+        }
+    }
+
+    fun skipCheck(serverId: String) {
+        val client = client() ?: return
+        viewModelScope.launch {
+            try {
+                client.skipCheck(serverId)
+            } catch (e: AgentException) {
+                prefs.lastProblem = e.key
+                update(serverId) { it.copy(problem = Message.of(e)) }
+            }
+            refreshServer(serverId)
         }
     }
 
@@ -577,6 +664,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             runCatching { client.me() }.onSuccess {
                 account = it
+                hidden = it.hidden.toSet()
                 prefs.user = it.user
                 alerts = graph.alerts.update { state -> state.onlyFor(it) }
                 keepWake(client, it)
@@ -594,9 +682,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val caughtUp = AlertSync { after, limit -> client.alerts(after, limit) }.catchUp(graph.alerts.read())
-                val next = account?.let(caughtUp::onlyFor) ?: caughtUp
-                graph.alerts.write(next)
-                alerts = next
+                // Marks set while this read waited (Mark all read) are kept.
+                alerts = graph.alerts.update { current -> (account?.let(caughtUp::onlyFor) ?: caughtUp).keepingMarks(current) }
             } catch (e: AgentException) {
                 prefs.lastProblem = e.key
             }
@@ -659,7 +746,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             wait = 2_000L
                         }
                         is LiveSignal.Changed -> {
-                            soon(signal.type in shared.feed)
+                            // The agent sends "alert" for every alert it keeps.
+                            soon(alertsToo = signal.type == "alert")
                             changed(signal)
                         }
                         is LiveSignal.Console -> signal.serverId?.let { pagesBy[it] }?.onConsoleLine(signal.line)
@@ -708,6 +796,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Asked from Discord while the screen is open.
             "discord_link_request", "whitelist_form", "new_address" -> if (pages.links != null || pages.whitelist != null) pages.loadCommunity()
             "quest_claim", "quest_suggested", "event_attendance" -> if (pages.quests.page.loaded) pages.quests.load()
+            // The Still fit? check finished a few seconds after the change.
+            "mod_fit" -> if (pages.content.mods.loaded) pages.content.loadMods()
         }
         // Started or stopped: Players and Chat say whether their buttons
         // work now, so they read it again rather than keep the old answer.
@@ -748,6 +838,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         technical = on
     }
 
+    /** "Don't show again": hidden here at once, and on the agent for every device. */
+    fun hide(key: String) {
+        hidden = hidden + key
+        val client = client() ?: return
+        viewModelScope.launch { runCatching { client.hide(key) } }
+    }
+
+    /** "Show all warnings again"; [done] says whether the agent took it. */
+    fun showAllAgain(done: (Boolean) -> Unit) {
+        val client = client() ?: return
+        viewModelScope.launch {
+            val ok = runCatching { client.showAllAgain() }.isSuccess
+            if (ok) hidden = emptySet()
+            done(ok)
+        }
+    }
+
+    fun chooseStreamer(on: Boolean) {
+        prefs.streamer = on
+        StreamerMode.on = on
+    }
+
     fun chooseUnlock(on: Boolean) {
         prefs.unlock = on
         unlock = on
@@ -770,7 +882,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         return@launch
                     }
                     client.registerPhone(token, "android", graph.deviceLabel())
-                    prefs.notifiedUpTo = maxOf(prefs.notifiedUpTo, alerts.cursor ?: 0)
+                    alerts = graph.alerts.update { it.nothingOlderToNotify() }
                 } else {
                     client.forgetPhone()
                     Push.stop(getApplication())

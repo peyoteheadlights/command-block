@@ -13,7 +13,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.Backup
 import io.github.peyoteheadlights.mcsc.core.Backups
+import io.github.peyoteheadlights.mcsc.core.BackupSize
 import io.github.peyoteheadlights.mcsc.core.ChangeList
 import io.github.peyoteheadlights.mcsc.core.Display
 import io.github.peyoteheadlights.mcsc.core.FolderPicker
@@ -90,6 +91,7 @@ private data class Confirming(val title: String, val body: String, val confirm: 
 fun BackupsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onRestoreWorld: () -> Unit) {
     val world = vm.pages(serverId).world
     val strings = vm.strings
+    val serverName = vm.servers.list.firstOrNull { it.id == serverId }?.name ?: serverId
     var asking by remember { mutableStateOf<Confirming?>(null) }
     var picking by remember { mutableStateOf(false) }
     // The backup waiting for the picker: id, name and size, kept if the
@@ -106,7 +108,10 @@ fun BackupsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onRest
             world.download(Backup(id = id, name = name, sizeBytes = size), open, discard, strings)
         }
     }
-    LaunchedEffect(serverId) { world.loadBackups() }
+    LaunchedEffect(serverId) {
+        world.loadBackups()
+        if (vm.canDo(Permissions.SETTINGS_SERVER)) world.loadSize()
+    }
 
     ServerFrame(
         vm, serverId,
@@ -170,6 +175,8 @@ fun BackupsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onRest
                 },
                 onRestore = { world.askRestore(backup, strings) },
                 onCopy = { world.copyAgain(backup, strings) },
+                onKeep = { world.keep(backup, backup.kept != true, strings) },
+                onOpen = { world.openAsServer(backup, serverName, strings) },
                 onDelete = {
                     asking = Confirming(
                         strings.t("backups.delete_title", "name" to backup.name),
@@ -180,6 +187,15 @@ fun BackupsScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onRest
             )
         }
         Backups.keeping(strings, list.value?.retention)?.let { item { Note(it, color = LocalColors.current.text3) } }
+
+        if (vm.canDo(Permissions.SETTINGS_SERVER)) leftOutCard(vm, world, busy)
+        if (vm.canDo(Permissions.BACKUPS_DELETE)) {
+            cleanupCard(vm, world, busy, onEmpty = {
+                asking = Confirming(strings.t("cleanup.empty_title"), strings.t("cleanup.empty_body"), strings.t("cleanup.empty")) {
+                    world.cleanupEmpty(strings)
+                }
+            })
+        }
 
         item { SectionTitle(t("page.world")) }
         item { Card { Item(t("world.lead"), onClick = onRestoreWorld) } }
@@ -231,6 +247,8 @@ private fun BackupCard(
     onDownload: () -> Unit,
     onRestore: () -> Unit,
     onCopy: () -> Unit,
+    onKeep: () -> Unit,
+    onOpen: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val strings = vm.strings
@@ -244,6 +262,7 @@ private fun BackupCard(
             if (vm.technical) backup.name else Display.dateTime(strings, backup.createdAt),
             subtitle = listOfNotNull(
                 kind,
+                t("backups.kept").takeIf { backup.kept == true && backup.kind != "season" },
                 t(status.key),
                 Display.bytes(strings, backup.sizeBytes),
                 Display.dateTime(strings, backup.createdAt).takeIf { vm.technical },
@@ -259,6 +278,10 @@ private fun BackupCard(
                     .takeIf { vm.canDo(Permissions.BACKUPS_RESTORE) && Backups.onDisk(backup) },
                 Press(t(if (busy == "copy:${backup.id}") "offsite.copying" else "offsite.copy_now"), onCopy, enabled = idle)
                     .takeIf { Backups.canCopyAgain(backup, offsite, vm.canDo(Permissions.BACKUPS_CREATE)) },
+                Press(t(if (backup.kept == true) "backups.unkeep" else "backups.keep"), onKeep, enabled = idle)
+                    .takeIf { Backups.canKeep(backup, vm.canDo(Permissions.BACKUPS_DELETE)) },
+                Press(t(if (backup.kind == "season") "season.open" else "backups.open_as_server"), onOpen, enabled = idle)
+                    .takeIf { Backups.canOpenAsServer(backup, vm.canDo(Permissions.SERVERS_MANAGE)) },
                 Press(t("backups.delete"), onDelete, danger = true, enabled = idle)
                     .takeIf { vm.canDo(Permissions.BACKUPS_DELETE) },
             ),
@@ -353,6 +376,92 @@ private fun LazyListScope.offsiteCard(vm: AppViewModel, offsite: Offsite?, busy:
                     ),
                 )
             }
+        }
+    }
+}
+
+/** Left out of backups: what a backup weighs now, each folder left out
+ * with "Back it up again", and map tiles that could be left out. */
+private fun LazyListScope.leftOutCard(vm: AppViewModel, world: WorldPages, busy: String?) {
+    item { SectionTitle(t("leftout.title")) }
+    item {
+        val strings = vm.strings
+        val colors = LocalColors.current
+        val size: BackupSize? = world.size.value
+        var typed by rememberSaveable { mutableStateOf("") }
+        Card {
+            Note(t("leftout.lead"), color = colors.text, modifier = Modifier.padding(top = 10.dp))
+            when {
+                size != null -> Note(
+                    t("leftout.size", "size" to Display.bytes(strings, size.totalBytes), "free" to Display.bytes(strings, size.freeBytes)),
+                    color = colors.text,
+                )
+                world.size.loading -> Note(t("leftout.measuring"))
+                else -> world.size.problem?.let { Note(it.text(strings), color = colors.danger) }
+            }
+            if (size != null && size.excluded.isEmpty()) Note(t("leftout.none"))
+            for (folder in size?.excluded.orEmpty()) {
+                Item(folder.path, subtitle = Display.bytes(strings, folder.sizeBytes))
+                Presses(listOf(Press(t("leftout.put_back"), { world.saveExcludes(Backups.excludes(size, remove = folder.path), strings) }, enabled = busy == null)))
+            }
+            for (tip in size?.suggested.orEmpty()) {
+                Item(t("leftout.suggest", "name" to (tip.name ?: ""), "path" to tip.path, "size" to Display.bytes(strings, tip.sizeBytes)))
+                Presses(listOf(Press(t("leftout.leave_out"), { world.saveExcludes(Backups.excludes(size, add = tip.path), strings) }, enabled = busy == null)))
+            }
+            if (vm.technical && size != null) {
+                OutlinedTextField(
+                    value = typed,
+                    onValueChange = { typed = it },
+                    label = { Text(t("leftout.path_hint")) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                )
+                Presses(listOf(Press(t("leftout.leave_out"), {
+                    world.saveExcludes(Backups.excludes(size, add = typed), strings)
+                    typed = ""
+                }, enabled = busy == null && typed.isNotBlank())))
+            }
+            Presses(listOf(Press(t("leftout.measure"), world::loadSize, enabled = !world.size.loading)))
+        }
+    }
+}
+
+/** Clean up: shown first, ticked, moved to the bin; Undo and Empty now. */
+private fun LazyListScope.cleanupCard(vm: AppViewModel, world: WorldPages, busy: String?, onEmpty: () -> Unit) {
+    item { SectionTitle(t("cleanup.title")) }
+    item {
+        val strings = vm.strings
+        val colors = LocalColors.current
+        val found = world.cleanup.value
+        Card {
+            Note(t("cleanup.lead", "days" to 7), color = colors.text, modifier = Modifier.padding(top = 10.dp))
+            world.cleanup.problem?.let { Note(it.text(strings), color = colors.danger) }
+            if (found != null && found.items.isEmpty()) Note(t("cleanup.nothing"))
+            for (item in found?.items.orEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+                    Checkbox(
+                        checked = item.path in world.picked,
+                        onCheckedChange = { on -> world.picked = if (on) world.picked + item.path else world.picked - item.path },
+                    )
+                    Text(Backups.cleanupLine(strings, item, vm.technical), color = colors.text)
+                }
+            }
+            if (found?.dimensionsChecked == false) Note(t("cleanup.dimensions_unknown"), color = colors.text3)
+            val bin = found?.bin.orEmpty()
+            if (bin.isNotEmpty()) {
+                val until = bin.mapNotNull { it.emptiesAt }.minOrNull()
+                Note(t("cleanup.bin", "size" to Display.bytes(strings, bin.sumOf { it.sizeBytes ?: 0L }), "when" to Display.dateTime(strings, until)))
+            }
+            Presses(
+                listOfNotNull(
+                    Press(t("cleanup.look"), world::loadCleanup, enabled = busy == null && !world.cleanup.loading),
+                    Press(t("cleanup.move"), { world.cleanUp(strings) }, enabled = busy == null && world.picked.isNotEmpty())
+                        .takeIf { found?.items.orEmpty().isNotEmpty() },
+                    Press(t("cleanup.undo_last"), { world.cleanupUndo(world.lastBatch ?: bin.first().batch, strings) }, enabled = busy == null)
+                        .takeIf { bin.isNotEmpty() },
+                    Press(t("cleanup.empty"), onEmpty, danger = true, enabled = busy == null).takeIf { bin.isNotEmpty() },
+                ),
+            )
         }
     }
 }

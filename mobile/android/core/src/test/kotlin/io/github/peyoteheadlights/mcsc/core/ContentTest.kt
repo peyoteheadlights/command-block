@@ -23,6 +23,66 @@ class ContentTest {
     private fun mod(filename: String = "a.jar", enabled: Boolean = true, status: String = "ok", vararg issues: ModIssue) =
         Mod(filename = filename, modId = "a", name = "Alpha", version = "1.0", enabled = enabled, status = status, issues = issues.toList())
 
+    // ------------------------------------------------------------ deep scan
+    @Test
+    fun `the deep scan answer reads its checks, the running scan and what it listed`() {
+        val report = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(
+            DeepScanReport.serializer(),
+            """{"scanners":[{"id":"behaviour","name":"Behaviour","words":"deepscan.scanner.behaviour","what":"deepscan.what.behaviour","speed":"deepscan.speed.quick","took":{"seconds":1.5,"files":3},"downloaded":null,"extra":1}],"antivirus":{},"running":{"id":"j1","done":2.0,"total":5.0,"progress":0.4},"last":{"finished":100.0,"files":3,"skipped":1,"found":[{"root":"java","path":"bin/x.exe","sha256":"aa","kind":"worth_a_look","findings":[{"scanner":"behaviour","words":"deepscan.rule.starts_program","values":{}}],"state":"found"}],"errors":[],"took":1.5}}""",
+        )
+        assertEquals("behaviour", report.scanners.single().id)
+        assertEquals(3, report.scanners.single().took?.files)
+        assertNull(report.scanners.single().downloaded)
+        assertEquals(2.0, report.running?.done)
+        val found = report.last!!.found.single()
+        assertEquals("java", found.root)
+        assertEquals("worth_a_look", found.kind)
+        assertEquals("behaviour", found.findings.single().scanner)
+    }
+
+    @Test
+    fun `a program not downloaded yet says its size and a hidden one is left out`() {
+        val report = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(
+            DeepScanReport.serializer(),
+            """{"scanners":[{"id":"behaviour"},{"id":"jneedle","installed":true,"available":false},{"id":"clamav","installed":false,"available":true,"size":226000000}]}""",
+        )
+        assertEquals(listOf("behaviour", "clamav"), report.shown.map { it.id })
+        assertTrue(report.scanners.first().installed)
+        assertFalse(report.shown.last().installed)
+        assertEquals(226000000L, report.shown.last().size)
+        assertNull(report.scanners.first().size)
+    }
+
+    @Test
+    fun `virustotal stays listed without a key so the owner can add one`() {
+        val report = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(
+            DeepScanReport.serializer(),
+            """{"scanners":[{"id":"behaviour"},{"id":"virustotal","available":false,"key":false}]}""",
+        )
+        assertEquals(listOf("behaviour", "virustotal"), report.shown.map { it.id })
+        assertNull(report.scanners.first().key)
+        assertEquals(false, report.shown.last().key)
+    }
+
+    @Test
+    fun `the deep scan plan and the jar check before a start are read`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val off = json.decodeFromString(DeepScanReport.serializer(), """{"scanners":[]}""").options
+        assertEquals("off", off.schedule)
+        assertFalse(off.beforeStart)
+        assertNull(off.next)
+        val plan = json.decodeFromString(
+            DeepScanReport.serializer(),
+            """{"scanners":[],"options":{"before_start":true,"schedule":"weekly","time":"04:00","day":"sun","next":200.0}}""",
+        ).options
+        assertTrue(plan.beforeStart)
+        assertEquals("weekly", plan.schedule)
+        assertEquals("sun", plan.day)
+        assertEquals(200.0, plan.next)
+        val status = json.decodeFromString(ServerStatus.serializer(), """{"state":"offline","checking_jars":true}""")
+        assertTrue(status.checkingJars)
+    }
+
     // ------------------------------------------------------------ the screen's words
     @Test
     fun `the screen is named for what the server type takes`() {
@@ -35,6 +95,15 @@ class ContentTest {
         assertEquals("Mods", strings.t(ContentKind.MODS.titleKey))
         assertEquals("Plugins", strings.t(ContentKind.PLUGINS.titleKey))
         assertEquals("Packs", strings.t(ContentKind.PACKS.titleKey))
+    }
+
+    @Test
+    fun `vanilla still gets the screen to make a modpack, a packless Bedrock server doesn't`() {
+        val row = ServerRow(id = "s", name = "S")
+        assertTrue(Content.shown(row))
+        assertTrue(Content.shown(row.copy(content = "mods")))
+        assertFalse(Content.shown(row.copy(edition = "bedrock")))
+        assertFalse(Content.shown(null))
     }
 
     @Test
@@ -55,6 +124,9 @@ class ContentTest {
         val newer = mod().copy(updateAvailable = ModUpdate(latestVersion = "2.0"), minecraftRange = ">=1.21")
         assertEquals("Update: 2.0", Content.newer(strings, newer))
         assertNull(Content.newer(strings, mod()))
+        assertNull(Content.held(strings, newer))
+        val held = newer.copy(updateAvailable = ModUpdate(latestVersion = "2.0", heldUntil = 1.0))
+        assertTrue(Content.held(strings, held, java.time.ZoneOffset.UTC)!!.startsWith("Update all waits until "))
         assertEquals("a · a.jar · For Minecraft >=1.21", Content.technical(strings, newer))
         assertEquals("1.0 → 2.0", Content.change(strings, "1.0", "2.0"))
         assertEquals("Unknown → 2.0", Content.change(strings, null, "2.0"))
@@ -63,22 +135,24 @@ class ContentTest {
     // ------------------------------------------------------------ who may change what, and when
     @Test
     fun `only someone allowed sees change buttons, and they work only while stopped`() {
-        assertEquals(Changes.NOT_ALLOWED, Content.changes(canManage = false, serverState = States.OFFLINE))
-        assertEquals(Changes.READY, Content.changes(canManage = true, serverState = States.OFFLINE))
-        assertEquals(Changes.READY, Content.changes(canManage = true, serverState = States.CRASHED))
-        for (state in listOf(States.ONLINE, States.STARTING, States.STOPPING, States.RESTART_PENDING)) {
-            assertEquals(state, Changes.STOP_FIRST, Content.changes(canManage = true, serverState = state))
+        // The agent says when changes are allowed ("change" in its list).
+        val off = listOf("start", "change")
+        assertEquals(Changes.NOT_ALLOWED, Content.changes(canManage = false, label = "offline", can = off))
+        assertEquals(Changes.READY, Content.changes(canManage = true, label = "offline", can = off))
+        assertEquals(Changes.READY, Content.changes(canManage = true, label = "crashed", can = off))
+        for (label in listOf("online", "not_answering", "starting", "stopping", "crashed")) {
+            assertEquals(label, Changes.STOP_FIRST, Content.changes(canManage = true, label = label, can = listOf("stop")))
         }
         // A state not known is never taken to be stopped.
-        assertEquals(Changes.UNKNOWN, Content.changes(canManage = true, serverState = null))
-        assertEquals(Changes.UNKNOWN, Content.changes(canManage = true, serverState = States.UNKNOWN))
+        assertEquals(Changes.UNKNOWN, Content.changes(canManage = true, label = null, can = off))
+        assertEquals(Changes.UNKNOWN, Content.changes(canManage = true, label = "unknown", can = emptyList()))
         // Bedrock packs change while running too (a restart is offered after).
         assertEquals(Changes.READY, Content.packChanges(canManage = true))
         assertEquals(Changes.NOT_ALLOWED, Content.packChanges(canManage = false))
         // "Stop the server first" offers Stop only while it would work.
-        assertTrue(Content.canStopHere(States.ONLINE, canControl = true))
-        assertFalse(Content.canStopHere(States.ONLINE, canControl = false))
-        assertFalse(Content.canStopHere(States.STOPPING, canControl = true))
+        assertTrue(Content.canStopHere(listOf("stop", "restart"), canControl = true))
+        assertFalse(Content.canStopHere(listOf("stop"), canControl = false))
+        assertFalse(Content.canStopHere(emptyList(), canControl = true))
     }
 
     @Test
@@ -171,11 +245,12 @@ class ContentTest {
             UpdateAllRow(modId = "a", name = "Alpha", filename = "a.jar", enabled = true, installedVersion = "1.0", latestVersion = "2.0", versionId = "va"),
             UpdateAllRow(modId = "b", name = "Beta", filename = "b.jar.disabled", enabled = false, installedVersion = "1.0", latestVersion = "1.1", versionId = "vb"),
             UpdateAllRow(modId = "c", name = "Gamma", filename = "c.jar", enabled = true, installedVersion = "3", latestVersion = "4", versionId = null),
+            UpdateAllRow(modId = "d", name = "Delta", filename = "d.jar", enabled = true, installedVersion = "1", latestVersion = "2", versionId = "vd", heldUntil = 1.0),
         ),
     )
 
     @Test
-    fun `update all ticks the ones that are on and leaves turned-off ones for the person`() {
+    fun `update all ticks the ones that are on and leaves turned-off and held ones for the person`() {
         assertEquals(setOf("a.jar", "c.jar"), UpdateAll.ticked(plan))
         val body = UpdateAll.body(plan, setOf("c.jar", "b.jar.disabled")).toString()
         assertEquals(
@@ -188,12 +263,119 @@ class ContentTest {
     }
 
     @Test
+    fun `the still fit card reads the agent's answer and changes these as one update all`() {
+        val list = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(
+            ModList.serializer(),
+            """{"mods": [], "server_state": "OFFLINE", "fit": {"about": "Create 6.0", "needs_change": [{"mod_id": "r", "name": "Rails", "filename": "r.jar", "why": "Rails needs Create below 6", "from": "1.0", "to": "2.0", "version_id": "R2"}], "no_fit": [{"mod_id": "g", "name": "Gamma", "filename": "g.jar", "why": "No version for Minecraft 1.21.4 yet"}], "cant_tell": []}}""",
+        )
+        val fit = list.fit!!
+        assertEquals("1 mod needs a different version to go with Create 6.0.", StillFit.lead(strings, fit, plugins = false))
+        assertEquals("Some plugins may not go with Create 6.0.", StillFit.lead(strings, fit.copy(needsChange = emptyList()), plugins = true))
+        val plan = StillFit.plan(fit)
+        assertEquals(setOf("r.jar"), UpdateAll.ticked(plan))
+        assertEquals("""{"mods":[{"filename":"r.jar","version_id":"R2"}]}""", UpdateAll.body(plan, UpdateAll.ticked(plan)).toString())
+        assertEquals("No version for Minecraft 1.21.4 yet", fit.noFit.single().why)
+        assertNull(ModList().fit)
+    }
+
+    @Test
+    fun `the same job card offers turn off on the pick's others, or on each one when there's no pick`() {
+        val list = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(
+            ModList.serializer(),
+            """{"mods": [], "server_state": "OFFLINE", "overlaps": [
+                {"kind": "same_mod", "why": "Sodium is here 2 times.", "keep": "new.jar", "say": "Keep 0.5.2, turn off 0.5.1",
+                 "mods": [{"filename": "old.jar", "mod_id": "sodium", "name": "Sodium", "version": "0.5.1", "turn_off": true, "needed_by": ""},
+                          {"filename": "new.jar", "mod_id": "sodium", "name": "Sodium", "version": "0.5.2", "turn_off": false, "needed_by": ""}]},
+                {"kind": "same_job", "why": "They all draw a web map of the world.", "keep": "", "say": "These do the same job. Keep the one you use.",
+                 "mods": [{"filename": "dynmap.jar", "name": "Dynmap", "version": "3.7", "turn_off": false, "needed_by": "Dynmap Addon"},
+                          {"filename": "squaremap.jar", "name": "squaremap", "version": "1.2", "turn_off": false, "needed_by": ""}]}
+            ]}""",
+        )
+        val (twice, maps) = list.overlaps
+        assertEquals("Keep 0.5.2, turn off 0.5.1", twice.say)
+        assertEquals(listOf("old.jar"), SameJob.turnOff(twice).map { it.filename })
+        assertEquals(listOf("squaremap.jar"), SameJob.turnOff(maps).map { it.filename })
+        assertEquals(emptyList<Overlap>(), ModList().overlaps)
+    }
+
+    @Test
+    fun `server players and both say where the mark came from`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val list = json.decodeFromString(
+            ModList.serializer(),
+            """{"mods": [{"filename": "a.jar", "side": "both", "side_from": "unknown", "loader": "forge"}, {"filename": "b.jar", "side": "server", "side_from": "modrinth"}, {"filename": "p.jar", "side": "server", "side_from": "file", "loader": "paper"}], "server_state": "OFFLINE", "player_only": [{"filename": "map.jar", "name": "Minimap", "kind": "mod", "size_bytes": 10, "changed": true}, {"filename": "f.zip", "missing": true, "site": "modrinth"}], "player_only_options": {"backup": true, "skip_listed": true}, "odd_setups": [{"filename": "a.jar", "text": "Alpha needs Beta."}]}""",
+        )
+        val (a, b, plugin) = list.mods
+        assertEquals("For: Both (not sure, the mod doesn't say)", Sides.words(strings, a))
+        assertEquals("For: Server (from Modrinth)", Sides.words(strings, b))
+        assertEquals(null, Sides.words(strings, plugin))
+        assertEquals(listOf("server", "players"), Sides.picks(a))
+        assertEquals(listOf("players", "both"), Sides.picks(b))
+        assertEquals(emptyList<String>(), Sides.picks(plugin))
+        assertEquals("Minimap", list.playerOnly.first().name)
+        assertEquals(true, list.playerOnly.first().changed)
+        assertEquals(listOf(false, true), list.playerOnly.map { it.missing })
+        assertEquals(PlayerOnlyOptions(backup = true, skipListed = true), list.playerOnlyOptions)
+        assertEquals(PlayerOnlyOptions(), ModList().playerOnlyOptions)
+        assertEquals("Alpha needs Beta.", list.oddSetups.single().text)
+        assertEquals(true, Sides.accepts("Faithful.ZIP"))
+        assertEquals(false, Sides.accepts("pack.mrpack"))
+    }
+
+    @Test
+    fun `the side filter and on all servers`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val mods = listOf(Mod(filename = "a.jar", side = "server"), Mod(filename = "b.jar", side = "both"))
+        assertEquals(listOf("a.jar"), Sides.shown(mods, "server").map { it.filename })
+        assertEquals(2, Sides.shown(mods, "all").size)
+        assertEquals(emptyList<Mod>(), Sides.shown(mods, "players"))
+        val found = json.decodeFromString(
+            ModSides.serializer(),
+            """{"mods": [{"name": "Chunky", "mod_id": "chunky", "side": "server", "servers": [{"id": "s", "name": "Survival", "filename": "c.jar", "side_from": "file"}, {"id": "c", "name": "Creative", "filename": "c.jar", "side_from": "unknown"}]}, {"name": "Minimap", "side": "players", "servers": [{"id": "s", "name": "Survival", "filename": "m.jar", "side_from": null}]}], "not_read": [{"id": "x", "name": "Old", "detail": "Access is denied"}]}""",
+        )
+        val (chunky) = Sides.shown(found, "server")
+        assertEquals("On: Survival, Creative (not sure)", Sides.servers(strings, chunky))
+        assertEquals(listOf("Minimap"), Sides.shown(found, "players").map { it.name })
+        assertEquals("Old", found.notRead.single().name)
+    }
+
+    @Test
+    fun `a linked modpack's card and modpack update's question`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val list = json.decodeFromString(
+            ModList.serializer(),
+            """{"mods": [{"filename": "mine.jar", "added_by_you": true}], "server_state": "OFFLINE", "modpack": {"name": "Test Pack", "site": "Modrinth", "version": "1.2.0", "update": {"version_id": "v2", "version": "1.3.0"}, "added_by_you": 1}}""",
+        )
+        val pack = list.modpack!!
+        assertEquals(
+            listOf("Made from Test Pack 1.2.0 on Modrinth.", "Version 1.3.0 is out.", "1 mod was added by you. Modpack update keeps it."),
+            LinkedPacks.lines(strings, pack),
+        )
+        assertEquals("A new version is out.", LinkedPacks.lines(strings, pack.copy(update = LinkedModpackUpdate("cf:1-2"), addedByYou = 0))[1])
+        assertEquals(true, list.mods.single().addedByYou)
+        val preview = json.decodeFromString(
+            ModpackUpdatePreview.serializer(),
+            """{"token": "t", "pack": {"name": "Test Pack", "type_name": "Fabric"}, "changes": {"to_version": "1.3.0", "added": ["ferrite.jar"], "removed": [], "newer": [{"name": "l2.jar", "from": "l.jar", "to": "l2.jar"}], "added_by_you": ["mine.jar"], "configs_changed_by_you": [], "version_change": true, "minecraft_version": "1.21.1", "problems": []}}""",
+        )
+        assertEquals(
+            listOf("Newer: l.jar → l2.jar", "Added: ferrite.jar", "Kept, added by you: mine.jar"),
+            LinkedPacks.changes(strings, preview.changes),
+        )
+        assertEquals("The server is set up as Fabric 1.21.1 first.", LinkedPacks.steps(strings, preview).last())
+        assertNull(ModList().modpack)
+    }
+
+    @Test
     fun `update all says why it can't start and what it did`() {
         assertEquals(strings.t("mobile.content.stop_first"), UpdateAll.blocked(strings, plan.copy(serverRunning = true)))
         assertEquals("Wait for Backing up to finish first.", UpdateAll.blocked(strings, plan.copy(blockedBy = "Backing up")))
         assertNull(UpdateAll.blocked(strings, plan))
         val done = UpdateAllResult(updated = listOf(UpdateAllDone("Alpha", "1.0", "2.0")), safetyBackup = SafetyBackup(4, "before-update-all.zip"))
         assertEquals("Updated 1. The backup made first is before-update-all.zip.", UpdateAll.done(strings, done))
+        assertEquals(
+            "Updated 1. The backup made first is before-update-all.zip.\nDelta came out too recently, so Update all left them for now. Press Update now on one to update it anyway.",
+            UpdateAll.done(strings, done.copy(held = listOf("Delta"))),
+        )
         val running = Job(id = "j", kind = "mods", state = "running", step = "Updating Alpha (1 of 2)", serverId = "s")
         assertEquals("Updating Alpha (1 of 2)", UpdateAll.progress(running, "s"))
         assertNull(UpdateAll.progress(running, "other"))
@@ -214,6 +396,31 @@ class ContentTest {
         assertEquals(4, Modpacks.steps(strings, inspected.copy(into = ModpackInto(false))).size)
         assertEquals("pack.status_client", Modpacks.fileStatus(ModpackFile(status = "client_only")).key)
         assertEquals(Tone.DANGER, Modpacks.fileStatus(ModpackFile(status = "refused")).tone)
+    }
+
+    @Test
+    fun `a found modpack says its site, loader, version, downloads and what it holds`() = runBlocking {
+        val hit = ModrinthHit(
+            projectId = "xyz", title = "Pack", downloads = 1234, sourceName = "Modrinth",
+            loaders = listOf("Fabric"), minecraftVersion = "1.21.10", serverSide = "unsupported",
+            disclosures = listOf("Shows ads"),
+        )
+        assertEquals(
+            "Modrinth  ·  Fabric 1.21.10  ·  1,234 downloads  ·  Made for players' games, not servers  ·  Shows ads",
+            Modpacks.about(strings, hit),
+        )
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"hits": [{"project_id": "curseforge:9", "slug": "curseforge:9", "title": "Cozy", "source": "curseforge", "source_name": "CurseForge", "loaders": ["Forge"]}], "total": 1, "problems": ["Modrinth isn't available right now."]}"""))
+            val found = c.searchModpacks("cozy pack")
+            assertEquals("Modrinth isn't available right now.", found.problems.single())
+            assertEquals("/api/modpacks/search?q=cozy%20pack&limit=20", agent.server.takeRequest().path)
+            agent.server.enqueue(agent.json("""{"token": "t", "pack": {"name": "Cozy", "can_import": true}}"""))
+            assertEquals("Cozy", c.fetchModpack(found.hits.single(), null).pack.name)
+            val sent = agent.server.takeRequest()
+            assertEquals("/api/modpacks/curseforge", sent.path)
+            assertEquals("""{"project":"curseforge:9","server_id":""}""", sent.body.readUtf8())
+        }
     }
 
     // ------------------------------------------------------------ game settings
@@ -406,8 +613,16 @@ class ContentTest {
     fun `a file picked on the phone is sent as an upload form`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)
+            agent.server.enqueue(agent.json("""{"detail": "Some values can't be used.", "problems": {"confirm": "No site lists this file.", "sha512": "abc"}}""", code = 400))
+            val e = assertThrows(AgentException.Failed::class.java) {
+                runBlocking { c.uploadMod("s", PickedFile.of("e.jar", byteArrayOf(80, 75, 3, 4))) }
+            }
+            assertEquals("No site lists this file.", e.problems["confirm"])
+            assertEquals("abc", e.problems["sha512"])
+            assertEquals("/api/servers/s/mods/upload?confirm=false", agent.server.takeRequest().path)
+
             agent.server.enqueue(agent.json("""{"ok": true, "installed": {"filename": "e.jar", "name": "Epsilon", "version": "3.0"}}"""))
-            assertEquals("Epsilon", c.uploadMod("s", PickedFile.of("e.jar", byteArrayOf(80, 75, 3, 4))).installed?.name)
+            assertEquals("Epsilon", c.uploadMod("s", PickedFile.of("e.jar", byteArrayOf(80, 75, 3, 4)), confirm = true).installed?.name)
             val sent = agent.server.takeRequest()
             assertEquals("/api/servers/s/mods/upload?confirm=true", sent.path)
             assertTrue(sent.getHeader("Content-Type")!!.startsWith("multipart/form-data"))
@@ -420,7 +635,229 @@ class ContentTest {
             assertEquals("/api/modpacks/inspect?server_id=s", agent.server.takeRequest().path)
             agent.server.enqueue(agent.json("""{"ok": true, "job_id": "j", "modpack": {"name": "Pack"}, "version_change": false, "undo": null}"""))
             assertEquals("Pack", c.importModpack("s", "tok").modpack.name)
-            assertEquals("""{"token":"tok","confirm":true}""", agent.server.takeRequest().body.readUtf8())
+            assertEquals("""{"token":"tok","confirm":true,"own_jars":false}""", agent.server.takeRequest().body.readUtf8())
+            agent.server.enqueue(agent.json("""{"ok": true, "job_id": "j", "modpack": {"name": "Pack"}, "version_change": false, "undo": null}"""))
+            c.importModpack("s", "tok", ownJars = true)
+            assertEquals("""{"token":"tok","confirm":true,"own_jars":true}""", agent.server.takeRequest().body.readUtf8())
+        }
+    }
+
+    @Test
+    fun `another owner's modpack lists its own jars and the plugins to get`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val pack = json.decodeFromString(
+            Modpack.serializer(),
+            """{"name": "P", "own_jars": ["mods/a.jar"], "plugins_to_get": ["EssentialsX"], "can_import": true}""",
+        )
+        val notes = Modpacks.notes(strings, pack)
+        assertEquals("Get these plugins yourself: EssentialsX", notes[0])
+        assertTrue(notes[1], notes[1].startsWith("Not checked by a site: mods/a.jar."))
+        assertEquals(emptyList<String>(), Modpacks.notes(strings, Modpack()))
+        val changes = json.decodeFromString(ModpackChanges.serializer(), """{"new_own_jars": ["mods/a.jar"]}""")
+        assertTrue(LinkedPacks.changes(strings, changes).single().startsWith("Not checked by a site"))
+    }
+
+    @Test
+    fun `make a modpack sends the answers, then downloads it and posts it in discord`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"name": "Friends", "version": "2", "configs": [{"path": "config/a.toml", "size_bytes": 9}], "players_loaders": [{"id": "fabric", "name": "Fabric"}], "discord": true, "discord_limit_bytes": 10485760, "required_to_join": {"available": false, "needs_fabric": true}}"""))
+            val options = c.makeModpackOptions("s")
+            assertEquals("config/a.toml", options.configs.single().path)
+            assertEquals(false, options.requiredToJoin.available)
+            assertEquals(true, options.requiredToJoin.needsFabric)
+            assertEquals(true, options.chatLine.on)
+            assertEquals("/api/servers/s/modpack/make", agent.server.takeRequest().path)
+
+            agent.server.enqueue(agent.json("""{"ok": true, "token": "t1", "filename": "Friends 2.mrpack", "files": 3, "size_bytes": 2048, "own_files": ["overrides/mods/x.jar"], "trust_note": "Only share it with people you trust.", "get_yourself": [{"name": "Secret Mod", "page": null}], "plugins_to_get": [], "left_out": ["Ledger"], "discord": true}"""))
+            val made = c.makeModpack("s", MakeModpack("Friends", "2", configs = listOf("config/a.toml")))
+            val sent = agent.server.takeRequest()
+            assertEquals("POST", sent.method)
+            assertEquals(
+                """{"name":"Friends","version":"2","leave_out_server_only":true,"configs":["config/a.toml"],"players_loader":"fabric","required":false}""",
+                sent.body.readUtf8(),
+            )
+            val lines = MadeModpacks.lines(strings, made)
+            assertTrue(lines[0], lines[0].startsWith("Friends 2.mrpack is ready"))
+            assertTrue(lines[1], lines[1].contains("people you trust"))
+            assertTrue(lines.any { it.endsWith("Secret Mod") })
+            assertTrue(lines.any { it.endsWith("Ledger") })
+
+            agent.server.enqueue(MockResponse().setHeader("Content-Type", "application/zip").setBody("PK modpack"))
+            val out = java.io.ByteArrayOutputStream()
+            c.downloadModpack("s", made, out)
+            assertEquals("/api/servers/s/modpack/made/t1", agent.server.takeRequest().path)
+            assertEquals("PK modpack", out.toString())
+
+            agent.server.enqueue(agent.json("""{"ok": true, "posted": 1}"""))
+            assertEquals(1, c.postModpack("s", "t1").posted)
+            val posted = agent.server.takeRequest()
+            assertEquals("/api/servers/s/modpack/made/discord", posted.path)
+            assertEquals("""{"token":"t1"}""", posted.body.readUtf8())
+        }
+    }
+
+    @Test
+    fun `a required modpack and its chat line are sent when the companion is on the server`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"name": "Friends", "version": "2", "configs": [], "players_loaders": [], "discord": false, "discord_limit_bytes": 1, "required_to_join": {"available": true, "on": true}, "chat_line": {"on": false, "text": "Get {name}"}}"""))
+            val options = c.makeModpackOptions("s")
+            assertEquals(RequiredToJoin(available = true, on = true), options.requiredToJoin)
+            assertEquals(ChatLine(on = false, text = "Get {name}"), options.chatLine)
+            agent.server.takeRequest()
+
+            agent.server.enqueue(agent.json("""{"ok": true, "token": "t1", "filename": "Friends 2.mrpack", "files": 1, "size_bytes": 1}"""))
+            c.makeModpack("s", MakeModpack("Friends", "2", required = true, chatLine = ChatLine(false, "Get {name}")))
+            val sent = agent.server.takeRequest().body.readUtf8()
+            assertTrue(sent, sent.endsWith(""""required":true,"chat_line":{"on":false,"text":"Get {name}"}}"""))
+        }
+    }
+
+    @Test
+    fun `the title screen is read, sent with the modpack and its picture uploaded`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            val options = """{"name": "Friends", "version": "2", "required_to_join": {"available": true, "on": false}, "title_screen": {"button": {"on": true, "address": "play.example.net"}, "flavor_text": {"on": false, "text": ""}, "background": {"on": false}, "background_set": true}}"""
+            agent.server.enqueue(agent.json(options))
+            val got = c.makeModpackOptions("s").titleScreen
+            assertEquals(TitleButton(true, "play.example.net"), got.button)
+            assertTrue(got.backgroundSet)
+            agent.server.takeRequest()
+
+            agent.server.enqueue(agent.json(options))
+            c.uploadTitleBackground("s", PickedFile("sky.png", 2) { "PN".byteInputStream() })
+            assertEquals("/api/servers/s/modpack/title-background", agent.server.takeRequest().path)
+
+            agent.server.enqueue(agent.json("""{"ok": true, "token": "t1", "filename": "Friends 2.mrpack", "files": 1, "size_bytes": 1}"""))
+            val screen = TitleScreen(TitleButton(true, "play.example.net"), FlavorText(true, "Dragons!"), OnOff(true))
+            c.makeModpack("s", MakeModpack("Friends", "2", titleScreen = screen))
+            val sent = agent.server.takeRequest().body.readUtf8()
+            assertTrue(sent, sent.endsWith(""""title_screen":{"button":{"on":true,"address":"play.example.net"},"flavor_text":{"on":true,"text":"Dragons!"},"background":{"on":true}}}"""))
+        }
+    }
+
+    @Test
+    fun `the download link turns on and the resource pack is sent, set by link and removed`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"on": false, "why_not": null, "listening": false, "modpack_url": null, "speed_cap_bytes": 4194304, "resource_pack": null, "max_pack_bytes": 262144000}"""))
+            val off = c.downloadLink("s")
+            assertEquals("/api/servers/s/download-link", agent.server.takeRequest().path)
+            assertEquals(listOf("No resource pack."), DownloadLinks.packLines(strings, off))
+            assertTrue(DownloadLinks.lines(strings, off, owner = false).single().contains("owner"))
+
+            val on = """{"on": true, "listening": true, "modpack_url": "http://100.64.0.1:25590/abc/modpack.mrpack", "speed_cap_bytes": 4194304, "resource_pack": {"source": "file", "filename": "Textures.zip", "url": "http://100.64.0.1:25590/abc/resource-pack.zip", "sha1": "aa", "size_bytes": 2048, "required": true, "served": true}, "max_pack_bytes": 262144000, "restart_needed": true}"""
+            agent.server.enqueue(agent.json(on))
+            val link = c.setDownloadLink("s", true)
+            val switched = agent.server.takeRequest()
+            assertEquals("POST", switched.method)
+            assertEquals("""{"on":true}""", switched.body.readUtf8())
+            val lines = DownloadLinks.lines(strings, link, owner = true)
+            assertTrue(lines[0], lines[0].endsWith("/abc/modpack.mrpack"))
+            val pack = DownloadLinks.packLines(strings, link)
+            assertTrue(pack[0], pack[0].startsWith("Textures.zip") && pack[0].contains("served by the download link"))
+            assertTrue(pack.last().startsWith("Restart the server"))
+
+            agent.server.enqueue(agent.json(on))
+            c.uploadResourcePack("s", PickedFile("Textures.zip", 2) { "PK".byteInputStream() }, required = true)
+            val sent = agent.server.takeRequest()
+            assertEquals("/api/servers/s/resource-pack/upload?required=true", sent.path)
+            assertTrue(sent.body.readUtf8().contains("Textures.zip"))
+
+            agent.server.enqueue(agent.json(on))
+            c.setResourcePackLink("s", "https://packs.example.com/t.zip", "", false)
+            assertEquals("""{"url":"https://packs.example.com/t.zip","sha1":"","required":false}""", agent.server.takeRequest().body.readUtf8())
+
+            agent.server.enqueue(agent.json(on))
+            c.setResourcePackRequired("s", false)
+            assertEquals("""{"required":false}""", agent.server.takeRequest().body.readUtf8())
+
+            agent.server.enqueue(agent.json("""{"on": true, "listening": true, "speed_cap_bytes": 1, "max_pack_bytes": 1}"""))
+            assertEquals(null, c.removeResourcePack("s").resourcePack)
+            val removed = agent.server.takeRequest()
+            assertEquals("DELETE", removed.method)
+            assertEquals("/api/servers/s/resource-pack", removed.path)
+
+            agent.server.enqueue(agent.json(on))
+            c.newDownloadLink("s")
+            assertEquals("/api/servers/s/download-link/new", agent.server.takeRequest().path)
+        }
+    }
+
+    @Test
+    fun `sign in with Modrinth comes back as mcsc link and the modpack goes up`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"url": "https://modrinth.com/auth/authorize?state=s1"}"""))
+            assertEquals("https://modrinth.com/auth/authorize?state=s1", c.modrinthSignIn().url)
+            val started = agent.server.takeRequest()
+            assertEquals("/api/modrinth/sign-in", started.path)
+            assertEquals("""{"return_to":"phone"}""", started.body.readUtf8())
+
+            assertEquals("abc" to "x.1.phone.y", ModrinthCards.cameBack("mcsc://modrinth?state=x.1.phone.y&code=abc"))
+            assertEquals(null, ModrinthCards.cameBack("mcsc://modrinth?state=x.1.phone.y&error=access_denied"))
+            assertEquals(null, ModrinthCards.cameBack("mcsc://server/abc?code=1&state=2"))
+            assertEquals(null, ModrinthCards.cameBack("https://modrinth?code=1&state=2"))
+
+            agent.server.enqueue(agent.json("""{"available": true, "signed_in": true, "username": "mark", "ran_out": false}"""))
+            assertTrue(c.modrinthFinish("abc", "x.1.phone.y").signedIn)
+            assertEquals("""{"code":"abc","state":"x.1.phone.y"}""", agent.server.takeRequest().body.readUtf8())
+
+            val card = """{"account": {"available": true, "signed_in": true, "username": "mark", "ran_out": false}, "made": {"name": "Friends", "version": "2"}, "project": {"id": "p1", "slug": "friends", "title": "Friends", "url": "https://modrinth.com/modpack/friends"}, "uploads": [{"version_id": "v2", "version": "2", "at": 1.0}], "own_jars": [{"path": "mods/a.jar", "name": "A", "side": "both", "slug": "a", "url": "https://modrinth.com/mod/a"}], "server_project": {"id": "s", "slug": "s", "url": "https://modrinth.com/server/s"}, "older": {"listed": "1", "newest": "2"}, "address": "play.example.org"}"""
+            agent.server.enqueue(agent.json(card))
+            val share = c.modrinthUpload("s", "friends", "Our pack")
+            assertEquals("/api/servers/s/modrinth/upload", agent.server.takeRequest().path)
+            val lines = ModrinthCards.lines(strings, share, owner = true)
+            assertEquals("Signed in to Modrinth as mark.", lines[0])
+            assertTrue(lines[1], lines[1].contains("https://modrinth.com/modpack/friends"))
+            assertTrue(lines.last().contains("https://modrinth.com/mod/a"))
+            val server = ModrinthCards.serverLines(strings, share)
+            assertTrue(server[1], server[1].contains("version 1"))
+            assertTrue(ModrinthCards.steps(strings, share).contains("play.example.org"))
+            assertEquals("our-friends-pack", ModrinthCards.slug("Our Friends' Pack!"))
+
+            agent.server.enqueue(agent.json(card))
+            c.modrinthOwnJar("s", "mods/a.jar", "a", "A mod")
+            assertEquals("""{"path":"mods/a.jar","slug":"a","summary":"A mod"}""", agent.server.takeRequest().body.readUtf8())
+            agent.server.enqueue(agent.json(card))
+            c.modrinthServerProject("s", "")
+            assertEquals("/api/servers/s/modrinth/server-project", agent.server.takeRequest().path)
+        }
+    }
+
+    @Test
+    fun `far view lists what each choice adds and says why one can't`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"supported": true, "choice": "off", "choices": [{"id": "distanthorizons", "name": "Distant Horizons", "available": true, "server": ["Distant Horizons"], "players": []}, {"id": "voxy", "name": "Voxy", "available": false, "why": "Voxy has nothing for NeoForge on Minecraft 1.21.4 yet.", "server": [], "players": []}], "unvisited": false, "load_ahead": {"on": false, "radius": 2000, "world": "", "chunky": false, "running": false, "night": "1:00-6:00", "main_world": "world"}, "may_change": true}"""))
+            val card = c.farView("s")
+            assertEquals("/api/servers/s/far-view", agent.server.takeRequest().path)
+            assertEquals("Far view is off.", FarViews.status(strings, card))
+            assertEquals("The server gets: Distant Horizons", FarViews.lines(strings, card.choices[0], card.choice)[1])
+            assertEquals("Voxy has nothing for NeoForge on Minecraft 1.21.4 yet.", FarViews.lines(strings, card.choices[1], card.choice)[1])
+            assertEquals("1:00-6:00", card.loadAhead.night)
+            agent.server.enqueue(agent.json("""{"ok": true, "choice": "voxy", "removed": [], "added": ["voxy.jar"]}"""))
+            assertEquals(listOf("voxy.jar"), c.chooseFarView("s", "voxy").added)
+            val sent = agent.server.takeRequest()
+            assertEquals("/api/servers/s/far-view", sent.path)
+            assertEquals("""{"choice":"voxy"}""", sent.body.readUtf8())
+        }
+    }
+
+    @Test
+    fun `the anti-cheat picker never shows a guessed price and warns about two`() = runBlocking {
+        TestAgent().use { agent ->
+            val c = client(agent)
+            agent.server.enqueue(agent.json("""{"supported": true, "installed": ["Grim", "Vulcan"], "free": [{"id": "grim", "name": "Grim", "project": "grimac", "on": true, "warning": true}], "paid": [{"id": "vulcan", "name": "Vulcan", "on": true, "link": "https://www.spigotmc.org/resources/83626/", "setup": null, "price": null}, {"id": "polar", "name": "Polar", "on": false, "link": "https://polar.top", "setup": "https://docs.polar.top/getting-started.html", "price": "19.99 USD", "checked": "14 November 2026"}], "may_install": true, "may_add_own_jar": false}"""))
+            val picker = c.antiCheat("s")
+            assertEquals("/api/servers/s/anticheat", agent.server.takeRequest().path)
+            assertTrue(AntiCheats.status(strings, picker).startsWith("Two anti-cheats are in: Grim, Vulcan."))
+            val grim = AntiCheats.free(strings, picker.free[0])
+            assertTrue(grim.any { it.contains("Try it with a friend first") })
+            assertEquals("Price: see the seller's page.", AntiCheats.paid(strings, picker.paid[0])[1])
+            assertEquals("Price: 19.99 USD (checked 14 November 2026).", AntiCheats.paid(strings, picker.paid[1])[1])
+            assertEquals("No anti-cheat runs on this server type.", AntiCheats.status(strings, AntiCheat()))
         }
     }
 
@@ -428,9 +865,10 @@ class ContentTest {
     fun `bedrock packs and game settings are read and saved`() = runBlocking {
         TestAgent().use { agent ->
             val c = client(agent)
-            agent.server.enqueue(agent.json("""{"addons": [{"uuid": "u1", "version": "1.0.0", "name": "Skins", "description": null, "kind": "resource", "folder": "resource_packs/skins", "enabled": true}], "world": "Bedrock level", "running": true, "restart_needed": true}"""))
+            agent.server.enqueue(agent.json("""{"addons": [{"uuid": "u1", "version": "1.0.0", "name": "Skins", "description": null, "kind": "resource", "folder": "resource_packs/skins", "enabled": true}], "world": "Bedrock level", "required": true, "running": true, "restart_needed": true}"""))
             val packs = c.addons("s")
             assertEquals("Bedrock level", packs.world)
+            assertEquals(true, packs.required)
             assertEquals("addons.kind_resource", Content.packKind(packs.addons.single()))
             agent.server.takeRequest()
             agent.server.enqueue(agent.json("""{"ok": true, "installed": [], "restart_needed": true}"""))
@@ -438,6 +876,11 @@ class ContentTest {
             val toggled = agent.server.takeRequest()
             assertEquals("PUT", toggled.method)
             assertEquals("""{"enabled":false}""", toggled.body.readUtf8())
+            agent.server.enqueue(agent.json("""{"ok": true, "required": false, "undo": null, "running": true, "restart_needed": true}"""))
+            assertEquals(true, c.setAddonsRequired("s", required = false).restartNeeded)
+            val required = agent.server.takeRequest()
+            assertEquals("/api/servers/s/addons/required", required.path)
+            assertEquals("""{"required":false}""", required.body.readUtf8())
 
             agent.server.enqueue(agent.json("""{"file": "C:\\s\\server.properties", "exists": true, "modified_at": 1.0, "world_exists": true, "world_folder": "world", "fields": [{"key": "max-players", "kind": "int", "value": 20, "raw": "20", "set": true, "problem": null, "minecraft_default": "20", "choices": [], "min": 1, "max": 10000, "max_length": 200, "read_only": null}], "text": "", "running": false, "restart_needed": false}"""))
             assertEquals("20", GameForm.initial(c.gameSettings("s").fields.single()))

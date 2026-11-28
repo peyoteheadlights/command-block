@@ -39,12 +39,8 @@ final class AppModel {
     @ObservationIgnored private var watchers: [String] = []
     private var watching: String? = nil
     @ObservationIgnored private var pagesById: [String: ServerPages] = [:]
-    /// The "+" on All servers, kept while the app runs so setting up shows its progress again.
-    @ObservationIgnored private(set) lazy var adding = AddServerPages(
-        client: { [weak self] in self?.client },
-        noted: { [weak self] problem in self?.note(problem) },
-        listChanged: { [weak self] in await self?.refreshServers() }
-    )
+    /// The "+" on All servers, kept while signed in so setting up shows its progress again.
+    @ObservationIgnored private(set) lazy var adding = makeAddingPages()
 
     /// Settings > Moderators (owner only).
     @ObservationIgnored private(set) lazy var moderators = makeModeratorPages()
@@ -54,9 +50,19 @@ final class AppModel {
     @ObservationIgnored private(set) lazy var pcSettings = makePcPages()
     /// Settings > Discord bot (owner only).
     @ObservationIgnored private(set) lazy var discord = makeDiscordPages()
+    /// Rented servers on a host's panel (All servers).
+    @ObservationIgnored private(set) lazy var rented = makeRentedPages()
 
     // The pages of the signed-in account, made again when it signs out so
     // nothing of one PC or account shows on the next.
+    private func makeAddingPages() -> AddServerPages {
+        AddServerPages(
+            client: { [weak self] in self?.client },
+            noted: { [weak self] problem in self?.note(problem) },
+            listChanged: { [weak self] in await self?.refreshServers() }
+        )
+    }
+
     private func makeModeratorPages() -> ModeratorPages {
         ModeratorPages(client: { [weak self] in self?.client }, noted: { [weak self] problem in self?.note(problem) }, strings: strings)
     }
@@ -71,6 +77,10 @@ final class AppModel {
 
     private func makeDiscordPages() -> DiscordPages {
         DiscordPages(client: { [weak self] in self?.client }, noted: { [weak self] problem in self?.note(problem) }, strings: strings)
+    }
+
+    private func makeRentedPages() -> RentedPages {
+        RentedPages(client: { [weak self] in self?.client }, noted: { [weak self] problem in self?.note(problem) }, strings: strings)
     }
 
     // Settings.
@@ -91,6 +101,8 @@ final class AppModel {
     var inviteOverSignIn = false
     /// The signed-in account, from /auth/me.
     private var account: Me? = nil
+    /// Warnings and tips this account hid with "Don't show again", from /auth/me.
+    private(set) var hidden: Set<String> = []
     /// The account on the server whose screen is open: what it may do there.
     var me: Me? { account?.forServer(watching) }
     var agentVersion: String?
@@ -102,6 +114,8 @@ final class AppModel {
     var serversFresh = false
     var serversCheckedAt: Double? = nil
     var serversProblem: AgentError? = nil
+    /// What Start all, Stop all or a move just did, in words.
+    var serversSaid: [String] = []
     var alertState: AlertState
     var live = false
     /// Lock-screen alerts on for this sign-in, and what went wrong turning them on.
@@ -120,6 +134,8 @@ final class AppModel {
 
     // Navigation.
     var tab: AppTab = .servers
+    /// mcsc://modrinth?..., the browser coming back from Sign in with Modrinth.
+    var modrinthReturn: URL? = nil
     var serversPath: [ServerRoute] = []
 
     init() {
@@ -288,11 +304,26 @@ final class AppModel {
         startLive()
     }
 
+    /// "Don't show again": hidden here at once, and on the agent for every device.
+    func hide(_ key: String) {
+        hidden.insert(key)
+        guard let client = client else { return }
+        Task { _ = try? await client.hide(key) }
+    }
+
+    /// "Show all warnings again"; true when the agent took it.
+    func showAllAgain() async -> Bool {
+        guard let client = client, (try? await client.showAllAgain()) != nil else { return false }
+        hidden = []
+        return true
+    }
+
     func loadAccount() async {
         guard let client = client, signedIn else { return }
         do {
             let found = try await client.me()
             account = found
+            hidden = Set(found.hidden)
             alertState = alertState.onlyFor(found)
             store.alertState = alertState
             await keepWake(client, found)
@@ -308,11 +339,14 @@ final class AppModel {
     /// Sign out here and on the PC.
     func signOut() async {
         stopLive()
+        var heard = true
         if let client = client, signedIn {
-            await client.logout()
+            heard = await client.logout()
         }
         TokenStore.delete()
         clearSignedIn()
+        // The PC still has this phone signed in: say where to end it.
+        if !heard { signInNotice = t("mobile.settings.sign_out_not_heard") }
     }
 
     /// Forget this PC: sign out, then forget the address, the pinned
@@ -378,10 +412,12 @@ final class AppModel {
         waking = false
         wakeFailed = false
         pcSettings.stop()
+        adding = makeAddingPages()
         moderators = makeModeratorPages()
         yourAccount = makeAccountPages()
         pcSettings = makePcPages()
         discord = makeDiscordPages()
+        rented = makeRentedPages()
         startAnswers = [:]
     }
 
@@ -420,6 +456,47 @@ final class AppModel {
         WidgetCenter.shared.reloadAllTimelines()
     }
 
+    /// Start all or Stop all for `ids`, the servers shown.
+    func allServers(_ action: String, ids: [String]) async {
+        guard let client = client, signedIn else { return }
+        serversSaid = []
+        do {
+            let rows = try await client.allServers(action: action, ids: ids).servers
+            let done = rows.filter { ["started", "stopped", "stopping"].contains($0.result) }.count
+            serversSaid = [done > 0 ? t("servers.all_done_\(action)", ["n": done]) : t("servers.all_none_\(action)")]
+                + rows.filter { $0.result == "failed" }.map {
+                    t("servers.all_failed", ["name": $0.name, "reason": $0.detail ?? ""])
+                }
+        } catch let problem as AgentError {
+            note(problem)
+            serversSaid = [problem.message(strings)]
+        } catch {}
+        await refreshServers()
+    }
+
+    /// Moves `id` one place up or down among `shown` (its group's servers).
+    func moveServer(_ id: String, shown: [String], up: Bool) async {
+        guard let order = ServerListing.moved(order: servers.map(\.id), shown: shown, id: id, up: up) else { return }
+        await arrangeServers { try await $0.saveServerOrder(ids: order) }
+    }
+
+    func groupServer(_ id: String, group: String) async {
+        let name = group.trimmingCharacters(in: .whitespaces)
+        await arrangeServers { try await $0.saveServerGroup(serverId: id, group: name) }
+    }
+
+    private func arrangeServers(_ call: (AgentClient) async throws -> Void) async {
+        guard let client = client, signedIn else { return }
+        do {
+            try await call(client)
+            serversSaid = []
+        } catch let problem as AgentError {
+            note(problem)
+            serversSaid = [problem.message(strings)]
+        } catch {}
+        await refreshServers()
+    }
+
     func syncAlerts() async {
         guard let client = client, signedIn else { return }
         let sync = AlertSync { after, limit in
@@ -427,7 +504,8 @@ final class AppModel {
         }
         do {
             let caughtUp = try await sync.catchUp(alertState)
-            let next = account.map(caughtUp.onlyFor) ?? caughtUp
+            // A Mark all read tapped while this read waited is kept.
+            let next = (account.map(caughtUp.onlyFor) ?? caughtUp).keepingMarks(alertState)
             alertState = next
             store.alertState = next
         } catch let problem as AgentError {
@@ -492,6 +570,8 @@ final class AppModel {
             switch action {
             case "start": return t("mobile.server.done_start")
             case "stop": return t("mobile.server.done_stop")
+            case "restart-when-empty", "cancel-restart-when-empty": return t("mobile.server.done_\(action.replacingOccurrences(of: "-", with: "_"))")
+            case "force_stop": return t("mobile.server.done_force_stop")
             default: return t("mobile.server.done_restart")
             }
         } catch let problem as AgentError {
@@ -551,52 +631,66 @@ final class AppModel {
     func startLive() {
         guard let client = client, signedIn, !locked else { return }
         liveTask?.cancel()
-        let feed = LiveFeed(client: client, token: { TokenStore.read() })
-        self.feed = feed
-        let watched = watching
         liveTask = Task { [weak self] in
-            for await signal in feed.connect(serverId: watched) {
-                guard let self = self else { return }
-                switch signal {
-                case .ready:
-                    self.live = true
-                case .changed(let serverId, let type):
-                    self.scheduleRefresh()
-                    self.changed(serverId, type)
-                case .activity(let row):
-                    for pages in self.pagesById.values {
-                        pages.onEvent(row)
-                    }
-                case .console(let serverId, let line):
-                    if let serverId = serverId {
-                        self.pagesById[serverId]?.onConsoleLine(line)
-                    }
-                case .chat(let serverId, let message):
-                    if let serverId = serverId {
-                        self.pagesById[serverId]?.onChat(message)
-                    }
-                case .consoleTail(let serverId, let lines):
-                    self.pagesById[serverId]?.onConsoleTail(lines)
-                case .task(let serverId, let job):
-                    self.adding.onTask(job)
-                    if let serverId = serverId {
-                        self.pagesById[serverId]?.content.onTask(job)
-                        self.pagesById[serverId]?.world.onTask(job)
-                        self.pagesById[serverId]?.setup.onTask(job)
-                    }
-                case .closed:
-                    self.live = false
-                    // Ask who this is: a 401 there signs the app out.
-                    await self.loadAccount()
-                case .lost(let problem):
-                    self.live = false
-                    self.note(problem)
-                case .signedOut:
-                    self.live = false
-                    self.signedOutByPC()
-                }
+            // A dropped feed (the PC restarted after an update, Wi-Fi changed)
+            // connects again by itself, waiting longer each time, as on Android.
+            var wait: UInt64 = 2
+            while !Task.isCancelled {
+                guard let self = self, self.signedIn, !self.locked else { return }
+                let feed = LiveFeed(client: client, token: { TokenStore.read() })
+                self.feed = feed
+                await self.listen(feed, watched: self.watching, wait: &wait)
+                if Task.isCancelled { return }
+                self.live = false
+                try? await Task.sleep(nanoseconds: wait * 1_000_000_000)
+                wait = min(wait * 2, 30)
             }
-            self?.live = false
+        }
+    }
+
+    /// One connection of the live feed, until it ends.
+    private func listen(_ feed: LiveFeed, watched: String?, wait: inout UInt64) async {
+        for await signal in feed.connect(serverId: watched) {
+            if Task.isCancelled { return }
+            switch signal {
+            case .ready:
+                self.live = true
+                wait = 2
+            case .changed(let serverId, let type):
+                self.scheduleRefresh()
+                self.changed(serverId, type)
+            case .activity(let row):
+                for pages in self.pagesById.values {
+                    pages.onEvent(row)
+                }
+            case .console(let serverId, let line):
+                if let serverId = serverId {
+                    self.pagesById[serverId]?.onConsoleLine(line)
+                }
+            case .chat(let serverId, let message):
+                if let serverId = serverId {
+                    self.pagesById[serverId]?.onChat(message)
+                }
+            case .consoleTail(let serverId, let lines):
+                self.pagesById[serverId]?.onConsoleTail(lines)
+            case .task(let serverId, let job):
+                self.adding.onTask(job)
+                if let serverId = serverId {
+                    self.pagesById[serverId]?.content.onTask(job)
+                    self.pagesById[serverId]?.world.onTask(job)
+                    self.pagesById[serverId]?.setup.onTask(job)
+                }
+            case .closed:
+                self.live = false
+                // Ask who this is: a 401 there signs the app out.
+                await self.loadAccount()
+            case .lost(let problem):
+                self.live = false
+                self.note(problem)
+            case .signedOut:
+                self.live = false
+                self.signedOutByPC()
+            }
         }
     }
 
@@ -651,6 +745,11 @@ final class AppModel {
         case "discord_link_request", "whitelist_form", "new_address":
             if pages.links != nil || pages.whitelist != nil {
                 Task { await pages.loadCommunity() }
+            }
+        // The Still fit? check finished a few seconds after the change.
+        case "mod_fit":
+            if pages.content.mods.value != nil {
+                Task { await pages.content.loadMods() }
             }
         case "quest_claim", "quest_suggested", "event_attendance":
             if pages.quests.page.value != nil {
@@ -850,6 +949,10 @@ final class AppModel {
 
     func open(_ url: URL) {
         guard url.scheme?.lowercased() == DeepLink.scheme else { return }
+        if url.host == "modrinth" { // Sign in with Modrinth coming back: the Mods screen finishes it
+            modrinthReturn = url
+            return
+        }
         tab = .servers
         if let id = DeepLink.serverId(from: url) {
             serversPath = [.server(id)]

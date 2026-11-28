@@ -177,6 +177,7 @@ def every_line():
             home=True,
             router=True,
             spam={"on": True, "names": 5, "seconds": 60},
+            anticheat=["Grim", "Vulcan"],
         ),
         facts(
             props={"online-mode": "false", "white-list": "true"},
@@ -188,8 +189,23 @@ def every_line():
             paper=paper_on,
             minecraft="1.12.2",
             jvm_args=[protection.log4j_flag(protection.log4j_row("1.12.2"))],
+            anticheat=["Grim"],
         ),
-        facts(props={"online-mode": "false", "white-list": "true"}, plugins=True, paper={}),
+        facts(
+            props={"online-mode": "false", "white-list": "true"},
+            plugins=True,
+            paper={},
+            anticheat=[],
+        ),
+        *(
+            facts(windows_user={"on": on, "ok": ok, "running_as": running_as})
+            for on, ok, running_as in [
+                (False, True, None),
+                (True, True, True),
+                (True, True, False),
+                (True, False, None),
+            ]
+        ),
     ]
     return [line for case in cases for line in lines(case)]
 

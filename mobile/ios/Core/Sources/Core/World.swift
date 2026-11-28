@@ -118,17 +118,23 @@ public struct Backup: Decodable, Equatable, Identifiable, Sendable {
     public var status: String?
     public var exists: Bool?
     public var copy: BackupCopy?
+    /// "Keep this backup": the clean-up never deletes it.
+    public var kept: Bool?
+    /// Its top-level folders, comma-separated; a path with "/" is one file.
+    public var includes: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, kind, status, exists, copy
+        case id, name, kind, status, exists, copy, kept, includes
         case createdAt = "created_at"
         case sizeBytes = "size_bytes"
     }
 
     public init(
         id: Int64, name: String = "", kind: String? = nil, createdAt: Double? = nil, sizeBytes: Int64? = nil,
-        status: String? = nil, exists: Bool? = nil, copy: BackupCopy? = nil
+        status: String? = nil, exists: Bool? = nil, copy: BackupCopy? = nil, kept: Bool? = nil, includes: String? = nil
     ) {
+        self.kept = kept
+        self.includes = includes
         self.id = id
         self.name = name
         self.kind = kind
@@ -149,6 +155,176 @@ public struct Backup: Decodable, Equatable, Identifiable, Sendable {
         status = c.maybe(.status)
         exists = c.maybe(.exists)
         copy = c.maybe(.copy)
+        kept = c.maybe(.kept)
+        includes = c.maybe(.includes)
+    }
+}
+
+public struct BackupKept: Decodable, Equatable, Sendable {
+    public var id: Int64
+    public var kept: Bool
+}
+
+/// One folder a backup holds, or one left out, measured now. `name` is a
+/// map add-on's name, for a suggested folder.
+public struct SizedFolder: Decodable, Equatable, Sendable {
+    public var path: String
+    public var sizeBytes: Int64?
+    public var name: String?
+
+    enum CodingKeys: String, CodingKey {
+        case path, name
+        case sizeBytes = "size_bytes"
+    }
+
+    public init(path: String, sizeBytes: Int64? = nil, name: String? = nil) {
+        self.path = path
+        self.sizeBytes = sizeBytes
+        self.name = name
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        path = try c.decode(String.self, forKey: .path)
+        sizeBytes = c.maybe(.sizeBytes)
+        name = c.maybe(.name)
+    }
+}
+
+/// What a manual or scheduled backup would hold, measured now.
+public struct BackupSize: Decodable, Equatable, Sendable {
+    public var excluded: [SizedFolder]
+    public var suggested: [SizedFolder]
+    public var totalBytes: Int64?
+    public var freeBytes: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case excluded, suggested
+        case totalBytes = "total_bytes"
+        case freeBytes = "free_bytes"
+    }
+
+    public init(excluded: [SizedFolder] = [], suggested: [SizedFolder] = [], totalBytes: Int64? = nil, freeBytes: Int64? = nil) {
+        self.excluded = excluded
+        self.suggested = suggested
+        self.totalBytes = totalBytes
+        self.freeBytes = freeBytes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        excluded = c.each(.excluded)
+        suggested = c.each(.suggested)
+        totalBytes = c.maybe(.totalBytes)
+        freeBytes = c.maybe(.freeBytes)
+    }
+}
+
+/// One thing the clean-up offers: an old log, an old crash report, a
+/// folder set aside by a restore or an unused dimension.
+public struct CleanupItem: Decodable, Equatable, Sendable {
+    public var path: String
+    public var kind: String
+    public var sizeBytes: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case path, kind
+        case sizeBytes = "size_bytes"
+    }
+
+    public init(path: String, kind: String, sizeBytes: Int64? = nil) {
+        self.path = path
+        self.kind = kind
+        self.sizeBytes = sizeBytes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        path = try c.decode(String.self, forKey: .path)
+        kind = try c.decode(String.self, forKey: .kind)
+        sizeBytes = c.maybe(.sizeBytes)
+    }
+}
+
+/// One clean-up waiting in the bin, which Undo puts back.
+public struct CleanupBatch: Decodable, Equatable, Sendable {
+    public var batch: String
+    public var sizeBytes: Int64?
+    public var emptiesAt: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case batch
+        case sizeBytes = "size_bytes"
+        case emptiesAt = "empties_at"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        batch = try c.decode(String.self, forKey: .batch)
+        sizeBytes = c.maybe(.sizeBytes)
+        emptiesAt = c.maybe(.emptiesAt)
+    }
+}
+
+public struct CleanupList: Decodable, Equatable, Sendable {
+    public var items: [CleanupItem]
+    public var dimensionsChecked: Bool
+    public var bin: [CleanupBatch]
+
+    enum CodingKeys: String, CodingKey {
+        case items, bin
+        case dimensionsChecked = "dimensions_checked"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        items = c.each(.items)
+        dimensionsChecked = c.value(.dimensionsChecked, true)
+        bin = c.each(.bin)
+    }
+}
+
+public struct CleanupDone: Decodable, Equatable, Sendable {
+    public var batch: String?
+    public var moved: [String]
+    public var skipped: [JSONValue]
+    public var sizeBytes: Int64?
+    public var binDays: Int
+
+    enum CodingKeys: String, CodingKey {
+        case batch, moved, skipped
+        case sizeBytes = "size_bytes"
+        case binDays = "bin_days"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        batch = c.maybe(.batch)
+        moved = c.value(.moved, [])
+        skipped = c.value(.skipped, [])
+        sizeBytes = c.maybe(.sizeBytes)
+        binDays = c.value(.binDays, 7)
+    }
+}
+
+public struct CleanupUndone: Decodable, Equatable, Sendable {
+    public var leftInBin: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case leftInBin = "left_in_bin"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        leftInBin = c.value(.leftInBin, [])
+    }
+}
+
+public struct CleanupEmptied: Decodable, Equatable, Sendable {
+    public var freedBytes: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case freedBytes = "freed_bytes"
     }
 }
 
@@ -895,6 +1071,56 @@ public enum Backups {
         backup.exists != false
     }
 
+    /// "Keep this backup" is offered for a checked backup the clean-up could
+    /// delete (manual and season backups are never deleted).
+    public static func canKeep(_ backup: Backup, canDelete: Bool) -> Bool {
+        canDelete && backup.status == "ok" && !["manual", "season"].contains(backup.kind ?? "")
+    }
+
+    /// "Restore as a new server": a checked backup of a whole server, not of single files.
+    public static func canOpenAsServer(_ backup: Backup, canManage: Bool) -> Bool {
+        canManage && backup.status == "ok" && onDisk(backup) && !(backup.includes ?? "").contains("/")
+    }
+
+    /// The new server's name: "Survival from 2026-11-19" ("season" for an old season).
+    public static func copyName(_ strings: Strings, serverName: String, backup: Backup, zone: TimeZone = .current) -> String {
+        let format = DateFormatter()
+        format.dateFormat = "yyyy-MM-dd"
+        format.timeZone = zone
+        format.locale = Locale(identifier: "en_US_POSIX")
+        let date = format.string(from: Date(timeIntervalSince1970: backup.createdAt ?? 0))
+        let key = backup.kind == "season" ? "season.copy_name" : "backups.copy_name"
+        return String(strings.t(key, ["name": serverName, "date": date]).prefix(60))
+    }
+
+    /// A folder next to the agent's suggested one, on the PC (a Windows
+    /// path, so "\\" is split here, not by the phone's own file rules).
+    public static func besideFolder(_ suggested: String, name: String) -> String {
+        guard let cut = suggested.lastIndex(where: { $0 == "\\" || $0 == "/" }), cut != suggested.startIndex else {
+            return suggested
+        }
+        return String(suggested[...cut]) + name
+    }
+
+    /// One clean-up line: what it is, its size and, in Technical, its path.
+    public static func cleanupLine(_ strings: Strings, _ item: CleanupItem, technical: Bool) -> String {
+        [strings.t("cleanup.kind.\(item.kind)"), technical ? item.path : nil, Display.bytes(strings, item.sizeBytes)]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
+
+    /// Logs and crash reports start ticked; bigger things are the owner's pick.
+    public static func ticked(_ item: CleanupItem) -> Bool {
+        ["old_log", "crash_report"].contains(item.kind)
+    }
+
+    /// The exclusions with one added or taken away, as the setting is saved.
+    public static func excludes(_ size: BackupSize?, add: String? = nil, remove: String? = nil) -> [String] {
+        let now = (size?.excluded ?? []).map(\.path).filter { $0 != remove }
+        let extra = add?.trimmingCharacters(in: .whitespaces) ?? ""
+        return extra.isEmpty || now.contains(extra) ? now : now + [extra]
+    }
+
     /// The newest finished change on this server that can be undone. The
     /// agent lists jobs newest first.
     /// A task's states once it is over.
@@ -933,10 +1159,40 @@ public enum Backups {
 
 /// Schedules' words and what is sent (schedules.js).
 public enum Schedules {
-    public static let KINDS = ["daily", "weekly", "interval"]
+    public static let KINDS = ["daily", "weekly", "interval", "once", "event", "cron"]
     /// The most the agent takes for a name and a time.
     public static let NAME_LENGTH = 80
     public static let EXPR_LENGTH = 32
+    /// The most steps in a row the agent takes.
+    public static let MAX_STEPS = 10
+
+    /// One step of the form: its task, its words (message, command or the
+    /// message before a backup) and the message after a backup.
+    public struct Step: Equatable, Sendable {
+        public var task: String
+        public var words = ""
+        public var after = ""
+        public init(task: String, words: String = "", after: String = "") {
+            self.task = task
+            self.words = words
+            self.after = after
+        }
+    }
+
+    /// The kinds the form offers: a cron line only in Technical.
+    public static func kinds(technical: Bool) -> [String] {
+        KINDS.filter { technical || $0 != "cron" }
+    }
+
+    /// What one step can do: "steps" is made by adding steps, any console command is Technical.
+    public static func stepTasks(_ tasks: [String], technical: Bool) -> [String] {
+        tasks.filter { $0 != "steps" && (technical || $0 != "command") }
+    }
+
+    /// The words a step's task needs, as a strings key; nil when it needs none.
+    public static func wordsKey(_ task: String) -> String? {
+        ["message": "schedules.text_message", "command": "schedules.text_command", "backup": "schedules.before"][task]
+    }
 
     public static func kindKey(_ kind: String) -> String {
         "schedules.kind_\(kind)"
@@ -954,18 +1210,66 @@ public enum Schedules {
         !strings.technical && tasks.contains(task) && strings.has("task.\(task)") ? strings.t("task.\(task)") : task
     }
 
-    /// The next run's time, or Off.
-    public static func next(_ strings: Strings, _ schedule: Schedule) -> String {
-        schedule.enabled ? Display.dateTime(strings, schedule.nextRun) : strings.t("schedules.off")
+    /// What a schedule does: "3 steps", or its task with its message or command.
+    public static func summary(_ strings: Strings, _ schedule: Schedule, tasks: [String]) -> String {
+        if schedule.task == "steps" {
+            if case .array(let steps) = schedule.payload["steps"] {
+                return strings.t("schedules.steps_count", ["count": steps.count])
+            }
+            return strings.t("schedules.steps_count", ["count": 0])
+        }
+        let name = taskName(strings, schedule.task, tasks: tasks)
+        if let said = (schedule.payload["text"] ?? schedule.payload["command"])?.text, !said.isEmpty {
+            return "\(name): \(said)"
+        }
+        return name
     }
 
-    /// A new schedule; with no name it is called after its task.
-    public static func newBody(_ strings: Strings, name: String, task: String, kind: String, expr: String, tasks: [String]) -> ScheduleBody {
+    /// The next run's time, "When it happens" for an event, or Off.
+    public static func next(_ strings: Strings, _ schedule: Schedule) -> String {
+        if !schedule.enabled { return strings.t("schedules.off") }
+        if schedule.kind == "event" { return strings.t("schedules.on_event") }
+        return Display.dateTime(strings, schedule.nextRun)
+    }
+
+    /// A new schedule; with no name it is called after its task. One step is
+    /// sent as that task; more as "steps". `confirm`: the person said yes to
+    /// a command the console asks about.
+    public static func newBody(
+        _ strings: Strings, name: String, steps: [Step], kind: String, expr: String, tasks: [String],
+        keepGoing: Bool = false, onlyIfRunning: Bool = false, skipWhenEmpty: Bool = false, confirm: Bool = false
+    ) -> ScheduleBody {
+        let sent = steps.map { step($0, confirm: confirm) }
+        let options: [String: JSONValue] = ["only_if_running": .bool(onlyIfRunning), "skip_when_empty": .bool(skipWhenEmpty)]
+        let task = steps.count == 1 ? steps[0].task : "steps"
+        var payload: [String: JSONValue]
+        if steps.count == 1 {
+            payload = sent[0].filter { $0.key != "task" }
+        } else {
+            payload = ["steps": .array(sent.map { .object($0) }), "keep_going": .bool(keepGoing)]
+        }
+        payload.merge(options) { _, new in new }
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         return ScheduleBody(
             name: trimmed.isEmpty ? taskName(strings, task, tasks: tasks) : trimmed,
-            task: task, kind: kind, expr: expr.trimmingCharacters(in: .whitespaces), payload: [:], enabled: true
+            task: task, kind: kind, expr: expr.trimmingCharacters(in: .whitespaces), payload: payload, enabled: true
         )
+    }
+
+    private static func step(_ step: Step, confirm: Bool) -> [String: JSONValue] {
+        let words = JSONValue.string(step.words.trimmingCharacters(in: .whitespaces))
+        var sent: [String: JSONValue] = ["task": .string(step.task)]
+        switch step.task {
+        case "message": sent["text"] = words
+        case "command":
+            sent["command"] = words
+            sent["confirm"] = .bool(confirm)
+        case "backup":
+            sent["before"] = words
+            sent["after"] = .string(step.after.trimmingCharacters(in: .whitespaces))
+        default: break
+        }
+        return sent
     }
 
     /// The whole schedule again with only on or off changed (PUT replaces it).

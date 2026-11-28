@@ -316,8 +316,12 @@ class Wake:
         if helper and old and helper["session"] == old:
             self._save(helper={**helper, "session": new})
 
-    def remove_helper(self) -> dict[str, Any]:
-        self._save(helper=None)
+    def remove_helper(self, session: str | None = None) -> dict[str, Any]:
+        """Nobody helps any more; with ``session``, only if that sign-in's PC
+        is the one helping (a PC unticking must not remove one that took over)."""
+        helper = self.saved().get("helper")
+        if session is None or (helper and helper["session"] == session):
+            self._save(helper=None)
         return self.setup()
 
     def may_wake(self, user: str) -> bool:
@@ -365,12 +369,12 @@ class Wake:
         its own with new_key()."""
         saved = self.saved()
         helper = self.helper()
-        has_key = False
+        hashed = None
         if session:
             row = self.core.db.query_one(
                 "SELECT wake_key_hash FROM sessions WHERE token_hash = ?", (session,)
             )
-            has_key = bool(row and row["wake_key_hash"])
+            hashed = row["wake_key_hash"] if row else None
         return {
             "on": bool(saved.get("on") and saved.get("mac")),
             "pc": socket.gethostname(),
@@ -378,7 +382,10 @@ class Wake:
             "broadcast": saved.get("broadcast"),
             "helper": {"address": helper["address"], "port": helper["port"]} if helper else None,
             "router_url": saved.get("router_url"),
-            "has_key": has_key,
+            "has_key": bool(hashed),
+            # A device checks its own key against it: if the answer giving it
+            # a new key was lost, the one it kept no longer works.
+            "key_hash": hashed,
         }
 
     def new_key(self, session: str | None) -> str:

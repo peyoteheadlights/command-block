@@ -172,6 +172,26 @@ def test_on_another_pc_the_second_copy_folder_is_chosen_on_the_servers_pc(qapp, 
     assert not page.choose.isVisibleTo(page)
 
 
+def test_on_another_pc_an_agent_only_pc_says_to_use_the_phone_app(
+    qapp, agent_http, monkeypatch, tmp_path
+):
+    """An Agent only PC has no app to choose the folder in: say how instead."""
+    from agent import appinfo
+
+    (tmp_path / appinfo.INSTALL_RECORD).write_text(
+        '{"data_root": "x", "agent_only": true}', encoding="utf-8"
+    )
+    monkeypatch.setattr(appinfo, "program_dir", lambda: tmp_path)
+    window = open_window(qapp, agent_http)
+    window.agent.place = "100.64.0.7"
+    sign_in(qapp, window)
+    wait_for(qapp, lambda: window.screen_name == "All servers" and window.agent_only)
+    open_server(qapp, window, "Survival")
+    page = open_page(qapp, window, "Backups")
+    wait_for(qapp, lambda: "in the Command Block phone app" in shown_text(page))
+    assert not page.choose.isVisibleTo(page)
+
+
 # ---------------------------------------------------------------- bringing a world in
 def test_a_world_zip_is_read_first_then_replaces_the_world_with_undo(qapp, agent_http, tmp_path):
     headers = owner(agent_http)
@@ -295,3 +315,129 @@ def test_a_failed_download_leaves_the_file_the_save_box_chose(tmp_path):
     with pytest.raises(AgentError, match="Gone."):
         agent.download_to("/servers/survival/backups/1/download", str(kept))
     assert kept.read_bytes() == b"keep me"
+
+
+# ---------------------------------------------------------------- backups and disk
+def server_dir(agent_http):
+    return agent_http.agent.app.state.core.servers["survival"].config.server_dir
+
+
+def test_a_map_tiles_folder_is_offered_then_left_out(qapp, agent_http):
+    tiles = server_dir(agent_http) / "config" / "squaremap" / "web" / "tiles"
+    tiles.mkdir(parents=True)
+    (tiles / "t.png").write_bytes(b"p" * 5000)
+    window, page = backups_page(qapp, agent_http)
+    wait_for(qapp, lambda: "squaremap map tiles" in shown_text(page))
+    assert "Nothing is left out." in shown_text(page)
+    assert "A backup now holds about" in shown_text(page)
+    buttons_named(page, "Leave out")[0].click()
+    wait_for(qapp, lambda: bool(buttons_named(page, "Back it up again")))
+    settings = agent_http.get("/api/servers/survival/settings", headers=owner(agent_http)).json()
+    assert settings["backups"]["exclude"] == ["config/squaremap/web/tiles"]
+
+
+def test_keep_and_restore_as_a_new_server_are_in_a_backups_menu(qapp, agent_http):
+    headers = owner(agent_http)
+    made = agent_http.post(
+        "/api/servers/survival/backups", json={"name": "auto"}, headers=headers, timeout=60
+    ).json()
+    core = agent_http.agent.app.state.core
+    core.db.execute("UPDATE backups SET kind = 'scheduled' WHERE id = ?", (made["id"],))
+    window, page = backups_page(qapp, agent_http)
+    wait_for(qapp, lambda: "Scheduled" in shown_text(page))
+    menu_item(page, "Keep this backup").trigger()
+    wait_for(qapp, lambda: "Kept. The clean-up won't delete it." in page.note.text())
+
+    def offered(words):
+        try:
+            return menu_item(page, words)
+        except AssertionError:
+            return None
+
+    wait_for(qapp, lambda: offered("Stop keeping this backup") is not None)
+    menu_item(page, "Restore as a new server").trigger()
+    wait_for(qapp, lambda: "Copying into Survival from" in page.note.text(), 30)
+
+
+def test_the_clean_up_shows_first_then_moves_to_the_bin_with_undo(qapp, agent_http):
+    import os
+    import time
+
+    old = server_dir(agent_http) / "logs" / "2026-01-01-1.log.gz"
+    old.write_bytes(b"old log")
+    week = time.time() - 8 * 86400
+    os.utime(old, (week, week))
+    window, page = backups_page(qapp, agent_http)
+    button(page, "Look for things to clean up").click()
+
+    def picks():
+        return [b for b in page.findChildren(QtWidgets.QCheckBox) if "Old log" in b.text()]
+
+    wait_for(qapp, lambda: bool(picks()))
+    assert picks()[0].isChecked(), "old logs are ticked to start with"
+    assert old.exists(), "only shown so far"
+    button(page, "Move to the clean-up bin").click()
+    wait_for(qapp, lambda: "Moved 1 to the clean-up bin" in page.note.text())
+    assert not old.exists()
+    wait_for(qapp, lambda: "Clean-up bin:" in shown_text(page))
+    page.note.undo.click()
+    wait_for(qapp, lambda: "Put back where it was." in page.note.text())
+    assert old.read_bytes() == b"old log"
+
+
+def test_a_download_cut_half_way_never_takes_the_files_name(tmp_path):
+    """Quitting mid-download skips every clean-up; the chosen name only ever
+    holds a whole file."""
+    kept = tmp_path / "old.zip"
+    kept.write_bytes(b"keep me")
+    seen: list = []
+
+    def cut_off():
+        yield b"half a backup"
+        seen.append(kept.read_bytes())  # what the name holds while it downloads
+        raise httpx.ReadError("cut off")
+
+    agent = AgentClient(
+        httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, content=cut_off())),
+            base_url="http://x",
+        )
+    )
+    with pytest.raises(AgentError):
+        agent.download_to("/servers/survival/backups/1/download", str(kept))
+    assert seen == [b"keep me"] and kept.read_bytes() == b"keep me"
+    assert list(tmp_path.iterdir()) == [kept]
+    whole = AgentClient(
+        httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"whole")),
+            base_url="http://x",
+        )
+    )
+    whole.download_to("/servers/survival/backups/1/download", str(kept))
+    assert kept.read_bytes() == b"whole" and list(tmp_path.iterdir()) == [kept]
+
+
+def test_a_running_backup_stays_greyed_when_the_page_comes_back(qapp, agent_http, monkeypatch):
+    import threading
+
+    window, page = backups_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.back_up.isEnabled())
+    release, sent = threading.Event(), []
+    real_on = AgentClient.on
+
+    def slow_on(self, sid, method, path, body=None, slow=False):
+        if method == "POST" and path == "/backups":
+            sent.append(path)
+            release.wait(30)
+        return real_on(self, sid, method, path, body, slow)
+
+    monkeypatch.setattr(AgentClient, "on", slow_on)
+    page.make_backup()
+    wait_for(qapp, lambda: sent)
+    open_page(qapp, window, "Players and chat")
+    page = open_page(qapp, window, "Backups")  # load() runs again
+    assert not page.back_up.isEnabled()
+    page.make_backup()  # a second press, however it got there, sends nothing
+    release.set()
+    wait_for(qapp, lambda: page.back_up.isEnabled(), 30)
+    assert sent == ["/backups"]

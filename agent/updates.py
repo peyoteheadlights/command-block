@@ -71,6 +71,10 @@ FIRST_CHECK_DELAY = 15 * 60
 MAX_SETUP_BYTES = 250 * 1024 * 1024
 REQUEST_FILE = "request.json"
 RESULT_FILE = "last-update.json"
+# After Windows starts the update task, the installer stops this agent (or
+# writes its result here first if it can't go on). The job waits for one.
+INSTALLER_WAIT = 10 * 60
+INSTALLER_POLL = 1.0
 APP_CLOSING = "update_closing_app"  # the live-feed event that closes the desktop app
 
 _VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
@@ -292,19 +296,40 @@ class Updater:
         if self._task:
             self._task.cancel()
 
+    def _result_stamp(self) -> float | None:
+        try:
+            return (updates_dir(self.config) / RESULT_FILE).stat().st_mtime
+        except OSError:
+            return None
+
     async def _announce_last_result(self) -> None:
-        """Say how the last update went, once."""
+        """Say how the last update went, once, and end the update job the
+        installer cut off by stopping the agent."""
         result = self.last_result()
-        path = updates_dir(self.config) / RESULT_FILE
         if not result or not result.get("from_app"):
             return
-        try:
-            stamp = str(path.stat().st_mtime)
-        except OSError:
+        stamp = self._result_stamp()
+        if stamp is None:
             return
-        if self.core.db.get_setting("updates:result_seen", None) == stamp:
+        if self.core.db.get_setting("updates:result_seen", None) == str(stamp):
             return
-        self.core.db.set_setting("updates:result_seen", stamp)
+        self.core.db.set_setting("updates:result_seen", str(stamp))
+        job = self.core.db.query_one(
+            "SELECT id FROM jobs WHERE kind = 'update' AND state = 'interrupted' "
+            "ORDER BY created_at DESC LIMIT 1"
+        )
+        if job:
+            self.core.db.execute(
+                "UPDATE jobs SET state = ?, message = ?, updated_at = ? WHERE id = ?",
+                (
+                    "succeeded" if result.get("ok") else "failed",
+                    f"Updated to version {result.get('version')}"
+                    if result.get("ok")
+                    else result.get("message") or "The update didn't work.",
+                    time.time(),
+                    job["id"],
+                ),
+            )
         if result.get("ok"):
             event = Event(
                 type="update_finished",
@@ -332,7 +357,7 @@ class Updater:
         players = []
         unknown = False
         for ctx in self.core.servers.values():
-            if ctx.server.status().get("state") != "running":
+            if ctx.server.state.value != "ONLINE":
                 continue
             count = ctx.players.online_count()
             if count is None:
@@ -382,15 +407,31 @@ class Updater:
                 json.dumps(request, indent=2), encoding="utf-8"
             )
             job.step("Starting the update")
+            before = self._result_stamp()
             await asyncio.to_thread(run_updater_task)
             # The desktop app on this PC runs from the folder the update
             # replaces, so it closes now (only once the update has started);
             # the update opens it again.
             await self.core.bus.publish(Event(APP_CLOSING, "Closing the app for the update"))
+            # Windows starting the task isn't the update working: wait for
+            # the installer. Normally it stops this agent first, and the next
+            # start ends this job from last-update.json (_announce_last_result).
+            job.step("Waiting for the installer")
+            deadline = time.monotonic() + INSTALLER_WAIT
+            while self._result_stamp() == before:
+                if time.monotonic() > deadline:
+                    raise UpdateError(
+                        "Windows started the update, but the installer didn't run. Run the "
+                        "setup from the Start menu once to repair it, then try again."
+                    )
+                await asyncio.sleep(INSTALLER_POLL)
+            result = self.last_result() or {}
+            if not result.get("ok"):
+                raise UpdateError(result.get("message") or "The installer couldn't update the app.")
             return {
                 "version": release.version,
                 "backup": str(backup),
-                "message": "The update is starting. The agent is back in a minute or two.",
+                "message": f"Updated to version {result.get('version')}",
             }
 
         return self.core.jobs.start(

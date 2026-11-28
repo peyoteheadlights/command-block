@@ -5,16 +5,20 @@ of the mods or plugins folder is made and checked first, then each mod is
 updated in turn with the same step a single update uses. If any of them
 fails, the whole folder is put back from that backup, so a server is never
 left with half its mods updated, and the answer names the one that failed.
-Being one change, it has one backup and one Undo.
+Being one change, it has one backup and one Undo. A mod whose update is
+still in the update hold (out for only a few days) is left out and named
+in the answer; Update now on that one mod skips the wait.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..jobs import JobConflict
 from ..safechange import SafeChange, run_safe_change
+from .jarinfo import ModInfo
 from .manager import ModError, ModManager
 
 if TYPE_CHECKING:
@@ -38,6 +42,14 @@ async def update_all(
     for item in wanted:
         unique.setdefault(item["filename"], item)
     targets = [(mods.find(item["filename"]), item.get("version_id")) for item in unique.values()]
+    # Too new to trust yet: left for Update now on each, or the hold's end.
+    held = [mod for mod, _ in targets if _held(mods, mod)]
+    if held and len(held) == len(targets):
+        raise ModError(
+            f"{_names(held)} came out too recently, so Update all waits for the update hold. "
+            "Press Update now on one to update it anyway."
+        )
+    targets = [(mod, version_id) for mod, version_id in targets if mod not in held]
     # What the agent notes about each mod (where it came from, its update),
     # put back with the files if one update fails.
     noted = [f"mod_{kind}:{mod.mod_id}" for mod, _ in targets for kind in ("source", "update")]
@@ -92,7 +104,7 @@ async def update_all(
         mods.require_server_offline(f"update {mods.word}s")
         return await run_safe_change(ctx.server, ctx.backups, plan, job=job, user=user)
 
-    names = ", ".join(mod.name for mod, _ in targets)
+    names = _names(mod for mod, _ in targets)
     try:
         job, outcome = await ctx.core.jobs.run(
             "mods", f"{TITLE} on {ctx.name}", run, server_id=ctx.server_id, risky=True, user=user
@@ -107,9 +119,19 @@ async def update_all(
     return {
         "job_id": job.id,
         "updated": outcome["updated"],
+        "held": [mod.name for mod in held],
         "safety_backup": outcome["safety_backup"],
         "undo": outcome["undo"],
     }
+
+
+def _held(mods: ModManager, mod: ModInfo) -> bool:
+    update = mods.db.get_setting(f"mod_update:{mod.mod_id}")
+    return bool(update and mods.held_until(update))
+
+
+def _names(mods: Iterable[ModInfo]) -> str:
+    return ", ".join(mod.name for mod in mods)
 
 
 def folder_in_server(ctx: ServerContext, path: Path) -> str | None:

@@ -360,3 +360,43 @@ def test_the_bot_pc_lists_each_pcs_bot_link(qapp, fake, discord_http):  # noqa: 
     assert {"Remove bot link", "Add bot link"} <= set(shown_buttons(page))
     button(page, "Remove bot link").click()
     wait_for_window(qapp, lambda: "Discord can't reach Den PC's servers now." in shown_text(window))
+
+
+def test_discord_says_13_and_up_when_a_server_is_for_kids(qapp, fake, discord_http):  # noqa: F811
+    core = discord_http.agent.app.state.core
+    ctx = next(iter(core.servers.values()))
+    ctx.config.set("server.played_by", "kids")
+    window, page = gear(qapp, discord_http, "discord")
+    wait_for_window(qapp, lambda: "Connected as Command Block." in shown_text(page))
+    window.refresh()
+    wait_for_window(qapp, lambda: "aged 13 and up" in shown_text(page), 20)
+
+
+def test_set_up_stays_greyed_until_the_answer(qapp, fake, discord_http, monkeypatch):  # noqa: F811
+    import threading
+
+    from desktop.agent import AgentClient
+
+    window, page = gear(qapp, discord_http, "discord")
+    wait_for_window(qapp, lambda: "Connected as Command Block." in shown_text(page))
+    release, sent = threading.Event(), []
+    real_call = AgentClient.call
+
+    def slow_call(self, method, path, body=None, slow=False):
+        if path.endswith("/setup"):
+            sent.append(path)
+            release.wait(30)
+        return real_call(self, method, path, body, slow)
+
+    monkeypatch.setattr(AgentClient, "call", slow_call)
+    [b for b in page.findChildren(QtWidgets.QCheckBox) if b.text() == "Survival"][0].setChecked(
+        True
+    )
+    button(page, "Set up this Discord server").click()
+    wait_for_window(qapp, lambda: sent)
+    page.show_state((page.state, page.data))  # the page is built again meanwhile
+    qapp.processEvents()
+    assert not button(page, "Set up this Discord server").isEnabled()
+    release.set()
+    wait_for_window(qapp, lambda: "Made:" in shown_text(page), 20)
+    assert len(sent) == 1

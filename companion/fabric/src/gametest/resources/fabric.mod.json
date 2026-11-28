@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "commandblock-companion-test",
+  "version": "1",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-client-gametest": ["io.github.peyoteheadlights.companion.fabric.TitleTest", "io.github.peyoteheadlights.companion.fabric.JoinTest"]
+  }
+}

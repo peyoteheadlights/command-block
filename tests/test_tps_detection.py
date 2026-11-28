@@ -49,6 +49,9 @@ async def test_each_provider_is_detected(setup, provider, expected):
         assert result["command"] == expected
         assert result["detection"] == "automatic"
         assert server.tps is not None
+        await server.send_command(expected, internal=True)  # one more reading
+        await asyncio.sleep(0.5)
+        assert server.tps_source == expected  # the command that answered, not "auto"
         # every command tried before the working one was rejected, not guessed at
         for tried in result["tried"][:-1]:
             assert tried["result"] == "rejected"

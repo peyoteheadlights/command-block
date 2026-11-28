@@ -289,15 +289,20 @@ final class SetupPages {
 
     func check() async {
         guard let client = client(), let type = pickedType, let minecraft = pickedVersion else { return }
+        let loader = pickedLoader
         report = PageRead(loading: true)
+        let answer: PageRead<VersionPreflight>?
         do {
-            report = PageRead(value: try await client.versionPreflight(serverId: serverId, type: type, minecraft: minecraft, loader: pickedLoader))
+            answer = PageRead(value: try await client.versionPreflight(serverId: serverId, type: type, minecraft: minecraft, loader: loader))
         } catch let problem as AgentError {
             noted(problem)
-            report = PageRead(problem: problem)
+            answer = PageRead(problem: problem)
         } catch {
-            report = nil
+            answer = nil
         }
+        // Another kind, version or loader was picked meanwhile: an old answer.
+        guard pickedType == type, pickedVersion == minecraft, pickedLoader == loader else { return }
+        report = answer
     }
 
     /// After the one confirmation: the server stops, a backup is taken,
@@ -389,6 +394,136 @@ final class SetupPages {
         } catch {}
     }
 
+    func setConsoleFriends(_ on: Bool, _ strings: Strings) async {
+        guard let client = client(), busy == nil else { return }
+        busy = "console"
+        said = nil
+        defer { busy = nil }
+        do {
+            crossplay = PageRead(value: try await client.setConsoleFriends(serverId: serverId, enabled: on))
+            said = Said(text: strings.t(on ? "console.on_done" : "console.off_done"), good: true)
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+    }
+
+    // MARK: - Server address
+
+    /// "Let friends join from the internet" (agent/internet.py).
+    private(set) var internet = PageRead<InternetReach>()
+
+    func loadInternet() async {
+        guard let client = client() else { return }
+        internet.loading = true
+        do {
+            internet = PageRead(value: try await client.internet(serverId: serverId))
+        } catch let problem as AgentError {
+            noted(problem)
+            internet = PageRead(problem: problem)
+        } catch {
+            internet.loading = false
+        }
+    }
+
+    private func internetCall(_ name: String, _ strings: Strings, _ work: (AgentClient) async throws -> InternetReach) async {
+        guard let client = client(), busy == nil else { return }
+        busy = name
+        said = nil
+        defer { busy = nil }
+        do {
+            internet = PageRead(value: try await work(client))
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+    }
+
+    func setInternet(_ on: Bool, _ strings: Strings) async {
+        await internetCall("internet", strings) { try await $0.setInternet(serverId: serverId, on: on) }
+    }
+
+    /// mcsrvstat.us; `allow` after the owner said yes to it once.
+    func testInternet(allow: Bool, _ strings: Strings) async {
+        await internetCall("internet_test", strings) { try await $0.testInternet(serverId: serverId, allow: allow) }
+    }
+
+    /// This phone pings the address itself (over mobile data), then tells the agent.
+    func phoneTest(address: String, port: Int, bedrock: Bool, _ strings: Strings) async {
+        await internetCall("phone_test", strings) { client in
+            let works = await OutsidePing.ask(host: address, port: port, bedrock: bedrock)
+            return try await client.phoneTest(serverId: serverId, address: address, port: port, works: works)
+        }
+    }
+
+    // MARK: - playit.gg
+
+    /// playit.gg on the server's PC (agent/playit.py).
+    private(set) var playit = PageRead<PlayitState>()
+    /// playit's config.yml box, pasted for WaterdogPE (holds the tunnel's token; never saved).
+    var waterdogBox = ""
+
+    func loadPlayit() async {
+        guard let client = client() else { return }
+        do {
+            playit = PageRead(value: try await client.playit(serverId: serverId))
+        } catch let problem as AgentError {
+            noted(problem)
+            playit = PageRead(problem: problem)
+        } catch {}
+    }
+
+    func playitCall(_ strings: Strings, _ work: (AgentClient) async throws -> PlayitState) async {
+        guard let client = client(), busy == nil else { return }
+        busy = "playit"
+        said = nil
+        defer { busy = nil }
+        do {
+            let now = try await work(client)
+            playit = PageRead(value: now)
+            if let problem = now.stopProblem {
+                said = Said(text: strings.t("playit.stop_problem", ["problem": problem]), good: false)
+            }
+            if now.internetOff { said = Said(text: strings.t("playit.waterdog_internet_off"), good: true) }
+            if now.waterdog != nil { waterdogBox = "" } // the token isn't kept on the phone
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+    }
+
+    // MARK: - DuckDNS and No-IP
+
+    /// This PC's names for its internet address (agent/ddns.py).
+    private(set) var ddns = PageRead<DdnsState>()
+
+    func loadDdns() async {
+        guard let client = client() else { return }
+        do {
+            ddns = PageRead(value: try await client.ddns())
+        } catch let problem as AgentError {
+            noted(problem)
+            ddns = PageRead(problem: problem)
+        } catch {}
+    }
+
+    /// True when it worked, so the form can close.
+    @discardableResult
+    func ddnsCall(_ strings: Strings, _ work: (AgentClient) async throws -> DdnsState) async -> Bool {
+        guard let client = client(), busy == nil else { return false }
+        busy = "ddns"
+        said = nil
+        defer { busy = nil }
+        do {
+            ddns = PageRead(value: try await work(client))
+            return true
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+        return false
+    }
+
     // MARK: - Duplicate
 
     private(set) var copyOptions = PageRead<DuplicateOptions>()
@@ -447,16 +582,22 @@ final class SetupPages {
         return false
     }
 
+    /// The Java options from before the last save, while Undo can put them back.
+    private(set) var argsBefore: [String]? = nil
+
     /// Saves the Java options typed in Technical mode, then reads the form
-    /// and the memory card again so both show them.
-    func saveJavaOptions(_ args: [String], _ strings: Strings) async {
+    /// and the memory card again so both show them. `undoing`: putting the
+    /// old ones back, which can't itself be undone.
+    func saveJavaOptions(_ args: [String], _ strings: Strings, undoing: Bool = false) async {
         guard let client = client(), busy == nil else { return }
+        let before = memory.value?.jvmArgs
         busy = "java"
         said = nil
         do {
             let done = try await client.saveServerSettings(serverId: serverId, updates: ["server.jvm_args": .array(args.map { .string($0) })])
             let refused = done.rejected["server.jvm_args"]
-            said = Said(text: refused ?? strings.t("mobile.raw.args_saved"), good: refused == nil)
+            said = Said(text: refused ?? strings.t(undoing ? "memory.raw_undone" : "mobile.raw.args_saved"), good: refused == nil)
+            argsBefore = refused == nil && !undoing ? before : nil
             busy = nil
             await loadMemory()
             await loadSettings()

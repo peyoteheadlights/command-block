@@ -102,7 +102,7 @@ def status_message(ctx: ServerContext, shared: str | None) -> str:
     so it only changes when something real does."""
     state = ctx.server.state.value
     words = state_words(state)
-    if state == "ONLINE" and ctx.answering.problem:
+    if ctx.controls()["label"] == "not_answering" and ctx.answering.problem:
         words = f"running but not answering: {ctx.answering.problem['what']}"
     lines = [f"**{ctx.name}** is {words}"]
     if state == "ONLINE":

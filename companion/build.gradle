@@ -1,0 +1,16 @@
+// Shared settings for every module of the Companion.
+subprojects {
+    apply plugin: 'java-library'
+
+    group = 'io.github.peyoteheadlights'
+    version = '0.1.0'
+
+    repositories { mavenCentral() }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        // common works on Minecraft 1.21+ (Java 21); the loader modules raise it.
+        options.release = 21
+        options.compilerArgs << '-Xlint:all' << '-Werror'
+    }
+}

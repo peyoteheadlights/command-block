@@ -49,6 +49,13 @@ PLAYERS_MANAGE = "players.manage"  # whitelist, kick, ban and unban
 PLAYERS_OP = "players.op"
 CHAT_SEND = "chat.send"  # say something to everyone in the game
 MODS_MANAGE = "mods.manage"  # install, remove, enable, update, roll back mods
+# "Add own .jar": a jar no site lists, by hand or from a modpack. It runs with
+# the server's rights on the PC and nothing can tell what it does, so it is
+# in no level: the owner ticks it on purpose.
+MODS_OWN_JAR = "mods.own_jar"
+# Run a deep scan and move what it lists to quarantine. In no level: the
+# owner ticks it on purpose, since a whole-folder scan reads every file.
+DEEP_SCAN = "deepscan.run"
 BACKUPS_CREATE = "backups.create"
 BACKUPS_DOWNLOAD = "backups.download"
 BACKUPS_RESTORE = "backups.restore"  # also Undo and Redo, which restore
@@ -96,6 +103,8 @@ ALL = frozenset(
         PLAYERS_OP,
         CHAT_SEND,
         MODS_MANAGE,
+        MODS_OWN_JAR,
+        DEEP_SCAN,
         BACKUPS_CREATE,
         BACKUPS_DOWNLOAD,
         BACKUPS_RESTORE,
@@ -137,6 +146,8 @@ SERVER_PERMISSIONS = frozenset(
         PLAYERS_OP,
         CHAT_SEND,
         MODS_MANAGE,
+        MODS_OWN_JAR,
+        DEEP_SCAN,
         BACKUPS_CREATE,
         BACKUPS_DOWNLOAD,
         BACKUPS_RESTORE,
@@ -162,7 +173,9 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Diagnose server is in no level: the owner ticks it on purpose.
     ("server", (SERVER_CONTROL, SERVER_DIAGNOSE, CONSOLE_READ, CONSOLE_SEND)),
     ("players", (PLAYERS_MANAGE, CHAT_SEND, PLAYERS_OP)),
-    ("addons", (MODS_MANAGE,)),
+    ("addons", (MODS_MANAGE, MODS_OWN_JAR)),
+    # In no level: the owner ticks it on purpose.
+    ("protection", (DEEP_SCAN,)),
     ("backups", (BACKUPS_CREATE, BACKUPS_RESTORE, BACKUPS_DOWNLOAD, BACKUPS_DELETE, WORLD_REPLACE)),
     ("settings", (SETTINGS_GAME, SETTINGS_SERVER, SCHEDULES_MANAGE)),
     # In no level: the owner ticks it on purpose (Phase 11).
@@ -170,13 +183,16 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 # Shown only in Technical mode: rarer, and riskier.
-TECHNICAL = frozenset({CONSOLE_SEND, PLAYERS_OP, BACKUPS_DOWNLOAD, BACKUPS_DELETE, WORLD_REPLACE})
+TECHNICAL = frozenset(
+    {CONSOLE_SEND, PLAYERS_OP, BACKUPS_DOWNLOAD, BACKUPS_DELETE, WORLD_REPLACE, MODS_OWN_JAR}
+)
 # These let someone do anything in the game: the apps warn when they're ticked.
 WARN = frozenset({CONSOLE_SEND, PLAYERS_OP})
 # A switch that can't work without another one brings it along.
 NEEDS: dict[str, frozenset[str]] = {
     PLAYERS_OP: frozenset({PLAYERS_MANAGE}),
     CONSOLE_SEND: frozenset({CONSOLE_READ}),
+    MODS_OWN_JAR: frozenset({MODS_MANAGE}),
 }
 
 START_AND_STOP = frozenset({SERVER_VIEW, SERVER_CONTROL})
@@ -275,6 +291,12 @@ def on_server(principal: Principal, server_id: str | None) -> frozenset[str]:
     return principal.access.on(server_id)
 
 
+def may_add_own_jar(principal: Principal, server_id: str | None) -> bool:
+    """Whether this account holds "Add own .jar" on that server. Asked only
+    once a jar turns out to be one no site lists."""
+    return MODS_OWN_JAR in on_server(principal, server_id)
+
+
 def held_anywhere(principal: Principal) -> frozenset[str]:
     """Every permission this account holds on at least one server, plus its
     account-wide ones: the flat list the sign-in answer has always given."""
@@ -290,6 +312,18 @@ def legacy_names(held: frozenset[str]) -> list[str]:
     if held & {SETTINGS_GAME, SETTINGS_SERVER, PC_SETTINGS}:
         names.add(LEGACY_SETTINGS_EDIT)
     return sorted(names)
+
+
+# Alerts that need a permission on top of seeing the server: Known bad
+# and a jar changed outside the app go to moderators who can run the
+# deep scan.
+ALERT_NEEDS = {"jar_scan_found": DEEP_SCAN, "jar_changed": DEEP_SCAN}
+
+
+def may_get_alert(principal: Principal, event_type: str | None, server_id: str | None) -> bool:
+    """Whether this account is told about this kind of alert on that server."""
+    need = ALERT_NEEDS.get(str(event_type))
+    return need is None or need in on_server(principal, server_id)
 
 
 def can_see_server(principal: Principal, server_id: str | None) -> bool:

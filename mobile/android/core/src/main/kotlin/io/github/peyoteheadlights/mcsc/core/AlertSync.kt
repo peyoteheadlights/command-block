@@ -4,15 +4,35 @@ import kotlinx.serialization.Serializable
 
 /**
  * The Notifications tab's list as the phone keeps it: the alerts read so
- * far (newest [KEPT]), where to carry on reading ([cursor]) and how far the
- * person has looked ([readUpTo]). Saved on the phone between launches.
+ * far (newest [KEPT]), where to carry on reading ([cursor]), how far the
+ * person has looked ([readUpTo]) and the newest shown on the lock screen
+ * ([notifiedUpTo]). Saved on the phone between launches; all three numbers
+ * start again together when the list does.
  */
 @Serializable
 data class AlertState(
     val cursor: Long? = null,
     val readUpTo: Long = 0,
     val alerts: List<AppAlert> = emptyList(),
+    val notifiedUpTo: Long = 0,
 ) {
+    /** Alerts not shown on the lock screen yet. */
+    val toNotify: List<AppAlert> get() = alerts.filter { it.id > notifiedUpTo }
+
+    fun notified(): AlertState = copy(notifiedUpTo = maxOf(notifiedUpTo, alerts.maxOfOrNull { it.id } ?: 0))
+
+    /**
+     * This list, caught up while [current] changed on the phone (Mark all
+     * read tapped meanwhile): the newer marks are kept, unless the list
+     * started again, when its own fresh marks are right.
+     */
+    fun keepingMarks(current: AlertState): AlertState =
+        if ((cursor ?: 0) < (current.cursor ?: 0)) this
+        else copy(readUpTo = maxOf(readUpTo, current.readUpTo), notifiedUpTo = maxOf(notifiedUpTo, current.notifiedUpTo))
+
+    /** Lock-screen alerts just turned on: only what comes after now. */
+    fun nothingOlderToNotify(): AlertState = copy(notifiedUpTo = maxOf(notifiedUpTo, cursor ?: 0))
+
     /** Newest first, for the list. */
     val newestFirst: List<AppAlert> get() = alerts.sortedByDescending { it.id }
 
@@ -42,7 +62,7 @@ class AlertSync(private val fetch: suspend (after: Long?, limit: Int) -> AppAler
         val cursor = state.cursor
         if (cursor == null) {
             val now = fetch(null, pageSize)
-            return state.copy(cursor = now.latest, readUpTo = now.latest)
+            return state.copy(cursor = now.latest, readUpTo = now.latest, notifiedUpTo = now.latest)
         }
         var after: Long = cursor
         val found = mutableListOf<AppAlert>()
@@ -51,7 +71,7 @@ class AlertSync(private val fetch: suspend (after: Long?, limit: Int) -> AppAler
             if (answer.latest < after) {
                 // The agent's list started again (a new data folder): its
                 // numbers mean other alerts now, so start from where it is.
-                return AlertState(cursor = answer.latest, readUpTo = answer.latest)
+                return AlertState(cursor = answer.latest, readUpTo = answer.latest, notifiedUpTo = answer.latest)
             }
             found += answer.alerts
             after = answer.latest

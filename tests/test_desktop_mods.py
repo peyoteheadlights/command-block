@@ -6,8 +6,12 @@ test_dependency_resolution, whose downloads are real jar files."""
 
 from __future__ import annotations
 
+import hashlib
+
 import httpx
 import pytest
+
+from desktop import parts
 
 from .conftest import PASSWORD, LiveAgent, build_bedrock_config
 from .fake_pc import FakePC
@@ -64,7 +68,8 @@ def mods_page(qapp, agent_http, pc=None):
 def row_buttons(page, words, mod) -> list:
     return [
         b
-        for b in page.findChildren(QtWidgets.QPushButton)
+        # a row's switch and icon buttons are buttons too, with the same names
+        for b in page.findChildren(QtWidgets.QAbstractButton)
         if b.isVisibleTo(page) and b.accessibleName() == f"{words}: {mod}"
     ]
 
@@ -81,14 +86,18 @@ def can(page, words, mod) -> bool:
     return any(b.isEnabled() for b in row_buttons(page, words, mod))
 
 
-def ticks(window, pick=None) -> list[tuple[str, str, list]]:
+def ticks(window, pick=None, locks=None) -> list[tuple[str, str, list]]:
     """Answers the window's ticked lists (all as shown, or the ``pick``
-    indexes), and records them as (title, body, choices)."""
+    indexes; locked ones can't be ticked), and records them as (title,
+    body, choices). ``locks`` records each list's locked indexes."""
     seen: list[tuple[str, str, list]] = []
 
-    def tick(title, body, choices, yes):
+    def tick(title, body, choices, yes, locked=()):
         seen.append((title, body, choices))
-        return pick if pick is not None else [i for i, (_w, on) in enumerate(choices) if on]
+        if locks is not None:
+            locks.append(set(locked))
+        wanted = pick if pick is not None else [i for i, (_w, on) in enumerate(choices) if on]
+        return [i for i in wanted if i not in locked]
 
     window.tick = tick
     return seen
@@ -113,7 +122,7 @@ def drop(qapp, window, paths) -> bool:
 
 
 # ---------------------------------------------------------------- the page
-def test_the_tab_is_named_by_type_and_hidden_for_vanilla(qapp, agent_http):
+def test_the_tab_is_named_by_type_and_vanilla_only_makes_a_modpack(qapp, agent_http):
     window = signed_in_on(qapp, agent_http)
     assert "Mods" in page_tabs(window)
     config = core_of(agent_http).servers["survival"].config
@@ -122,7 +131,14 @@ def test_the_tab_is_named_by_type_and_hidden_for_vanilla(qapp, agent_http):
     wait_for(qapp, lambda: "Plugins" in page_tabs(window) and "Mods" not in page_tabs(window))
     config.set("server.type", "vanilla")
     window.refresh()
-    wait_for(qapp, lambda: "Plugins" not in page_tabs(window) and "Mods" not in page_tabs(window))
+    wait_for(qapp, lambda: "Plugins" not in page_tabs(window) and "Mods" in page_tabs(window))
+    window.server_screen.show_page("Mods")
+    page = window.server_screen.page
+    assert page is window.server_screen.page_widgets["Vanilla mods"]
+    assert "Fabric" in page.fabric.text()
+    assert page.make_card.frame.isVisibleTo(window)
+    page.change.click()
+    wait_for(qapp, lambda: window.server_screen.current_page == "Settings")
     window.load_server_parts()
     overview = window.server_screen.simple_overview
     assert not overview.mods_card.isVisibleTo(window)
@@ -137,7 +153,10 @@ def test_the_list_shows_each_mod_and_changes_wait_until_the_server_stops(qapp, a
     # The rows are shown on the next turn of the event loop, after the count.
     wait_for(qapp, lambda: "3 mods installed" in shown_text(page) and "Alpha" in shown_text(page))
     text = shown_text(page)
-    assert "Alpha" in text and "Beta" in text and "Off" in text and "Working" in text
+    assert "Alpha" in text and "Beta" in text and "Working" in text
+    # Beta is off: its switch says so, and names what a click would do
+    assert row_button(page, "Turn off", "Alpha").isChecked()
+    assert not row_button(page, "Turn on", "Beta").isChecked()
     assert "Stop the server first" in text
     assert not row_button(page, "Turn off", "Alpha").isEnabled()
     assert not button(page, "Update all").isEnabled()
@@ -166,7 +185,7 @@ def test_an_update_asks_and_undo_puts_the_old_version_back(qapp, agent_http):
     agent_http.get("/api/servers/survival/mods/update-all", headers=headers)  # saves what's newer
     window, page = mods_page(qapp, agent_http)
     questions = asked(window)
-    wait_for(qapp, lambda: "Update: 2.0" in shown_text(page))
+    wait_for(qapp, lambda: "1.0 → 2.0" in shown_text(page))
     row_button(page, "Update", "Alpha").click()
     wait_for(qapp, lambda: "Updated to 2.0" in page.note.text(), 30)
     assert questions[0] == (
@@ -183,7 +202,7 @@ def test_remove_says_what_needs_it_first(qapp, agent_http):
     window, page = mods_page(qapp, agent_http)
     questions = asked(window)
     wait_for(qapp, lambda: can(page, "Turn off", "Alpha"))
-    menu_item(page, "Remove").trigger()  # the first row's menu: Alpha
+    row_button(page, "Remove", "Alpha").click()
     wait_for(qapp, lambda: "Alpha removed" in page.note.text())
     assert questions[0][0] == "Remove Alpha?" and "Needs Alpha needs it" in questions[0][1]
     assert not (folder / "alpha.jar").exists()
@@ -222,7 +241,7 @@ def test_search_and_install_with_the_mods_it_needs(qapp, agent_http):
     window, page = mods_page(qapp, agent_http)
     seen = ticks(window)
     page.search_box.setText("lith")
-    button(page, "Search").click()
+    page.search_box.returnPressed.emit()  # Enter in the field: there is no Search button
     wait_for(qapp, lambda: "Lithium" in shown_text(page))
     wait_for(qapp, lambda: can(page, "Install", "Lithium"))
     row_button(page, "Install", "Lithium").click()
@@ -277,6 +296,36 @@ def test_update_all_shows_a_ticked_list_and_is_one_change_with_one_undo(qapp, ag
     headers = owner(agent_http)
     assert undo_titles(agent_http, headers)[0] == "Update all"
     wait_for(qapp, lambda: window.server_screen.header.undo.isVisible())
+
+
+def test_update_all_stays_greyed_while_it_runs_even_when_the_list_refreshes(
+    qapp, agent_http, monkeypatch
+):
+    import threading
+
+    from desktop.agent import AgentClient
+
+    with_mods(agent_http)
+    window, page = mods_page(qapp, agent_http)
+    seen = ticks(window)
+    release, sent = threading.Event(), []
+    real_on = AgentClient.on
+
+    def slow_on(self, sid, method, path, body=None, slow=False):
+        if method == "POST" and path == "/mods/update-all":
+            sent.append(path)
+            release.wait(30)
+        return real_on(self, sid, method, path, body, slow)
+
+    monkeypatch.setattr(AgentClient, "on", slow_on)
+    wait_for(qapp, lambda: button(page, "Update all").isEnabled())
+    button(page, "Update all").click()
+    wait_for(qapp, lambda: sent and seen)
+    page.update_all_ready()  # what every refresh of the list does
+    assert not page.update_all.isEnabled()
+    release.set()
+    wait_for(qapp, lambda: "Updated 1." in page.note.text(), 60)
+    wait_for(qapp, lambda: page.update_all.isEnabled())
 
 
 def test_a_failed_update_all_names_the_mod_and_changes_nothing(qapp, agent_http):
@@ -339,8 +388,8 @@ def test_a_modpack_is_read_first_then_imported(qapp, agent_http, tmp_path, monke
     with_mods(agent_http)
     imported = []
 
-    async def import_into(ctx, token, user="system"):
-        imported.append(token)
+    async def import_into(ctx, token, user="system", own_jars=False):
+        imported.append((token, own_jars))
         return {
             "job_id": "j1",
             "modpack": {"name": "Test Pack"},
@@ -359,13 +408,23 @@ def test_a_modpack_is_read_first_then_imported(qapp, agent_http, tmp_path, monke
     assert title == "Import Test Pack?"
     assert "Skipped, only for the game itself: sodium.jar" in body
     assert "A backup is taken and checked first" in body
-    assert len(imported) == 1
+    assert len(imported) == 1 and imported[0][1] is False
 
     # Dropped on the window: the same question; No throws the upload away.
     questions = asked(window, answer=False)
     assert drop(qapp, window, [tmp_path / "pack.mrpack"])
     wait_for(qapp, lambda: questions)
     assert len(imported) == 1
+
+    # Own jars are in the question, and Import is the yes to them.
+    questions = asked(window)
+    own = {"overrides/mods/our-tweaks.jar": b"PK own"}
+    pc.picked = str(make_pack(tmp_path / "own.mrpack", overrides=own))
+    page.note.say("")
+    button(page, "Choose a modpack file").click()
+    wait_for(qapp, lambda: "Imported Test Pack" in page.note.text(), 30)
+    assert "Not checked by a site: mods/our-tweaks.jar" in questions[0][1]
+    assert imported[-1][1] is True
 
 
 # ---------------------------------------------------------------- Bedrock add-ons
@@ -441,6 +500,10 @@ def test_a_moderator_without_mods_rights_sees_no_change_buttons(qapp, agent_http
     wait_for(qapp, lambda: window.role is not None and not window._tasks)
     wait_for(qapp, lambda: "3 mods installed" in shown_text(page))
     assert not buttons_named(page, "Turn off") and not buttons_named(page, "Update all")
+    # "On all servers" only changes what the list shows; no switch changes a mod.
+    switches = [s for s in page.findChildren(parts.Switch) if s.isVisibleTo(page)]
+    assert switches == [page.everywhere]
+    assert not row_buttons(page, "Remove", "Alpha")
     assert not page.search_card.isVisibleTo(page)
 
 
@@ -606,7 +669,10 @@ def test_suggestions_map_link_and_speed_ups_are_shown(qapp, agent_http, monkeypa
     with_mods(agent_http)
     pc = FakePC()
     window, page = mods_page(qapp, agent_http, pc)
-    wait_for(qapp, lambda: page.players_card.isVisibleTo(page))
+    wait_for(
+        qapp,
+        lambda: page.players_card.isVisibleTo(page) and "Sodium" in shown_text(page.players_card),
+    )
     assert "Sodium" in shown_text(page.players_card)
     assert not page.ideas_card.isVisibleTo(page)  # the lists are Technical only
     # Qt shows a button added to a shown page on the next turn of the event loop.
@@ -722,8 +788,726 @@ def test_the_settings_page_lists_the_folders_other_config_files(qapp, agent_http
     (ctx.config.server_dir / "bukkit.yml").write_text("a: 1\n", encoding="utf-8")
     window = signed_in_on(qapp, agent_http)
     page = open_page(qapp, window, "Settings")
-    wait_for(qapp, lambda: page.findChildren(QtWidgets.QListWidget))
-    listed = page.findChildren(QtWidgets.QListWidget)[0]
+    # The config files' list, not the Server files card's (both are lists).
+    lists = lambda: [  # noqa: E731
+        w
+        for w in page.findChildren(QtWidgets.QListWidget)
+        if w.accessibleName() == "Other settings files"
+    ]
+    wait_for(qapp, lists)
+    listed = lists()[0]
     names = [listed.item(i).text() for i in range(listed.count())]
     assert "bukkit.yml" in names and "plugins/Chunky/config.yml" in names
     assert "server.properties" not in names
+
+
+def test_still_fit_card_changes_the_ticked_ones_as_one_update_all(qapp, agent_http):
+    with_mods(agent_http)
+    core_of(agent_http).servers["survival"].db.set_setting(
+        "mod_fit",
+        {
+            "about": "Create 6.0",
+            "needs_change": [
+                {
+                    "mod_id": "alpha",
+                    "name": "Alpha",
+                    "filename": "alpha.jar",
+                    "why": "Rails needs Alpha 2.0 or newer",
+                    "from": "1.0",
+                    "to": "2.0",
+                    "version_id": "alpha-2.0",
+                },
+            ],
+            "no_fit": [
+                {
+                    "mod_id": "gamma",
+                    "name": "Gamma",
+                    "filename": "gamma.jar",
+                    "why": "No version for Minecraft 1.21.1 yet",
+                }
+            ],
+            "cant_tell": [
+                {
+                    "mod_id": "beta",
+                    "name": "Beta",
+                    "filename": "beta.jar.disabled",
+                    "why": "Can't read its range",
+                }
+            ],
+        },
+    )
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: "Can't read its range" in shown_text(page))
+    shown = shown_text(page)
+    assert "1 mod needs a different version to go with Create 6.0." in shown
+    assert [t.text() for t, _ in page.fit_ticks] == ["Alpha   1.0 → 2.0"]
+    assert "No version for Minecraft 1.21.1 yet" in shown
+    assert "Can't tell" in shown and "Can't read its range" in shown
+    assert row_button(page, "Turn off", "Gamma")
+    wait_for(qapp, lambda: button(page, "Change these").isEnabled())
+    button(page, "Change these").click()
+    wait_for(qapp, lambda: "Updated 1." in page.note.text(), 60)
+    assert undo_titles(agent_http, owner(agent_http))[0] == "Update all"
+    assert list(mods_folder(agent_http).glob("alpha-2.0*"))
+
+    button(page, "Hide").click()
+    wait_for(qapp, lambda: not page.fit_card.isVisible())
+
+
+def test_the_same_mod_twice_offers_turn_off_on_the_older_copy(qapp, agent_http):
+    folder = with_mods(agent_http)
+    make_jar(folder / "alpha-new.jar", "alpha", version="1.1", name="Alpha")
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: "Keep 1.1, turn off 1.0" in shown_text(page))
+    assert page.same_card.isVisible()
+    assert "Alpha is here 2 times." in shown_text(page)
+    wait_for(qapp, lambda: can(page, "Turn off", "Alpha 1.0"))
+    assert not row_buttons(page, "Turn off", "Alpha 1.1")
+    row_button(page, "Turn off", "Alpha 1.0").click()
+    wait_for(qapp, lambda: (folder / "alpha.jar.disabled").exists())
+    wait_for(qapp, lambda: not page.same_card.isVisible())
+
+
+def test_a_found_modpack_is_read_from_its_own_site_with_a_site_that_is_down_said():
+    from desktop.mods import find_pack
+
+    calls, said, read = [], [], []
+
+    class Window:
+        def __init__(self):
+            self.agent = self
+
+        def call(self, method, path, body=None, slow=False):
+            calls.append((method, path, body))
+            if method == "GET":
+                hit = {"project_id": "curseforge:900", "title": "Cozy", "source": "curseforge"}
+                problems = ["Modrinth isn't available right now."]
+                return {"hits": [hit | {"source_name": "CurseForge"}], "problems": problems}
+            return {"pack": "read"}
+
+        def run(self, work, done, failed):
+            done(work())
+
+        def pick(self, title, body, choices):
+            assert choices == ["Cozy  ·  CurseForge"], "no download count when the site gave none"
+            return 0
+
+    find_pack(Window(), "cozy pack", "survival", said.append, read.append)
+    assert calls[0][1] == "/modpacks/search?q=cozy%20pack&limit=10"
+    assert calls[1] == (
+        "POST",
+        "/modpacks/curseforge",
+        {"project": "curseforge:900", "server_id": "survival"},
+    )
+    assert "Modrinth isn't available right now." in said and read == [{"pack": "read"}]
+
+
+def test_a_linked_modpack_card_updates_and_unlinks(qapp, agent_http, monkeypatch, tmp_path):
+    from agent import linkedpack, modpack
+
+    from .test_modpack import make_pack
+
+    with_mods(agent_http)
+    ctx = core_of(agent_http).servers["survival"]
+    alpha = mods_folder(agent_http) / "alpha.jar"
+    sha256 = hashlib.sha256(alpha.read_bytes()).hexdigest()
+    entry = {"path": "mods/alpha.jar", "key": "a" * 128, "project": "A", "sha256": sha256}
+    linkedpack._save(
+        ctx,
+        {
+            "site": "modrinth",
+            "project": "xyz",
+            "version_id": "v1",
+            "version": "1.2.0",
+            "name": "Test Pack",
+            "files": [entry],
+            "overrides": {},
+        },
+    )
+    ctx.db.set_setting(
+        linkedpack.UPDATE_SETTING,
+        {"for": "v1", "version_id": "v2", "version": "1.3.0", "checked_at": 9e12},
+    )
+    sent = []
+
+    async def preview(ctx, version_id=None):
+        sent.append(("preview", version_id))
+        return {
+            "token": "0" * 32,
+            "pack": modpack.inspect(make_pack(tmp_path / "p.mrpack")).to_dict(),
+            "changes": {
+                "from_version": "1.2.0",
+                "to_version": "1.3.0",
+                "added": ["ferrite.jar"],
+                "removed": [],
+                "newer": [{"name": "alpha-2.jar", "from": "alpha.jar", "to": "alpha-2.jar"}],
+                "added_by_you": ["gamma.jar"],
+                "configs_changed_by_you": ["config/alpha.toml"],
+                "new_own_jars": ["mods/our-tweaks.jar"],
+                "version_change": False,
+                "minecraft_version": "1.21.1",
+                "problems": [],
+            },
+        }
+
+    async def update(ctx, token, use_pack_configs=False, user="system", own_jars=False):
+        sent.append(("update", use_pack_configs, own_jars))
+        return {
+            "job_id": "j1",
+            "changes": (await preview(ctx))["changes"],
+            "kept_configs": [],
+            "version_change": False,
+            "undo": None,
+        }
+
+    monkeypatch.setattr(linkedpack, "preview", preview)
+    monkeypatch.setattr(linkedpack, "update", update)
+    window, page = mods_page(qapp, agent_http)
+    # The card and the list's rows come from two answers: wait for both.
+    wait_for(qapp, lambda: "Version 1.3.0 is out." in shown_text(page))
+    wait_for(qapp, lambda: "Added by you" in shown_text(page))
+    shown = shown_text(page)
+    assert "Made from Test Pack 1.2.0 on Modrinth." in shown
+    assert "2 mods were added by you. Modpack update keeps them." in shown
+    assert "Added by you" in shown
+
+    seen = ticks(window, pick=[0])
+    wait_for(qapp, lambda: button(page, "Modpack update").isEnabled())
+    button(page, "Modpack update").click()
+    wait_for(qapp, lambda: "Test Pack is now on 1.3.0" in page.note.text(), 30)
+    title, body, choices = seen[0]
+    assert title == "Update Test Pack to 1.3.0?"
+    assert "Newer: alpha.jar → alpha-2.jar" in body and "Added: ferrite.jar" in body
+    assert "Kept, added by you: gamma.jar" in body
+    assert "Not checked by a site: mods/our-tweaks.jar" in body
+    assert choices == [("Use the modpack's config files instead of mine", False)]
+    assert sent == [("preview", "v2"), ("update", True, True), ("preview", None)]
+
+    asked(window)
+    button(page, "Unlink").click()
+    wait_for(qapp, lambda: not page.linked_card.isVisible())
+    assert linkedpack.read_link(ctx) is None
+
+
+# ---------------------------------------------------------------- Server / Players / Both
+def row_menu_item(page, mod, words):
+    """An item of one mod's ⋯ menu."""
+    for more in page.findChildren(QtWidgets.QToolButton):
+        if more.isVisibleTo(page) and more.accessibleName().endswith(f": {mod}") and more.menu():
+            for action in more.menu().actions():
+                if action.text() == words:
+                    return action
+    raise AssertionError(f"no {words!r} in {mod}'s menu")
+
+
+def test_marks_move_a_mod_to_players_only_and_back(qapp, agent_http, tmp_path):
+    folder = with_mods(agent_http)
+    make_jar(folder / "map.jar", "minimap", name="Minimap", environment="client")
+    players = core_of(agent_http).servers["survival"].config.server_dir / "player-only"
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc)
+    window.confirm = lambda *words: True  # no site lists these files
+    wait_for(qapp, lambda: "For: Players (from the mod's file)" in shown_text(page))
+    assert "For: Both (from the mod's file)" in shown_text(page)
+    assert "Players only" in shown_text(page) and "Nothing here yet." in shown_text(page)
+
+    wait_for(qapp, lambda: can(page, "Turn off", "Minimap"))
+    row_menu_item(page, "Minimap", "Only players need it").trigger()
+    wait_for(qapp, lambda: "Minimap moved to Players only" in page.note.text(), 20)
+    assert (players / "map.jar").is_file() and not (folder / "map.jar").exists()
+    wait_for(qapp, lambda: can(page, "Move to the server", "Minimap"))
+
+    pack = tmp_path / "faithful.zip"
+    import zipfile
+
+    with zipfile.ZipFile(pack, "w") as zf:
+        zf.writestr("pack.mcmeta", "{}")
+    pc.picked = str(pack)
+    button(page, "Add for players").click()
+    wait_for(qapp, lambda: "faithful.zip was added for players." in page.note.text(), 20)
+    assert (players / "faithful.zip").is_file()
+
+    row_button(page, "Move to the server", "Minimap").click()
+    wait_for(qapp, lambda: "Minimap is now marked Both." in page.note.text(), 20)
+    assert (folder / "map.jar").is_file()
+    wait_for(qapp, lambda: "For: Both (set by you)" in shown_text(page))
+
+
+def test_player_files_backup_options_and_get_it_again(qapp, agent_http, tmp_path, monkeypatch):
+    import zipfile
+
+    from agent import downloads
+    from agent.mods import sides
+
+    with_mods(agent_http)
+    ctx = core_of(agent_http).servers["survival"]
+    pack = tmp_path / "faithful.zip"
+    with zipfile.ZipFile(pack, "w") as zf:
+        zf.writestr("pack.mcmeta", "{}")
+    data = pack.read_bytes()
+
+    async def known(mods, sent):
+        return "modrinth", {"project_id": "x"}
+
+    async def file_url(sha512):
+        return "https://cdn.modrinth.com/data/x/versions/y/faithful.zip"
+
+    async def fetched(spec):
+        return data, None
+
+    monkeypatch.setattr(sides, "known_source", known)
+    monkeypatch.setattr(downloads, "download_bytes", fetched)
+    ctx.mods.modrinth.file_url = file_url
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc)
+    pc.picked = str(pack)
+    wait_for(qapp, lambda: button(page, "Add for players").isEnabled())
+    button(page, "Add for players").click()
+    wait_for(qapp, lambda: "faithful.zip was added for players." in page.note.text(), 20)
+
+    wait_for(qapp, lambda: page.back_up_players.isChecked() and page.skip_listed.isVisible())
+    page.skip_listed.click()
+    wait_for(qapp, lambda: sides.options(ctx)["skip_listed"] is True)
+
+    (ctx.config.server_dir / "player-only" / "faithful.zip").unlink()  # left out, then restored
+    page.changed()
+    wait_for(qapp, lambda: can(page, "Get it again", "faithful"))
+    row_button(page, "Get it again", "faithful").click()
+    wait_for(qapp, lambda: (ctx.config.server_dir / "player-only" / "faithful.zip").is_file(), 20)
+
+
+# ---------------------------------------------------------------- Make a modpack
+def test_make_a_modpack_then_save_it_and_post_it_in_discord(
+    qapp, agent_http, monkeypatch, tmp_path
+):
+    import zipfile
+
+    from agent import modpackmake
+    from desktop import make_modpack
+
+    with_mods(agent_http)
+    ctx = core_of(agent_http).servers["survival"]
+    (ctx.config.server_dir / "config").mkdir(exist_ok=True)
+    (ctx.config.server_dir / "config" / "alpha.toml").write_text("speed = 2\n")
+
+    async def no_sites(ctx, items):  # the sites themselves have their own tests
+        return None
+
+    async def versions(ctx, items, players_loader):
+        return {"minecraft": "1.21.1", "fabric-loader": "0.16.5"}
+
+    posted = []
+
+    async def post(ctx, token, user="system"):
+        posted.append(token)
+        return {"posted": 1}
+
+    monkeypatch.setattr(modpackmake, "_look_up", no_sites)
+    monkeypatch.setattr(modpackmake, "_dependencies", versions)
+    monkeypatch.setattr(modpackmake, "_chat_channels", lambda ctx: ["c1"])
+    monkeypatch.setattr(modpackmake, "post_to_discord", post)
+    asked_with = []
+
+    def answer(dialog):
+        asked_with.append(dialog)
+        dialog.configs[0][0].setChecked(True)
+        return 1
+
+    monkeypatch.setattr(make_modpack.MakeDialog, "exec", answer)
+    pc = FakePC()
+    pc.save_to = str(tmp_path / "saved.mrpack")
+    window, page = mods_page(qapp, agent_http, pc)
+    assert page.make_card.frame.isVisibleTo(page)
+    button(page, "Make a modpack…").click()
+    wait_for(qapp, lambda: "is ready" in shown_text(page), 30)
+    dialog = asked_with[0]
+    assert dialog.leave_out.isChecked(), "ticked by default for friends"
+    assert dialog.body()["configs"] == ["config/alpha.toml"]
+    assert not dialog.required.isEnabled(), "no Companion on this server"
+    assert not dialog.chat_on.isVisibleTo(dialog)
+    shown = shown_text(page)
+    assert "Only share it with people you trust." in shown, "Alpha and Gamma are own jars"
+    assert "Share it from the Modrinth App" in shown
+
+    button(page, "Save…").click()
+    wait_for(qapp, lambda: "Saved to" in page.note.text(), 20)
+    with zipfile.ZipFile(tmp_path / "saved.mrpack") as zf:
+        names = zf.namelist()
+    assert "overrides/config/alpha.toml" in names and "overrides/mods/alpha.jar" in names
+    assert "overrides/mods/beta.jar" not in names, "a turned-off mod stays out"
+
+    button(page, "Post in Discord").click()
+    wait_for(qapp, lambda: "Posted in 1 Discord" in page.note.text(), 20)
+    assert posted == [page.make_card.result["token"]]
+
+
+# ---------------------------------------------------------------- Download link
+def test_turn_on_the_download_link_and_add_a_resource_pack(qapp, agent_http, monkeypatch, tmp_path):
+    import hashlib
+
+    from agent import downloadlink
+
+    from .test_modpack_make import PACK
+
+    with_mods(agent_http)
+    ctx = core_of(agent_http).servers["survival"]
+    monkeypatch.setattr(downloadlink.LinkServer, "address", lambda self: "127.0.0.1")
+    props = ctx.config.server_dir / "server.properties"
+    if not props.is_file():
+        props.write_text("motd=hi\n")
+    pack = tmp_path / "Textures.zip"
+    pack.write_bytes(PACK)
+    pc = FakePC()
+    pc.picked = str(pack)
+    window, page = mods_page(qapp, agent_http, pc)
+    wait_for(qapp, lambda: page.link_card.frame.isVisibleTo(page) and page.link_card.data, 20)
+    assert "No resource pack." in shown_text(page)
+    button(page, "Turn on the download link").click()
+    wait_for(qapp, lambda: page.link_card.data.get("on"), 20)
+    assert "Make a modpack and its link shows here." in shown_text(page)
+
+    button(page, "Choose a pack…").click()
+    wait_for(qapp, lambda: page.link_card.data.get("resource_pack"), 20)
+    assert "Textures.zip" in shown_text(page) and "served by the download link" in shown_text(page)
+    assert f"resource-pack-sha1={hashlib.sha1(PACK).hexdigest()}" in props.read_text()
+
+    page.link_card.required.click()
+    wait_for(qapp, lambda: "require-resource-pack=true" in props.read_text(), 20)
+    button(page, "Turn off").click()
+    wait_for(qapp, lambda: not page.link_card.data.get("on"), 20)
+    assert "Turn on the download link so players' games can get it." in shown_text(page)
+    assert "resource-pack=\n" in props.read_text()
+
+
+# ---------------------------------------------------------------- Put it on Modrinth
+def test_sign_in_with_modrinth_and_upload_the_modpack(qapp, agent_http, monkeypatch):
+    import re
+    import threading
+    import urllib.request
+
+    from agent import downloads, modpackmake
+    from desktop import make_modpack, modrinth_card
+
+    from .test_curseforge import FakeCurseForge
+    from .test_modrinth_share import FakeModrinthSite
+
+    with_mods(agent_http)
+    site = FakeModrinthSite(FakeCurseForge())
+    monkeypatch.setattr(downloads, "TRANSPORT", httpx.MockTransport(site))
+
+    async def no_sites(ctx, items):
+        return None
+
+    async def versions(ctx, items, players_loader):
+        return {"minecraft": "1.21.1", "fabric-loader": "0.16.5"}
+
+    monkeypatch.setattr(modpackmake, "_look_up", no_sites)
+    monkeypatch.setattr(modpackmake, "_dependencies", versions)
+    monkeypatch.setattr(make_modpack.MakeDialog, "exec", lambda dialog: 1)
+    typed = ["friends-pack", "Our friends' pack"]
+    monkeypatch.setattr(modrinth_card.QInputDialog, "getText", lambda *a, **k: (typed.pop(0), True))
+    pc = FakePC()
+    window, page = mods_page(qapp, agent_http, pc)
+    card = page.modrinth_card
+    wait_for(qapp, lambda: card.frame.isVisibleTo(page) and card.data, 20)
+    assert "Not signed in to Modrinth." in shown_text(page)
+
+    button(page, "Sign in with Modrinth").click()
+    wait_for(qapp, lambda: pc.opened, 20)
+    state = re.search(r"state=([^&]+)", pc.opened[-1]).group(1)
+    assert f".pc{card.catcher.port}." in state, "the way back is this computer's own address"
+    back = f"http://127.0.0.1:{card.catcher.port}/modrinth?state={state}&code=good-code"
+    seen: list[bytes] = []
+    threading.Thread(target=lambda: seen.append(urllib.request.urlopen(back).read())).start()
+    wait_for(qapp, lambda: "Signed in to Modrinth as mark." in shown_text(page), 20)
+    assert b"You can close this tab" in seen[0]
+
+    button(page, "Make a modpack…").click()
+    wait_for(qapp, lambda: "is ready" in shown_text(page), 30)
+    wait_for(qapp, lambda: (card.data.get("made") or {}).get("version") == "1", 20)
+    button(page, "Upload Survival 1").click()
+    wait_for(qapp, lambda: "press Submit for review" in page.note.text(), 30)
+    assert site.projects[0]["slug"] == "friends-pack" and site.projects[0]["is_draft"]
+    assert "https://modrinth.com/modpack/friends-pack" in shown_text(page)
+
+    button(page, "Sign out of Modrinth").click()
+    wait_for(qapp, lambda: "Not signed in to Modrinth." in shown_text(page), 20)
+
+
+# ---------------------------------------------------------------- the anti-cheat picker
+def test_the_anti_cheat_picker_offers_grim_with_the_fabric_warning(qapp, agent_http):
+    with_mods(agent_http)  # Alpha and Gamma say "*": mods players need too
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: "No anti-cheat is in." in shown_text(page), 20)
+    words = shown_text(page)
+    assert "Try it with a friend first." in words
+    assert button(page, "Add Grim")
+
+
+def test_the_side_filter_and_on_all_servers(qapp, agent_http):
+    folder = with_mods(agent_http)
+    make_jar(folder / "chunky.jar", "chunky", name="Chunky", environment="server")
+    creative = mods_folder(agent_http, "creative")
+    creative.mkdir(exist_ok=True)
+    make_jar(creative / "chunky.jar", "chunky", name="Chunky", environment="server")
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: can(page, "Remove", "Alpha"))
+
+    page.filters.buttons["server"].click()
+    wait_for(qapp, lambda: can(page, "Remove", "Chunky"))
+    assert not row_buttons(page, "Remove", "Alpha")
+    page.filters.buttons["players"].click()
+    wait_for(qapp, lambda: "No mods with this mark." in shown_text(page))
+
+    page.filters.buttons["server"].click()
+    page.everywhere.click()
+    wait_for(qapp, lambda: "On: Survival, Creative" in shown_text(page))
+    assert "Alpha" not in shown_text(page)
+    page.filters.buttons["all"].click()
+    wait_for(qapp, lambda: "Alpha" in shown_text(page) and "For: Both" in shown_text(page))
+    page.everywhere.click()
+    wait_for(qapp, lambda: can(page, "Remove", "Alpha"))
+
+
+# ---------------------------------------------------------------- far view
+def test_the_far_view_card_offers_each_choice_and_chunky(qapp, agent_http):
+    from .test_far_view import FarModrinth
+
+    with_mods(agent_http, FarModrinth())
+    window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: "Far view is off." in shown_text(page), 20)
+    words = shown_text(page)
+    assert "Distant Horizons: friends see far land" in words
+    assert "Chunky loads land around the middle of the world" in words
+    assert button(page, "Add Chunky")
+
+
+def test_make_dialog_offers_required_and_the_chat_line_with_the_companion(qapp):
+    from desktop import make_modpack
+
+    options = {
+        "name": "Friends",
+        "version": "2",
+        "required_to_join": {"available": True, "on": False},
+        "chat_line": {"on": True, "text": "Get {name} {version}"},
+    }
+    dialog = make_modpack.MakeDialog(None, options)
+    assert dialog.required.isEnabled() and not dialog.required.isChecked()
+    assert dialog.body()["chat_line"] == {"on": True, "text": "Get {name} {version}"}
+    dialog.required.setChecked(True)
+    assert not dialog.chat_text.isEnabled(), "a required modpack has no chat line"
+    assert dialog.body()["required"] is True
+    dialog.chat_text.setText("  ")
+    assert dialog.body()["chat_line"] is None, "empty: the agent's own wording"
+
+
+def test_make_dialog_on_vanilla_offers_change_server_type(qapp):
+    from desktop import make_modpack
+
+    opened = []
+    options = {"name": "Friends", "required_to_join": {"available": False, "needs_fabric": True}}
+    dialog = make_modpack.MakeDialog(None, options, change_type=lambda: opened.append(1))
+    assert not dialog.required.isEnabled()
+    assert "Needs a Fabric server" in shown_text(dialog)
+    button(dialog, "Change server type").click()
+    assert opened == [1]
+    assert dialog.result() == make_modpack.QDialog.DialogCode.Rejected
+
+
+def test_make_dialog_sets_the_title_screen(qapp):
+    from desktop import make_modpack
+
+    options = {
+        "name": "Friends",
+        "version": "2",
+        "required_to_join": {"available": True, "on": False},
+        "title_screen": {
+            "button": {"on": True, "address": "play.example.net"},
+            "flavor_text": {"on": False, "text": ""},
+            "background": {"on": False},
+            "background_set": False,
+        },
+    }
+    uploaded = {"title_screen": {"background_set": True}}
+    dialog = make_modpack.MakeDialog(None, options, lambda: uploaded)
+    assert dialog.address.isEnabled() and not dialog.flavor.isEnabled()
+    assert not dialog.background_on.isEnabled(), "no picture picked yet"
+    button(dialog, "Pick picture").click()
+    assert dialog.background_on.isChecked()
+    dialog.flavor_on.setChecked(True)
+    dialog.flavor.setText(" Dragons! ")
+    assert dialog.body()["title_screen"] == {
+        "button": {"on": True, "address": "play.example.net"},
+        "flavor_text": {"on": True, "text": "Dragons!"},
+        "background": {"on": True},
+    }
+
+
+# ---------------------------------------------------------------- deep scan
+def test_deep_scan_lists_a_worth_a_look_mod_and_quarantine_moves_it(qapp, agent_http):
+    from .test_deepscan import BAD_CLASSES, CLASS
+    from .test_jarscan import mod_with
+
+    folder = mods_folder(agent_http)
+    folder.mkdir(exist_ok=True)
+    mod_with(folder / "bad.jar", {"a/B.class": CLASS + BAD_CLASSES["starts_a_program"]})
+    _window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.deep.boxes and page.deep.run_button.isEnabled())
+    page.deep.run_button.click()
+    wait_for(
+        qapp, lambda: "Worth a look" in shown_text(page) and can(page, "Quarantine", "mods/bad.jar")
+    )
+    row_button(page, "Quarantine", "mods/bad.jar").click()
+    wait_for(qapp, lambda: not (folder / "bad.jar").exists())
+    wait_for(qapp, lambda: not row_buttons(page, "Quarantine", "mods/bad.jar"))
+
+
+def test_deep_scan_hides_jneedle_without_its_list_and_says_download_sizes(
+    qapp, agent_http, monkeypatch
+):
+    import time
+
+    from agent.mods import scanprograms
+    from agent.mods.scanprograms import PROGRAMS, ScanPrograms
+
+    monkeypatch.setattr(scanprograms, "WINDOWS", True)  # ClamAV is offered on Windows only
+
+    mods_folder(agent_http).mkdir(exist_ok=True)
+    programs = ScanPrograms(core_of(agent_http).servers["survival"].deepscan.forge_dir)
+    programs.home("jneedle").mkdir(parents=True)
+    (programs.home("jneedle") / "list-failed").write_text(str(time.time()))
+    _window, page = mods_page(qapp, agent_http)
+    deep = page.deep
+    wait_for(qapp, lambda: deep.boxes)
+    assert "jneedle" not in deep.boxes and "mcantimalware" in deep.boxes
+    size = round(PROGRAMS["clamav"].size / 1e6)
+    # The new rows show on Qt's next pass, not straight away.
+    wait_for(qapp, lambda: f"Downloaded the first time you run it ({size} MB)." in shown_text(page))
+
+
+def test_deep_scan_schedule_and_before_start_are_saved_on_the_agent(qapp, agent_http):
+    mods_folder(agent_http).mkdir(exist_ok=True)
+    _window, page = mods_page(qapp, agent_http)
+    deep = page.deep
+    wait_for(qapp, lambda: deep.boxes)
+    assert deep.schedule.currentText() == "Never on its own" and not deep.day.isVisibleTo(page)
+    deep.schedule.setCurrentIndex(2)
+    deep.schedule.activated.emit(2)
+    config = core_of(agent_http).servers["survival"].config
+    wait_for(qapp, lambda: config.mods.deep_scan_schedule == "weekly")
+    wait_for(qapp, lambda: "Next run:" in deep.next_run.text())
+    assert deep.day.isVisibleTo(page) and deep.day.currentText() == "Sunday"
+    assert deep.time.time().toString("HH:mm") == "04:00"
+    deep.before_start.click()
+    wait_for(qapp, lambda: config.mods.deep_scan_before_start)
+
+
+def test_jar_check_before_start_and_ask_me_first_boxes(qapp, agent_http):
+    mods_folder(agent_http).mkdir(exist_ok=True)
+    _window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.before_start.isVisibleTo(page))
+    assert page.ask_first.isVisibleTo(page)  # signed in as the owner
+    config = core_of(agent_http).servers["survival"].config
+    page.before_start.click()
+    wait_for(qapp, lambda: config.mods.check_before_start)
+    page.ask_first.click()
+    wait_for(qapp, lambda: config.mods.ask_before_stop)
+
+
+def test_deep_scan_the_owner_saves_and_removes_a_virustotal_key(qapp, agent_http, monkeypatch):
+    from .test_virustotal import KEY, Fake
+
+    Fake(monkeypatch)  # VirusTotal takes any key here
+    mods_folder(agent_http).mkdir(exist_ok=True)
+    _window, page = mods_page(qapp, agent_http)
+    deep = page.deep
+    wait_for(qapp, lambda: "virustotal" in deep.boxes)
+    assert not deep.boxes["virustotal"].isEnabled()  # no key yet
+    assert deep.vt_key.isVisibleTo(page) and "non-commercial" in deep.vt_note.text()
+    deep.vt_key.setText(KEY)
+    deep.vt_save.click()
+    wait_for(qapp, lambda: deep.boxes["virustotal"].isEnabled())
+    assert deep.vt_key.text() == "" and not deep.vt_key.isVisibleTo(page)
+    vt = core_of(agent_http).servers["survival"].deepscan.virustotal
+    assert vt.key() == KEY
+    deep.vt_remove.click()
+    wait_for(qapp, lambda: not deep.boxes["virustotal"].isEnabled())
+    assert vt.key() is None
+
+
+# ------------------------------------------------------------ update hold
+class FreshModrinth(FakeModrinth):
+    """Alpha 2.0 came out an hour ago."""
+
+    def _version(self, slug, number, deps, filename=None):
+        import time
+        from datetime import UTC, datetime
+
+        found = super()._version(slug, number, deps, filename)
+        if slug == "alpha" and number == "2.0":
+            when = datetime.fromtimestamp(time.time() - 3600, UTC)
+            found["date_published"] = when.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return found
+
+
+def test_a_held_update_says_so_and_update_all_leaves_it_out(qapp, agent_http):
+    folder = with_mods(agent_http, FreshModrinth(PROJECTS))
+    window, page = mods_page(qapp, agent_http)
+    locks: list[set[int]] = []
+    seen = ticks(window, pick=[0, 1], locks=locks)
+    wait_for(qapp, lambda: button(page, "Update all").isEnabled())
+    button(page, "Update all").click()
+    wait_for(qapp, lambda: "Updated 1." in page.note.text(), 60)
+    _title, _body, choices = seen[0]
+    assert choices[0][0].startswith("Alpha   1.0 → 2.0   (Held until ")
+    assert choices[0][1] is False  # not ticked
+    assert locks == [{0}]  # and can't be ticked
+    assert (folder / "alpha.jar").exists()
+    wait_for(qapp, lambda: "Update all waits until" in shown_text(page), 30)  # on Alpha's row
+
+
+def test_the_owner_sets_the_update_hold(qapp, agent_http):
+    mods_folder(agent_http).mkdir(exist_ok=True)
+    _window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.hold_days.isVisibleTo(page))
+    assert page.hold_days.value() == 3
+    assert not page.hold_days.keyboardTracking()  # typing "14" is one save, not two
+    config = core_of(agent_http).servers["survival"].config
+    page.hold_days.setValue(7)
+    wait_for(qapp, lambda: config.mods.update_hold_days == 7)
+
+
+# ------------------------------------------------------------ jar changed outside
+def test_that_was_me_clears_a_jar_changed_outside_the_app(qapp, agent_http):
+    folder = with_mods(agent_http)
+    _window, page = mods_page(qapp, agent_http)
+    wait_for(qapp, lambda: page.scan_again.isEnabled())
+    page.scan_again.click()
+    wait_for(qapp, lambda: "gamma.jar" in shown_text(page), 30)
+    make_jar(folder / "dropped.jar", "dropped", version="1.0", name="Dropped")
+    page.scan_again.click()
+    wait_for(qapp, lambda: can(page, "That was me", "dropped.jar"), 30)
+    assert "Changed outside the app" in shown_text(page)
+    row_button(page, "That was me", "dropped.jar").click()
+    wait_for(qapp, lambda: not row_buttons(page, "That was me", "dropped.jar"), 30)
+
+
+def test_a_locked_row_in_a_ticked_list_cant_be_ticked(qapp):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QCheckBox, QWidget
+
+    from desktop.window import MainWindow
+
+    parent = QWidget()
+    parent.scale = 1  # type: ignore[attr-defined]  (all tick needs from the window)
+    found: list[tuple[bool, bool]] = []
+
+    def answer():
+        box = QApplication.activeModalWidget()
+        found.extend((t.isChecked(), t.isEnabled()) for t in box.findChildren(QCheckBox))
+        box.accept()
+
+    QTimer.singleShot(0, answer)
+    picked = MainWindow.tick(parent, "T", "B", [("held", True), ("free", True)], "Go", locked={0})
+    assert found == [(False, False), (True, True)]
+    assert picked == [1]

@@ -230,6 +230,17 @@ one Undo), `POST /api/mods/link` (`{"url"}`: a GitHub release's files, or
 `"kind": "browser"`), `POST /api/mods/link/add` (`{"version_id"}` from it),
 `GET /api/mods/impact?filename=`,
 `POST /api/mods/remove`, `POST /api/mods/enable`, `POST /api/mods/disable`,
+`POST /api/mods/side` (`{"filename", "side"}`: server, players or both;
+players moves the jar into the server folder's `player-only/`, which the
+server never loads, and leaving players moves it back; needs the server
+stopped for a move), `POST /api/mods/player-only/upload` (multipart: a mod,
+resource pack or shader pack for players only; `confirm=true` for a file no
+site lists), `POST /api/mods/player-only/remove` (`{"filename"}`, to the
+trash), `POST /api/mods/player-only/fetch` (`{"filename"}`: a missing file
+Modrinth lists, downloaded again and checked by its SHA-512),
+`POST /api/mods/player-only/options` (`{"backup": true, "skip_listed":
+false}`, needs `settings.server`). `GET /api/mods` gives each mod `side` and `side_from`, plus
+`player_only` and `odd_setups`,
 `GET /api/mods/updates?refresh=`, `POST /api/mods/update`,
 `GET /api/mods/versions/{mod_id}`, `POST /api/mods/rollback`,
 `GET /api/mods/history`, `GET /api/mods/check`,
@@ -273,11 +284,15 @@ Both saves keep a safety backup of the old file and answer with `changed`,
 | GET | `/api/servers/{id}/duplicate` | A suggested name and folder for a copy |
 | POST | `/api/servers/{id}/duplicate` | `{"name", "directory", "world": "copy" \| "fresh"}`. Runs as a job; the copy gets the next free port and an unused color |
 | POST | `/api/modpacks/inspect` | Multipart upload of a `.mrpack` (`?server_id=` adds `into`, what importing into that server would do). Reads it and answers with a `token` and the `pack`: versions, every file with `download`, `client_only` or `refused` and why, `problems`, `can_import`. Changes nothing |
-| GET | `/api/modpacks/curseforge/search?q=` | CurseForge modpacks, most popular first |
+| GET | `/api/modpacks/search?q=` | Modrinth's and CurseForge's modpacks side by side, each with `source_name`, `loaders`, the newest `minecraft_version`, `server_side` (`unsupported`: made for players' games only) and Modrinth's `disclosures` ("Shows ads"). A site that's down is named in `problems` |
+| POST | `/api/modpacks/modrinth` | `{"project": "<id or slug>", "server_id"}`: downloads the Modrinth pack's newest release (Modrinth's CDN only, SHA-512 checked) and answers as `inspect` does |
 | POST | `/api/modpacks/curseforge` | `{"project": "curseforge:<id>", "server_id"}`: downloads the pack's newest release and answers as `inspect` does (a CurseForge pack's `.zip` can be uploaded to `inspect` too). Its files may also be `needs_you` |
 | DELETE | `/api/modpacks/{token}` | Throw an uploaded pack away |
 | POST | `/api/modpacks/{token}/new-server` | Make a new server from the pack: `{"name", "directory", "eula_accepted": true}` |
 | POST | `/api/servers/{id}/modpack` | Import into this server: `{"token", "confirm": true}`. Stops it, backs it up, moves its mods aside, changes its version first if needed |
+| POST | `/api/servers/{id}/modpack/update/preview` | Linked modpack only (`modpack` in `GET /mods`): `{"version_id": null}` downloads its newest version (or that one) and answers with a `token`, the `pack` and `changes`: `added`, `removed`, `newer`, `added_by_you` (kept), `configs_changed_by_you` (kept unless `use_pack_configs`), `version_change`. Compared by file hash. Changes nothing |
+| POST | `/api/servers/{id}/modpack/update` | Modpack update: `{"token", "use_pack_configs": false, "confirm": true}`. Stops the server, one backup of what it touches, all or nothing, one Undo (which also puts the old link back) |
+| DELETE | `/api/servers/{id}/modpack/link` | Unlink: the server keeps its mods and stops following the modpack |
 
 ## Server types, versions and crossplay
 

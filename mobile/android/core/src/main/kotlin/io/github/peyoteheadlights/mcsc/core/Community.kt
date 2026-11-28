@@ -78,7 +78,7 @@ data class DiscordSetupDone(val made: List<String> = emptyList(), val status: Di
 @Serializable
 data class DiscordStatus(
     @SerialName("token_set") val tokenSet: Boolean = false,
-    /** off, connecting, connected, token_rejected, intents_refused or stopped. */
+    /** off, connecting, connected, token_rejected, intents_refused, refused or stopped. */
     val state: String = "off",
     val detail: String = "",
     @SerialName("connected_at") val connectedAt: Double? = null,

@@ -94,6 +94,31 @@ async def test_on_starts_the_server_as_the_separate_user_with_its_folder_opened(
     assert not ctx.server.running
 
 
+async def test_shared_mod_files_are_read_only_for_the_separate_user(core, windows, monkeypatch):
+    """A hard link has one set of rights for every name: the stored file
+    says "no writing" for the account, and the store folder is read + run."""
+    from agent.mods.store import folder
+
+    from .test_mods import make_jar
+
+    denied: list[Path] = []
+    monkeypatch.setattr(serveruser, "deny_writes", lambda path: denied.append(path) or True)
+    ctx = core.servers["survival"]
+    jar = make_jar(ctx.config.mods_dir / "early.jar", "early")
+    ctx.mods.place_jar(jar, jar)  # stored while the setting was still off
+    assert denied == []
+    turn_on(core.config)
+    late = make_jar(ctx.config.mods_dir / "late.jar", "late")
+    ctx.mods.place_jar(late, late)
+    assert len(denied) == 1
+
+    await ctx.server.start()
+    assert await ctx.server.wait_online(20)
+    assert len(denied) == 2  # the early file caught up before the start
+    assert (folder(ctx.config), "RX") in windows.granted
+    await ctx.server.stop()
+
+
 async def test_a_missing_starter_service_refuses_to_start_and_never_starts_as_the_owner(
     core, windows, monkeypatch
 ):
@@ -372,3 +397,67 @@ def test_desktop_shows_repair_when_the_account_is_broken_and_simple_has_no_turn_
     wait_for(qapp, lambda: "Repair" not in shown_buttons(page))
     assert "Turn off" not in shown_buttons(page)
     window.close()
+
+
+# ------------------------------------------------------------------ Protection card
+def user_line(windows_user):
+    from agent.protection import Facts, lines
+
+    found = lines(Facts(properties={"online-mode": "true"}, windows_user=windows_user))
+    return [(x["id"], x["level"]) for x in found if x["id"].startswith("windows_user")]
+
+
+def test_the_protection_card_says_how_the_server_runs():
+    def user(on=True, ok=True, running_as=None):
+        return {"on": on, "ok": ok, "running_as": running_as}
+
+    assert user_line(None) == []  # not Windows
+    assert user_line(user(on=False)) == [("windows_user_off", "suggest")]
+    assert user_line(user()) == [("windows_user_on", "info")]
+    assert user_line(user(running_as=True)) == [("windows_user_on", "info")]
+    assert user_line(user(running_as=False)) == [("windows_user_restart", "problem")]
+    assert user_line(user(ok=False)) == [("windows_user_broken", "problem")]
+
+
+async def test_the_card_reads_the_account_and_how_the_running_server_started(
+    core, windows, monkeypatch
+):
+    from agent import protection
+
+    monkeypatch.setattr(serveruser, "IS_WINDOWS", True)
+    monkeypatch.setattr(serveruser, "account_exists", lambda name=serveruser.ACCOUNT: True)
+    monkeypatch.setattr(serveruser, "ask", fake_ask(None))
+    ctx = core.servers["survival"]
+    await ctx.server.start()  # as the owner: the setting is off
+    assert await ctx.server.wait_online(20)
+    turn_on(core.config)
+    seen = await asyncio.to_thread(protection.facts, ctx)
+    assert seen.windows_user == {"on": True, "ok": True, "running_as": False}
+    await ctx.server.stop()
+    await ctx.server.start()
+    assert await ctx.server.wait_online(20)
+    seen = await asyncio.to_thread(protection.facts, ctx)
+    assert seen.windows_user["running_as"] is True
+    await ctx.server.stop()
+    seen = await asyncio.to_thread(protection.facts, ctx)
+    assert seen.windows_user["running_as"] is None
+
+
+async def test_the_card_has_no_windows_user_line_off_windows(core, monkeypatch):
+    from agent import protection
+
+    monkeypatch.setattr(serveruser, "IS_WINDOWS", False)
+    seen = await asyncio.to_thread(protection.facts, core.servers["survival"])
+    assert seen.windows_user is None
+
+
+async def test_the_card_does_not_ask_the_service_while_the_setting_is_off(core, monkeypatch):
+    from agent import protection
+
+    monkeypatch.setattr(serveruser, "IS_WINDOWS", True)
+    monkeypatch.setattr(serveruser, "account_exists", lambda name=serveruser.ACCOUNT: True)
+    asked = []
+    monkeypatch.setattr(serveruser, "ask", lambda message: asked.append(message))
+    seen = await asyncio.to_thread(protection.facts, core.servers["survival"])
+    assert seen.windows_user == {"on": False, "ok": True, "running_as": None}
+    assert asked == []

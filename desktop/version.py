@@ -246,9 +246,13 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
             }
 
         def check() -> None:
+            asked = choice()
+
             def got(report: dict) -> None:
+                if choice() != asked:
+                    return  # the version or loader changed while checking: an old answer
                 checked.clear()
-                checked.update(report)
+                checked.update(report, asked=asked)
                 say_found(report_lines(report))
 
             page.ask(
@@ -260,7 +264,11 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
             )
 
         def change() -> None:
-            if not checked:
+            if page.busy("change"):
+                said.setText(text("version.changing"))
+                return
+            if checked.get("asked") != choice():
+                # Never checked, or checked for another version or loader.
                 said.setText(text("version.check_first"))
                 return
             after = checked["target"]
@@ -281,13 +289,20 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
                 page.done(" ".join(notes))
 
             said.setText(text("version.changing"))
+            change_button.setEnabled(False)
+
+            def failed(exc: Exception) -> None:
+                said.setText(str(exc))
+                change_button.setEnabled(True)
+
             page.ask(
                 "POST",
                 "/version",
                 done,
-                lambda e: said.setText(str(e)),
-                body={**choice(), "confirm": True},
+                failed,
+                body={**checked["asked"], "confirm": True},
                 slow=True,
+                busy="change",
             )
 
         versions.currentIndexChanged.connect(fill_loaders)
@@ -299,7 +314,7 @@ def version_card(page: SettingsPage, current: dict) -> QFrame:
         # is asked for when someone wants to change, not every time.
         show = push(text("desktop.typechange.version_opener"))
         check_button = push(text("version.check"))
-        change_button = push(text("version.change"), "primary")
+        change_button = push(text("version.change"), "tonal")
         for widget in (versions, snapshots, check_button, change_button):
             widget.setEnabled(False)
 
@@ -422,9 +437,12 @@ def fill_type_card(page: SettingsPage, layout: QVBoxLayout, current: dict, found
         def check() -> None:
             checked.clear()
             say([(text("version.checking"), "sub")])
+            asked = body()
 
             def got(report: dict) -> None:
-                checked.update(report)
+                if body() != asked:
+                    return  # another type was picked while checking: an old answer
+                checked.update(report, asked=asked)
                 say(type_lines(report))
 
             page.ask(
@@ -436,7 +454,11 @@ def fill_type_card(page: SettingsPage, layout: QVBoxLayout, current: dict, found
             )
 
         def change() -> None:
-            if not checked:
+            if page.busy("change"):
+                said.setText(text("version.changing"))
+                return
+            if checked.get("asked") != body():
+                # Never checked, or checked for another type.
                 said.setText(text("version.check_first"))
                 return
             name = checked["target"]["type_name"]
@@ -451,13 +473,20 @@ def fill_type_card(page: SettingsPage, layout: QVBoxLayout, current: dict, found
             if not window.confirm(text("desktop.typechange.confirm_title", type=name), words, yes):
                 return
             said.setText(text("version.changing"))
+            go.setEnabled(False)
+
+            def failed(exc: Exception) -> None:
+                said.setText(str(exc))
+                go.setEnabled(True)
+
             page.ask(
                 "POST",
                 "/type-change",
                 lambda _r: page.done(text("desktop.typechange.done", type=name)),
-                lambda e: said.setText(str(e)),
-                body={**body(), "stop_first": True, "confirm": True},
+                failed,
+                body={**checked["asked"], "stop_first": True, "confirm": True},
                 slow=True,
+                busy="change",
             )
 
         def forget(_index: int) -> None:
@@ -623,7 +652,7 @@ def world_copy(page: SettingsPage, layout: QVBoxLayout, current: dict, offer: di
         )
 
     kinds.currentIndexChanged.connect(lambda _i: load_versions())
-    go = push(text("desktop.typechange.copy"), "primary")
+    go = push(text("desktop.typechange.copy"), "tonal")
     go.clicked.connect(make)
     layout.addLayout(buttons(go))
     layout.addWidget(said)
@@ -698,7 +727,7 @@ def crossplay_card(page: SettingsPage, status: dict) -> QFrame:
         layout.addWidget(field(text("cross.port"), port, text("cross.port_hint")))
     said = label(kind="sub")
     on = not status.get("enabled")
-    turn = push(text("cross.turn_on" if on else "cross.turn_off"), "primary" if on else "")
+    turn = push(text("cross.turn_on" if on else "cross.turn_off"), "tonal" if on else "")
     turn.setEnabled(page.may("settings.server"))
 
     def switch() -> None:
@@ -727,4 +756,59 @@ def crossplay_card(page: SettingsPage, status: dict) -> QFrame:
     layout.addWidget(label(text("cross.differences"), "step"))
     for line in status.get("differences") or []:
         layout.addWidget(label(f"• {line}", "sub"))
+    if status.get("console_friends"):
+        console_friends(page, layout, status["console_friends"])
     return frame
+
+
+def console_friends(page: SettingsPage, layout: QVBoxLayout, found: dict) -> None:
+    """Let console friends join (agent/consolefriends.py): the risks come
+    first, and only the owner sees the sign-in code."""
+    layout.addWidget(label(text("console.title"), "step"))
+    layout.addWidget(label(text("console.what"), "sub"))
+    if not found.get("available"):
+        layout.addWidget(label(text("console.needs_crossplay"), "sub"))
+        if not found.get("on"):  # left on: it can still be turned off
+            return
+    if found.get("on"):
+        sign_in = found.get("sign_in")
+        if found.get("gamertag"):
+            layout.addWidget(label(text("console.signed_in", gamertag=found["gamertag"]), "notice"))
+        elif sign_in:
+            layout.addWidget(label(text("console.sign_in", **sign_in), "notice"))
+            go = push(sign_in["url"])
+            go.clicked.connect(lambda: page.window_.pc.open_link(sign_in["url"]))
+            layout.addWidget(go)
+        else:
+            layout.addWidget(label(text("console.waiting"), "sub"))
+        if found.get("problem"):
+            layout.addWidget(label(found["problem"], "problem"))
+    owner = page.window_.role in (None, "owner")
+    if not owner:
+        layout.addWidget(label(text("console.owner_only"), "muted"))
+        return
+    on = not found.get("on")
+    said = label(kind="sub")
+    turn = push(text("console.turn_on" if on else "console.turn_off"), "tonal" if on else "")
+
+    def switch() -> None:
+        if on and not page.window_.confirm(
+            text("console.risk_title"), text("console.risk_body"), text("console.risk_button")
+        ):
+            return
+        said.setText(text("console.turning_on" if on else "console.turning_off"))
+        page.ask(
+            "PUT",
+            "/crossplay/console-friends",
+            lambda _r: page.done(text("console.on_done" if on else "console.off_done")),
+            lambda e: said.setText(str(e)),
+            body={"enabled": on, "accept_risks": on},
+            slow=True,
+        )
+
+    turn.clicked.connect(switch)
+    row = QHBoxLayout()
+    row.addWidget(turn)
+    row.addWidget(label(text("console.stopped_first"), "muted"), 1)
+    layout.addLayout(row)
+    layout.addWidget(said)

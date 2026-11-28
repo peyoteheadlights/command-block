@@ -13,6 +13,7 @@ import shutil
 import socket
 import threading
 import time
+import weakref
 from typing import Any
 
 import psutil
@@ -24,6 +25,8 @@ from ..security.paths import directory_size
 from . import health
 
 log = logging.getLogger("msc.metrics")
+
+THRESHOLD_OF = {"high_cpu": "cpu_percent", "high_ram": "ram_percent", "low_disk": "disk_free_gb"}
 
 # The PC's CPU reading is shared by every server's monitor. A reading over a
 # shorter window than this is not taken; the last one is reused instead.
@@ -81,6 +84,38 @@ def _busy_percent(before: Any, after: Any) -> float | None:
 machine_cpu = _MachineCpu()
 
 
+class Stretch:
+    """One measure's alert pair: "started" once it has been past its line
+    for ``wait`` seconds, "ended" when it's back. Nothing in between."""
+
+    def __init__(self) -> None:
+        self.since: float | None = None
+        self.told = False
+
+    def step(self, past_line: bool, now: float, wait: float) -> str | None:
+        if not past_line:
+            self.since = None
+            if self.told:
+                self.told = False
+                return "ended"
+            return None
+        if self.since is None:
+            self.since = now
+        if not self.told and now - self.since >= wait:
+            self.told = True
+            return "started"
+        return None
+
+
+# CPU and memory belong to the PC: every server's monitor on one agent reads
+# the same numbers, so they share one Stretch each (keyed by the agent's bus).
+_machine_stretches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def machine_stretches(root_bus) -> dict[str, Stretch]:
+    return _machine_stretches.setdefault(root_bus, {"cpu": Stretch(), "ram": Stretch()})
+
+
 class MetricsMonitor:
     def __init__(self, config, bus: EventBus, db, server):
         self.config = config
@@ -90,6 +125,7 @@ class MetricsMonitor:
         self.last: dict[str, Any] = {}
         self._task: asyncio.Task | None = None
         self._alert_sent: dict[str, float] = {}
+        self._disk = Stretch()
         self._net_baseline = self._net_counters()
         self._net_baseline_ts = time.time()
         self._storage_cache: tuple[float, dict] | None = None
@@ -236,10 +272,10 @@ class MetricsMonitor:
             port = int(args[args.index("--port") + 1])
         port = port or int(self.server.detected_port or self.config.server.port)
         if self.config.server_type.ping == "raknet":
-            # Bedrock listens on UDP: asked with RakNet's unconnected ping.
-            from ..minecraft import raknet
+            # Bedrock: NetherNet's join page (1.26.50+), else RakNet's ping.
+            from ..minecraft import nethernet, raknet
 
-            return raknet.ping(host, port) is not None
+            return nethernet.ping(host, port) is not None or raknet.ping(host, port) is not None
         try:
             with socket.create_connection((host, port), timeout=1.5):
                 return True
@@ -333,31 +369,69 @@ class MetricsMonitor:
             else:
                 await self.bus.publish(event)
 
-        if sample["cpu_percent"] is not None and sample["cpu_percent"] >= th.cpu_percent:
-            await alert(
-                "cpu",
-                "high_cpu",
-                f"CPU use {sample['cpu_percent']:.0f}% (alert at {th.cpu_percent:g}%)",
-                {"value": sample["cpu_percent"], "threshold": th.cpu_percent},
-                machine=True,
+        # CPU, memory and disk: one alert when it starts, one when it ends.
+        # CPU and memory only count once they stay high for high_minutes,
+        # so a short spike (a world loading) says nothing.
+        root = getattr(self.bus, "root", self.bus)
+        machine = machine_stretches(root)
+        wait = max(0.0, th.high_minutes) * 60
+
+        async def pair(
+            stretch: Stretch,
+            value,
+            past_line: bool,
+            type_: str,
+            started: str,
+            ended: str,
+            on_machine: bool,
+        ) -> None:
+            if value is None:
+                return  # not measured: nothing starts or ends
+            said = stretch.step(past_line, now, 0 if type_ == "low_disk" else wait)
+            if said is None:
+                return
+            data = {"value": value, "threshold": getattr(th, THRESHOLD_OF[type_])}
+            event = (
+                Event(type=type_, message=started, level="warn", data=data)
+                if said == "started"
+                else Event(type=f"{type_}_ended", message=ended, level="info", data=data)
             )
-        if sample["ram_percent"] >= th.ram_percent:
-            await alert(
-                "ram",
-                "high_ram",
-                f"PC memory use {sample['ram_percent']:.0f}% "
-                f"({sample['ram_used_mb'] / 1024:.1f} of {sample['ram_total_mb'] / 1024:.1f} GB)",
-                {"value": sample["ram_percent"], "threshold": th.ram_percent},
-                machine=True,
-            )
-        if sample["disk_free_gb"] is not None and sample["disk_free_gb"] <= th.disk_free_gb:
-            await alert(
-                "disk",
-                "low_disk",
-                f"Only {sample['disk_free_gb']:.1f} GB free on the server's drive "
-                f"(alert at {th.disk_free_gb:g} GB)",
-                {"value": sample["disk_free_gb"], "threshold": th.disk_free_gb},
-            )
+            await (root if on_machine else self.bus).publish(event)
+
+        cpu = sample["cpu_percent"]
+        minutes = f"{th.high_minutes:g} minutes"
+        await pair(
+            machine["cpu"],
+            cpu,
+            cpu is not None and cpu >= th.cpu_percent,
+            "high_cpu",
+            f"CPU use has stayed at {th.cpu_percent:g}% or more for {minutes} "
+            f"(now {cpu or 0:.0f}%)",
+            f"CPU use is back under {th.cpu_percent:g}% (now {cpu or 0:.0f}%)",
+            True,
+        )
+        ram = sample["ram_percent"]
+        await pair(
+            machine["ram"],
+            ram,
+            ram is not None and ram >= th.ram_percent,
+            "high_ram",
+            f"PC memory use has stayed at {th.ram_percent:g}% or more for {minutes} "
+            f"(now {ram or 0:.0f}%, {sample['ram_used_mb'] / 1024:.1f} of "
+            f"{sample['ram_total_mb'] / 1024:.1f} GB)",
+            f"PC memory use is back under {th.ram_percent:g}% (now {ram or 0:.0f}%)",
+            True,
+        )
+        free = sample["disk_free_gb"]
+        await pair(
+            self._disk,
+            free,
+            free is not None and free <= th.disk_free_gb,
+            "low_disk",
+            f"Only {free or 0:.1f} GB free on the server's drive (alert at {th.disk_free_gb:g} GB)",
+            f"{free or 0:.1f} GB free on the server's drive again (alert at {th.disk_free_gb:g} GB)",
+            False,
+        )
         if sample["tps"] is not None and sample["tps"] < th.tps_min:
             await alert(
                 "tps",

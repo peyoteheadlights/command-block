@@ -7,10 +7,13 @@ import io.github.peyoteheadlights.mcsc.core.AgentClient
 import io.github.peyoteheadlights.mcsc.core.AgentException
 import io.github.peyoteheadlights.mcsc.core.Backup
 import io.github.peyoteheadlights.mcsc.core.BackupList
+import io.github.peyoteheadlights.mcsc.core.BackupSize
 import io.github.peyoteheadlights.mcsc.core.Backups
 import io.github.peyoteheadlights.mcsc.core.Change
 import io.github.peyoteheadlights.mcsc.core.ChangeList
 import io.github.peyoteheadlights.mcsc.core.Charts
+import io.github.peyoteheadlights.mcsc.core.CleanupList
+import io.github.peyoteheadlights.mcsc.core.Display
 import io.github.peyoteheadlights.mcsc.core.Job
 import io.github.peyoteheadlights.mcsc.core.Offsite
 import io.github.peyoteheadlights.mcsc.core.Performance
@@ -35,6 +38,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 
 /** What a button did, said once it is done: good news or a problem. */
 data class Said(val text: String, val good: Boolean)
@@ -148,6 +155,75 @@ class WorldPages(
         Said(strings.t("backups.deleted"), good = true)
     }
 
+    /** Keep this backup (or stop keeping it): the clean-up never deletes a kept one. */
+    fun keep(backup: Backup, keep: Boolean, strings: Strings) = work("keep:${backup.id}", strings, reload = ::loadBackups) {
+        it.keepBackup(serverId, backup.id, keep)
+        Said(strings.t(if (keep) "backups.kept_toast" else "backups.unkept_toast"), good = true)
+    }
+
+    /** Restore as a new server: Duplicate with the backup's world, settings
+     * and add-ons, next to this server's folder. This server stays as it is. */
+    fun openAsServer(backup: Backup, serverName: String, strings: Strings) = work("open:${backup.id}", strings) {
+        val options = it.duplicateOptions(serverId)
+        val name = Backups.copyName(strings, serverName, backup)
+        it.duplicate(serverId, name, Backups.besideFolder(options.directory, name), "fresh", fromBackup = backup.id)
+        Said(strings.t("dup.started", "name" to name), good = true)
+    }
+
+    // ------------------------------------------------------------ left out of backups
+    /** What a backup would hold now, with what is left out. Walks the world. */
+    var size: Read<BackupSize> by mutableStateOf(Read())
+        private set
+
+    fun loadSize() = read({ size }, { size = it }) { it.backupSize(serverId) }
+
+    fun saveExcludes(paths: List<String>, strings: Strings) = work("exclude", strings, reload = ::loadSize) {
+        val updates = buildJsonObject { put("backups.exclude", JsonArray(paths.map { p -> JsonPrimitive(p) })) }
+        val refused = it.saveServerSettings(serverId, updates).rejected["backups.exclude"]
+        if (refused != null) Said(refused, good = false) else Said(strings.t("leftout.saved"), good = true)
+    }
+
+    // ------------------------------------------------------------ clean-up
+    /** What the clean-up offers and what's in its bin; null until looked for. */
+    var cleanup: Read<CleanupList> by mutableStateOf(Read())
+        private set
+
+    /** The paths ticked to go. Logs and crash reports start ticked. */
+    var picked: Set<String> by mutableStateOf(emptySet())
+
+    fun loadCleanup() = read({ cleanup }, { got ->
+        val list = got.value
+        if (list != null && list != cleanup.value) picked = list.items.filter(Backups::ticked).map { i -> i.path }.toSet()
+        cleanup = got
+    }) { it.cleanup(serverId) }
+
+    /** Undo for the clean-up just done, until something else is said. */
+    var lastBatch: String? by mutableStateOf(null)
+        private set
+
+    fun cleanUp(strings: Strings) = work("cleanup", strings, reload = ::loadCleanup) {
+        val done = it.cleanUp(serverId, picked.toList())
+        lastBatch = done.batch
+        var words = strings.t(
+            "cleanup.done", "count" to done.moved.size, "size" to Display.bytes(strings, done.sizeBytes), "days" to done.binDays,
+        )
+        if (done.skipped.isNotEmpty()) words += " " + strings.t("cleanup.skipped", "count" to done.skipped.size)
+        Said(words, good = true)
+    }
+
+    fun cleanupUndo(batch: String, strings: Strings) = work("cleanup", strings, reload = ::loadCleanup) {
+        val back = it.cleanupUndo(serverId, batch)
+        lastBatch = null
+        if (back.leftInBin.isNotEmpty()) Said(strings.t("cleanup.left", "count" to back.leftInBin.size), good = false)
+        else Said(strings.t("cleanup.undone"), good = true)
+    }
+
+    fun cleanupEmpty(strings: Strings) = work("cleanup", strings, reload = ::loadCleanup) {
+        val emptied = it.cleanupEmpty(serverId)
+        lastBatch = null
+        Said(strings.t("cleanup.emptied", "size" to Display.bytes(strings, emptied.freedBytes)), good = true)
+    }
+
     /** A task finished on another device (or here) may have added a change:
      * read the lists again while Backups is open. */
     fun onTask(job: Job) {
@@ -186,6 +262,7 @@ class WorldPages(
      * file; [discard] removes it again when the download didn't finish. */
     fun download(backup: Backup, open: () -> OutputStream?, discard: () -> Unit, strings: Strings) {
         val c = client() ?: return
+        if (busy != null) return
         busy = "download:${backup.id}"
         said = null
         downloading = Downloading(backup.name, 0L, backup.sizeBytes)
@@ -377,17 +454,64 @@ class WorldPages(
         Said(strings.t("schedules.deleted"), good = true)
     }
 
-    /** Adds a schedule; [added] runs once the agent took it, to empty the form. */
-    fun addSchedule(name: String, task: String, kind: String, expr: String, strings: Strings, added: () -> Unit) {
-        val tasks = schedules.value?.tasks.orEmpty()
+    /** A command the console asks "are you sure?" about, in the agent's
+     * words, while the screen asks the person; null otherwise. */
+    var scheduleDanger: String? by mutableStateOf(null)
+        private set
+    private var pendingSchedule: ((Boolean) -> JsonObject)? = null
+    private var pendingAdded: () -> Unit = {}
+
+    /** Adds a schedule; [added] runs once the agent took it, to empty the form.
+     * [body] makes what is sent, with or without "confirm" on its commands. */
+    fun addSchedule(body: (Boolean) -> JsonObject, strings: Strings, added: () -> Unit, confirm: Boolean = false) {
         work("add", strings, reload = ::loadSchedules) {
-            it.addSchedule(serverId, Schedules.newBody(strings, name, task, kind, expr, tasks))
+            try {
+                it.addSchedule(serverId, body(confirm))
+            } catch (e: AgentException.Failed) {
+                if (e.status != 409 || confirm) throw e
+                pendingSchedule = body
+                pendingAdded = added
+                scheduleDanger = e.reason ?: strings.t("value.unknown")
+                return@work null
+            }
             added()
             Said(strings.t("schedules.created"), good = true)
         }
     }
 
+    /** The person answered the "are you sure?" about a scheduled command. */
+    fun answerDanger(yes: Boolean, strings: Strings) {
+        val body = pendingSchedule
+        scheduleDanger = null
+        pendingSchedule = null
+        if (yes && body != null) addSchedule(body, strings, pendingAdded, confirm = true)
+    }
+
     // ------------------------------------------------------------ performance
+    /** Why the graphs couldn't be shared as CSV, until the next try. */
+    var csvProblem: Message? by mutableStateOf(null)
+        private set
+
+    /** The graphs' points for the time shown, as a CSV file in [folder], then [share]. */
+    fun shareCsv(folder: File, share: (File) -> Unit) {
+        val c = client() ?: return
+        csvProblem = null
+        scope.launch {
+            try {
+                val csv = c.performanceCsv(serverId, range)
+                val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    folder.mkdirs()
+                    folder.listFiles()?.forEach { it.delete() }
+                    File(folder, csv.filename.substringAfterLast('/')).apply { writeText(csv.text) }
+                }
+                share(file)
+            } catch (e: AgentException) {
+                noted(e)
+                csvProblem = Message.of(e)
+            }
+        }
+    }
+
     var range: Int by mutableStateOf(Charts.DEFAULT_RANGE)
         private set
     var performance: Read<Performance> by mutableStateOf(Read())

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import ssl
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ class AgentError(Exception):
 
     problems: dict[str, str] = {}  # a form's reasons, by field, when the agent gave them
     line: int | None = None  # a refused settings file: the line it is about
+    status: int | None = None  # the agent's HTTP answer (403: not allowed), when it gave one
 
 
 class Unreachable(AgentError):
@@ -127,21 +129,22 @@ class AgentClient:
         return self.request("GET", path).content
 
     def download_to(self, path: str, target: str) -> None:
-        """A file that can be big (a backup), written to ``target`` as it
-        comes so it never sits in memory. A part-written file is removed."""
-        written = False
+        """A file that can be big (a backup), written as it comes so it never
+        sits in memory. It goes to ``target``.part and takes the real name
+        only when complete, so quitting half way (which skips any clean-up)
+        never leaves a cut-off file that looks like a good backup."""
+        part = Path(target + ".part")
         try:
             with self.reach().stream(
                 "GET", "/api" + path, headers=self.headers(), timeout=SLOW
             ) as response:
                 self.check(response, streamed=True)
-                with open(target, "wb") as out:
-                    written = True
+                with open(part, "wb") as out:
                     for chunk in response.iter_bytes(CHUNK):
                         out.write(chunk)
+            os.replace(part, target)
         except BaseException as exc:
-            if written:  # a file the save box said to replace stays until then
-                Path(target).unlink(missing_ok=True)
+            part.unlink(missing_ok=True)
             if isinstance(exc, httpx.TransportError):
                 raise Unreachable("The download stopped: can't reach the agent.") from exc
             if isinstance(exc, OSError):
@@ -203,6 +206,7 @@ class AgentClient:
             error.problems = found if isinstance(found, dict) else {}
             line = body.get("line") if isinstance(body, dict) else None
             error.line = line if isinstance(line, int) else None
+            error.status = response.status_code
             raise error
 
     def sign_in(self, username: str, password: str, remember: bool, device: str) -> dict:
@@ -255,6 +259,8 @@ class AgentClient:
         return self.call("GET", "/servers")["servers"]
 
     def server_action(self, server_id: str, action: str) -> dict:
+        if action == "force_stop":
+            return self.call("POST", f"/servers/{server_id}/server/stop", {"force": True})
         return self.call("POST", f"/servers/{server_id}/server/{action}", {})
 
     def preferences(self) -> dict:

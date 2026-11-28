@@ -431,6 +431,19 @@ def agent_http(tmp_path, monkeypatch):
     )
     agent = LiveAgent(config)
     agent.start()
+    # Prices read just now, so the anti-cheat card on the Mods page doesn't
+    # ask Spiget (the real site, or a test's fake one that only knows its own hosts).
+    import time
+
+    from agent import anticheat
+
+    agent.app.state.core.db.set_setting(
+        anticheat.PRICES_SETTING, {"vulcan": {"tried_at": time.time()}}
+    )
+    # A PC that's been set up: the first-run questions were answered (skipped)
+    # already, so they don't pop up over every test. tests/test_desktop_welcome.py
+    # takes this away to ask them.
+    agent.app.state.core.db.set_setting("user:admin:welcome", {"first_time": None, "kinds": []})
     with httpx.Client(base_url=f"http://127.0.0.1:{agent.port}", timeout=15) as client:
         client.agent = agent  # type: ignore[attr-defined]
         yield client
@@ -453,10 +466,22 @@ def qapp():
 def pytest_runtest_teardown(item, nextitem):
     """Close the desktop app's windows after each test, before its agent
     stops, so their live feeds stop instead of trying the next test's agent
-    with an old sign-in."""
+    with an old sign-in. Then delete them: a closed window keeps its timers,
+    and processEvents() alone never runs deleteLater(), so old windows piled
+    up and kept calling closed agents until later tests timed out."""
     widgets = sys.modules.get("PySide6.QtWidgets")
     app = widgets.QApplication.instance() if widgets else None
-    for window in app.topLevelWidgets() if app else []:
-        if hasattr(window, "feed"):
-            window.quitting = True
-            window.close()
+    windows = [w for w in app.topLevelWidgets() if hasattr(w, "feed")] if app else []
+    if not windows:
+        return
+    from PySide6.QtCore import QEvent, QThreadPool
+
+    for window in windows:
+        window.quitting = True
+        window.close()
+    # Let running agent calls finish while the agent is still up.
+    QThreadPool.globalInstance().waitForDone(5000)
+    app.processEvents()
+    for window in windows:
+        window.deleteLater()
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)

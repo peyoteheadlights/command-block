@@ -68,6 +68,41 @@ struct CrossplayCardView: View {
                 Hint(text: "• " + line, palette: palette)
             }
         }
+        if let friends = info.consoleFriends { consoleFriends(friends) }
+    }
+
+    /// "Let console friends join": the risks first (.consoleOn), owner only.
+    @ViewBuilder
+    private func consoleFriends(_ info: ConsoleFriends) -> some View {
+        Text(model.t("console.title")).foregroundStyle(palette.textPrimary)
+        Hint(text: model.t("console.what"), palette: palette)
+        if let state = ConsoleFriendsText.state(model.strings, info) {
+            Text(state).foregroundStyle(palette.textPrimary)
+        }
+        if let code = info.signIn, let url = URL(string: code.url) {
+            Link(code.url, destination: url)
+        }
+        if let problem = info.problem { Text(problem).foregroundStyle(palette.danger) }
+        if info.available || info.on {
+            if model.me?.isOwner != true {
+                Hint(text: model.t("console.owner_only"), palette: palette)
+            } else {
+                if info.on {
+                    Button(model.t(setup.busy == "console" ? "console.turning_off" : "console.turn_off")) {
+                        let strings = model.strings
+                        Task { await setup.setConsoleFriends(false, strings) }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(setup.busy != nil)
+                } else {
+                    Button(model.t(setup.busy == "console" ? "console.turning_on" : "console.turn_on")) { ask(.consoleOn) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(palette.accent)
+                        .disabled(setup.busy != nil)
+                }
+                Hint(text: model.t("console.stopped_first"), palette: palette)
+            }
+        }
     }
 }
 

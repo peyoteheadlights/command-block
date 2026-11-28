@@ -8,30 +8,59 @@ import io.github.peyoteheadlights.mcsc.core.Addon
 import io.github.peyoteheadlights.mcsc.core.AgentClient
 import io.github.peyoteheadlights.mcsc.core.AgentException
 import io.github.peyoteheadlights.mcsc.core.Content
+import io.github.peyoteheadlights.mcsc.core.DeepScanFound
+import io.github.peyoteheadlights.mcsc.core.DeepScanReport
 import io.github.peyoteheadlights.mcsc.core.DependencyPlan
 import io.github.peyoteheadlights.mcsc.core.DependencyReport
 import io.github.peyoteheadlights.mcsc.core.GameForm
+import io.github.peyoteheadlights.mcsc.core.GameRules
 import io.github.peyoteheadlights.mcsc.core.GameSettings
 import io.github.peyoteheadlights.mcsc.core.Install
+import io.github.peyoteheadlights.mcsc.core.JarScanReport
 import io.github.peyoteheadlights.mcsc.core.Job
 import io.github.peyoteheadlights.mcsc.core.Mod
 import io.github.peyoteheadlights.mcsc.core.ModHistory
 import io.github.peyoteheadlights.mcsc.core.ModImpact
 import io.github.peyoteheadlights.mcsc.core.ModList
+import io.github.peyoteheadlights.mcsc.core.ModSides
 import io.github.peyoteheadlights.mcsc.core.ModProject
 import io.github.peyoteheadlights.mcsc.core.ModVersion
 import io.github.peyoteheadlights.mcsc.core.ModVersions
+import io.github.peyoteheadlights.mcsc.core.DownloadLink
+import io.github.peyoteheadlights.mcsc.core.MakeModpack
 import io.github.peyoteheadlights.mcsc.core.ModpackInspected
+import io.github.peyoteheadlights.mcsc.core.AntiCheat
+import io.github.peyoteheadlights.mcsc.core.Display
+import io.github.peyoteheadlights.mcsc.core.FarView
+import io.github.peyoteheadlights.mcsc.core.ModpackMade
+import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
+import io.github.peyoteheadlights.mcsc.core.ModpackUpdatePreview
+import io.github.peyoteheadlights.mcsc.core.ModSearch
+import io.github.peyoteheadlights.mcsc.core.ModrinthCards
 import io.github.peyoteheadlights.mcsc.core.ModrinthHit
+import io.github.peyoteheadlights.mcsc.core.ModrinthJar
+import io.github.peyoteheadlights.mcsc.core.ModrinthShare
 import io.github.peyoteheadlights.mcsc.core.PickedFile
+import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
 import io.github.peyoteheadlights.mcsc.core.Strings
+import io.github.peyoteheadlights.mcsc.core.ModFit
+import io.github.peyoteheadlights.mcsc.core.StillFit
 import io.github.peyoteheadlights.mcsc.core.UpdateAll
 import io.github.peyoteheadlights.mcsc.core.UpdateAllPlan
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.coroutines.withContext
 
 /** A remove waiting for "yes", with what else needs the mod. */
 data class RemoveAsk(val mod: Mod, val impact: ModImpact)
+
+/** The Modrinth address and summary being asked: the modpack, or one own [jar]. */
+data class ModrinthAsk(val jar: ModrinthJar?, val name: String)
 
 /** The kept versions of one mod, shown to roll back to. */
 data class VersionsAsk(val mod: Mod, val versions: Read<ModVersions>)
@@ -74,6 +103,11 @@ class ContentPages(
         private set
     var dependencies: DependencyReport? by mutableStateOf(null)
         private set
+    var scan: Read<JarScanReport> by mutableStateOf(Read())
+        private set
+    var deep: Read<DeepScanReport> by mutableStateOf(Read())
+        private set
+    private var watchingDeep = false
     var removing: RemoveAsk? by mutableStateOf(null)
         private set
     var updating: Mod? by mutableStateOf(null)
@@ -97,7 +131,112 @@ class ContentPages(
             // The list still shows without these.
             dependencies = try { c.dependencies(serverId) } catch (e: AgentException) { null }
             history = try { Read(c.modHistory(serverId)) } catch (e: AgentException) { Read(problem = Message.of(e)) }
+            scan = try { Read(c.jarScan(serverId)) } catch (e: AgentException) { Read(problem = Message.of(e)) }
+            showDeep(try { Read(c.deepScan(serverId)) } catch (e: AgentException) { Read(problem = Message.of(e)) })
         }
+    }
+
+    /** The Server / Players / Both filter ("all": every mod). */
+    var sideFilter by mutableStateOf("all")
+
+    /** "On all servers": every server's marks; null while it's off. */
+    var everywhere: Read<ModSides>? by mutableStateOf(null)
+        private set
+
+    fun showEverywhere(on: Boolean) {
+        if (!on) {
+            everywhere = null
+            return
+        }
+        val c = client() ?: return
+        everywhere = Read(loading = true)
+        scope.launch {
+            everywhere = try {
+                Read(c.modSides())
+            } catch (e: AgentException) {
+                noted(e)
+                Read(problem = Message.of(e))
+            }
+        }
+    }
+
+    /** Shows the deep scan, and asks again every 2 s while one is running. */
+    private fun showDeep(read: Read<DeepScanReport>) {
+        deep = read
+        if (read.value?.running == null || watchingDeep) return
+        val c = client() ?: return
+        watchingDeep = true
+        scope.launch {
+            try {
+                while (deep.value?.running != null) {
+                    delay(2000)
+                    deep = try { Read(c.deepScan(serverId)) } catch (e: AgentException) { Read(problem = Message.of(e)) }
+                }
+            } finally {
+                watchingDeep = false
+            }
+            loadMods() // a Known bad file may have gone to quarantine
+        }
+    }
+
+    fun runDeepScan(what: String, scanners: List<String>, filename: String?, strings: Strings) = work("deep_scan", strings) {
+        showDeep(Read(it.runDeepScan(serverId, what, scanners, filename)))
+        null
+    }
+
+    fun saveVirusTotalKey(key: String, strings: Strings) = work("vt_key", strings) {
+        showDeep(Read(it.saveVirusTotalKey(serverId, key.trim())))
+        null
+    }
+
+    fun removeVirusTotalKey(strings: Strings) = work("vt_key", strings) {
+        showDeep(Read(it.removeVirusTotalKey(serverId)))
+        null
+    }
+
+    fun deepQuarantine(item: DeepScanFound, strings: Strings) = work("deep:${item.root}:${item.path}", strings, reload = ::loadMods) {
+        deep = Read(it.deepScanQuarantine(serverId, item.root, item.path))
+        null
+    }
+
+    /** Checks every jar again; the list reloads after, as a jar may have moved. */
+    fun scanJars(strings: Strings) = work("jar_scan", strings, reload = ::loadMods) {
+        scan = Read(it.scanJars(serverId))
+        null
+    }
+
+    fun putBack(id: String, filename: String, strings: Strings) = work("put_back:$id", strings, reload = ::loadMods) {
+        it.putBackJar(serverId, id)
+        Said(strings.t("jarscan.undone", "name" to filename), good = true)
+    }
+
+    fun scanOptions(
+        strings: Strings,
+        weekly: Boolean? = null,
+        onChange: Boolean? = null,
+        beforeStart: Boolean? = null,
+        askFirst: Boolean? = null,
+        updateHoldDays: Int? = null,
+    ) = work("jar_scan_options", strings) {
+        scan = Read(it.jarScanOptions(serverId, weekly, onChange, beforeStart, askFirst, updateHoldDays))
+        null
+    }
+
+    /** "That was me" on a jar changed outside the app. */
+    fun changedOk(filename: String, strings: Strings) = work("changed_ok:$filename", strings) {
+        scan = Read(it.jarChangedOk(serverId, filename))
+        null
+    }
+
+    fun deepOptions(
+        strings: Strings,
+        beforeStart: Boolean? = null,
+        schedule: String? = null,
+        time: String? = null,
+        day: String? = null,
+    ) = work("deep_scan_options", strings) {
+        showDeep(Read(it.deepScanOptions(serverId, beforeStart, schedule, time, day)))
+        null
     }
 
     fun setEnabled(mod: Mod, on: Boolean, strings: Strings) = work("toggle:${mod.filename}", strings, reload = ::loadMods) {
@@ -197,6 +336,18 @@ class ContentPages(
                 Read(problem = Message.of(e))
             }
         }
+    }
+
+    /** "Change these" on the Still fit? card: Update all's list, filled from the card. */
+    fun openFit(fit: ModFit) {
+        val read = StillFit.plan(fit)
+        ticked = UpdateAll.ticked(read)
+        plan = Read(read)
+    }
+
+    fun hideFit(strings: Strings) = work("hide_fit", strings, reload = ::loadMods) {
+        it.hideFit(serverId)
+        null
     }
 
     fun tick(filename: String, on: Boolean) {
@@ -323,14 +474,51 @@ class ContentPages(
     var modpack: ModpackInspected? by mutableStateOf(null)
         private set
 
-    fun uploadMod(file: PickedFile, strings: Strings) = work("upload", strings, reload = ::loadMods) {
-        val done = it.uploadMod(serverId, file)
+    /** A picked file no site lists, waiting for "Add it anyway": the agent's warning and its SHA-512. */
+    class Unknown(val file: PickedFile, val warning: String, val sha512: String?)
+
+    var unknown: Unknown? by mutableStateOf(null)
+        private set
+
+    fun uploadMod(file: PickedFile, strings: Strings, confirm: Boolean = false) = work("upload", strings, reload = ::loadMods) {
+        val done = try {
+            it.uploadMod(serverId, file, confirm)
+        } catch (e: AgentException.Failed) {
+            val warning = e.problems["confirm"] ?: throw e
+            unknown = Unknown(file, warning, e.problems["sha512"])
+            return@work null
+        }
         Said(strings.t("mobile.content.added", "name" to (done.installed?.name ?: file.name)), good = true)
+    }
+
+    fun addUnknown(strings: Strings) {
+        val file = unknown?.file ?: return
+        unknown = null
+        uploadMod(file, strings, confirm = true)
+    }
+
+    fun cancelUnknown() {
+        unknown = null
     }
 
     /** Reads the modpack on the PC; nothing changes until Import. */
     fun inspectModpack(file: PickedFile, strings: Strings) = work("modpack", strings) {
         modpack = it.inspectModpack(serverId, file)
+        null
+    }
+
+    /** Modpacks found by name on Modrinth and CurseForge; picking one reads it like a file. */
+    var packsFound: ModSearch? by mutableStateOf(null)
+        private set
+
+    fun findPacks(query: String, strings: Strings) = work("find_pack", strings) {
+        packsFound = it.searchModpacks(query.trim())
+        null
+    }
+
+    fun readFound(hit: ModrinthHit, strings: Strings) = work("modpack", strings) {
+        modpack = it.fetchModpack(hit, serverId)
+        packsFound = null
         null
     }
 
@@ -349,9 +537,291 @@ class ContentPages(
         modpack = null
         task = null
         work("modpack", strings, reload = ::loadMods) {
-            val done = it.importModpack(serverId, read.token)
+            // Its own jars were listed in the question just answered.
+            val done = it.importModpack(serverId, read.token, ownJars = read.pack.ownJars.isNotEmpty())
             Said(strings.t("mobile.content.modpack_done", "name" to done.modpack.name.ifBlank { read.pack.name }), good = true)
         }
+    }
+
+    // ------------------------------------------------------------ Server / Players / Both
+    fun setSide(filename: String, name: String, side: String, strings: Strings) = work("side:$filename", strings, reload = ::loadMods) {
+        it.setModSide(serverId, filename, side)
+        Said(strings.t("sides.marked_$side", "name" to name), good = true)
+    }
+
+    fun uploadForPlayers(file: PickedFile, strings: Strings) = work("players", strings, reload = ::loadMods) {
+        it.uploadForPlayers(serverId, file)
+        Said(strings.t("sides.players_added", "name" to file.name), good = true)
+    }
+
+    fun fetchForPlayers(filename: String, strings: Strings) = work("fetch:$filename", strings, reload = ::loadMods) {
+        it.fetchForPlayers(serverId, filename)
+        Said(strings.t("sides.players_added", "name" to filename), good = true)
+    }
+
+    fun setPlayerOnlyOptions(options: PlayerOnlyOptions, strings: Strings) = work("options", strings, reload = ::loadMods) {
+        it.setPlayerOnlyOptions(serverId, options)
+        Said(strings.t("sides.options_saved"), good = true)
+    }
+
+    fun removeForPlayers(filename: String, strings: Strings) = work("remove:$filename", strings, reload = ::loadMods) {
+        it.removeForPlayers(serverId, filename)
+        null
+    }
+
+    // ------------------------------------------------------------ linked modpack
+    var packUpdate: ModpackUpdatePreview? by mutableStateOf(null)
+        private set
+
+    /** Gets the new version; nothing changes until Modpack update is pressed. */
+    fun previewPackUpdate(versionId: String?, strings: Strings) = work("modpack", strings) {
+        packUpdate = it.previewModpackUpdate(serverId, versionId)
+        null
+    }
+
+    fun cancelPackUpdate() {
+        val token = packUpdate?.token ?: return
+        packUpdate = null
+        val c = client() ?: return
+        scope.launch {
+            try { c.forgetModpack(token) } catch (e: AgentException) { /* The PC drops it later itself. */ }
+        }
+    }
+
+    fun updatePack(usePackConfigs: Boolean, strings: Strings) {
+        val read = packUpdate ?: return
+        packUpdate = null
+        work("modpack", strings, reload = ::loadMods) {
+            it.updateModpack(serverId, read.token, usePackConfigs, ownJars = read.changes.newOwnJars.isNotEmpty())
+            Said(strings.t("linked.updated", "name" to read.pack.name, "version" to read.changes.toVersion), good = true)
+        }
+    }
+
+    fun unlinkPack(strings: Strings) = work("unlink", strings, reload = ::loadMods) {
+        it.unlinkModpack(serverId)
+        null
+    }
+
+    // ------------------------------------------------------------ Make a modpack
+    /** Set while the Make a modpack question shows. */
+    var makeOptions: ModpackMakeOptions? by mutableStateOf(null)
+        private set
+
+    /** The modpack made last, with Share and Post in Discord. */
+    var made: ModpackMade? by mutableStateOf(null)
+        private set
+
+    fun askMakeModpack(strings: Strings) = work("make", strings) {
+        makeOptions = it.makeModpackOptions(serverId)
+        null
+    }
+
+    fun cancelMakeModpack() {
+        makeOptions = null
+        backgroundSet = false
+    }
+
+    /** A title-screen picture was uploaded while the question shows (its answers stay). */
+    var backgroundSet by mutableStateOf(false)
+        private set
+
+    fun uploadTitleBackground(file: PickedFile, strings: Strings) = work("background", strings) {
+        backgroundSet = it.uploadTitleBackground(serverId, file).titleScreen.backgroundSet
+        null
+    }
+
+    fun makeModpack(answers: MakeModpack, strings: Strings) {
+        makeOptions = null
+        backgroundSet = false
+        work("make", strings) {
+            made = it.makeModpack(serverId, answers)
+            loadLink() // the modpack's download link, if it's on
+            loadModrinth() // "Upload Friends 2"
+            null
+        }
+    }
+
+    /** Downloads the modpack into [folder] (the old one there is cleared out) and opens the share menu. */
+    fun shareModpack(folder: File, strings: Strings, share: (File) -> Unit) = work("share", strings) { c ->
+        val pack = made ?: return@work null
+        val name = pack.filename.substringAfterLast('/').substringAfterLast('\\').ifBlank { "modpack.mrpack" }
+        val file = withContext(Dispatchers.IO) {
+            folder.mkdirs()
+            folder.listFiles()?.forEach { it.delete() }
+            val target = File(folder, name)
+            try {
+                target.outputStream().use { out -> c.downloadModpack(serverId, pack, out) }
+            } catch (e: Exception) {
+                target.delete()
+                throw e
+            }
+            target
+        }
+        share(file)
+        null
+    }
+
+    fun postModpack(strings: Strings) = work("discord", strings) {
+        val pack = made ?: return@work null
+        val posted = it.postModpack(serverId, pack.token)
+        Said(strings.t(if (posted.asLink) "make.posted_link" else "make.posted", "count" to posted.posted), good = true)
+    }
+
+    // ------------------------------------------------------------ Download link
+    /** The download link and the server resource pack, once read. */
+    var link: DownloadLink? by mutableStateOf(null)
+        private set
+
+    /** Set while "Use a link…" asks for the pack's link and SHA-1. */
+    var askingPackLink by mutableStateOf(false)
+
+    /** Read on its own, not as a "work": the mods list may be loading at the same time. */
+    fun loadLink() {
+        val c = client() ?: return
+        scope.launch {
+            try {
+                link = c.downloadLink(serverId)
+            } catch (e: AgentException) {
+                noted(e)
+            }
+        }
+    }
+
+    fun switchLink(on: Boolean, strings: Strings) = work("link", strings) {
+        link = it.setDownloadLink(serverId, on)
+        null
+    }
+
+    fun newLink(strings: Strings) = work("link", strings) {
+        link = it.newDownloadLink(serverId)
+        null
+    }
+
+    fun uploadPack(file: PickedFile, strings: Strings) = work("pack", strings) {
+        link = it.uploadResourcePack(serverId, file, link?.resourcePack?.required ?: false)
+        null
+    }
+
+    fun setPackLink(url: String, sha1: String, strings: Strings) {
+        askingPackLink = false
+        work("pack", strings) {
+            link = it.setResourcePackLink(serverId, url, sha1, link?.resourcePack?.required ?: false)
+            null
+        }
+    }
+
+    fun setPackRequired(required: Boolean, strings: Strings) = work("pack", strings) {
+        link = it.setResourcePackRequired(serverId, required)
+        null
+    }
+
+    fun removePack(strings: Strings) = work("pack", strings) {
+        link = it.removeResourcePack(serverId)
+        null
+    }
+
+    // ------------------------------------------------------------ Put it on Modrinth
+    var modrinth: ModrinthShare? by mutableStateOf(null)
+        private set
+
+    /** Asking the Modrinth address and summary: for the modpack (no [ModrinthAsk.jar]) or one own jar. */
+    var askingModrinth: ModrinthAsk? by mutableStateOf(null)
+
+    /** Set while "Paste its link…" asks for the Server Project's link. */
+    var askingServerLink by mutableStateOf(false)
+
+    fun loadModrinth() {
+        val c = client() ?: return
+        scope.launch {
+            try {
+                modrinth = c.modrinth(serverId)
+            } catch (e: AgentException) {
+                noted(e)
+            }
+        }
+    }
+
+    /** Opens Modrinth's page; it comes back as mcsc://modrinth (MainActivity). */
+    fun signInModrinth(open: (String) -> Unit, strings: Strings) = work("modrinth", strings) {
+        open(it.modrinthSignIn().url)
+        Said(strings.t("modrinth.waiting"), good = true)
+    }
+
+    fun finishModrinth(link: String, strings: Strings) {
+        val (code, state) = ModrinthCards.cameBack(link) ?: return tell(Said(strings.t("modrinth.said_no"), good = false))
+        work("modrinth", strings) {
+            it.modrinthFinish(code, state)
+            modrinth = it.modrinth(serverId)
+            Said(strings.t("modrinth.welcome"), good = true)
+        }
+    }
+
+    fun signOutModrinth(strings: Strings) = work("modrinth", strings) {
+        it.modrinthSignOut()
+        modrinth = it.modrinth(serverId)
+        null
+    }
+
+    fun uploadToModrinth(slug: String, summary: String, strings: Strings) {
+        val jar = askingModrinth?.jar
+        askingModrinth = null
+        work("modrinth", strings) {
+            modrinth = if (jar == null) it.modrinthUpload(serverId, slug, summary) else it.modrinthOwnJar(serverId, jar.path, slug, summary)
+            Said(strings.t("modrinth.uploaded"), good = true)
+        }
+    }
+
+    fun setServerProject(link: String, strings: Strings) {
+        askingServerLink = false
+        work("modrinth", strings) {
+            modrinth = it.modrinthServerProject(serverId, link)
+            null
+        }
+    }
+
+    // ------------------------------------------------------------ the anti-cheat picker
+    var antiCheat: AntiCheat? by mutableStateOf(null)
+        private set
+
+    fun loadAntiCheat() {
+        val c = client() ?: return
+        scope.launch {
+            try {
+                antiCheat = c.antiCheat(serverId)
+            } catch (e: AgentException) {
+                noted(e)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ far view
+    var farView: FarView? by mutableStateOf(null)
+        private set
+
+    fun loadFarView() {
+        val c = client() ?: return
+        scope.launch {
+            try {
+                farView = c.farView(serverId)
+            } catch (e: AgentException) {
+                noted(e)
+            }
+        }
+    }
+
+    fun chooseFarView(choice: String, strings: Strings) = work("far_view", strings, reload = { loadFarView(); loadMods() }) {
+        it.chooseFarView(serverId, choice)
+        Said(strings.t("farview.changed"), good = true)
+    }
+
+    fun saveFarView(unvisited: Boolean, loadAhead: Boolean, radius: Int, strings: Strings) = work("far_view", strings) {
+        farView = it.farViewOptions(serverId, unvisited, loadAhead, radius, farView?.loadAhead?.world ?: "")
+        Said(strings.t("farview.saved"), good = true)
+    }
+
+    fun rebuildFarView(strings: Strings) = work("far_view", strings) {
+        val done = it.rebuildFarView(serverId)
+        Said(strings.t("farview.rebuilt", "files" to done.files.toString(), "size" to Display.bytes(strings, done.sizeBytes)), good = true)
     }
 
     // ------------------------------------------------------------ Bedrock packs
@@ -373,6 +843,11 @@ class ContentPages(
                 Read(problem = Message.of(e))
             }
         }
+    }
+
+    fun setAddonsRequired(on: Boolean, strings: Strings) = work("required", strings, reload = ::loadAddons) {
+        restartOffered = it.setAddonsRequired(serverId, on).restartNeeded == true
+        Said(strings.t(if (on) "addons.required_on" else "addons.required_off"), good = true)
     }
 
     fun setAddon(addon: Addon, on: Boolean, strings: Strings) = work("pack:${addon.uuid}", strings, reload = ::loadAddons) {
@@ -491,6 +966,100 @@ class ContentPages(
 
     fun gameRestarted() {
         gameRestart = false
+    }
+
+    // ------------------------------------------------------------ game rules
+    /** Read from the running server only when the screen asks (one question per rule). */
+    var rules: Read<GameRules> by mutableStateOf(Read())
+        private set
+
+    /** Changed values by rule name, waiting for Save rules. */
+    var ruleEdits: Map<String, JsonPrimitive> by mutableStateOf(emptyMap())
+        private set
+
+    /** What the last change was before, for Undo; empty: nothing to undo. */
+    var rulesBefore: JsonObject by mutableStateOf(JsonObject(emptyMap()))
+        private set
+
+    var rulesSaid: Message? by mutableStateOf(null)
+        private set
+
+    /** Rules of a preset this server doesn't have, from the last change. */
+    var rulesSkipped: List<String> by mutableStateOf(emptyList())
+        private set
+
+    fun loadRules() {
+        val c = client() ?: return
+        rules = rules.copy(loading = true)
+        scope.launch {
+            rules = try {
+                Read(c.gameRules(serverId)).also { ruleEdits = emptyMap() }
+            } catch (e: AgentException) {
+                noted(e)
+                Read(problem = Message.of(e))
+            }
+        }
+    }
+
+    fun editRule(name: String, value: JsonPrimitive) {
+        val said = rules.value?.rules?.firstOrNull { it.name == name }?.value
+        ruleEdits = if (said == value) ruleEdits - name else ruleEdits + (name to value)
+    }
+
+    /** Saves [changed] (Save rules or Undo), or applies [preset]. */
+    fun saveRules(changed: JsonObject = JsonObject(ruleEdits), preset: String? = null) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = "rules"
+        scope.launch {
+            try {
+                val done = c.saveGameRules(serverId, changed, preset)
+                val current = rules.value ?: GameRules(running = true)
+                rules = Read(current.copy(rules = done.rules))
+                ruleEdits = emptyMap()
+                rulesBefore = done.before
+                rulesSaid = if (done.before.isEmpty()) Message("gamerules.no_change")
+                else Message("gamerules.saved", mapOf("n" to done.before.size.toString()))
+                rulesSkipped = done.skipped
+            } catch (e: AgentException) {
+                noted(e)
+                rulesSaid = Message.of(e)
+                rulesSkipped = emptyList()
+            } finally {
+                busy = null
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ server icon
+    /** The server icon as base64 PNG; null while unknown or when there is none. */
+    var icon: String? by mutableStateOf(null)
+        private set
+
+    fun loadIcon() {
+        val c = client() ?: return
+        scope.launch {
+            icon = try {
+                c.serverIcon(serverId)
+            } catch (e: AgentException) {
+                noted(e)
+                null
+            }
+        }
+    }
+
+    /** [png] is already 64 x 64 (ServerIconPicker makes it). Undo is the
+     * server's own Undo, like every change the agent backs up first. */
+    fun saveIcon(png: String, strings: Strings) = work("icon", strings, reload = ::loadGame) {
+        val done = it.saveServerIcon(serverId, png)
+        icon = png
+        Said(strings.t("motd.icon_saved") + if (done.running) " " + strings.t("motd.icon_restart") else "", good = true)
+    }
+
+    fun removeIcon(strings: Strings) = work("icon", strings, reload = ::loadGame) {
+        it.removeServerIcon(serverId)
+        icon = null
+        Said(strings.t("motd.icon_removed"), good = true)
     }
 
     // ------------------------------------------------------------ doing

@@ -506,3 +506,80 @@ def test_another_pc_pings_a_home_address_for_diagnose(pcs, monkeypatch):
         )
     assert answer.status_code == 403
     assert asked == [("tcp", "192.168.1.5", 25565)]
+
+
+# ------------------------------------------------- joining: one timer only
+def test_a_new_pc_out_of_reach_after_allow_still_joins(pcs, monkeypatch):
+    """The PC it joins decides when a request runs out. The new PC keeps
+    asking while it can't reach it, so an Allow near the end never leaves
+    the old PC with a member that thinks it never joined."""
+    a, b = pcs("a"), pcs("b")
+    owner_a = a.sign_in()
+    cut_off = {"on": True}
+    real_call = b.core.pcs._call
+
+    async def call(where, method, path, *args, **kwargs):
+        if path == "/api/sync/hello" and cut_off["on"]:
+            raise OSError("no route to host")
+        return await real_call(where, method, path, *args, **kwargs)
+
+    monkeypatch.setattr(b.core.pcs, "_call", call)
+    link = a.call("POST", "/api/pcs/link", owner_a).json()["url"]
+    asked = b.call(
+        "POST",
+        "/api/pcs/join",
+        b.sign_in(),
+        json={"link": link, "username": "admin", "password": PASSWORD},
+    )
+    assert asked.status_code == 200, asked.text
+    joins = a.call("GET", "/api/pcs", owner_a).json()["joins"]
+    assert a.call("POST", f"/api/pcs/joins/{joins[0]['id']}/allow", owner_a).status_code == 200
+    # B's 10 minutes from asking run out while it can't reach A.
+    joining = b.core.db.get_setting("pcs_joining")
+    b.core.db.set_setting("pcs_joining", {**joining, "until": joining["until"] - 11 * 60})
+    time.sleep(4)
+    cut_off["on"] = False
+    wait_for(lambda: b.core.pcs.joined())
+
+
+def test_a_refused_join_stops_the_new_pc_waiting(pcs):
+    a, b = pcs("a"), pcs("b")
+    owner_a = a.sign_in()
+    link = a.call("POST", "/api/pcs/link", owner_a).json()["url"]
+    asked = b.call(
+        "POST",
+        "/api/pcs/join",
+        b.sign_in(),
+        json={"link": link, "username": "admin", "password": PASSWORD},
+    )
+    assert asked.status_code == 200, asked.text
+    joins = a.call("GET", "/api/pcs", owner_a).json()["joins"]
+    assert a.call("POST", f"/api/pcs/joins/{joins[0]['id']}/refuse", owner_a).status_code == 200
+    wait_for(lambda: not b.core.db.get_setting("pcs_joining"), seconds=10)
+    assert not b.core.pcs.joined()
+    wait_for(
+        lambda: any(
+            e["type"] == "pc_join_ran_out" for e in b.core.db.query("SELECT type FROM events")
+        ),
+        seconds=5,
+    )
+
+
+def test_a_bad_answer_from_another_pc_is_logged_and_sync_goes_on(pcs, monkeypatch, caplog):
+    a, b = pcs("a"), pcs("b")
+    owner_a = a.sign_in()
+    join(b, a, owner_a)
+    b.off()
+
+    real_call = b.core.pcs.__class__._call
+
+    async def broken(self, where, method, path, *args, **kwargs):
+        if method == "GET" and path.startswith("/api/sync/changes"):
+            return httpx.Response(200, content=b"not JSON")
+        return await real_call(self, where, method, path, *args, **kwargs)
+
+    monkeypatch.setattr(b.core.pcs.__class__, "_call", broken)
+    b.on()
+    wait_for(lambda: b.core.pcs.pulled.is_set(), seconds=10)
+    assert "account changes" in caplog.text
+    assert b.core.pcs._task is not None and not b.core.pcs._task.done()

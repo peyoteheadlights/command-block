@@ -1,5 +1,6 @@
 """The desktop app's main window: sign-in, then binder tabs for All servers,
-each server and "+", with the server's color tinting the whole window.
+each server and "+". The open server's color is on its tab, the band behind
+the sheet, the buttons and the edges.
 
 Every call to the agent runs off the window's thread (``MainWindow.run``),
 so a slow network never freezes the window.
@@ -7,6 +8,7 @@ so a slow network never freezes the window.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -15,10 +17,21 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import (
+    QMimeData,
+    QObject,
+    QPoint,
+    QRunnable,
+    QSize,
+    Qt,
+    QThreadPool,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import QDrag, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -26,14 +39,12 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QInputDialog,
-    QLabel,
     QLineEdit,
-    QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QScrollArea,
     QStackedWidget,
-    QTabBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -42,27 +53,34 @@ from PySide6.QtWidgets import (
 from agent import API_VERSION, appinfo
 from agent import __version__ as APP_VERSION
 
-from . import icons, self_update, theme
+from . import icons, motion, self_update, streamer, theme, ui
 from .agent import AgentClient, AgentError, SignedOut, Unreachable
 from .alerts import KEPT, PAGES, PC_PAGES, RESTART_FOR, NotificationsScreen
 from .backups import is_world
 from .discord import Discord
 from .feed import Feed
+from .frame import ROOM, FramelessWindow
 from .gear import Account, Devices, ListScreen, PCSettings, Updates
 from .help import About, Guide
 from .moderators import Moderators
 from .mods import takes
 from .new_server import NewServerScreen
 from .overview import SimpleOverview, TechnicalOverview
+from .parts import Box, Status
 from .pc import WindowsPC
 from .rented import ConnectPanel, RentedRow, RentedScreen
-from .server_tab import BUSY, ServerScreen, state_words
+from .server_tab import ServerScreen, facts, main_action, state_mark, state_words
+from .shell import BinderTabs, Desk, Sheet
 from .tailscale_step import TailscaleStep
+from .top_view import TopView
 from .ui import clock, content_page, has_packs, label, push, refill
 from .words import mode, text
 from .yourpcs import YourPCs
 
 log = logging.getLogger(__name__)
+
+# The live feed's events that can play a sound on this PC, and their switch.
+SOUNDS = {"server_crashed": "sound_crash", "player_joined": "sound_join"}
 
 
 class _Signals(QObject):
@@ -168,48 +186,103 @@ class SignInScreen(QWidget):
         )
 
 
-class ServerRow(QFrame):
-    """One server on All servers. ``act`` starts or stops a server on another
-    of the owner's PCs (that PC checks the account may)."""
+DRAGGED = "application/x-command-block-server"  # a server row being dragged
+
+
+class ServerRow(Box):
+    """One server on All servers: a raised box with its edge, color bar and
+    Start button in the server's own color. ``act`` starts or stops a
+    server on another of the owner's PCs (that PC checks the account may).
+    ``arrange`` (the owner, this PC's servers): a ⋯ menu to move it or put
+    it in a group, and the row can be dragged to a new place."""
 
     def __init__(
-        self, window: MainWindow, row: dict, act: Callable[[str], None] | None = None
+        self,
+        window: MainWindow,
+        row: dict,
+        act: Callable[[str], None] | None = None,
+        arrange: Callable[[str, str], None] | None = None,
     ) -> None:
         super().__init__()
-        self.setProperty("kind", "row")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 10, 10, 10)
-        dot = QLabel()
-        dot.setFixedSize(12, 12)
-        dot.setStyleSheet(f"background: {row.get('color') or '#8E8E93'}; border-radius: 6px;")
-        layout.addWidget(dot)
+        self.server_id = row["id"]
+        self.arrange = arrange
+        self.pressed: QPoint | None = None
+        # The parts in the box take their colors from here, not from the window.
+        self.look = theme.tokens(window.dark, row.get("color"))
+        self.setStyleSheet(theme.row_sheet(self.look))
+        line = QHBoxLayout()
+        line.setSpacing(12)
+        self.column.addLayout(line)
+        bar = QFrame()
+        bar.setFixedWidth(4)
+        bar.setStyleSheet(f"background: {row.get('color') or self.look['neutral']};")
+        line.addWidget(bar)
+        words = QVBoxLayout()
+        words.setSpacing(2)
         name = label(row["name"])
         name.setObjectName("title")
-        layout.addWidget(name, 1)
-        if row.get("test"):
-            layout.addWidget(label(text("test.badge"), "chip"))
+        words.addWidget(name)
         state = row.get("state", "UNKNOWN")
-        layout.addWidget(label(state_words(row), "sub"))
+        said = facts(row, port=False, players=False)
         if state == "ONLINE":
             players = row.get("players_online")
-            shown = (
+            said.append(
                 text("servers.players_of", n=players, max=row.get("max_players") or "?")
                 if players is not None
                 else text("state.unknown")
             )
-        else:
-            shown = text("servers.not_running")
-        layout.addWidget(label(shown, "sub"))
-        action = "stop" if state in ("ONLINE", *BUSY) else "start"
+        under = QHBoxLayout()
+        under.setSpacing(10)
+        under.addWidget(Status(state_mark(row), state_words(row)))
+        under.addWidget(label(" · ".join(said), "sub"), 1)
+        words.addLayout(under)
+        line.addLayout(words, 1)
+        action, allowed = main_action(row)
         button = push(text(f"action.{action}"), "primary" if action == "start" else "")
-        button.setEnabled(state not in BUSY)
+        button.setEnabled(allowed)
         button.setAccessibleName(f"{text(f'action.{action}')} {row['name']}")
         if act is not None:
             button.clicked.connect(lambda: act(action))
         else:
             button.clicked.connect(lambda: window.server_action(row["id"], action))
             button.setVisible(window.may(row["id"], "server.control"))
-        layout.addWidget(button)
+        line.addWidget(button)
+        if arrange is not None:
+            self.setToolTip(text("servers.drag_hint"))
+            more = QToolButton()
+            more.setText("⋯")
+            more.setAccessibleName(text("servers.more", name=row["name"]))
+            more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            menu = QMenu(more)
+            for how, key in (
+                ("up", "servers.move_up"),
+                ("down", "servers.move_down"),
+                ("group", "servers.group"),
+            ):
+                menu.addAction(text(key)).triggered.connect(
+                    lambda _=False, h=how: arrange(row["id"], h)
+                )
+            more.setMenu(menu)
+            line.addWidget(more)
+
+    def mousePressEvent(self, event) -> None:
+        self.pressed = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        moved = self.pressed is not None and (
+            (event.position().toPoint() - self.pressed).manhattanLength()
+            >= QApplication.startDragDistance()
+        )
+        if self.arrange is None or not moved:
+            return super().mouseMoveEvent(event)
+        self.pressed = None
+        drag = QDrag(self)
+        data = QMimeData()
+        data.setData(DRAGGED, self.server_id.encode())
+        drag.setMimeData(data)
+        drag.setPixmap(self.grab())
+        drag.exec(Qt.DropAction.MoveAction)
 
 
 class NoticeScreen(QWidget):
@@ -258,6 +331,10 @@ class NoticeScreen(QWidget):
 
 
 class AllServersScreen(QWidget):
+    """Every server as a raised box, under small headings where there is
+    more than one group (this PC, rented servers, the owner's other PCs),
+    then a dashed card to add one. With no server at all, only that."""
+
     NAME = "All servers"
 
     def __init__(self, window: MainWindow) -> None:
@@ -265,15 +342,9 @@ class AllServersScreen(QWidget):
         self.window_ = window
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 20)
-        top = QHBoxLayout()
-        heading = label(text("page.servers"))
-        heading.setObjectName("title")
-        top.addWidget(heading, 1)
-        # A server rented from a host, on its Pterodactyl panel (owner only).
-        self.connect_button = push(text("desktop.rented.connect"), "plain")
-        self.connect_button.clicked.connect(lambda: ConnectPanel(window).exec())
-        top.addWidget(self.connect_button)
-        outer.addLayout(top)
+        self.heading = label(text("page.servers"), name="h1")
+        outer.addWidget(self.heading)
+        outer.addSpacing(8)
         self.problem = label(kind="problem")
         self.problem.hide()
         outer.addWidget(self.problem)
@@ -283,11 +354,71 @@ class AllServersScreen(QWidget):
         self.said = label(kind="ok")  # what was just done here, like a server removed
         self.said.hide()
         outer.addWidget(self.said)
-        self.rows = QVBoxLayout()
-        self.rows.setSpacing(8)
-        outer.addLayout(self.rows)
-        outer.addStretch()
+        tools = QHBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText(text("servers.search"))
+        self.search.setAccessibleName(text("servers.search"))
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self.show_all)
+        tools.addWidget(self.search, 1)
+        self.start_all = push(text("servers.start_all"), "plain")
+        self.start_all.clicked.connect(lambda: self.all_servers("start"))
+        self.stop_all = push(text("servers.stop_all"), "plain")
+        self.stop_all.clicked.connect(lambda: self.all_servers("stop"))
+        tools.addWidget(self.start_all)
+        tools.addWidget(self.stop_all)
+        self.tools = QWidget()
+        self.tools.setLayout(tools)
+        tools.setContentsMargins(0, 0, 0, 4)
+        outer.addWidget(self.tools)
+        self.setAcceptDrops(True)
+        self.placed: list[ServerRow] = []  # this PC's rows, which a dragged one can land on
+        body = QWidget()
+        self.rows = QVBoxLayout(body)
+        self.rows.setContentsMargins(0, 0, 0, 0)
+        self.rows.setSpacing(2)  # a box brings its own room for its shadow
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
         self.servers: list[dict] = []
+        self.add_button = self.connect_button = QPushButton()  # made again with each fill
+
+    def add_card(self, first: bool) -> QWidget:
+        """Add server, and for the owner Connect a rented server (on its
+        Pterodactyl panel). ``first``: there is no server yet, so it is the
+        whole page, with the filled button."""
+        window = self.window_
+        self.add_button = push(text("page.add_server"), "primary" if first else "plain")
+        look = theme.tokens(window.dark)  # no server is open here: the copper
+        self.add_button.setIcon(
+            icons.icon("plus", look["accent-text" if first else "accent-ink"], 16)
+        )
+        self.add_button.clicked.connect(lambda: window.show_screen("New server"))
+        self.connect_button = push(text("desktop.rented.connect"), "plain")
+        self.connect_button.clicked.connect(lambda: ConnectPanel(window).exec())
+        self.connect_button.setVisible(window.role in (None, "owner"))
+        card = QFrame()
+        buttons: QBoxLayout
+        if first:
+            self.add_button.setProperty("big", True)
+            buttons = QVBoxLayout(card)
+            buttons.setContentsMargins(0, 60, 0, 0)
+            none = label(text("servers.none"), name="h2")
+            buttons.addWidget(none, 0, Qt.AlignmentFlag.AlignHCenter)
+            buttons.addSpacing(8)
+            for button in (self.add_button, self.connect_button):
+                buttons.addWidget(button, 0, Qt.AlignmentFlag.AlignHCenter)
+            return card
+        card.setObjectName("newServer")
+        buttons = QHBoxLayout(card)
+        buttons.setContentsMargins(12, 10, 12, 10)
+        buttons.addStretch()
+        buttons.addWidget(self.add_button)
+        buttons.addWidget(self.connect_button)
+        buttons.addStretch()
+        return card
 
     def failed(self, exc: AgentError) -> None:
         self.problem.setText(str(exc))
@@ -302,25 +433,50 @@ class AllServersScreen(QWidget):
         self.servers = servers
         self.show_all()
 
+    def matches(self, row: dict) -> bool:
+        needle = self.search.text().strip().lower()
+        return not needle or needle in f"{row.get('name', '')} {row.get('group') or ''}".lower()
+
     def show_all(self) -> None:
-        """This PC's servers, then each of the owner's other PCs' (Your
-        PCs), under the PC's name."""
+        """This PC's servers (under their group names, when the owner made
+        groups), then each of the owner's other PCs' (Your PCs), under the
+        PC's name. The search box narrows all of them by name or group."""
         refill(self.rows, [])
-        others = self.window_.other_pcs()
-        if others:
-            self.rows.addWidget(label(self.window_.this_pc_name(), name="h2"))
-        if not self.servers:
-            self.rows.addWidget(label(text("servers.none"), "sub"))
-        for row in self.servers:
-            self.rows.addWidget(ServerRow(self.window_, row))
-        self.connect_button.setVisible(self.window_.role in (None, "owner"))
-        if self.window_.rented:
-            self.rows.addWidget(label(text("desktop.rented.heading_list"), name="h2"))
-            for row in self.window_.rented:
-                self.rows.addWidget(RentedRow(self.window_, row))
+        window = self.window_
+        others = window.other_pcs()
+        group = lambda words: label(words, "group")  # noqa: E731
+        everywhere = (
+            len(self.servers)
+            + len(window.rented)
+            + sum(len(found) for found in window.elsewhere.values() if isinstance(found, list))
+        )
+        self.tools.setVisible(everywhere >= 2)
+        control = [r for r in self.servers if window.may(r["id"], "server.control")]
+        self.start_all.setVisible(len(control) >= 2)
+        self.stop_all.setVisible(len(control) >= 2)
+        if others or (window.rented and self.servers):
+            self.rows.addWidget(group(window.this_pc_name()))
+        shown = [r for r in self.servers if self.matches(r)]
+        arrange = self.arrange if window.role in (None, "owner") else None
+        names = [g for g in dict.fromkeys(r.get("group") or "" for r in shown) if g]
+        self.placed = []
+        for name in [*names, ""] if names else [""]:
+            if names:
+                self.rows.addWidget(label(name or text("servers.no_group"), "step"))
+            for row in shown:
+                if (row.get("group") or "") == name:
+                    self.placed.append(ServerRow(window, row, arrange=arrange))
+                    self.rows.addWidget(self.placed[-1])
+        if self.search.text().strip() and not shown and self.servers:
+            self.rows.addWidget(label(text("servers.no_match", search=self.search.text()), "sub"))
+        if window.rented:
+            self.rows.addWidget(group(text("desktop.rented.heading_list")))
+            for row in window.rented:
+                if self.matches(row):
+                    self.rows.addWidget(RentedRow(window, row))
         for pc in others:
-            self.rows.addWidget(label(pc.get("name") or "", name="h2"))
-            found = self.window_.elsewhere.get(pc["id"])
+            self.rows.addWidget(group(pc.get("name") or ""))
+            found = window.elsewhere.get(pc["id"])
             if found is None:
                 self.rows.addWidget(label(text("desktop.pcs.loading"), "sub"))
             elif isinstance(found, str):
@@ -328,9 +484,116 @@ class AllServersScreen(QWidget):
             elif not found:
                 self.rows.addWidget(label(text("servers.none"), "sub"))
             else:
-                for row in found:
-                    act = lambda action, p=pc, r=row: self.window_.act_elsewhere(p, r, action)  # noqa: E731
-                    self.rows.addWidget(ServerRow(self.window_, row, act))
+                for row in filter(self.matches, found):
+                    act = lambda action, p=pc, r=row: window.act_elsewhere(p, r, action)  # noqa: E731
+                    self.rows.addWidget(ServerRow(window, row, act))
+        first = not (self.servers or window.rented or others)
+        if not first:
+            self.rows.addSpacing(8)
+        self.rows.addWidget(self.add_card(first))
+        self.rows.addStretch()
+
+    # -- the owner's order and groups -------------------------------------
+    def arrange(self, server_id: str, how: str) -> None:
+        """The ⋯ menu: move a server up or down among the ones shown, or put
+        it in a group."""
+        window = self.window_
+        if how == "group":
+            row = next(r for r in self.servers if r["id"] == server_id)
+            name = window.ask(
+                text("servers.group_title"),
+                text("servers.group_ask"),
+                text("action.save"),
+                text("servers.group_title"),
+                row.get("group") or "",
+            )
+            if name is not None:
+                self.put(f"/servers/{server_id}/group", {"group": name.strip()})
+            return
+        group_of = {r["id"]: r.get("group") or "" for r in self.servers}
+        # Among the shown servers of its own group: the group stays as it is.
+        shown = [r.server_id for r in self.placed if group_of[r.server_id] == group_of[server_id]]
+        at = shown.index(server_id) + (-1 if how == "up" else 1)
+        if 0 <= at < len(shown):
+            self.move_to(server_id, shown[at], after=how == "down")
+
+    def move_to(self, server_id: str, target: str, after: bool) -> None:
+        """Put a server just before (or after) another. Landing among another
+        group's servers puts it in that group."""
+        order = [
+            r["id"] for r in self.window_.all_servers
+        ]  # with Test servers, so they keep their place
+        order.remove(server_id)
+        order.insert(order.index(target) + after, server_id)
+        group_of = {r["id"]: r.get("group") or "" for r in self.servers}
+        if group_of[server_id] != group_of[target]:
+            self.put(f"/servers/{server_id}/group", {"group": group_of[target]})
+        self.put("/servers/order", {"ids": order})
+
+    def put(self, path: str, body: dict) -> None:
+        window = self.window_
+        window.run(
+            lambda: window.agent.call("PUT", path, body), lambda _r: window.refresh(), self.failed
+        )
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasFormat(DRAGGED):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasFormat(DRAGGED):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        """Dropped on a row: before it when on its top half, after it when
+        on its bottom half. Below the last row: after the last."""
+        dragged = bytes(event.mimeData().data(DRAGGED).data()).decode()
+        at = self.mapToGlobal(event.position().toPoint())
+        for row in self.placed:
+            spot = row.mapFromGlobal(at)
+            if row.rect().contains(spot) or row is self.placed[-1] and spot.y() > 0:
+                if row.server_id != dragged:
+                    event.acceptProposedAction()
+                    self.move_to(dragged, row.server_id, after=spot.y() > row.height() / 2)
+                return
+
+    def all_servers(self, action: str) -> None:
+        """Start all or Stop all, for the servers shown (the search narrows it)."""
+        window = self.window_
+        ids = [r.server_id for r in self.placed if window.may(r.server_id, "server.control")]
+        if action == "stop" and not window.confirm(
+            text(
+                "servers.stop_all_title",
+                n=sum(r.get("state") != "OFFLINE" for r in self.servers if r["id"] in ids),
+            ),
+            text("servers.stop_all_body"),
+            text("servers.stop_all"),
+        ):
+            return
+
+        def done(result: dict) -> None:
+            rows = result.get("servers") or []
+            done_ = [r for r in rows if r["result"] in ("started", "stopped", "stopping")]
+            failed = [
+                text("servers.all_failed", name=r["name"], reason=r.get("detail") or "")
+                for r in rows
+                if r["result"] == "failed"
+            ]
+            words = (
+                text(f"servers.all_done_{action}", n=len(done_))
+                if done_
+                else text(f"servers.all_none_{action}")
+            )
+            self.say(" ".join([words, *failed]))
+            window.refresh()
+
+        window.run(
+            lambda: window.agent.call(
+                "POST", f"/servers/{action}-all", {"ids": ids}, slow=action == "stop"
+            ),
+            done,
+            self.failed,
+        )
 
 
 class ScreenStack(QStackedWidget):
@@ -351,7 +614,7 @@ class ScreenStack(QStackedWidget):
         return shown.minimumSizeHint() if shown is not None else super().minimumSizeHint()
 
 
-class MainWindow(QMainWindow):
+class MainWindow(FramelessWindow):
     STILL_DOWN_MS = 180_000  # then "may be off or asleep"
     TASK_AFTER_MS = 15_000  # after a Tailscale move, then run the agent's task
     WAKE_WAIT_MS = 120_000  # then "<PC> didn't wake"
@@ -360,7 +623,7 @@ class MainWindow(QMainWindow):
     OWN_UPDATE_POLL_MS = 3_600_000  # then is a day up? (self_update.due)
 
     def __init__(self, agent: AgentClient, pc: WindowsPC, dark: bool | None = None) -> None:
-        super().__init__()
+        super().__init__(pc)
         self.agent, self.pc = agent, pc
         self._tasks: set[Task] = set()
         # Agent calls wait on the network, not the CPU, and a backup can wait
@@ -369,6 +632,7 @@ class MainWindow(QMainWindow):
         pool.setMaxThreadCount(max(8, pool.maxThreadCount()))
         self.dark = dark if dark is not None else self.dark_look(pc.setting("look"))
         self.scale = pc.text_scale()
+        streamer.turn(str(pc.setting("streamer")).lower() == "true")
         self.servers: list[dict] = []
         self.all_servers: list[dict] = []  # with Test servers, which Simple mode hides
         # Other PCs' servers (Your PCs), by PC id: rows, or why there are none.
@@ -380,7 +644,7 @@ class MainWindow(QMainWindow):
         self.alerts: list[dict] = []  # newest first, as the bell lists them
         self.last_alert = 0  # the newest alert id seen, to catch up after a reconnect
         self.caught_up = False  # the alerts from before signing in are loaded
-        self.unread = 0
+        self.read_up_to = 0  # how far this account has read the alerts, on any device
         self.popped: dict[str, dict] = {}  # the alert behind each Windows alert, by id
         self.allowed: dict[str, list[str]] = {}  # server id -> what this account may do
         self.role: str | None = None  # owner or helper, once known
@@ -388,31 +652,42 @@ class MainWindow(QMainWindow):
         self.waking = False  # Wake was pressed; waiting for the PC to answer
         self.user: str | None = None  # the account's name, once known
         self.agent_version: str | None = None
+        # The agent's PC was installed "Agent only": it has no desktop app,
+        # so "do it on that PC" means running setup there (from /version).
+        self.agent_only = False
         self.setup_unfinished = False  # the Tailscale step was skipped (yellow dot)
         self.quitting = False
         mode["technical"] = False
         self.mode_picked = False  # picked here since signing in
+        self.welcome_open = False  # the first-run questions are showing
+        self.tips_on = True  # the account's "tips" preference
         self.ask_answered = False  # the donation card was answered here
         self.setWindowTitle(text("app.name"))
         self.resize(1280, 800)
-        desk = QWidget()
-        desk.setObjectName("desk")
-        desk.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        theme.load_fonts()
+        desk = Desk(self.see_through)
         column = QVBoxLayout(desk)
-        column.setContentsMargins(10, 6, 10, 10)
+        column.setContentsMargins(ROOM)
         column.setSpacing(0)
         self.topbar = QWidget()
         bar = QHBoxLayout(self.topbar)
         bar.setContentsMargins(0, 0, 0, 0)
-        self.binder = QTabBar()
+        self.binder = BinderTabs()
         self.binder.setObjectName("binder")
         self.binder.setAccessibleName(text("page.servers"))
         self.binder.setDrawBase(False)
         self.binder.setExpanding(False)
         self.binder.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.binder.currentChanged.connect(self.binder_changed)
-        bar.addWidget(self.binder)
+        self.binder.tabBarClicked.connect(self.binder_clicked)
+        bar.addWidget(self.binder, 0, Qt.AlignmentFlag.AlignBottom)
         bar.addStretch()
+        # The bell, gear and "?" share a strip with the window's own buttons.
+        strip = QFrame()
+        strip.setObjectName("strip")
+        strip_row = QHBoxLayout(strip)
+        strip_row.setContentsMargins(2, 2, 2, 2)
+        strip_row.setSpacing(4)
         self.tools: dict[str, QToolButton] = {}
         for name, words, opens in (
             ("bell", "desktop.tool.alerts", "Notifications"),
@@ -427,14 +702,35 @@ class MainWindow(QMainWindow):
             tool.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             tool.clicked.connect(lambda _=False, s=opens: self.show_screen(s))
             self.tools[name] = tool
-            bar.addWidget(tool)
+            strip_row.addWidget(tool)
+        self.tool_gap = QFrame()
+        self.tool_gap.setObjectName("gap")
+        self.tool_gap.setFixedHeight(16)
+        strip_row.addWidget(self.tool_gap)
+        for button in self.window_buttons.values():
+            strip_row.addWidget(button)
+        self.strip = strip
+        bar.addWidget(strip, 0, Qt.AlignmentFlag.AlignVCenter)
         column.addWidget(self.topbar)
+        # The band is the server's colored divider; the sheet lies on it.
+        self.band = QFrame()
+        self.band.setObjectName("band")
+        on_band = QHBoxLayout(self.band)
+        on_band.setContentsMargins(0, 12, 12, 12)
+        self.sheet = Sheet()
+        on_band.addWidget(self.sheet)
+        desk.band = self.band
+        column.addWidget(self.band, 1)
         self.stack = ScreenStack()
-        column.addWidget(self.stack, 1)
+        # The four whole-window screens have no paper to turn.
+        self.stack.currentChanged.connect(self.turn_page)
+        self.sheet.inside.addWidget(self.stack)
         self.setCentralWidget(desk)
+        self.place_frame()
         self.setAcceptDrops(True)
         self.screens: dict[str, QWidget] = {}
         self.server_screen = ServerScreen(self)
+        self.sheet.set_list(self.server_screen.page_list)
         self.rented_screen = RentedScreen(self)
         self.notifications = NotificationsScreen(self)
         self.down_screen = NoticeScreen("Agent not running")
@@ -516,6 +812,10 @@ class MainWindow(QMainWindow):
             pc.set_start_with_windows(True)
             pc.set_setting("start_with_windows_set", True)
         self.apply_look(None)
+        self.tab_to_window_buttons_last()
+        self.top_view = TopView(self)
+        for keys, by in (("Ctrl+Tab", 1), ("Ctrl+Shift+Tab", -1)):
+            QShortcut(QKeySequence(keys), self, lambda by=by: self.top_view.step(by))
         saved = pc.saved_sign_in(agent.place)
         once = pc.setting("one_time_sign_in") if agent.place == "this PC" else None
         if once:
@@ -599,6 +899,16 @@ class MainWindow(QMainWindow):
             self.open_page(found[0])
             self.server_screen.page.take(found[1])  # type: ignore[attr-defined]
 
+    def turn_page(self) -> None:
+        if not self.sheet.bare:
+            motion.turn(self.stack)
+
+    def can_drag(self, pos: QPoint) -> bool:
+        """By the top row and the band. A press on the paper is for what is
+        on the page."""
+        paper = self.sheet.paper().toRect().translated(self.sheet.mapTo(self, QPoint(0, 0)))
+        return self.sheet.bare or not paper.contains(pos)
+
     def bring_back(self) -> None:
         self.showNormal()
         self.raise_()
@@ -612,19 +922,32 @@ class MainWindow(QMainWindow):
             return look == "dark"
         return QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
 
+    def set_streamer(self, on: bool) -> None:
+        """Streamer mode, kept on this PC like the look."""
+        self.pc.set_setting("streamer", "true" if on else "false")
+        streamer.turn(on)
+        if not on and self.server_screen.row:
+            self.load_server_parts()  # labels show their own words again
+
     def set_look(self, look: str) -> None:
         """Kept on this PC: each PC (and person) picks their own."""
         self.pc.set_setting("look", look)
         self.dark = self.dark_look(look)
         row = self.server_screen.row if self.screen_name == "Server" else {}
         self.apply_look(row.get("color"))
+        self.fill_binder()
 
     def apply_look(self, color: str | None) -> None:
-        """The theme, tinted with the open server's color (None: neutral)."""
+        """The theme, with the open server's color on it (None: the copper)."""
         self.look = theme.tokens(self.dark, color)
         self.setStyleSheet(theme.style_sheet(self.look, self.scale))
         for name, tool in self.tools.items():
             tool.setIcon(icons.icon(name, self.look["text-primary"], 20))
+        self.show_frame_look(self.look)
+        self.binder.look = self.sheet.look = self.look
+        self.binder.update()
+        self.sheet.update()
+        self.server_screen.page_list.set_look(self.look)
         self.server_screen.technical_overview.style_graphs(self.look)
 
     @property
@@ -633,12 +956,19 @@ class MainWindow(QMainWindow):
 
     def show_screen(self, name: str) -> None:
         if name == "Notifications":
-            self.unread = 0
-            self.show_unread()
             self.mark_alerts_read()
-        self.topbar.setVisible(
-            name not in ("Sign-in", "Agent not running", "Update needed", "Tailscale")
-        )
+            self.show_unread()
+        # These four fill the window: no tabs, no tools, and their own small
+        # sheet. The window's own buttons stay when it has no Windows frame.
+        whole = name in ("Sign-in", "Agent not running", "Update needed", "Tailscale")
+        for widget in (self.binder, self.tool_gap, *self.tools.values()):
+            widget.setVisible(not whole)
+        self.strip.setVisible(self.frameless or not whole)
+        self.sheet.bare = whole
+        self.binder.none_open = name in ("Notifications", "PC settings", "Help")
+        self.binder.update()
+        self.server_screen.page_list.setVisible(name == "Server")
+        self.sheet.arrange()
         if name != "Server":
             self.apply_look(None)
         if name in ("PC settings", "Help"):
@@ -646,6 +976,9 @@ class MainWindow(QMainWindow):
             # section by itself and forget the one asked for.
             self.screens[name].load()  # type: ignore[attr-defined]
         self.stack.setCurrentWidget(self.screens[name])
+        self.binder.blockSignals(True)  # the tab that goes with the screen, however it was opened
+        self.select_binder_tab()
+        self.binder.blockSignals(False)
         if name == "New server":
             self.new_server.load()
 
@@ -660,25 +993,23 @@ class MainWindow(QMainWindow):
         current = [
             (self.binder.tabData(i), self.binder.tabText(i)) for i in range(self.binder.count())
         ]
-        colors = [r.get("color") for r in self.servers]
-        if current == tabs + [("new", "")] and colors == getattr(self, "_binder_colors", None):
+        running = {r["id"] for r in self.servers if r.get("state") == "ONLINE"}
+        shape = ([r.get("color") for r in self.servers], running, self.dark)
+        if current == tabs + [("new", "")] and shape == getattr(self, "_binder_shape", None):
             return
-        self._binder_colors = colors
+        self._binder_shape = shape
+        # Each server's tab is in that server's color, with a dot while it runs.
+        self.binder.looks = {r["id"]: theme.tokens(self.dark, r.get("color")) for r in self.servers}
+        self.binder.running = running
         self.binder.blockSignals(True)
         while self.binder.count():
             self.binder.removeTab(0)
-        self.binder.addTab(icons.icon("servers", self.look["text-secondary"]), text("page.servers"))
-        self.binder.setTabData(0, "all")
-        for row in self.servers:
-            i = self.binder.addTab(
-                icons.badge_icon(row.get("color") or "#8E8E93", row["name"][:1].upper()),
-                row["name"],
-            )
-            self.binder.setTabData(i, row["id"])
-        i = self.binder.addTab(icons.icon("plus", self.look["text-secondary"]), "")
-        self.binder.setTabData(i, "new")
+        for which, words in tabs + [("new", "")]:
+            i = self.binder.addTab(words)
+            self.binder.setTabData(i, which)
         self.binder.setTabToolTip(i, text("page.add_server"))
         self.binder.setAccessibleTabName(i, text("page.add_server"))
+        self.binder.refit()
         self.select_binder_tab()
         self.binder.blockSignals(False)
 
@@ -692,6 +1023,12 @@ class MainWindow(QMainWindow):
         for i in range(self.binder.count()):
             if self.binder.tabData(i) == wanted:
                 self.binder.setCurrentIndex(i)
+
+    def binder_clicked(self, index: int) -> None:
+        """A click on the tab that is already the current one: go back to
+        its screen from the bell's, the gear's or "?"'s."""
+        if index == self.binder.currentIndex() and self.binder.none_open:
+            self.binder_changed(index)
 
     def binder_changed(self, index: int) -> None:
         which = self.binder.tabData(index)
@@ -756,6 +1093,7 @@ class MainWindow(QMainWindow):
                 partial(self._servers_of, pc),
                 partial(self._elsewhere_found, pc),
                 partial(self._elsewhere_failed, pc),
+                this_pc=False,
             )
         self.screens["All servers"].show_all()  # type: ignore[attr-defined]
 
@@ -790,6 +1128,7 @@ class MainWindow(QMainWindow):
             lambda: self._client_for(pc).server_action(row["id"], action),
             done,
             lambda exc: self.screens["All servers"].failed(exc),  # type: ignore[attr-defined]
+            this_pc=False,
         )
 
     def servers_loaded(self, servers: list[dict]) -> None:
@@ -967,6 +1306,13 @@ class MainWindow(QMainWindow):
                 self.close_for_update()
             elif event.get("type") == "alert":
                 self.alerts_loaded([event.get("data") or {}], pop=True)
+            elif event.get("type") in SOUNDS and self.pc.setting(SOUNDS[event["type"]]) in (
+                True,
+                "true",
+            ):
+                self.pc.play_sound(crash=event["type"] == "server_crashed")
+                self.parts_due = self.parts_due or event.get("server_id") == self.server_id
+                self.soon.start()
             elif event.get("type") in ("console", "metrics", "chat"):
                 # Only the open page of the open server uses these, and only
                 # while the window shows.
@@ -988,17 +1334,21 @@ class MainWindow(QMainWindow):
         self.quit_app()
 
     def caught_up_with(self, found: dict) -> None:
+        # Unread is what this account hasn't read on any device: read on a
+        # phone lowers the count here at the next catch up.
+        self.read_up_to = max(self.read_up_to, int(found.get("read_up_to") or 0))
         self.alerts_loaded(found["alerts"], pop=self.caught_up)
-        if not self.caught_up:
-            # Unread is what this account hasn't read on any device.
-            read = int(found.get("read_up_to") or 0)
-            self.unread = sum(1 for a in self.alerts if a["id"] > read)
-            self.show_unread()
+        self.show_unread()
         self.caught_up = True
+
+    def seeing_notifications(self) -> bool:
+        """The Notifications screen is in front of someone, not hidden away."""
+        return self.screen_name == "Notifications" and self.isVisible() and not self.isMinimized()
 
     def mark_alerts_read(self) -> None:
         if self.last_alert:
             up_to = self.last_alert
+            self.read_up_to = max(self.read_up_to, up_to)
             self.run(lambda: self.agent.mark_alerts_read(up_to), lambda _r: None, lambda _e: None)
 
     def feed_changed(self) -> None:
@@ -1021,11 +1371,9 @@ class MainWindow(QMainWindow):
         self.notifications.fill(self.alerts, names)
         if not pop:
             return
-        if self.screen_name != "Notifications":
-            self.unread += len(new)
-            self.show_unread()
-        else:
+        if self.seeing_notifications():
             self.mark_alerts_read()  # seen as they arrive
+        self.show_unread()
         shown = self.pc.setting("show_alerts") not in (False, "false")
         showing = [
             alert
@@ -1058,6 +1406,10 @@ class MainWindow(QMainWindow):
                 ]
             self.popped = {str(alert["id"]): alert, **dict(list(self.popped.items())[:49])}
             self.pc.show_alert(alert["title"], alert["body"], str(alert["id"]), tuple(buttons))
+
+    @property
+    def unread(self) -> int:
+        return sum(1 for alert in self.alerts if alert["id"] > self.read_up_to)
 
     def show_unread(self) -> None:
         bell = self.tools["bell"]
@@ -1154,7 +1506,9 @@ class MainWindow(QMainWindow):
             self.down_screen.say(text("desktop.wake.awake", pc=self.wake_name()), "")
             QTimer.singleShot(1500, lambda: self.agent_up(health))
             return
-        if self.screen_name == "Agent not running" or self.tailscale_step.restarting:
+        if self.screen_name in ("Agent not running", "Update needed") or (
+            self.tailscale_step.restarting
+        ):
             self.still_down.stop()
             self.retry.stop()
             if self.tailscale_step.restarting:
@@ -1162,6 +1516,7 @@ class MainWindow(QMainWindow):
             else:
                 self.show_screen(self.back_to)
             if self.agent.token:
+                self.feed.start()  # stopped while an update was needed
                 self.refresh()
 
     def agent_down(self) -> None:
@@ -1239,7 +1594,10 @@ class MainWindow(QMainWindow):
         def work() -> dict:
             info = agent.call("GET", "/wake")
             key = kept.get("key")
-            if info.get("helper") and not (info.get("has_key") and key):
+            # Kept only if it is the agent's: a new key whose answer was lost
+            # leaves an old one here that the helping PC no longer takes.
+            known = key and hashlib.sha256(key.encode()).hexdigest() == info.get("key_hash")
+            if info.get("helper") and not known:
                 key = agent.call("POST", "/wake/key")["key"]
             return {**info, "key": key if info.get("helper") else None}
 
@@ -1296,8 +1654,19 @@ class MainWindow(QMainWindow):
         self.helper_timer.start()
         if self.agent.token:
             self.run(
-                lambda: self.agent.call("GET", "/wake/keys"), self.helper_synced, lambda _e: None
+                lambda: self.agent.call("GET", "/wake/keys"),
+                self.helper_synced,
+                self.helper_refused,
             )
+
+    def helper_refused(self, exc: AgentError) -> None:
+        """The agent's record says who helps: when it says this PC no longer
+        does (another PC took over, or Wake-on-LAN was turned off), this PC
+        stops listening and forgets its keys."""
+        if exc.status == 403:
+            self.pc.set_setting("help_wake", "")
+            self.pc.set_setting("help_wake_list", "")
+            self.sync_helper()
 
     def helper_synced(self, found: dict) -> None:
         self.pc.set_setting("help_wake_list", json.dumps(found))
@@ -1330,10 +1699,13 @@ class MainWindow(QMainWindow):
         self.quit_app()
 
     def stop_for_update(self, agent_api: int | None) -> None:
-        """A different API version: stop before sending anything it can't handle."""
+        """A different API version: stop before sending anything it can't
+        handle, and keep asking, so the app carries on once the update is in."""
+        if self.screen_name not in ("Agent not running", "Update needed"):
+            self.back_to = self.screen_name
         self.feed.stop()
         self.still_down.stop()
-        self.retry.stop()
+        self.retry.start()
         newer = isinstance(agent_api, int) and agent_api > API_VERSION
         self.update_screen.say(
             text("desktop.update.title"),
@@ -1353,6 +1725,7 @@ class MainWindow(QMainWindow):
                 return None  # not a plain version: say nothing rather than guess
 
         self.agent_version = found.get("version")
+        self.agent_only = bool(found.get("agent_only"))
         mine, theirs = parts(APP_VERSION), parts(str(found.get("version") or ""))
         note = self.screens["All servers"].note  # type: ignore[attr-defined]
         values = {"pc": self.agent.place, "agent": found.get("version"), "app": APP_VERSION}
@@ -1371,7 +1744,7 @@ class MainWindow(QMainWindow):
     def update_tray(self) -> None:
         """The icon (red dot while a server is down after a crash) and its
         menu: each server with Start or Stop and Open, as this account may."""
-        down = [r["name"] for r in self.servers if r.get("state") in ("CRASHED", "RESTART_PENDING")]
+        down = [r["name"] for r in self.servers if r.get("label") == "crashed"]
         words = "\n".join([text("app.name")] + [text("desktop.tray.crashed", name=n) for n in down])
         if self.setup_unfinished:
             words += "\n" + text("desktop.tray.setup_unfinished")
@@ -1384,9 +1757,9 @@ class MainWindow(QMainWindow):
         for row in self.servers if self.agent.token else []:
             server = menu.addMenu(f"{row['name']}: {state_words(row)}")
             if "server.control" in self.allowed.get(row["id"], []):
-                action = "stop" if row.get("state") in ("ONLINE", *BUSY) else "start"
+                action, allowed = main_action(row)
                 act = server.addAction(text(f"action.{action}"))
-                act.setEnabled(row.get("state") not in BUSY)
+                act.setEnabled(allowed)
                 act.triggered.connect(partial(self.server_action, row["id"], action))
             server.addAction(text("desktop.tray.open_server")).triggered.connect(
                 partial(self.go_to_server, row["id"])
@@ -1411,6 +1784,7 @@ class MainWindow(QMainWindow):
         return self.role in (None, "owner") or permission in self.allowed.get(server_id, [])
 
     def me_loaded(self, me: dict) -> None:
+        self.hidden_loaded(me)
         self.allowed = me.get("server_permissions") or {}
         self.role = me.get("role")
         self.user = me.get("user")
@@ -1425,6 +1799,23 @@ class MainWindow(QMainWindow):
             self.server_screen.show_page(self.server_screen.current_page)
         if self.role == "owner" and self.agent.place == "this PC":
             self.run(self.agent.tailscale, self.tailscale_loaded, lambda _e: None)
+        if self.role == "owner":
+            self.run(
+                lambda: self.agent.call("GET", "/account/welcome"),
+                self.welcome_loaded,
+                lambda _e: None,
+            )
+
+    def welcome_loaded(self, answers: dict) -> None:
+        """The first-run questions, once, until answered or skipped."""
+        if answers.get("answered") or self.welcome_open:
+            return
+        from .welcome import WelcomeDialog
+
+        self.welcome_open = True
+        dialog = WelcomeDialog(self)
+        dialog.finished.connect(lambda _r: setattr(self, "welcome_open", False))
+        dialog.open()
 
     def tailscale_loaded(self, state: dict) -> None:
         self.setup_unfinished = bool(state.get("skipped")) and not state.get("moved")
@@ -1458,7 +1849,7 @@ class MainWindow(QMainWindow):
     def signed_out(self, problem: str = "") -> None:
         """Back to the sign-in screen, forgetting any saved sign-in."""
         self.feed.stop()
-        self.alerts, self.last_alert, self.unread, self.popped = [], 0, 0, {}
+        self.alerts, self.last_alert, self.read_up_to, self.popped = [], 0, 0, {}
         self.caught_up = False
         self.allowed, self.role, self.user = {}, None, None
         self.account_permissions = []
@@ -1466,6 +1857,7 @@ class MainWindow(QMainWindow):
         self.sync_helper()
         self.show_unread()
         self.agent.token = None
+        ui.hidden.clear()  # the next account has its own
         self.pc.forget_sign_in(self.agent.place)
         screen = self.screens["Sign-in"]
         assert isinstance(screen, SignInScreen)
@@ -1481,8 +1873,22 @@ class MainWindow(QMainWindow):
         # The agent couldn't be told, but this PC still forgets the sign-in.
         self.signed_out(str(exc))
 
+    # ------------------------------------------------------------ Don't show again
+    def hidden_loaded(self, answer: dict) -> None:
+        ui.hidden.clear()
+        ui.hidden.update(answer.get("hidden") or [])
+        ui.on_hide = self.hide_warning
+
+    def hide_warning(self, key: str) -> None:
+        self.run(
+            lambda: self.agent.call("POST", "/account/hidden", {"key": key}),
+            lambda _r: None,
+            lambda _e: None,
+        )
+
     # ------------------------------------------------------------ Simple and Technical
     def mode_loaded(self, prefs: dict) -> None:
+        self.tips_on = prefs.get("tips", "on") == "on"
         if self.mode_picked:  # a slow answer mustn't undo the person's own pick
             return
         mode["technical"] = prefs.get("mode") == "technical"
@@ -1517,6 +1923,12 @@ class MainWindow(QMainWindow):
             self.refresh()
             self.load_server_parts()
 
+        if action == "force_stop" and not self.confirm(
+            text("confirm.force_stop_title"),
+            text("confirm.force_stop_body"),
+            text("action.force_stop"),
+        ):
+            return
         self.run(lambda: self.agent.server_action(server_id, action), done, failed)
 
     def confirm(self, title: str, body: str, yes: str, no: str | None = None) -> bool:
@@ -1539,10 +1951,16 @@ class MainWindow(QMainWindow):
         return box.textValue() if box.exec() else None
 
     def tick(
-        self, title: str, body: str, choices: list[tuple[str, bool]], yes: str
+        self,
+        title: str,
+        body: str,
+        choices: list[tuple[str, bool]],
+        yes: str,
+        locked: set[int] | tuple[()] = (),
     ) -> list[int] | None:
         """A question with a list to tick, each (words, ticked at first): the
-        ticked ones' indexes, or None when cancelled."""
+        ticked ones' indexes, or None when cancelled. ``locked``: indexes
+        shown greyed out, which can't be ticked."""
         box = QDialog(self)
         box.setWindowTitle(title)
         column = QVBoxLayout(box)
@@ -1550,9 +1968,10 @@ class MainWindow(QMainWindow):
         rows = QWidget()
         ticks = QVBoxLayout(rows)
         boxes = []
-        for words, ticked in choices:
+        for i, (words, ticked) in enumerate(choices):
             tick = QCheckBox(words)
-            tick.setChecked(ticked)
+            tick.setChecked(ticked and i not in locked)
+            tick.setEnabled(i not in locked)
             ticks.addWidget(tick)
             boxes.append(tick)
         scroll = QScrollArea()
@@ -1614,9 +2033,12 @@ class MainWindow(QMainWindow):
         done: Callable[[Any], None],
         failed: Callable[[AgentError], None] | None = None,
         always: Callable[[], None] | None = None,
+        this_pc: bool = True,
     ) -> None:
         """Run ``work`` off the window's thread, then ``done`` or ``failed``
-        back on it. Being signed out always goes back to the sign-in screen."""
+        back on it. Being signed out always goes back to the sign-in screen.
+        ``this_pc=False`` for work on the owner's other PCs: their problems
+        never sign this PC out or show it as not running."""
         task = Task(work)
         self._tasks.add(task)
 
@@ -1627,12 +2049,12 @@ class MainWindow(QMainWindow):
 
         def on_failed(exc: AgentError) -> None:
             finish()
-            if isinstance(exc, SignedOut) and self.screen_name != "Sign-in":
+            if this_pc and isinstance(exc, SignedOut) and self.screen_name != "Sign-in":
                 self.signed_out(text("error.session_ended"))
                 return
             if failed:
                 failed(exc)
-            if isinstance(exc, Unreachable):
+            if this_pc and isinstance(exc, Unreachable):
                 self.agent_down()
 
         def on_done(result: Any) -> None:

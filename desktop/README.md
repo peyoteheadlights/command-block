@@ -13,9 +13,45 @@ the phone apps use.
   SHA-256 fingerprint instead of turning certificate checks off.
 - `window.py` has the main window: sign-in, All servers and the binder tabs.
   Anything that calls the agent runs off the window's thread so the window
-  never freezes. `server_tab.py` is one server's tab: header card, page tabs
-  and the right panel. `overview.py` is its Overview in Simple and Technical,
-  and `graphs.py` draws the graphs.
+  never freezes. `server_tab.py` is one server's tab: the header, the open
+  page and the side notes. `overview.py` is its Overview in Simple and
+  Technical, and `graphs.py` draws the graphs.
+- `shell.py` draws the binder itself: the server tabs, the sheet of paper
+  and a server's page list with its sliding marker. `frame.py` is the window
+  without Windows' frame: only the binder shows on the desktop, and the
+  window does its own moving, resizing, snapping and minimize, maximize and
+  close buttons. Over Remote Desktop it is plain grey behind the binder.
+- `parts.py` has the parts the pages are built from: the raised box, the
+  icon button and the info dot with their hover label, the switch, the
+  segmented control, the snapping slider, the big number you can type in,
+  the search field, the status mark and the player face. Buttons and tick
+  boxes are style sheet rules in `theme.py`. A part finds its colors from
+  the window it is on. `python scripts/parts_gallery.py` shows them all on
+  one screen to try (`--shots` saves pictures).
+- The Overview, Settings and All servers are built from those parts. A
+  card is a raised box (`card()` in `overview.py`). In Settings a switch, a
+  slider, the name and the color save as soon as they change (`applies()`
+  and `saves_when_let_go()` in `settings.py`); the other fields keep their
+  card's Save. A server's box on All servers takes its own color
+  (`ServerRow` in `window.py`, `row_sheet()` in `theme.py`).
+- On the other pages each thing in a list (a mod, a backup, a schedule, a
+  player, a quest, a crash) is a `Row` (`parts.py`), a raised box of its
+  own, and the list's heading has no box (`card(..., box=False)`). On or
+  off is a `Switch` on the row; if the agent refuses, the list is read
+  again so the switch shows what is true. Update, Remove and Delete are
+  icon buttons with their name on hover. Diagnose server shows its tests
+  as round marks joined by a line (`Steps` in `parts.py`).
+- `top_view.py` is the top view: rest the mouse on the empty part of the
+  top row (or press Ctrl+Tab) and the binder tips back, with every server's
+  tab standing one step behind the one before. Ctrl+Tab and Ctrl+Shift+Tab
+  go through the tabs, and letting go of Ctrl opens the one picked. It draws
+  pictures of the real binder tipped back and hands clicks on to the real
+  tabs and buttons. `motion.py` has the page turn and the arithmetic both
+  use. A box coming up under the mouse, a note fading in and the status
+  dot's pulse are in `parts.py`.
+- Nothing moves when Windows' "Show animations" is off or over Remote
+  Desktop (`animated()` in `parts.py`). Ctrl+Tab still works then; the top
+  view is just there at once, and the mouse doesn't open it.
 - Each server page is a `Page` (`ui.py`) that asks the agent only while it
   is open: `players.py` (Players and chat), `console.py`, `performance.py`,
   `schedules.py`, `activity.py` (every event, and the crashes with what
@@ -39,8 +75,10 @@ the phone apps use.
   window current, and `alerts.py` is the bell's list of alerts.
 - `words.py` and `theme.py` read the words and colors from the top-level
   `shared/`, so the desktop app, the phone apps and the installer look and
-  read the same. The server's color tints the window with the same sums as
-  the phone apps (`agent/colors.py`). The app's own words start with
+  read the same. The page stays plain paper: a server's color goes on its
+  tab, the band behind the sheet, the buttons and the edges, worked out with
+  the same sums as the phone apps (`agent/colors.py`). `shared/fonts/` holds
+  Archivo, the heading font. The app's own words start with
   `desktop.` in `shared/strings.json`.
 - `icons.py` draws the line icons and the server badges; `images/` holds the
   app's icon (`python scripts/make_icons.py` makes it from `docs/images/logo.png`).

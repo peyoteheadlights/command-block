@@ -37,6 +37,38 @@ extension AgentClient {
         try await call("GET", world(serverId) + "/backups/offsite", as: Offsite.self)
     }
 
+    /// Keep this backup (or stop keeping it): the clean-up never deletes a kept one.
+    public func keepBackup(serverId: String, backupId: Int64, keep: Bool) async throws -> BackupKept {
+        let body = try AgentClient.encode(["keep": keep])
+        return try await call("POST", world(serverId) + "/backups/\(backupId)/keep", body: body, as: BackupKept.self)
+    }
+
+    /// How big a backup would be now; walks the world on the PC.
+    public func backupSize(serverId: String) async throws -> BackupSize {
+        try await call("GET", world(serverId) + "/backups/size", slow: true, as: BackupSize.self)
+    }
+
+    /// What the clean-up offers, and what's in its bin. Nothing changes.
+    public func cleanup(serverId: String) async throws -> CleanupList {
+        try await call("GET", world(serverId) + "/cleanup", slow: true, as: CleanupList.self)
+    }
+
+    /// Moves the picked items into the clean-up bin as one batch.
+    public func cleanUp(serverId: String, paths: [String]) async throws -> CleanupDone {
+        let body = try AgentClient.encode(["paths": paths])
+        return try await call("POST", world(serverId) + "/cleanup", body: body, slow: true, as: CleanupDone.self)
+    }
+
+    public func cleanupUndo(serverId: String, batch: String) async throws -> CleanupUndone {
+        let body = try AgentClient.encode(["batch": batch])
+        return try await call("POST", world(serverId) + "/cleanup/undo", body: body, slow: true, as: CleanupUndone.self)
+    }
+
+    /// Empties the whole bin for good.
+    public func cleanupEmpty(serverId: String) async throws -> CleanupEmptied {
+        try await call("POST", world(serverId) + "/cleanup/empty", body: Data("{}".utf8), slow: true, as: CleanupEmptied.self)
+    }
+
     /// Turns second copies off. Choosing a folder needs the PC's folder list.
     public func turnOffsiteOff(serverId: String) async throws -> Offsite {
         try await call("PUT", world(serverId) + "/backups/offsite", body: Data("{\"directory\": \"\"}".utf8), as: Offsite.self)

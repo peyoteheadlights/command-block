@@ -14,7 +14,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -142,13 +141,19 @@ class PcPages(
         busy = what
         said = null
         scope.launch {
-            said = try {
-                work(c)
+            try {
+                said = work(c)
             } catch (e: AgentException) {
                 noted(e)
-                Said(Message.of(e).text(strings), good = false)
+                said = Said(Message.of(e).text(strings), good = false)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Saving the help file on this phone failed (phone full): no crash.
+                said = Said(strings.t("mobile.download.save_failed", "reason" to (e.message ?: strings.t("value.unknown"))), good = false)
+            } finally {
+                busy = null
             }
-            busy = null
         }
     }
 
@@ -252,6 +257,7 @@ class PcPages(
         val c = client() ?: return
         val before = checks ?: update ?: return
         val target = before.latest?.version ?: return
+        if (busy != null) return
         checks = null
         busy = "update"
         said = null
@@ -303,11 +309,12 @@ class PcPages(
             exporting = PcSettings.Exporting.Running(null, null)
             try {
                 val started = c.startExport(PcSettings.exportBody(worlds, backups, secrets, passphrase, folder))
-                var state = PcSettings.exporting(c.exportJob(started.jobId))
+                val read = suspend { c.exportJob(started.jobId) }
+                var state = PcSettings.readExport(read) { delay(1_000) }
                 exporting = state
                 while (state is PcSettings.Exporting.Running) {
                     delay(1_000)
-                    state = PcSettings.exporting(c.exportJob(started.jobId))
+                    state = PcSettings.readExport(read) { delay(1_000) }
                     exporting = state
                 }
                 Said(PcSettings.exportSaid(strings, state).orEmpty(), good = state is PcSettings.Exporting.Saved)
@@ -367,7 +374,7 @@ fun PcSettingsScreen(vm: AppViewModel, onBack: () -> Unit, onDevices: () -> Unit
             item { SaidNote(pages.said) }
             item {
                 Card {
-                    Item(t("mobile.pc.devices"), subtitle = t("mobile.pc.devices_hint"), onClick = onDevices)
+                    Item(t("mobile.pc.devices"), info = t("mobile.pc.devices_hint"), onClick = onDevices)
                     Item(t("appset.alerts"), onClick = onAlerts)
                 }
             }
@@ -418,6 +425,10 @@ fun PcSettingsScreen(vm: AppViewModel, onBack: () -> Unit, onDevices: () -> Unit
                             }
                         }
                     }
+                }
+                PcSettings.modFiles(strings, view)?.let { words ->
+                    item { SectionTitle(t("modfiles.title")) }
+                    item { Card { Note(words, color = colors.text2) } }
                 }
                 item { SectionTitle(t("appset.maintenance")) }
                 item {

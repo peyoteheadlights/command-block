@@ -27,10 +27,12 @@ import logging
 import shutil
 import time
 import zipfile
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .. import savedlists
+from .. import notes, savedlists
 from ..events import Event, EventBus
 from ..minecraft.properties import FILENAME, FormError, PropertiesFile, world_folder
 from ..security.paths import (
@@ -40,7 +42,7 @@ from ..security.paths import (
     safe_filename,
     safe_join,
 )
-from . import checks
+from . import checks, overlap, store
 from .curseforge import Blocked, CurseForgeClient, file_prints
 from .dependencies import PLATFORM_IDS, DependencyResolver
 from .github import GitHubReleases
@@ -68,6 +70,11 @@ MAX_FILE_BYTES = 300 * 1024 * 1024
 UNKNOWN_FILE = (
     "Modrinth, Hangar and CurseForge don't list this file, so the app can't tell what it "
     "is or who made it. Add it only if you trust where it came from."
+)
+# The same jar, for an account without "Add own .jar" (permissions.MODS_OWN_JAR).
+OWN_JAR_NEEDED = (
+    "Modrinth, Hangar and CurseForge don't list this jar, so adding it needs the "
+    '"Add own .jar" permission. Ask the owner.'
 )
 # A jar with one of these is a mod or plugin (agent/mods/jarinfo.py reads them).
 MOD_FILES = (
@@ -110,16 +117,37 @@ def checked(source: str | None) -> dict[str, Any]:
     }
 
 
+def published_at(text: str | None) -> float | None:
+    """A site's release date ("2026-11-20T08:00:00Z") as a timestamp, or
+    None when it gave none or one that can't be read."""
+    if not text:
+        return None
+    try:
+        when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return (when if when.tzinfo else when.replace(tzinfo=UTC)).timestamp()
+
+
 def refuse_known_bad(data: bytes, filename: str) -> None:
     """Refuse a file the signed safety notes list as known bad (agent/notes.py)."""
-    from .. import notes
-
     bad = notes.known_bad(data)
     if bad:
         raise ModError(
             f"{filename} is on the safety notes' list of known bad files ({bad['why']}), "
             "so it wasn't installed."
         )
+
+
+async def refuse_flagged(data: bytes, filename: str) -> None:
+    """Refuse a jar Windows antivirus finds something in. A file from a
+    site was checked as it downloaded (agent/downloads.py); this is for
+    files that arrive another way, like an upload."""
+    from ..security import antivirus
+
+    found = await asyncio.to_thread(antivirus.scan_jar, data, filename)
+    if found:
+        raise ModError(antivirus.refusal(found, filename, by_hand=True))
 
 
 def is_datapack(data: bytes) -> bool:
@@ -172,6 +200,8 @@ class ModManager:
         self.github = GitHubReleases(config)
         self.curseforge = CurseForgeClient(config)
         self.deps = DependencyResolver(self)
+        # One copy of each jar, shared by every server (agent/mods/store.py).
+        self.store = store.for_config(db, config)
         self._cache: tuple[float, list[ModInfo]] | None = None
 
     # ------------------------------------------------------------------
@@ -243,6 +273,19 @@ class ModManager:
             )
             if source == "modrinth":
                 record["modrinth_project"] = version.get("project_id")
+            if version.get("client_only"):  # CurseForge: for the game, not servers
+                record["client_only"] = True
+            # What the site says this version doesn't work with, for the
+            # "same job" rows (agent/mods/overlap.py).
+            incompatible = [
+                d["project_id"]
+                for d in version.get("dependencies") or []
+                if d.get("type") == "incompatible" and d.get("project_id")
+            ]
+            # Modrinth's answer is saved even when empty, so the catch-up
+            # (fit.catch_up) knows this one was asked.
+            if incompatible or source == "modrinth":
+                record["incompatible"] = incompatible
         self.db.set_setting(f"mod_source:{mod_id}", record)
 
     async def match_on_hangar(self, mod: ModInfo) -> None:
@@ -395,7 +438,7 @@ class ModManager:
             row.update(checked(source))
             update = self.db.get_setting(f"mod_update:{mod.mod_id}")
             if update and update.get("installed_version") == mod.version:
-                row["update_available"] = update
+                row["update_available"] = {**update, "held_until": self.held_until(update)}
             else:
                 row["update_available"] = None
             result.append(row)
@@ -468,6 +511,7 @@ class ModManager:
         return {
             "per_mod": per_mod,
             "problems": problems,
+            "overlaps": self.overlaps(enabled),
             "minecraft_version": mc_version,
             "fabric_loader": loader_version,
             "loader_version": loader_version,
@@ -491,6 +535,19 @@ class ModManager:
                 "only known after the server has started once.",
             ],
         }
+
+    def overlaps(self, enabled: list[ModInfo] | None = None) -> list[dict[str, Any]]:
+        """The same mod twice and add-ons that do the same job, each with
+        which one to keep when the facts say (agent/mods/overlap.py)."""
+        if enabled is None:
+            enabled = [m for m in self.scan(use_cache=True) if m.enabled]
+        return overlap.find(
+            enabled,
+            self.origin,
+            self.record_of,
+            notes.same_job(self.server_type.id),
+            self.server.mc_version or (self.server.pending_version or {}).get("minecraft_version"),
+        )
 
     def missing_dependencies(self) -> list[dict[str, Any]]:
         checks = self.check_all()
@@ -619,7 +676,7 @@ class ModManager:
         while target.exists():
             target = folder / f"{stamp}-{counter}-{base_name}"
             counter += 1
-        shutil.copy2(path, target)
+        self.store.place(path, target)
         self.db.insert(
             "mod_versions",
             {
@@ -634,6 +691,47 @@ class ModManager:
             },
         )
         return target
+
+    @staticmethod
+    @contextmanager
+    def letting_go(path: Path):
+        """Windows won't remove or rename a file another program has open,
+        and a linked file is open on every server that runs with it."""
+        try:
+            yield
+        except PermissionError as exc:
+            try:
+                shared = path.stat().st_nlink > 1
+            except OSError:
+                shared = False
+            if not shared:
+                raise
+            raise ModError(
+                f"Couldn't change {path.name}. It's one file shared with another server, "
+                "and a running server keeps its files locked. If one of those servers "
+                "is running, stop it and try again."
+            ) from exc
+
+    def place_jar(self, source: Path, target: Path) -> None:
+        """Put a checked jar into the server's folder through the store,
+        and remember whether it could be linked (the Mods page says so when
+        this server's files are stored separately)."""
+        linked = self.store.place(source, target)
+        self.db.set_setting("mods_stored_separately", not linked)
+
+    async def _download(self, site: AddonSource, version: dict[str, Any]) -> tuple[bytes, str, str]:
+        """The site's file, from the store when it's already there (no
+        download, same checks after), else downloaded and checked."""
+        file = version.get("file") or {}
+        name = file.get("filename")
+        kept = name and self.store.find(
+            sha256=file.get("sha256"), sha1=file.get("sha1"), sha512=file.get("sha512")
+        )
+        if not name or not kept:
+            return await site.download(version)
+        safe_filename(name, JAR_EXT)
+        data = await asyncio.to_thread(kept.read_bytes)
+        return data, name, hashlib.sha256(data).hexdigest()
 
     def versions_for(self, mod_id: str) -> list[dict[str, Any]]:
         rows = self.db.query(
@@ -721,7 +819,7 @@ class ModManager:
             )
 
         try:
-            data, filename, sha256 = await site.download(version)
+            data, filename, sha256 = await self._download(site, version)
         except Blocked as exc:
             self.need_you(exc.need)
             raise
@@ -746,8 +844,9 @@ class ModManager:
                 old = read_mod_jar(target)
                 self.archive(target, old, source="replaced-on-install")
                 replaced = old.to_dict()
-                target.unlink()
-            temp.replace(target)
+                with self.letting_go(target):
+                    target.unlink()
+            self.place_jar(temp, target)
         finally:
             if temp.exists():
                 temp.unlink(missing_ok=True)
@@ -943,6 +1042,7 @@ class ModManager:
         target = safe_join(self.mods_dir, filename, allowed_extensions=JAR_EXT)
         if target.exists() and not allow_replace:
             raise ModError(f"{filename} is already there, so nothing was changed.")
+        await refuse_flagged(data, filename)
         temp = self.mods_dir / f".{filename}.part"
         temp.write_bytes(data)
         try:
@@ -955,8 +1055,9 @@ class ModManager:
             if target.exists():
                 old = read_mod_jar(target)
                 self.archive(target, old, source="replaced-on-upload")
-                target.unlink()
-            temp.replace(target)
+                with self.letting_go(target):
+                    target.unlink()
+            self.place_jar(temp, target)
         finally:
             temp.unlink(missing_ok=True)
         installed = read_mod_jar(target)
@@ -1072,7 +1173,8 @@ class ModManager:
             archived = str(self.archive(path, mod, source="removed"))
         stamp = time.strftime("%Y%m%d-%H%M%S")
         trash_target = self.trash_dir / f"{stamp}-{path.name}"
-        shutil.move(str(path), str(trash_target))
+        with self.letting_go(path):
+            shutil.move(str(path), str(trash_target))
         self.record(
             "remove",
             user,
@@ -1107,7 +1209,8 @@ class ModManager:
             )
         if target.exists():
             raise ModError(f"{new_name} is already in the {self.server_type.content} folder.")
-        path.rename(target)
+        with self.letting_go(path):
+            path.rename(target)
         self._cache = None
         updated = read_mod_jar(target)
         action = "enable" if enabled else "disable"
@@ -1235,9 +1338,22 @@ class ModManager:
             "source": self.origin(mod)[0],
             "changelog": (latest.get("changelog") or "")[:400],
             "saved": saved,
+            "published": published_at(latest.get("date_published")),
         }
         self.db.set_setting(f"mod_update:{mod.mod_id}", entry)
-        return entry
+        return {**entry, "held_until": self.held_until(entry)}
+
+    def held_until(self, update: dict[str, Any]) -> float | None:
+        """When the update hold on ``update`` ends, or None when it isn't
+        held: its site put it out more than the hold's days ago, the hold
+        is 0 days, or the site gave no date. Update all and the update
+        notices wait for it; Update now on that one doesn't."""
+        days = min(max(self.config.mods.update_hold_days, 0), 14)
+        published = update.get("published")
+        if not days or not published:
+            return None
+        until = float(published) + days * 86400
+        return until if until > time.time() else None
 
     @staticmethod
     def _is_installed_file(mod: ModInfo, version: dict[str, Any]) -> bool:
@@ -1264,7 +1380,15 @@ class ModManager:
         def row(mod: ModInfo) -> dict[str, Any]:
             return {"mod_id": mod.mod_id, "name": mod.name or mod.mod_id, "filename": mod.filename}
 
-        keys = ("installed_version", "latest_version", "version_id", "project", "source", "saved")
+        keys = (
+            "installed_version",
+            "latest_version",
+            "version_id",
+            "project",
+            "source",
+            "saved",
+            "held_until",
+        )
         return {
             "updates": [
                 {**row(mod), "enabled": mod.enabled, **{key: entry[key] for key in keys}}
@@ -1301,7 +1425,7 @@ class ModManager:
                 f"{mod.name} is already this version ({version['version_number']}), "
                 "so nothing was changed."
             )
-        data, new_filename, sha256 = await site.download(version)
+        data, new_filename, sha256 = await self._download(site, version)
         refuse_known_bad(data, new_filename)
         archived = self.archive(old_path, mod, source="pre-update")
         target = safe_join(self.mods_dir, new_filename, allowed_extensions=JAR_EXT)
@@ -1313,13 +1437,15 @@ class ModManager:
         try:
             probe = read_mod_jar(temp, compute_hash=False)
             self._check_loader(probe, discarded=False)
-            old_path.unlink()
-            temp.replace(target)
+            with self.letting_go(old_path):
+                old_path.unlink()
+            self.place_jar(temp, target)
         except Exception:
             temp.unlink(missing_ok=True)
             if not old_path.exists():  # put the old jar back
-                shutil.copy2(archived, old_path)
+                self.place_jar(archived, old_path)
             raise
+        temp.unlink(missing_ok=True)
         installed = read_mod_jar(target)
         installed.sha256 = sha256
         self.archive(target, installed, source=version["file"]["url"])
@@ -1380,9 +1506,10 @@ class ModManager:
         if current:
             current_path = Path(current.path)
             self.archive(current_path, current, source="pre-rollback")
-            current_path.unlink()
+            with self.letting_go(current_path):
+                current_path.unlink()
         target = safe_join(self.mods_dir, row["filename"], allowed_extensions=JAR_EXT)
-        shutil.copy2(source, target)
+        self.place_jar(source, target)
         restored = read_mod_jar(target)
         self.record(
             "rollback",

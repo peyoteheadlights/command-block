@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..events import Event
 from ..security.paths import PathSafetyError, check_archive_member, is_inside
 
 if TYPE_CHECKING:
@@ -170,7 +171,36 @@ async def copy_world(
         copied += await asyncio.to_thread(copy_unlisted, worlds, staging, copied)
         return copied
     finally:
+        await resume_saving(server, "save resume", "copying the world")
+
+
+# How long to wait before asking a second time.
+RETRY_SECONDS = 5
+
+
+async def resume_saving(server: MinecraftServer, command: str, after: str) -> None:
+    """Turn world saving back on after ``after`` (a backup, a copy): ``save-on``,
+    or ``save resume`` on Bedrock. Tried twice; if both fail while the server
+    still runs, the owner gets an alert, because everything played from now
+    on would be lost at the next crash."""
+    for attempt in range(2):
         try:
-            await server.send_command("save resume", internal=True)
-        except Exception:  # reported; the backup's own error, if any, still raises
-            log.exception("could not send save resume")
+            await server.send_command(command, internal=True)
+            return
+        except Exception:
+            log.warning("could not turn world saving back on (%s)", command, exc_info=True)
+        if attempt == 0:
+            await asyncio.sleep(RETRY_SECONDS)
+    if not server.running:
+        return  # a server that starts again saves as normal
+    await server.bus.publish(
+        Event(
+            type="saving_off",
+            level="error",
+            message=(
+                f"World saving is still off after {after}. Anything played from now on is "
+                "lost if the server crashes. Restart the server to turn saving back on."
+            ),
+            data={"after": after},
+        )
+    )

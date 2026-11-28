@@ -1,12 +1,13 @@
-"""The Settings tab: one page in four sections, with buttons at the top
-that jump to each. Server settings (name and color, crashes, sleep when
+"""The Settings tab: four sections, picked with the control at the top, one
+shown at a time. Server settings (name and color, crashes, sleep when
 empty, CPU cores, backups kept, start and stop limits, duplicate, remove),
 Game settings (server.properties, memory and the folder's other config
 files, opened in desktop/editor.py), Version, and Bedrock players
 on a Java server (version.py has those two).
 
-Each card has its own Save, which sends only what changed; the agent checks
-every value. Saving reloads the page."""
+A switch, a slider, the name and the color save as soon as they change; the
+other fields have their card's Save, which sends only what changed. The agent
+checks every value, and the page is read again from it after each save."""
 
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -29,16 +30,19 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPlainTextEdit,
     QRadioButton,
-    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
+from . import motd
 from .agent import AgentError
 from .editor import edit_file
+from .gamerules import RulesCard
 from .overview import card
-from .ui import Page, duration, field, label, push, refill, swatches
+from .parts import BigNumber, Box, InfoDot, Segmented, SnapSlider, Switch
+from .server_files import FilesCard
+from .ui import Page, duration, field, label, notice, push, refill, swatches
 from .version import crossplay_card, type_card, version_card
 from .words import mode, text
 
@@ -133,46 +137,152 @@ def number(value: float, low: float, high: float, decimals: int = 0) -> QSpinBox
     return box
 
 
+def switch_row(words: QLabel, name: str, hint: str = "") -> tuple[QHBoxLayout, Switch]:
+    """One on/off setting in one row: its words, an info dot for the
+    sentence that explains it, and the switch. ``name`` is what Narrator
+    reads for the switch."""
+    row = QHBoxLayout()
+    words.setWordWrap(False)
+    row.addWidget(words)
+    if hint:
+        row.addWidget(InfoDot(hint))
+    row.addStretch(1)
+    switch = Switch(name)
+    row.addWidget(switch)
+    return row, switch
+
+
+def switch_card(title: str, name: str, hint: str = "") -> tuple[Box, QVBoxLayout, Switch]:
+    """A card that is one on/off setting: the switch sits on the heading's row."""
+    frame, layout = card(title)
+    top = layout.takeAt(0)  # the heading's row, as card() made it
+    heading = frame.findChild(QLabel, "h2")
+    assert top is not None and heading is not None
+    top.layout().removeWidget(heading)
+    row, switch = switch_row(heading, name, hint)
+    layout.insertLayout(0, row)
+    return frame, layout, switch
+
+
+def address_ways(join: dict) -> list[QWidget]:
+    """The home network and Tailscale addresses friends type, read from this PC."""
+    shown: list[QWidget] = []
+    for part in (join.get("java"), join.get("bedrock")):
+        if not part:
+            continue
+        port = part.get("port")
+        home = next((a["address"] for a in part.get("local") or [] if not a.get("virtual")), None)
+        if home:
+            shown.append(label(text("address.home", address=f"{home}:{port}"), "sub"))
+        tailscale = part.get("tailscale") or {}
+        name = (tailscale.get("dns_name") or "").rstrip(".") or tailscale.get("address")
+        if name:
+            shown.append(label(text("address.tailscale", address=f"{name}:{port}"), "sub"))
+    return shown
+
+
+def saves_when_let_go(slider: SnapSlider, save: Callable[[int], None]) -> None:
+    """Calls ``save`` with the slider's value when the mouse lets it go, or
+    a moment after the last arrow key: not at every step on the way."""
+    wait = QTimer(slider)
+    wait.setSingleShot(True)
+    wait.setInterval(500)
+    wait.timeout.connect(lambda: save(slider.value()))
+    slider.sliderReleased.connect(lambda: save(slider.value()))
+    slider.valueChanged.connect(lambda _v: None if slider.isSliderDown() else wait.start())
+
+
+def slider_card(
+    title: str, hint: str, slider: SnapSlider, unit: str, low: str, high: str
+) -> tuple[Box, QVBoxLayout, BigNumber]:
+    """A card for one slider: the heading and its info dot, the value big on
+    the right (it is also the field to type in), the slider, and the two
+    ends of its range under it."""
+    frame, layout = card(title, words=hint)
+    top = layout.itemAt(0).layout()
+    assert isinstance(top, QHBoxLayout)
+    big = BigNumber(slider.accessibleName())
+    top.addWidget(big)
+    if unit:
+        top.addWidget(label(unit, "sub"), 0, Qt.AlignmentFlag.AlignBottom)
+    layout.addWidget(slider)
+    ends = QHBoxLayout()
+    ends.addWidget(label(low, "sub"))
+    ends.addStretch()
+    ends.addWidget(label(high, "sub"))
+    layout.addLayout(ends)
+    return frame, layout, big
+
+
+def merge(old: dict, new: dict) -> None:
+    """``new``'s values into ``old``, keeping each dict inside the same
+    object, so the Save buttons' closures read the new values."""
+    for key, value in new.items():
+        if isinstance(value, dict) and isinstance(old.get(key), dict):
+            merge(old[key], value)
+        else:
+            old[key] = value
+
+
 class SettingsPage(Page):
     def __init__(self, window: MainWindow) -> None:
         super().__init__(window)
-        jumps = QHBoxLayout()
-        self.headings: dict[str, QLabel] = {}
-        self.jump_buttons: dict[str, Any] = {}
+        self.sections = Segmented(
+            [(key, text(words)) for key, words in SECTIONS], "server", self.jump
+        )
+        self.column.addWidget(self.sections)
+        self.section: dict[str, QWidget] = {}
         self.slots: dict[str, QVBoxLayout] = {}
-        for key, words in SECTIONS:
-            button = push(text(words), "plain")
-            button.clicked.connect(lambda _=False, k=key: self.jump(k))
-            jumps.addWidget(button)
-            self.jump_buttons[key] = button
-        jumps.addStretch()
-        self.column.addLayout(jumps)
-        for key, words in SECTIONS:
-            heading = label(text(words), name="title")
-            self.headings[key] = heading
-            self.column.addWidget(heading)
-            for slot in [key] + {"server": ["manage"], "game": ["memory", "raw", "files"]}.get(
-                key, []
-            ):
+        self.server_data: dict = {}  # what the server cards were built from
+        self.memory_data: dict = {}
+        for key, _words in SECTIONS:
+            holder = self.section[key] = QWidget()
+            column = QVBoxLayout(holder)
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(4)  # a card brings its own room for its shadow
+            if key == "game":
+                # The two sliders side by side, above the form.
+                sliders = QHBoxLayout()
+                for slot in ("memory", "view"):
+                    self.slots[slot] = QVBoxLayout()
+                    sliders.addLayout(self.slots[slot], 1)
+                column.addLayout(sliders)
+            for slot in [key] + {
+                "server": ["manage", "serverfiles"],
+                "game": ["list", "rules", "raw", "files"],
+            }.get(key, []):
                 self.slots[slot] = QVBoxLayout()
-                self.slots[slot].setSpacing(12)
-                self.column.addLayout(self.slots[slot])
+                self.slots[slot].setSpacing(4)
+                column.addLayout(self.slots[slot])
+            holder.setVisible(key == "server")
+            self.column.addWidget(holder)
         self.column.addStretch()
+        self.rules = RulesCard(self)
+        self.slots["rules"].addWidget(self.rules)
+        self.server_files = FilesCard(self)
+        self.slots["serverfiles"].addWidget(self.server_files)
 
     def jump(self, key: str) -> None:
-        self.verticalScrollBar().setValue(self.headings[key].y())
+        """Shows one of the four sections."""
+        self.sections.choose(key)
+        for name, holder in self.section.items():
+            holder.setVisible(name == key)
+        self.verticalScrollBar().setValue(0)
+        if key == "game" and self.row:
+            self.rules.load()  # asks the server one question per rule, so only when shown
 
     def may(self, permission: str) -> bool:
         return self.window_.may(self.row["id"], permission)
 
     def load(self) -> None:
         java = self.row.get("edition") != "bedrock"
-        for widget in (self.headings["bedrock"], self.jump_buttons["bedrock"]):
-            widget.setVisible(java)
+        self.sections.buttons["bedrock"].setVisible(java)
+        if not java and self.sections.key() == "bedrock":
+            self.jump("server")
         refill(self.slots["bedrock"], [])
         self.ask("GET", "/settings", self.show_server)
-        self.ask("GET", "/game-settings", self.show_game, self.game_failed)
-        self.ask("GET", "/memory", self.show_memory, lambda exc: self.problem("memory", exc))
+        self.load_game()
+        self.load_memory()
         self.window_.with_types(
             lambda: self.ask(
                 "GET", "/version", self.show_version, lambda e: self.problem("version", e)
@@ -186,6 +296,11 @@ class SettingsPage(Page):
             self.ask("GET", "/duplicate", self.show_manage, lambda exc: self.show_manage(None, exc))
         else:
             refill(self.slots["manage"], [])
+        if self.sections.key() == "game":
+            self.rules.load()
+        self.server_files.setVisible(self.may("files.browse"))
+        if self.may("files.browse"):
+            self.server_files.load()
         refill(self.slots["files"], [])
         if self.may("mods.manage"):
             self.ask("GET", "/config-files", self.show_files, lambda e: self.problem("files", e))
@@ -195,11 +310,25 @@ class SettingsPage(Page):
         forms would throw away what someone is typing."""
         self.ask("GET", "/game-settings", self.show_banner, lambda _e: None)
 
-    def done(self, words: str) -> None:
-        """After a change: the page again from the agent, and what happened on top."""
-        self.load()
+    def done(self, words: str, reload: Callable[[], None] | None = None) -> None:
+        """After a change: the page again from the agent (or only the part
+        ``reload`` asks for again), and what happened on top."""
+        (reload or self.load)()
         self.say(words)
         self.verticalScrollBar().setValue(0)
+
+    def settings_again(self) -> None:
+        """After a Save: what the agent has now becomes what each card's Save
+        compares with, without building the cards again, so what someone
+        typed in another card and hasn't saved yet stays."""
+        self.ask("GET", "/settings", lambda data: merge(self.server_data, data))
+        self.ask("GET", "/memory", lambda data: merge(self.memory_data, data), lambda _e: None)
+
+    def load_game(self) -> None:
+        self.ask("GET", "/game-settings", self.show_game, self.game_failed)
+
+    def load_memory(self) -> None:
+        self.ask("GET", "/memory", self.show_memory, lambda exc: self.problem("memory", exc))
 
     def problem(self, slot: str, exc: Exception) -> None:
         refill(self.slots[slot], [label(str(exc), "problem")])
@@ -208,18 +337,54 @@ class SettingsPage(Page):
         """After a Save: the agent's reasons for anything it refused, or Saved."""
         rejected = list(((result or {}).get("rejected") or {}).values())
         said.setText(" ".join(rejected) if rejected else text("settings.saved"))
+        said.show()
         said.setProperty("kind", "problem" if rejected else "ok")
         said.setStyle(said.style())
         if not rejected:
             self.window_.refresh()  # the name and color show in the tabs
-            self.load()
+            self.settings_again()
+
+    def applies(self, switch: Switch, key: str, layout: QVBoxLayout) -> None:
+        """Makes ``switch`` save ``key`` as soon as it is flipped. If the
+        agent says no, the switch goes back and the reason shows under it:
+        it never stays on something that was not saved."""
+        said = label(kind="problem")
+        said.hide()
+        layout.addWidget(said)
+        quiet = [False]
+
+        def back(words: str) -> None:
+            quiet[0] = True
+            switch.setChecked(not switch.isChecked())
+            quiet[0] = False
+            said.setText(words)
+            said.show()
+
+        def done(result: dict) -> None:
+            rejected = list((result.get("rejected") or {}).values())
+            if rejected:
+                back(" ".join(rejected))
+            else:
+                self.settings_again()
+
+        def flip(on: bool) -> None:
+            if not quiet[0]:
+                self.ask(
+                    "PUT",
+                    "/settings",
+                    done,
+                    lambda exc: back(str(exc)),
+                    body={"updates": {key: on}},
+                )
+
+        switch.toggled.connect(flip)
 
     def save_button(
         self, layout: QVBoxLayout, collect: Callable[[], dict], words: str = "action.save"
     ) -> QLabel:
         """A Save that sends what ``collect`` says changed, and its result line."""
         row = QHBoxLayout()
-        button = push(text(words), "primary")
+        button = push(text(words), "tonal")  # the one filled button is the header's Start
         said = label(kind="sub")
         row.addWidget(button)
         row.addWidget(said, 1)
@@ -243,9 +408,12 @@ class SettingsPage(Page):
 
     # ------------------------------------------------------------ server settings
     def show_server(self, data: dict) -> None:
+        self.server_data = data
         server, editable = data["server"], self.may("settings.server")
+        address = self.address_card()
         cards = [
             self.identity(data),
+            address,
             self.crashes(data["monitor"]),
             self.sleep(server, data.get("sleep") or {}),
             *([self.join(server, data["join"])] if data.get("join") else []),
@@ -257,86 +425,558 @@ class SettingsPage(Page):
             cards.insert(1, self.build_folder(server))
         if self.row.get("edition") == "bedrock" and self.window_.role != "helper":
             cards.insert(3, self.bedrock_updates(server))
-        for frame in cards:
-            frame.setEnabled(editable)
+        for frame in cards:  # the address card's switch is the owner's alone
+            frame.setEnabled(editable or frame is address)
         refill(self.slots["server"], cards)
+
+    # ------------------------------------------------------------ Server address
+    def address_card(self) -> QFrame:
+        """Every way in (agent/joininfo.py) and "Let friends join from the
+        internet" (agent/internet.py): the router port by UPnP, the internet
+        address the router gave, the outside test, port forwarding by hand
+        and playit.gg when the internet provider blocks it."""
+        frame, layout, on = switch_card(text("address.title"), text("address.internet_label"), "")
+        owner = self.window_.role in (None, "owner")
+        on.setEnabled(owner)
+        ways, status = QVBoxLayout(), QVBoxLayout()
+        layout.insertLayout(1, ways)
+        layout.addLayout(status)
+
+        def show(now: dict) -> None:
+            on.blockSignals(True)
+            on.setChecked(bool(now.get("on")))
+            on.blockSignals(False)
+            refill(status, self.address_lines(now, owner, show))
+
+        def flip(want: bool) -> None:
+            on.setEnabled(False)
+            refill(status, [label(text("address.busy"), "sub")])
+            self.ask(
+                "PUT",
+                "/internet",
+                show,
+                lambda exc: refill(status, [label(str(exc), "problem")]),
+                body={"on": want},
+                always=lambda: on.setEnabled(owner),
+                slow=True,
+            )
+
+        on.toggled.connect(flip)
+        self.ask("GET", "/join", lambda join: refill(ways, address_ways(join)), lambda _e: None)
+        self.ask("GET", "/internet", show, lambda exc: refill(status, [label(str(exc), "problem")]))
+        names = QVBoxLayout()
+        layout.addLayout(names)
+        self.names_part(names, owner)
+        tunnel = QVBoxLayout()
+        layout.addLayout(tunnel)
+        self.playit_part(tunnel, owner)
+        layout.addWidget(label(text("address.consoles"), "sub"))
+        return frame
+
+    # ------------------------------------------------------------ playit.gg
+    def playit_part(self, box: QVBoxLayout, owner: bool) -> None:
+        """playit.gg built in (agent/playit.py): install on click (on the
+        agent's PC only), link, the tunnel to make, its address and test."""
+        here = self.window_.agent.place == "this PC"
+
+        def show(now: dict) -> None:
+            refill(box, self.playit_lines(now, owner, here, show, failed, again))
+
+        def failed(exc: Exception) -> None:
+            refill(box, [label(str(exc), "problem")])
+
+        def again() -> None:
+            self.ask("GET", "/playit", show, failed)
+
+        self._playit_installing = lambda: refill(box, [label(text("playit.installing"), "sub")])
+        again()
+
+    def playit_lines(
+        self, now: dict, owner: bool, here: bool, show, failed, again: Callable[[], None]
+    ) -> list[QWidget]:
+        shown: list[QWidget] = [label(text("playit.title"), name="h3")]
+        phase, claim = now.get("phase"), now.get("claim") or {}
+
+        def act(action: str) -> Callable[[], None]:
+            return lambda: self.ask("POST", f"/playit/{action}", show, failed, body={}, slow=True)
+
+        def button(words: str, do: Callable[[], None], kind: str = "") -> QWidget:
+            pressed = push(text(words), kind)
+            pressed.clicked.connect(do)
+            return pressed
+
+        if not now.get("on"):
+            shown.append(label(text("playit.note"), "sub"))
+            if not owner:
+                return shown
+            if phase == "not_installed" and not here:
+                return [*shown, label(text("playit.not_here"), "sub")]
+
+            def use() -> None:
+                if phase != "not_installed":
+                    act("use")()
+                    return
+                if not self.window_.confirm(
+                    text("playit.install_title"),
+                    text("playit.install_body"),
+                    text("playit.install"),
+                ):
+                    return
+                self._playit_installing()
+                self.window_.run(self.window_.pc.install_playit, lambda _r: act("use")(), failed)
+
+            return [*shown, button("playit.use", use, "tonal")]
+        if claim.get("state") == "waiting":
+            shown.append(label(text("playit.link"), "sub"))
+            open_page = button("playit.link_open", lambda: self.window_.pc.open_link(claim["url"]))
+            shown += [open_page, button("playit.check", again)]
+        elif claim.get("state") in ("rejected", "expired", "failed"):
+            words = text(f"playit.link_{claim['state']}", detail=claim.get("detail") or "")
+            shown.append(label(words, "problem"))
+            if owner:
+                shown.append(button("playit.use", act("use"), "tonal"))
+        elif phase == "waiting_for_secret":
+            shown.append(label(text("playit.not_linked"), "problem"))
+            if owner:
+                shown.append(button("playit.use", act("use"), "tonal"))
+        elif phase != "running":
+            words = text("playit.stopped", phase=phase, problem=now.get("problem") or "")
+            shown.append(label(words.strip(), "problem"))
+            if owner and phase != "not_installed":
+                shown.append(button("playit.reconnect", act("reconnect"), "tonal"))
+        elif now.get("plain_bedrock") and not now.get("waterdog"):
+            shown += self.waterdog_setup(now, owner, show, failed)
+        else:
+            shown += self.playit_ways(now, owner, show)
+            if owner and any(not w.get("tunnel") for w in now.get("ways") or []):
+                shown.append(button("playit.check", again))
+            if now.get("waterdog"):
+                shown += self.waterdog_lines(now["waterdog"], owner, show, failed)
+        if owner:
+            shown.append(button("playit.stop", lambda: self.playit_stop(show, failed, here)))
+        return shown
+
+    def playit_ways(self, now: dict, owner: bool, show) -> list[QWidget]:
+        """Each tunnel the server needs: its address, or how to make it."""
+        shown: list[QWidget] = []
+        missing = False
+        for way in now.get("ways") or []:
+            found, port = way.get("tunnel"), way["local_port"]
+            if found:
+                key = f"playit.join_{way['kind']}"
+                shown.append(label(text(key, address=found["address"], port=port), "sub"))
+                if found.get("disabled"):
+                    words = text("playit.disabled", reason=found.get("reason") or "")
+                    shown.append(label(words, "problem"))
+                continue
+            missing = True
+            proxy = text("playit.proxy_v2" if now.get("proxy") == "v2" else "playit.proxy_none")
+            kind = text(f"playit.kind_{way['kind']}")
+            shown.append(
+                label(text("playit.make_tunnel", kind=kind, port=port, proxy=proxy), "sub")
+            )
+        if missing and owner:
+            make = push(text("playit.make_open"), "tonal")
+            make.clicked.connect(lambda: self.window_.pc.open_link(now.get("new_tunnel") or ""))
+            shown.append(make)
+        test = now.get("test") or {}
+        if test.get("works") is not None:
+            key = "playit.works" if test["works"] else "playit.fails"
+            words = text(key, address=test.get("address") or "", by=text("address.by_mcsrvstat"))
+            shown.append(label(words, "sub" if test["works"] else "problem"))
+        java = next((w for w in now.get("ways") or [] if w["kind"] == "java"), None)
+        address = ((java or {}).get("tunnel") or {}).get("address")
+        if owner and address:
+            run = push(text("address.test"), "tonal")
+
+            def run_test() -> None:
+                allow = bool(now.get("mcsrvstat_ok")) or self.window_.confirm(
+                    text("address.test"),
+                    text("address.test_ask", address=address),
+                    text("address.test"),
+                )
+                if allow:
+                    run.setEnabled(False)
+                    self.ask(
+                        "POST",
+                        "/playit-test",
+                        show,
+                        None,
+                        body={"allow_mcsrvstat": True},
+                        slow=True,
+                    )
+
+            run.clicked.connect(run_test)
+            shown.append(run)
+        return shown
+
+    def waterdog_setup(self, now: dict, owner: bool, show, failed) -> list[QWidget]:
+        """A plain Bedrock server needs WaterdogPE in front (agent/waterdog.py):
+        the owner pastes playit's config.yml box, which holds the tunnel's token."""
+        shown: list[QWidget] = [label(text("playit.bedrock_note"), "sub")]
+        if not owner:
+            return shown
+        make = push(text("playit.make_open"), "tonal")
+        make.clicked.connect(lambda: self.window_.pc.open_link(now.get("new_tunnel") or ""))
+        paste = QPlainTextEdit()
+        paste.setPlaceholderText(text("playit.bedrock_paste"))
+        paste.setFixedHeight(120)
+        set_up = push(text("playit.bedrock_set_up"), "tonal")
+
+        def go() -> None:
+            if not self.window_.confirm(
+                text("playit.bedrock_confirm_title"),
+                text("playit.bedrock_confirm_body"),
+                text("playit.bedrock_set_up"),
+            ):
+                return
+            set_up.setEnabled(False)
+
+            def done(after: dict) -> None:
+                show(after)
+                if after.get("internet_off"):
+                    self.window_.page_problem(AgentError(text("playit.waterdog_internet_off")))
+
+            def refused(exc: Exception) -> None:
+                set_up.setEnabled(True)
+                self.window_.page_problem(exc)
+
+            body = {"box": paste.toPlainText()}
+            self.ask("POST", "/playit-bedrock", done, refused, body=body, slow=True)
+
+        set_up.clicked.connect(go)
+        return [*shown, make, paste, set_up]
+
+    def waterdog_lines(self, found: dict, owner: bool, show, failed) -> list[QWidget]:
+        """WaterdogPE's state, the allow list and the way back."""
+        state = found.get("state") or "stopped"
+        shown: list[QWidget] = [
+            label(
+                text(f"playit.waterdog_{state}", port=found.get("server_port")),
+                "problem" if state == "stopped" else "sub",
+            ),
+            label(
+                text(
+                    "playit.waterdog_list_on"
+                    if found.get("list_on")
+                    else "playit.waterdog_list_off"
+                ),
+                "sub",
+            ),
+        ]
+        if owner:
+            stop = push(text("playit.waterdog_stop"))
+
+            def off() -> None:
+                if self.window_.confirm(
+                    text("playit.waterdog_stop"),
+                    text("playit.waterdog_stop_body"),
+                    text("playit.waterdog_stop"),
+                ):
+                    self.ask("DELETE", "/playit-bedrock", show, failed, slow=True)
+
+            stop.clicked.connect(off)
+            shown.append(stop)
+        return shown
+
+    def playit_stop(self, show, failed, here: bool) -> None:
+        if not self.window_.confirm(
+            text("playit.stop"), text("playit.stop_body"), text("playit.stop")
+        ):
+            return
+
+        def stopped(now: dict) -> None:
+            show(now)
+            if now.get("stop_problem"):
+                problem = text("playit.stop_problem", problem=now["stop_problem"])
+                self.window_.page_problem(AgentError(problem))
+            elif here and self.window_.confirm(
+                text("playit.uninstall_title"),
+                text("playit.uninstall_body"),
+                text("playit.uninstall"),
+                text("playit.keep"),
+            ):
+                self.window_.run(
+                    self.window_.pc.uninstall_playit,
+                    lambda _r: self.ask("GET", "/playit", show, failed),
+                    failed,
+                )
+
+        self.ask("POST", "/playit/stop", stopped, failed, body={}, slow=True)
+
+    # ------------------------------------------------------------ DuckDNS and No-IP
+    def ask_pc(self, method: str, path: str, done, failed, body: dict | None = None) -> None:
+        """An agent-wide route (the names are the PC's, not this server's)."""
+        agent, here = self.window_.agent, self.window_.still_on(self.row["id"])
+        self.window_.run(lambda: agent.call(method, path, body, True), here(done), here(failed))
+
+    def names_part(self, names: QVBoxLayout, owner: bool) -> None:
+        """A name for the internet address (agent/ddns.py): DuckDNS, with
+        No-IP next to it. Only names: the port must still be open."""
+
+        def show(now: dict) -> None:
+            shown: list[QWidget] = [
+                label(text("ddns.title"), name="h3"),
+                label(text("ddns.note"), "sub"),
+            ]
+            for kind in ("duckdns", "noip"):
+                shown += self.name_lines(kind, now, owner, show)
+            refill(names, shown)
+
+        def failed(exc: Exception) -> None:
+            refill(names, [label(str(exc), "problem")])
+
+        self.ask_pc("GET", "/ddns", show, failed)
+
+    def name_lines(self, kind: str, now: dict, owner: bool, show) -> list[QWidget]:
+        saved, site = now.get(kind), now.get(f"{kind}_site") or ""
+        lines: list[QWidget] = []
+        if saved:
+            lines.append(label(text(f"ddns.{kind}_saved", name=saved["name"]), "sub"))
+            if saved.get("problem"):
+                lines.append(label(text("ddns.stopped", problem=saved["problem"]), "problem"))
+            if kind == "noip":
+                when = time.strftime("%d %b %Y", time.localtime(saved["confirm_by"]))
+                lines.append(
+                    label(
+                        text("ddns.noip_confirm_by", date=when),
+                        "problem" if saved.get("confirm_soon") else "sub",
+                    )
+                )
+            if not owner:
+                return lines
+            row = QHBoxLayout()
+            if kind == "noip":
+                # One click to No-IP's hostname page (its Confirm button is there), then this.
+                confirm = push(text("ddns.noip_open"), "tonal")
+                confirm.clicked.connect(lambda: self.window_.pc.open_link(site))
+                row.addWidget(confirm)
+                done = push(text("ddns.noip_confirmed"))
+                done.clicked.connect(
+                    lambda: self.ask_pc("POST", "/ddns/noip/confirmed", show, None, {})
+                )
+                row.addWidget(done)
+            remove = push(text("ddns.remove"))
+
+            def forget() -> None:
+                if self.window_.confirm(
+                    text("ddns.remove"),
+                    text("ddns.remove_body", name=saved["name"]),
+                    text("ddns.remove"),
+                ):
+                    self.ask_pc("DELETE", f"/ddns/{kind}", show, None)
+
+            remove.clicked.connect(forget)
+            row.addWidget(remove)
+            row.addStretch(1)
+            box = QWidget()
+            box.setLayout(row)
+            return [*lines, box]
+        if not owner:
+            return lines
+        start = push(text(f"ddns.{kind}_use"), "tonal" if kind == "duckdns" else "")
+        form = QWidget()
+        column = QVBoxLayout(form)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.addWidget(label(text(f"ddns.{kind}_steps"), "sub"))
+        open_site = push(text(f"ddns.{kind}_open"))
+        open_site.clicked.connect(lambda: self.window_.pc.open_link(site))
+        column.addWidget(open_site)
+        boxes: dict[str, QLineEdit] = {}
+        fields = ("name", "token") if kind == "duckdns" else ("name", "username", "password")
+        for name in fields:
+            box = QLineEdit()
+            box.setMaxLength(253)
+            if name in ("token", "password"):
+                box.setEchoMode(QLineEdit.EchoMode.Password)
+            boxes[name] = box
+            column.addWidget(field(text(f"ddns.{kind}_{name}"), box))
+        said = label(kind="problem")
+        said.hide()
+        save = push(text("ddns.save"), "primary")
+
+        def send() -> None:
+            save.setEnabled(False)
+            said.setText(text("ddns.checking"))
+            said.show()
+
+            def failed(exc: Exception) -> None:
+                said.setText(str(exc))
+                save.setEnabled(True)
+
+            body = {name: box.text().strip() for name, box in boxes.items()}
+            self.ask_pc("PUT", f"/ddns/{kind}", show, failed, body)
+
+        save.clicked.connect(send)
+        column.addWidget(save)
+        column.addWidget(said)
+        form.hide()
+        start.clicked.connect(form.show)
+        start.clicked.connect(start.hide)
+        return [*lines, start, form]
+
+    def address_lines(self, now: dict, owner: bool, show: Callable[[dict], None]) -> list[QWidget]:
+        """What "Let friends join from the internet" is doing now, with the
+        next step: test, forward by hand, or playit.gg."""
+        shown: list[QWidget] = []
+        reason, address = now.get("reason"), now.get("address")
+        full = f"{address}:{now.get('port')}" if address else ""
+        if not owner:
+            shown.append(label(text("address.owner_only"), "sub"))
+        if reason == "off":
+            shown.append(label(text("address.internet_note", port=now.get("port")), "sub"))
+        elif reason == "not_running":
+            shown.append(label(text("address.not_running"), "sub"))
+        elif now.get("busy"):
+            shown.append(label(text("address.busy"), "sub"))
+        elif reason == "tested":
+            by = text(
+                "address.by_phone" if now.get("tested_by") == "phone" else "address.by_mcsrvstat"
+            )
+            key = "address.works" if now.get("works") else "address.fails"
+            shown.append(
+                label(text(key, address=full, by=by), "sub" if now.get("works") else "problem")
+            )
+            if now.get("works"):
+                for name in now.get("names") or []:
+                    shown.append(
+                        label(text("ddns.join", name=name["name"], port=now.get("port")), "sub")
+                    )
+        elif reason in ("shared", "private"):
+            # The playit.gg part under the names offers the way round it.
+            shown.append(label(text(f"address.{reason}"), "problem"))
+        elif reason in ("no_router", "refused"):
+            shown.append(
+                label(text(f"address.{reason}", detail=now.get("detail") or ""), "problem")
+            )
+        elif full:
+            shown.append(label(text("address.open", address=full), "sub"))
+            shown.append(label(text("address.not_known"), "sub"))
+        if full and owner and reason in ("not_tested", "not_checked", "tested"):
+            test = push(text("address.test"), "tonal")
+
+            def run_test() -> None:
+                allow = bool(now.get("mcsrvstat_ok")) or self.window_.confirm(
+                    text("address.test"),
+                    text("address.test_ask", address=full),
+                    text("address.test"),
+                )
+                if allow:
+                    test.setEnabled(False)
+                    self.ask(
+                        "POST",
+                        "/internet/test",
+                        show,
+                        None,
+                        body={"allow_mcsrvstat": True},
+                        slow=True,
+                    )
+
+            test.clicked.connect(run_test)
+            shown += [test, label(text("address.test_phone"), "sub")]
+        forward = reason in ("no_router", "refused") or (
+            reason == "tested" and not now.get("works")
+        )
+        if forward or (mode["technical"] and reason not in ("shared", "private")):
+            local = now.get("local_address") or "?"
+            if not forward:
+                shown.append(label(text("address.forward_title"), name="h3"))
+            for port in now.get("ports") or []:
+                shown.append(label(text("address.forward_step", local=local, **port), "sub"))
+            shown.append(label(text("address.forward_help"), "sub"))
+        return shown
 
     def bedrock_updates(self, server: dict) -> QFrame:
         """Bedrock players' games update themselves, then can't join an older
         server. Off by default, and only the owner sees it."""
-        frame, layout = card(text("serverset.bedrock_update"))
-        on = QCheckBox(text("serverset.bedrock_update_label"))
+        frame, layout, on = switch_card(
+            text("serverset.bedrock_update"),
+            text("serverset.bedrock_update_label"),
+            text("serverset.bedrock_update_note"),
+        )
         on.setChecked(bool(server.get("bedrock_auto_update")))
-        layout.addWidget(on)
-        layout.addWidget(label(text("serverset.bedrock_update_note"), "muted"))
-
-        def collect() -> dict:
-            if on.isChecked() != bool(server.get("bedrock_auto_update")):
-                return {"server.bedrock_auto_update": on.isChecked()}
-            return {}
-
-        self.save_button(layout, collect)
+        self.applies(on, "server.bedrock_auto_update", layout)
         return frame
 
     def identity(self, data: dict) -> QFrame:
+        """The name and the color save as soon as they change: the name on
+        Enter or when the keyboard leaves the field, a color on its click."""
         frame, layout = card(text("serverset.identity"))
         name = QLineEdit(self.row["name"])
         name.setMaxLength(60)
         name.setObjectName("serverName")
-        layout.addWidget(field(text("serverset.name"), name))
-        chosen = {"color": data["color"]}
+        name.setAccessibleName(text("serverset.name"))
+        layout.addWidget(name)
+        said = label(kind="sub")
+        said.hide()  # until there is something to say
+        sent = [self.row["name"]]  # Enter also takes the keyboard away: send it once
+
+        def problem(exc: Exception) -> None:
+            said.setText(str(exc))
+            said.show()
+
+        def save_name() -> None:
+            new = name.text().strip()
+            if new and new != sent[0]:
+                sent[0] = new
+                self.ask(
+                    "PUT",
+                    "/settings",
+                    lambda result: self.saved(said, result),
+                    problem,
+                    body={"updates": {"server.name": new}},
+                )
+
+        def save_color(color: str) -> None:
+            if color != data["color"]:
+                self.ask(
+                    "PUT", "/color", lambda _r: self.saved(said), problem, body={"color": color}
+                )
+
+        name.editingFinished.connect(save_name)
         colors = QHBoxLayout()
-        colors.addWidget(
-            swatches(data["palette"], data["color"], lambda c: chosen.__setitem__("color", c)), 1
-        )
+        colors.addWidget(swatches(data["palette"], data["color"], save_color), 1)
         other = push(text("serverset.custom_color"), "plain")
 
         def any_color() -> None:
             picked = QColorDialog.getColor(parent=self, title=text("serverset.custom_color"))
             if picked.isValid():
-                chosen["color"] = picked.name().upper()
-                other.setText(f"{text('serverset.custom_color')}: {chosen['color']}")
+                save_color(picked.name().upper())
 
         other.clicked.connect(any_color)
         colors.addWidget(other)
-        layout.addWidget(label(text("serverset.color"), "sub"))
         layout.addLayout(colors)
-        row = QHBoxLayout()
-        save = push(text("serverset.save_identity"), "primary")
-        said = label(kind="sub")
-        row.addWidget(save)
-        row.addWidget(said, 1)
-        layout.addLayout(row)
+        from .welcome import PLAYED_BY
 
-        def save_identity() -> None:
-            new = name.text().strip()
-            if chosen["color"] != data["color"]:
-                self.ask(
-                    "PUT",
-                    "/color",
-                    lambda _r: self.saved(said) if new == self.row["name"] else None,
-                    lambda exc: said.setText(str(exc)),
-                    body={"color": chosen["color"]},
-                )
-            if new and new != self.row["name"]:
-                self.ask(
-                    "PUT",
-                    "/settings",
-                    lambda result: self.saved(said, result),
-                    lambda exc: said.setText(str(exc)),
-                    body={"updates": {"server.name": new}},
-                )
-            elif chosen["color"] == data["color"]:
-                said.setText(text("settings.nothing_changed"))
+        who = QComboBox()
+        who.setObjectName("playedBy")
+        who.addItem(text("welcome.for_unset"), "")
+        for value, words in PLAYED_BY:
+            who.addItem(text(words), value)
+        now = (data.get("server") or {}).get("played_by") or ""
+        who.setCurrentIndex(max(0, who.findData(now)))
 
-        save.clicked.connect(save_identity)
+        def save_who(_index: int) -> None:
+            self.ask(
+                "PUT",
+                "/settings",
+                lambda result: self.saved(said, result),
+                problem,
+                body={"updates": {"server.played_by": who.currentData()}},
+            )
+
+        who.currentIndexChanged.connect(save_who)
+        layout.addWidget(field(text("welcome.who_question"), who, text("serverset.played_by_hint")))
+        layout.addWidget(said)
         return frame
 
     def crashes(self, m: dict) -> QFrame:
-        frame, layout = card(text("serverset.crashes"))
-        auto = QCheckBox(text("serverset.auto_restart"))
+        frame, layout, auto = switch_card(
+            text("serverset.auto_restart"),
+            text("serverset.auto_restart"),
+            text("serverset.auto_restart_hint"),
+        )
         auto.setChecked(bool(m["auto_restart"]))
-        layout.addWidget(auto)
         delay = number(m["restart_delay"], 0, 3600, 1)
         most = number(m["max_crashes"], 1, 1000)
         layout.addLayout(
@@ -354,24 +994,43 @@ class SettingsPage(Page):
             )
         )
 
+        # Technical: exit codes that mean "stopped", not "crashed".
+        codes = QLineEdit(m.get("ignored_exit_codes") or "")
+        codes.setMaxLength(100)
+        codes.setPlaceholderText("1, 130")
+        codes.setAccessibleName(text("serverset.ignored_codes"))
+        if mode["technical"]:
+            layout.addLayout(
+                grid(
+                    [
+                        field(
+                            text("serverset.ignored_codes"),
+                            codes,
+                            text("serverset.ignored_codes_hint"),
+                        )
+                    ]
+                )
+            )
+
         def collect() -> dict:
             out: dict = {}
-            if auto.isChecked() != bool(m["auto_restart"]):
-                out["monitor.auto_restart"] = auto.isChecked()
             if abs(delay.value() - m["restart_delay"]) > 0.05:
                 out["monitor.restart_delay"] = delay.value()
             if most.value() != m["max_crashes"]:
                 out["monitor.max_crashes"] = most.value()
+            if codes.text().strip() != (m.get("ignored_exit_codes") or ""):
+                out["monitor.ignored_exit_codes"] = codes.text().strip()
             return out
 
         self.save_button(layout, collect)
+        self.applies(auto, "monitor.auto_restart", layout)
         return frame
 
     def sleep(self, server: dict, now: dict) -> QFrame:
-        frame, layout = card(text("serverset.sleep"))
-        on = QCheckBox(text("serverset.sleep_label"))
+        frame, layout, on = switch_card(
+            text("serverset.sleep"), text("serverset.sleep_label"), text("serverset.sleep_label")
+        )
         on.setChecked(bool(server["autosleep"]))
-        layout.addWidget(on)
         minutes = number(server["autosleep_minutes"], 1, 1440)
         layout.addLayout(
             grid(
@@ -385,8 +1044,9 @@ class SettingsPage(Page):
             )
         )
         # Only what was measured: the count, and what it is waiting for.
+        # Nothing while it is off: the switch says that.
         if not server["autosleep"]:
-            line = text("serverset.sleep_off")
+            line = ""
         elif not now:
             line = text("value.unknown")
         elif now.get("list_answered") is False:
@@ -399,43 +1059,52 @@ class SettingsPage(Page):
             line = text("serverset.sleep_countdown", duration=duration(now["stops_in"]))
         else:
             line = text("serverset.sleep_waiting")
-        layout.addWidget(label(line, "sub"))
+        if line:
+            layout.addWidget(label(line, "sub"))
         layout.addWidget(label(text("serverset.sleep_restart_note"), "muted"))
 
         def collect() -> dict:
             out: dict = {}
-            if on.isChecked() != bool(server["autosleep"]):
-                out["server.autosleep"] = on.isChecked()
             if minutes.value() != server["autosleep_minutes"]:
                 out["server.autosleep_minutes"] = minutes.value()
             return out
 
         self.save_button(layout, collect)
+        self.applies(on, "server.autosleep", layout)
         return frame
 
     def join(self, server: dict, now: dict) -> QFrame:
         """Join protection (agent/joinguard.py): one switch in Simple, and in
         Technical the size, limits, home-only, Launch mode, blocks and log."""
-        frame, layout = card(text("serverset.join"))
-        on = QCheckBox(text("serverset.join_label"))
+        frame, layout, on = switch_card(
+            text("serverset.join"), text("serverset.join_label"), text("serverset.join_note")
+        )
         on.setChecked(bool(server.get("join_protection")))
-        layout.addWidget(on)
         if now.get("why_not") == "start_command":
             line = text("serverset.join_start_command")
         elif now.get("restart_needed"):
             line = text("serverset.join_restart")
         elif now.get("running"):
             line = text("serverset.join_running", blocked=now.get("blocked_today", 0))
+        elif server.get("join_protection"):
+            line = text("serverset.join_next")
         else:
-            line = text(
-                "serverset.join_off" if not server.get("join_protection") else "serverset.join_next"
-            )
-        layout.addWidget(label(line, "sub"))
-        layout.addWidget(label(text("serverset.join_note"), "muted"))
-        wake = QCheckBox(text("serverset.wake_label"))
+            line = ""  # off: the switch says that
+        if line:
+            layout.addWidget(label(line, "sub"))
+        self.applies(on, "server.join_protection", layout)
+        row, wake = switch_row(
+            label(text("serverset.wake_label")),
+            text("serverset.wake_label"),
+            text("serverset.wake_note"),
+        )
         wake.setChecked(bool(server.get("start_on_join")))
-        layout.addWidget(wake)
-        layout.addWidget(label(text("serverset.wake_note"), "muted"))
+        layout.addLayout(row)
+        self.applies(wake, "server.start_on_join", layout)
+        if self.row.get("content"):  # the anti-cheat picker is on the Mods page
+            anticheat = push(text("desktop.protect.pick_anticheat"))
+            anticheat.clicked.connect(lambda: self.window_.open_page("Mods"))
+            layout.addWidget(anticheat, 0, Qt.AlignmentFlag.AlignLeft)
         size, home, limits = QComboBox(), QCheckBox(text("serverset.join_home_only")), {}
         if mode["technical"]:
             for value, words in (
@@ -467,10 +1136,6 @@ class SettingsPage(Page):
 
         def collect() -> dict:
             out: dict = {}
-            if on.isChecked() != bool(server.get("join_protection")):
-                out["server.join_protection"] = on.isChecked()
-            if wake.isChecked() != bool(server.get("start_on_join")):
-                out["server.start_on_join"] = wake.isChecked()
             if mode["technical"]:
                 if size.currentData() != (server.get("join_size") or ""):
                     out["server.join_size"] = size.currentData()
@@ -482,8 +1147,8 @@ class SettingsPage(Page):
                     out["server.join_limits"] = {**(server.get("join_limits") or {}), **picked}
             return out
 
-        self.save_button(layout, collect)
-        if mode["technical"]:
+        if mode["technical"]:  # Simple has only the two switches: nothing to Save
+            self.save_button(layout, collect)
             self.ask(
                 "GET",
                 "/join-protection",
@@ -684,7 +1349,7 @@ class SettingsPage(Page):
         for found in (status.get("problems") or [])[:1]:
             layout.addWidget(label(found, "problem"))
         row = QHBoxLayout()
-        save = push(text("action.save"), "primary")
+        save = push(text("action.save"), "tonal")
         half = push(text("serverset.half_cores"), "plain")
         said = label(kind="sub")
         for widget in (save, half):
@@ -734,22 +1399,23 @@ class SettingsPage(Page):
         layout.addLayout(
             grid([field(text(f"serverset.keep_{k}"), box) for k, box in boxes.items()], 3)
         )
-        on_stop = QCheckBox(text("serverset.backup_on_stop"))
-        on_stop.setChecked(bool(b.get("on_stop")))
-        layout.addWidget(on_stop)
-        layout.addWidget(label(text("serverset.backup_on_stop_hint"), "sub"))
 
         def collect() -> dict:
-            out: dict = {
+            return {
                 f"backups.keep_{k}": box.value()
                 for k, box in boxes.items()
                 if box.value() != b[f"keep_{k}"]
             }
-            if on_stop.isChecked() != bool(b.get("on_stop")):
-                out["backups.on_stop"] = on_stop.isChecked()
-            return out
 
         self.save_button(layout, collect)
+        row, on_stop = switch_row(
+            label(text("serverset.backup_on_stop")),
+            text("serverset.backup_on_stop"),
+            text("serverset.backup_on_stop_hint"),
+        )
+        on_stop.setChecked(bool(b.get("on_stop")))
+        layout.addLayout(row)
+        self.applies(on_stop, "backups.on_stop", layout)
         return frame
 
     def build_folder(self, server: dict) -> QFrame:
@@ -796,6 +1462,14 @@ class SettingsPage(Page):
             )
         )
         if mode["technical"]:
+            row, low = switch_row(
+                label(text("serverset.low_priority")),
+                text("serverset.low_priority"),
+                text("serverset.low_priority_hint"),
+            )
+            low.setChecked(bool(s.get("low_priority")))
+            layout.addLayout(row)
+            self.applies(low, "server.low_priority", layout)
             folder = label(text("serverset.folder", folder=s.get("directory") or "-"), "address")
             folder.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             layout.addWidget(folder)
@@ -849,7 +1523,7 @@ class SettingsPage(Page):
             if shown:
                 layout.addWidget(label(text(words), "sub"))
         row = QHBoxLayout()
-        go = push(text("dup.button"), "primary")
+        go = push(text("dup.button"), "tonal")
         said = label(text("dup.after"), "sub")
         row.addWidget(go)
         row.addWidget(said, 1)
@@ -913,6 +1587,7 @@ class SettingsPage(Page):
     def game_failed(self, exc: Exception) -> None:
         self.problem("game", exc)
         refill(self.slots["raw"], [])
+        refill(self.slots["list"], [])
 
     def show_banner(self, data: dict) -> None:
         banner = getattr(self, "banner", None)
@@ -930,6 +1605,17 @@ class SettingsPage(Page):
         frame.setEnabled(self.may("settings.game"))
         layout.addWidget(label(text("game.intro" if data.get("exists") else "game.no_file"), "sub"))
         fields = {f["key"]: f for f in data.get("fields") or []}
+        view = fields.get("view-distance")
+        if view and view["kind"] == "int" and not view.get("problem"):
+            del fields["view-distance"]  # it has its own card, with the slider
+            refill(self.slots["view"], [self.view_distance(view)])
+        else:
+            refill(self.slots["view"], [])
+        # The MOTD (a Bedrock server's name) has its own card, with colours.
+        shown_in_list = fields.pop("motd", None) or fields.pop("server-name", None)
+        refill(
+            self.slots["list"], [motd.list_card(self, shown_in_list, data)] if shown_in_list else []
+        )
         reads: dict[str, tuple[Callable[[], Any], Any, dict]] = {}
         errors: dict[str, QLabel] = {}
         for group, keys in GROUPS:
@@ -951,7 +1637,7 @@ class SettingsPage(Page):
                 boxes.append(box)
             layout.addLayout(grid(boxes, 3))
         row = QHBoxLayout()
-        save = push(text("game.save"), "primary")
+        save = push(text("game.save"), "tonal")
         said = label(text("game.copy_kept"), "sub")
         row.addWidget(save)
         row.addWidget(said, 1)
@@ -978,7 +1664,10 @@ class SettingsPage(Page):
                 said.setText(text("game.fix_marked") if problems else str(exc))
 
             def done(result: dict) -> None:
-                self.done(text("game.saved_running" if result.get("running") else "game.saved"))
+                self.done(
+                    text("game.saved_running" if result.get("running") else "game.saved"),
+                    self.load_game,
+                )
                 if (result.get("changed") or {}).get("online-mode") == "false":
                     self.ask("GET", "/protection", self.offer_login, lambda _e: None)
 
@@ -987,6 +1676,46 @@ class SettingsPage(Page):
         save.clicked.connect(save_game)
         refill(self.slots["game"], [self.banner, frame])
         refill(self.slots["raw"], [self.raw(data)] if mode["technical"] else [])
+
+    def view_distance(self, f: dict) -> QFrame:
+        """View distance as a slider, in chunks. It saves when let go, the
+        same way the form's Save does (the agent keeps a copy of the file)."""
+        words, hint = self.field_words(f)
+        first = int(f["value"] if f.get("set") else f["minecraft_default"])
+        slider = SnapSlider(words)
+        slider.setObjectName("viewSlider")
+        slider.setRange(f["min"], f["max"])
+        slider.setValue(first)
+        frame, layout, big = slider_card(words, hint, slider, "", str(f["min"]), str(f["max"]))
+        frame.setEnabled(self.may("settings.game"))
+        big.show_value(str(first))
+        slider.valueChanged.connect(lambda value: big.show_value(str(value)))
+        big.entered.connect(lambda typed: slider.setValue(round(typed)))
+        said = label(kind="problem")
+        said.hide()
+        layout.addWidget(said)
+
+        def failed(exc: Exception) -> None:
+            problems = exc.problems if isinstance(exc, AgentError) else {}
+            said.setText(problems.get("view-distance") or str(exc))
+            said.show()
+
+        def save(value: int) -> None:
+            if value == first and f.get("set"):
+                return
+            self.ask(
+                "PUT",
+                "/game-settings",
+                lambda r: self.done(
+                    text("game.saved_running" if r.get("running") else "game.saved"),
+                    self.load_game,
+                ),
+                failed,
+                body={"values": {"view-distance": str(value)}},
+            )
+
+        saves_when_let_go(slider, save)
+        return frame
 
     def offer_login(self, card: dict) -> None:
         """Offline mode was just turned on: offer this type's login add-on
@@ -1069,7 +1798,10 @@ class SettingsPage(Page):
             if result.get("nothing_changed"):
                 said.setText(text("settings.nothing_changed"))
                 return
-            self.done(text("game.saved_running" if result.get("running") else "game.saved"))
+            self.done(
+                text("game.saved_running" if result.get("running") else "game.saved"),
+                self.load_game,
+            )
 
         save.clicked.connect(
             lambda: self.ask(
@@ -1124,43 +1856,49 @@ class SettingsPage(Page):
     # ------------------------------------------------------------ memory
     def show_memory(self, data: dict) -> None:
         """The memory limit (-Xmx only), bounded by the PC's memory as measured."""
-        frame, layout = card(text("memory.title"))
-        layout.addWidget(label(text("memory.label"), "step"))
+        self.memory_data = data
         total = data.get("total_mb")
-        layout.addWidget(
-            label(
-                text("memory.pc_has", total=gb(total)) if total else text("memory.pc_unknown"),
-                "sub",
-            )
-        )
         editable = self.may("settings.server")
-        if not data.get("takes_memory_limit"):
-            words = (
-                "memory.not_bedrock" if self.row.get("edition") == "bedrock" else "memory.not_used"
-            )
-            layout.addWidget(label(text(words), "sub"))
-            refill(self.slots["memory"], [frame])
-            return
         current = data.get("limit_mb")
-        if total:
-            row = QHBoxLayout()
-            slider = QSlider(Qt.Orientation.Horizontal)
-            slider.setObjectName("memorySlider")
-            slider.setAccessibleName(text("memory.label"))
+        if not data.get("takes_memory_limit") or not total:
+            frame, layout = card(text("memory.title"), "memory.label")
+            if not total:
+                words = "memory.pc_unknown"
+            elif self.row.get("edition") == "bedrock":
+                words = "memory.not_bedrock"
+            else:
+                words = "memory.not_used"
+            layout.addWidget(label(text(words), "sub"))
+            if not data.get("takes_memory_limit"):
+                refill(self.slots["memory"], [frame])
+                return
+        else:
             step = data.get("step_mb") or 512
+            slider = SnapSlider(text("memory.label"))
+            slider.setObjectName("memorySlider")
             slider.setRange(data["min_mb"] // step, total // step)
-            start = min(total, max(data["min_mb"], current or 2048))
-            slider.setValue(round(start / step))
+            slider.setTickInterval(max(1, 1024 // step))  # a mark at every GB
+            slider.setValue(round(min(total, max(data["min_mb"], current or 2048)) / step))
             slider.setEnabled(editable)
-            shown = label(kind="step")
+            frame, layout, big = slider_card(
+                text("memory.title"),
+                f"{text('memory.label')}. {text('memory.pc_has', total=gb(total))}",
+                slider,
+                "GB",
+                gb(data["min_mb"]),
+                gb(total),
+            )
+            big.setEnabled(editable)
             warning = label(kind="problem")
+            said = label(kind="problem")
+            said.hide()
             others = [
                 s for s in data.get("servers") or [] if not s.get("this") and s.get("running")
             ]
 
             def moved(value: int) -> None:
                 mb = value * step
-                shown.setText(gb(mb))
+                big.show_value(f"{mb / 1024:g}")
                 together = sum(s.get("limit_mb") or 0 for s in others) + mb
                 over = together > total
                 warning.setVisible(over)
@@ -1176,53 +1914,70 @@ class SettingsPage(Page):
                 elif over:
                     warning.setText(text("memory.over_alone", total=gb(together), pc=gb(total)))
 
-            slider.valueChanged.connect(moved)
-            moved(slider.value())
-            row.addWidget(slider, 1)
-            row.addWidget(shown)
-            layout.addLayout(row)
-            layout.addWidget(warning)
-        layout.addWidget(
-            label(text("memory.now", limit=gb(current)) if current else text("memory.unset"), "sub")
-        )
-        if total and editable:
-            save_row = QHBoxLayout()
-            save = push(text("memory.save"), "primary")
-            said = label(kind="sub")
-            save_row.addWidget(save)
-            save_row.addWidget(said, 1)
-            layout.addLayout(save_row)
-
-            def save_memory() -> None:
-                mb = slider.value() * step
+            def save_memory(value: int) -> None:
+                mb = value * step
                 if mb == current:
-                    said.setText(text("settings.nothing_changed"))
                     return
 
                 def done(result: dict) -> None:
                     self.done(
-                        text("memory.saved_running" if result.get("running") else "memory.saved")
+                        text("memory.saved_running" if result.get("running") else "memory.saved"),
+                        self.load_memory,
                     )
 
-                self.ask(
-                    "PUT", "/memory", done, lambda e: said.setText(str(e)), body={"memory_mb": mb}
-                )
+                def failed(exc: Exception) -> None:
+                    said.setText(str(exc))
+                    said.show()
 
-            save.clicked.connect(save_memory)
+                self.ask("PUT", "/memory", done, failed, body={"memory_mb": mb})
+
+            slider.valueChanged.connect(moved)
+            moved(slider.value())
+            big.entered.connect(lambda typed: slider.setValue(round(typed * 1024 / step)))
+            saves_when_let_go(slider, save_memory)
+            layout.addWidget(warning)
+            layout.addWidget(said)
+            if not current:  # the slider only shows where it starts: say nothing is set
+                layout.addWidget(label(text("memory.unset"), "sub"))
         if mode["technical"]:
-            args = QLineEdit(" ".join(data.get("jvm_args") or []))
+            before = list(data.get("jvm_args") or [])
+            args = QLineEdit(" ".join(before))
             args.setEnabled(editable)
             layout.addWidget(field(text("memory.raw_args"), args, text("memory.raw_hint")))
+            layout.addWidget(notice("memory.raw_warning"))
             if editable:
-                self.save_button(
-                    layout,
-                    lambda: (
-                        {"server.jvm_args": args.text().split()}
-                        if args.text().split() != (data.get("jvm_args") or [])
-                        else {}
-                    ),
-                    "memory.save_raw",
-                )
+                said = label(kind="sub")
+                row = QHBoxLayout()
+                button = push(text("memory.save_raw"), "tonal")
+                row.addWidget(button)
+                row.addWidget(said, 1)
+                layout.addLayout(row)
+
+                def put(values: list[str], words: str, undo: bool) -> None:
+                    def done(result: dict) -> None:
+                        refused = (result.get("rejected") or {}).get("server.jvm_args")
+                        if refused:
+                            said.setText(refused)
+                            return
+                        back = (lambda: put(before, "memory.raw_undone", False)) if undo else None
+                        self.done(text(words), self.load_memory)
+                        self.say(text(words), back)
+
+                    self.ask(
+                        "PUT",
+                        "/settings",
+                        done,
+                        lambda exc: said.setText(str(exc)),
+                        body={"updates": {"server.jvm_args": values}},
+                    )
+
+                def save_args() -> None:
+                    if args.text().split() == before:
+                        said.setText(text("settings.nothing_changed"))
+                        return
+                    put(args.text().split(), "memory.raw_saved", True)
+
+                button.clicked.connect(save_args)
         refill(self.slots["memory"], [frame])
 
     # ------------------------------------------------------------ version and Bedrock players

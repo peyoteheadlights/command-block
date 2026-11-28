@@ -9,6 +9,10 @@ import io.github.peyoteheadlights.mcsc.core.CpuCores
 import io.github.peyoteheadlights.mcsc.core.Crossplay
 import io.github.peyoteheadlights.mcsc.core.CrossplayInfo
 import io.github.peyoteheadlights.mcsc.core.Duplicate
+import io.github.peyoteheadlights.mcsc.core.DdnsState
+import io.github.peyoteheadlights.mcsc.core.InternetReach
+import io.github.peyoteheadlights.mcsc.core.OutsidePing
+import io.github.peyoteheadlights.mcsc.core.PlayitState
 import io.github.peyoteheadlights.mcsc.core.DuplicateOptions
 import io.github.peyoteheadlights.mcsc.core.Job
 import io.github.peyoteheadlights.mcsc.core.Memory
@@ -23,7 +27,9 @@ import io.github.peyoteheadlights.mcsc.core.TypeVersions
 import io.github.peyoteheadlights.mcsc.core.VersionChange
 import io.github.peyoteheadlights.mcsc.core.VersionPreflight
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -352,14 +358,18 @@ class SetupPages(
         val c = client() ?: return
         val type = pickedType ?: return
         val minecraft = pickedVersion ?: return
+        val loader = pickedLoader
         report = Read(loading = true)
         scope.launch {
-            report = try {
-                Read(c.versionPreflight(serverId, type, minecraft, pickedLoader))
+            val answer = try {
+                Read(c.versionPreflight(serverId, type, minecraft, loader))
             } catch (e: AgentException) {
                 noted(e)
                 Read(problem = Message.of(e))
             }
+            // Another kind, version or loader was picked meanwhile: an old answer.
+            if (pickedType != type || pickedVersion != minecraft || pickedLoader != loader) return@launch
+            report = answer
         }
     }
 
@@ -470,6 +480,147 @@ class SetupPages(
         }
     }
 
+    fun setConsoleFriends(on: Boolean, strings: Strings) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = "console"
+        said = null
+        scope.launch {
+            try {
+                crossplay = Read(c.setConsoleFriends(serverId, on))
+                said = Said(strings.t(if (on) "console.on_done" else "console.off_done"), good = true)
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ server address
+    /** "Let friends join from the internet" (agent/internet.py). */
+    var internet: Read<InternetReach> by mutableStateOf(Read())
+        private set
+
+    fun loadInternet() {
+        val c = client() ?: return
+        internet = internet.copy(loading = true)
+        scope.launch {
+            internet = try {
+                Read(c.internet(serverId))
+            } catch (e: AgentException) {
+                noted(e)
+                Read(problem = Message.of(e))
+            }
+        }
+    }
+
+    private fun internetCall(name: String, strings: Strings, work: suspend (AgentClient) -> InternetReach) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = name
+        said = null
+        scope.launch {
+            try {
+                internet = Read(work(c))
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
+    }
+
+    fun setInternet(on: Boolean, strings: Strings) = internetCall("internet", strings) { it.setInternet(serverId, on) }
+
+    /** mcsrvstat.us; [allow] after the owner said yes to it once. */
+    fun testInternet(allow: Boolean, strings: Strings) = internetCall("internet_test", strings) { it.testInternet(serverId, allow) }
+
+    /** This phone pings the address itself (over mobile data), then tells the agent. */
+    fun phoneTest(address: String, port: Int, bedrock: Boolean, strings: Strings) = internetCall("phone_test", strings) { c ->
+        val works = withContext(Dispatchers.IO) {
+            if (bedrock) OutsidePing.bedrock(address, port) else OutsidePing.java(address, port)
+        }
+        c.phoneTest(serverId, address, port, works)
+    }
+
+    // ------------------------------------------------------------ playit.gg
+    /** playit.gg on the server's PC (agent/playit.py). */
+    var playit: Read<PlayitState> by mutableStateOf(Read())
+    /** playit's config.yml box, pasted for WaterdogPE (holds the tunnel's token; never saved). */
+    var waterdogBox: String by mutableStateOf("")
+
+    fun loadPlayit() {
+        val c = client() ?: return
+        scope.launch {
+            playit = try {
+                Read(c.playit(serverId))
+            } catch (e: AgentException) {
+                noted(e)
+                Read(problem = Message.of(e))
+            }
+        }
+    }
+
+    fun playitCall(strings: Strings, work: suspend (AgentClient) -> PlayitState) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = "playit"
+        said = null
+        scope.launch {
+            try {
+                val now = work(c)
+                playit = Read(now)
+                now.stopProblem?.let { said = Said(strings.t("playit.stop_problem", "problem" to it), good = false) }
+                if (now.internetOff) said = Said(strings.t("playit.waterdog_internet_off"), good = true)
+                if (now.waterdog != null) waterdogBox = "" // the token isn't kept on the phone
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ DuckDNS and No-IP
+    /** This PC's names for its internet address (agent/ddns.py). */
+    var ddns: Read<DdnsState> by mutableStateOf(Read())
+        private set
+
+    fun loadDdns() {
+        val c = client() ?: return
+        scope.launch {
+            ddns = try {
+                Read(c.ddns())
+            } catch (e: AgentException) {
+                noted(e)
+                Read(problem = Message.of(e))
+            }
+        }
+    }
+
+    /** True when it worked, so the form can close. */
+    fun ddnsCall(name: String, strings: Strings, done: () -> Unit = {}, work: suspend (AgentClient) -> DdnsState) {
+        val c = client() ?: return
+        if (busy != null) return
+        busy = name
+        said = null
+        scope.launch {
+            try {
+                ddns = Read(work(c))
+                done()
+            } catch (e: AgentException) {
+                noted(e)
+                said = Said(Message.of(e).text(strings), good = false)
+            } finally {
+                busy = null
+            }
+        }
+    }
+
     // ------------------------------------------------------------ duplicate
     var copyOptions: Read<DuplicateOptions> by mutableStateOf(Read())
         private set
@@ -550,18 +701,26 @@ class SetupPages(
         }
     }
 
+    /** The Java options from before the last save, while Undo can put them back. */
+    var argsBefore: List<String>? by mutableStateOf(null)
+        private set
+
     /** Saves the Java options typed in Technical mode, then reads the form
-     * and the memory card again so both show them. */
-    fun saveJavaOptions(args: List<String>, strings: Strings) {
+     * and the memory card again so both show them. [undoing]: putting the
+     * old ones back, which can't itself be undone. */
+    fun saveJavaOptions(args: List<String>, strings: Strings, undoing: Boolean = false) {
         val c = client() ?: return
         if (busy != null) return
+        val before = memory.value?.jvmArgs
         busy = "java"
         said = null
         scope.launch {
             try {
                 val done = c.saveServerSettings(serverId, buildJsonObject { put("server.jvm_args", JsonArray(args.map(::JsonPrimitive))) })
                 val refused = done.rejected["server.jvm_args"]
-                said = Said(refused ?: strings.t("mobile.raw.args_saved"), good = refused == null)
+                val words = if (undoing) "memory.raw_undone" else "mobile.raw.args_saved"
+                said = Said(refused ?: strings.t(words), good = refused == null)
+                argsBefore = if (refused == null && !undoing) before else null
                 loadMemory()
                 loadSettings()
             } catch (e: AgentException) {

@@ -150,7 +150,7 @@ struct ServersWidgetView: View {
 
     @ViewBuilder
     private func row(_ server: WidgetServer) -> some View {
-        let words = Display.state(server.state)
+        let words = Display.state(server.label)
         let line = HStack(spacing: 6) {
             ColorBadge(hex: server.color, size: 10)
             VStack(alignment: .leading, spacing: 0) {

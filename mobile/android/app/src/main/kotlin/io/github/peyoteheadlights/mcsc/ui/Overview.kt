@@ -9,13 +9,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.Display
+import io.github.peyoteheadlights.mcsc.core.Internet
 import io.github.peyoteheadlights.mcsc.core.JoinAddress
 import io.github.peyoteheadlights.mcsc.core.JoinInfo
 import io.github.peyoteheadlights.mcsc.core.JoinWay
@@ -53,7 +53,15 @@ private fun JoinCard(vm: AppViewModel, info: JoinInfo) {
             bedrock != null -> BedrockServer(vm, bedrock)
             else -> Item(t("value.unknown"))
         }
-        Note(t("join.internet"), color = colors.text3, modifier = Modifier.padding(bottom = 10.dp))
+        val internet = info.internet
+        val tested = internet?.let(Internet::address)
+        if (internet?.works == true && tested != null) {
+            Group(t("address.internet_label"), t("address.internet_note", "port" to internet.port))
+            Address(tested)
+            Note(Internet.lines(vm.strings, internet, owner = true).last().text, color = colors.success, modifier = Modifier.padding(bottom = 10.dp))
+        } else {
+            Note(t("join.internet"), color = colors.text3, modifier = Modifier.padding(bottom = 10.dp))
+        }
     }
 }
 
@@ -138,7 +146,7 @@ private fun adapterNote(vm: AppViewModel, address: JoinAddress, count: Int): Str
 
 @Composable
 private fun Group(title: String, hint: String) {
-    Item(title, subtitle = hint)
+    Item(title, info = hint)
 }
 
 @Composable
@@ -176,7 +184,7 @@ fun LazyListScope.suggestionsCard(vm: AppViewModel, pages: ServerPages, canEdit:
 private fun Suggestion(rec: Recommendation, canEdit: Boolean, onAction: (String) -> Unit) {
     val colors = LocalColors.current
     val context = LocalContext.current
-    Item(rec.title, subtitle = rec.reason)
+    Item(rec.title, info = rec.reason)
     rec.evidence?.takeIf { it.isNotBlank() }?.let { Note(it, color = colors.text3) }
     val url = rec.action?.url
     val label = rec.action?.label
@@ -205,7 +213,7 @@ fun LazyListScope.checklistCard(vm: AppViewModel, pages: ServerPages, canEdit: B
             val total = list.total
             Item(
                 if (done != null && total != null) t("start.progress", "done" to done, "total" to total) else t("value.unknown"),
-                subtitle = t("start.lead"),
+                info = t("start.lead"),
                 trailing = {
                     if (canEdit) TextButton(onClick = pages::hideChecklist) { Text(t("start.hide")) }
                 },

@@ -3,7 +3,10 @@ package io.github.peyoteheadlights.mcsc.ui
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,9 +21,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,21 +43,49 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import io.github.peyoteheadlights.mcsc.core.Addon
 import io.github.peyoteheadlights.mcsc.core.Changes
+import io.github.peyoteheadlights.mcsc.core.ChatLine
+import io.github.peyoteheadlights.mcsc.core.FlavorText
+import io.github.peyoteheadlights.mcsc.core.OnOff
+import io.github.peyoteheadlights.mcsc.core.TitleButton
+import io.github.peyoteheadlights.mcsc.core.TitleScreen
 import io.github.peyoteheadlights.mcsc.core.Content
 import io.github.peyoteheadlights.mcsc.core.ContentKind
 import io.github.peyoteheadlights.mcsc.core.Display
+import io.github.peyoteheadlights.mcsc.core.DownloadLinks
 import io.github.peyoteheadlights.mcsc.core.IconCache
 import io.github.peyoteheadlights.mcsc.core.Install
 import io.github.peyoteheadlights.mcsc.core.Mod
+import io.github.peyoteheadlights.mcsc.core.ModFit
+import io.github.peyoteheadlights.mcsc.core.ModList
+import io.github.peyoteheadlights.mcsc.core.ModSideRow
+import io.github.peyoteheadlights.mcsc.core.ModSides
 import io.github.peyoteheadlights.mcsc.core.ModVersion
+import io.github.peyoteheadlights.mcsc.core.SameJob
 import io.github.peyoteheadlights.mcsc.core.Modpacks
+import io.github.peyoteheadlights.mcsc.core.AntiCheats
+import io.github.peyoteheadlights.mcsc.core.FarViews
+import io.github.peyoteheadlights.mcsc.core.LinkedModpack
+import io.github.peyoteheadlights.mcsc.core.LinkedPacks
+import io.github.peyoteheadlights.mcsc.core.MadeModpacks
+import io.github.peyoteheadlights.mcsc.core.MakeModpack
+import io.github.peyoteheadlights.mcsc.core.ModrinthCards
+import io.github.peyoteheadlights.mcsc.core.ModrinthHit
+import io.github.peyoteheadlights.mcsc.core.ModpackMakeOptions
+import io.github.peyoteheadlights.mcsc.core.PlayerFile
+import io.github.peyoteheadlights.mcsc.core.PlayerOnlyOptions
+import io.github.peyoteheadlights.mcsc.core.Sides
+import io.github.peyoteheadlights.mcsc.core.DeepScanOptions
+import io.github.peyoteheadlights.mcsc.core.DeepScanReport
+import io.github.peyoteheadlights.mcsc.core.JarScanWords
 import io.github.peyoteheadlights.mcsc.core.Permissions
-import io.github.peyoteheadlights.mcsc.core.States
+import io.github.peyoteheadlights.mcsc.core.StillFit
 import io.github.peyoteheadlights.mcsc.core.Tone
 import io.github.peyoteheadlights.mcsc.core.UpdateAll
 import kotlinx.coroutines.Dispatchers
@@ -58,11 +94,16 @@ import kotlinx.coroutines.withContext
 /** A question waiting for "yes": its title, words and button. */
 private data class ContentAsk(val title: String, val body: String, val confirm: String, val danger: Boolean, val run: () -> Unit)
 
-/** The server's state for these screens: Unknown after a failed read, never a guess. */
-private fun stateFor(vm: AppViewModel, serverId: String, failed: Boolean): String? {
+/** The agent's label and buttons for one server. */
+private data class Controls(val label: String?, val can: List<String>)
+
+/** The server's label and buttons for these screens: Unknown after a failed read, never a guess. */
+private fun controlsFor(vm: AppViewModel, serverId: String, failed: Boolean): Controls {
     val ui = vm.server[serverId]
-    if (failed || ui?.problem != null) return States.UNKNOWN
-    return ui?.status?.state ?: vm.servers.list.firstOrNull { it.id == serverId }?.state
+    if (failed || ui?.problem != null) return Controls("unknown", emptyList())
+    ui?.status?.let { return Controls(it.label, it.can) }
+    val row = vm.servers.list.firstOrNull { it.id == serverId } ?: return Controls(null, emptyList())
+    return Controls(row.label, row.can)
 }
 
 /**
@@ -75,7 +116,7 @@ private fun stateFor(vm: AppViewModel, serverId: String, failed: Boolean): Strin
  * offer Restart now.
  */
 @Composable
-fun ContentScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
+fun ContentScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit, onChangeType: () -> Unit) {
     val content = vm.pages(serverId).content
     val kind = Content.kind(vm.servers.list.firstOrNull { it.id == serverId })
     var asking by remember { mutableStateOf<ContentAsk?>(null) }
@@ -107,15 +148,34 @@ fun ContentScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
                     ask.run()
                 }, onDismiss = { asking = null })
             }
-            ContentDialogs(vm, content) { asking = it }
+            ContentDialogs(vm, content, onChangeType) { asking = it }
         },
     ) {
         when (kind) {
             null -> item { Note(t("mobile.common.loading")) }
-            ContentKind.NONE -> item { Card(Modifier.padding(top = 8.dp)) { Item(t("mobile.content.none_for_type")) } }
+            ContentKind.NONE -> vanillaList(vm, content, onChangeType)
             ContentKind.PACKS -> packsList(vm, serverId, content) { asking = it }
             else -> modsList(vm, serverId, content, kind) { asking = it }
         }
+    }
+}
+
+// ---------------------------------------------------------------- vanilla
+
+/** Vanilla runs no mods: Make a modpack, and why Required to join needs Fabric. */
+private fun LazyListScope.vanillaList(vm: AppViewModel, content: ContentPages, onChangeType: () -> Unit) {
+    val idle = content.busy == null
+    item { SaidNote(content.said) }
+    item {
+        Card(Modifier.padding(top = 8.dp)) {
+            Note(t("make.required_vanilla"))
+            if (vm.canDo(Permissions.SETTINGS_SERVER)) Presses(listOf(Press(t("make.change_type"), onChangeType)))
+        }
+    }
+    if (vm.canDo(Permissions.MODS_MANAGE)) {
+        item { MakeModpackCard(vm, content, idle) }
+        item { DownloadLinkCard(vm, content, idle) }
+        item { ModrinthCard(vm, content, idle) }
     }
 }
 
@@ -123,12 +183,12 @@ fun ContentScreen(vm: AppViewModel, serverId: String, onBack: () -> Unit) {
 
 private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: ContentPages, kind: ContentKind, ask: (ContentAsk) -> Unit) {
     val read = content.mods
-    val state = stateFor(vm, serverId, read.problem != null)
-    val changes = Content.changes(vm.canDo(Permissions.MODS_MANAGE), state)
+    val controls = controlsFor(vm, serverId, read.problem != null)
+    val changes = Content.changes(vm.canDo(Permissions.MODS_MANAGE), controls.label, controls.can)
     val busy = content.busy
     val idle = busy == null
 
-    item { ChangesCard(vm, serverId, changes, state, ask) }
+    item { ChangesCard(vm, serverId, changes, controls, ask) }
     item { TaskNote(content, serverId) }
     item { SaidNote(content.said) }
 
@@ -141,6 +201,15 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
         if (read.problem == null) item { Note(t("mobile.common.loading")) }
         return
     }
+    if (list.storedSeparately) item { Note(t("mods.stored_separately"), color = LocalColors.current.text2) }
+    list.modpack?.let { pack -> item { LinkedPackCard(vm, content, pack, changes == Changes.READY && idle) } }
+    if (vm.canDo(Permissions.MODS_MANAGE)) item { MakeModpackCard(vm, content, idle) }
+    if (vm.canDo(Permissions.MODS_MANAGE)) item { DownloadLinkCard(vm, content, idle) }
+    if (vm.canDo(Permissions.MODS_MANAGE)) item { ModrinthCard(vm, content, idle) }
+    item { AntiCheatCard(vm, content, idle) }
+    item { FarViewCard(vm, content, idle) }
+    list.fit?.let { fit -> item { StillFitCard(vm, content, list, fit, kind, changes == Changes.READY && idle) } }
+    if (list.overlaps.isNotEmpty()) item { SameJobCard(vm, content, list, changes == Changes.READY && idle) }
 
     if (changes == Changes.READY) {
         item {
@@ -177,8 +246,27 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
             else vm.strings.tn("mods.installed", list.mods.size),
         )
     }
-    if (list.mods.isEmpty()) item { Card { Item(t("mods.none"), subtitle = t("mods.none_hint").takeIf { changes == Changes.READY }) } }
-    items(list.mods, key = { it.filename }) { mod -> ModCard(vm, content, mod, changes, ask) }
+    // Plugins only ever run on the server, so the filter is for mods.
+    if (kind == ContentKind.MODS && list.mods.isNotEmpty()) item { SidesFilter(content) }
+    val everywhere = content.everywhere.takeIf { kind == ContentKind.MODS }
+    when {
+        everywhere != null -> everywhereList(content, everywhere)
+        list.mods.isEmpty() -> item { Card { Item(t("mods.none"), subtitle = t("mods.none_hint").takeIf { changes == Changes.READY }) } }
+        else -> {
+            val shown = Sides.shown(list.mods, content.sideFilter)
+            if (shown.isEmpty()) item { Note(t("sides.none_filtered"), color = LocalColors.current.text3) }
+            items(shown, key = { it.filename }) { mod -> ModCard(vm, content, mod, changes, ask) }
+        }
+    }
+    if (list.oddSetups.isNotEmpty()) {
+        item {
+            Card {
+                Note(t("sides.odd_title"), color = LocalColors.current.warning)
+                for (odd in list.oddSetups) Note("• ${odd.text}", color = LocalColors.current.warning)
+            }
+        }
+    }
+    if (kind != ContentKind.PACKS) playersOnly(vm, content, list.playerOnly, list.playerOnlyOptions, kind, changes, ask)
 
     if (changes == Changes.READY) {
         item { SectionTitle(t("mobile.content.search_title")) }
@@ -186,6 +274,9 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
         foundList(vm, content)
         item { AddFiles(vm, content, kind) }
     }
+
+    jarScanList(vm, content, changes)
+    deepScanList(vm, content, if (kind == ContentKind.PLUGINS) "plugins" else "mods")
 
     item { SectionTitle(t("mods.change_history")) }
     val rows = content.history.value?.history
@@ -214,9 +305,270 @@ private fun LazyListScope.modsList(vm: AppViewModel, serverId: String, content: 
     }
 }
 
+/** Server / Players / Both, and "On all servers". */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SidesFilter(content: ContentPages) {
+    FlowRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (side in Sides.FILTERS) {
+            FilterChip(selected = content.sideFilter == side, onClick = { content.sideFilter = side }, label = { Text(t("sides.$side")) })
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(t("sides.all_servers"), Modifier.weight(1f))
+        Switch(checked = content.everywhere != null, onCheckedChange = content::showEverywhere)
+    }
+}
+
+private fun LazyListScope.everywhereList(content: ContentPages, read: Read<ModSides>) {
+    read.problem?.let { problem -> item { ProblemNote(problem, onRetry = { content.showEverywhere(true) }) } }
+    val found = read.value
+    if (found == null) {
+        if (read.problem == null) item { Note(t("mobile.common.loading")) }
+        return
+    }
+    for (missed in found.notRead) {
+        item { Note(t("sides.not_read", "name" to missed.name, "reason" to missed.detail), color = LocalColors.current.warning) }
+    }
+    val shown = Sides.shown(found, content.sideFilter)
+    if (shown.isEmpty()) item { Note(t("sides.none_filtered"), color = LocalColors.current.text3) }
+    items(shown) { row -> EverywhereCard(row) }
+}
+
+@Composable
+private fun EverywhereCard(row: ModSideRow) {
+    val strings = LocalStrings.current
+    Card {
+        Item(row.name, subtitle = t("sides.for", "side" to t("sides.${row.side}")) + " · " + Sides.servers(strings, row))
+    }
+}
+
+@Composable
+private fun said(words: JarScanWords): String {
+    val text = t(words.words, *words.values.toList().toTypedArray())
+    return words.scanner?.let { "$it: $text" } ?: text
+}
+
+/** The jar check: what each jar's checks found, and the jars in quarantine with Put back. */
+private fun LazyListScope.jarScanList(vm: AppViewModel, content: ContentPages, changes: Changes) {
+    item { SectionTitle(t("jarscan.title")) }
+    content.scan.problem?.let { problem ->
+        item { Note(problem.text(), color = LocalColors.current.text3) }
+    }
+    val report = content.scan.value ?: return
+    val manage = vm.canDo(Permissions.MODS_MANAGE)
+    val idle = content.busy == null
+    item {
+        val now = rememberNow()
+        Card {
+            Note(t("jarscan.intro"), color = LocalColors.current.text2)
+            val checked = report.checkedAt
+            Item(
+                if (checked == null) t("jarscan.not_yet")
+                else t(
+                    "jarscan.summary",
+                    "when" to Display.ago(vm.strings, checked, now),
+                    "checked" to report.summary.checked,
+                    "jars" to report.summary.jars,
+                    "found" to report.summary.found,
+                ),
+            )
+            if (manage) {
+                Item(t("jarscan.weekly"), trailing = {
+                    Checkbox(checked = report.weekly, enabled = idle, onCheckedChange = { content.scanOptions(vm.strings, weekly = it) })
+                })
+                Item(t("jarscan.on_change"), trailing = {
+                    Checkbox(checked = report.onChange, enabled = idle, onCheckedChange = { content.scanOptions(vm.strings, onChange = it) })
+                })
+                Item(t("jarscan.before_start"), trailing = {
+                    Checkbox(checked = report.beforeStart, enabled = idle, onCheckedChange = { content.scanOptions(vm.strings, beforeStart = it) })
+                })
+                // Only the owner can turn off the automatic stop or change the update hold.
+                if (vm.me?.isOwner == true) {
+                    Item(t("jarscan.ask_first"), trailing = {
+                        Checkbox(checked = report.askFirst, enabled = idle, onCheckedChange = { content.scanOptions(vm.strings, askFirst = it) })
+                    })
+                    val days = report.updateHoldDays
+                    Item(t("jarscan.hold_days"), subtitle = days.toString(), trailing = {
+                        Row {
+                            TextButton(onClick = { content.scanOptions(vm.strings, updateHoldDays = days - 1) }, enabled = idle && days > 0) { Text("−") }
+                            TextButton(onClick = { content.scanOptions(vm.strings, updateHoldDays = days + 1) }, enabled = idle && days < 14) { Text("+") }
+                        }
+                    })
+                }
+                Presses(listOf(Press(t(if (content.busy == "jar_scan") "jarscan.checking" else "jarscan.check_again"), { content.scanJars(vm.strings) }, enabled = idle)))
+            }
+        }
+    }
+    items(report.jars, key = { "scan:" + it.filename }) { jar ->
+        val colors = LocalColors.current
+        Card {
+            Item(jar.filename, subtitle = t(jar.words, *jar.values.toList().toTypedArray()))
+            for (finding in jar.findings) Note(said(finding), color = colors.danger)
+            for (note in jar.notes) Note(said(note), color = colors.text3)
+            if (jar.changedOutside) {
+                Note(t("jarscan.changed"), color = colors.danger)
+                if (manage) Presses(listOf(Press(t("jarscan.changed_ok"), { content.changedOk(jar.filename, vm.strings) }, enabled = idle)))
+            }
+        }
+    }
+    if (report.quarantine.isNotEmpty()) item { SectionTitle(t("jarscan.quarantine")) }
+    items(report.quarantine, key = { "quarantine:" + it.id }) { jar ->
+        val colors = LocalColors.current
+        val now = rememberNow()
+        Card {
+            Item(jar.filename, subtitle = t("jarscan.quarantined", "when" to Display.ago(vm.strings, jar.at, now)))
+            for (finding in jar.findings) Note(said(finding), color = colors.danger)
+            if (changes != Changes.NOT_ALLOWED) {
+                Presses(listOf(Press(t("jarscan.undo"), { content.putBack(jar.id, jar.filename, vm.strings) }, enabled = changes == Changes.READY && idle)))
+            }
+        }
+    }
+}
+
+/** The deep scan: pick the checks and what to look at, run it, and see what it listed. */
+private fun LazyListScope.deepScanList(vm: AppViewModel, content: ContentPages, word: String) {
+    item { SectionTitle(t("deepscan.title")) }
+    content.deep.problem?.let { problem ->
+        item { Note(problem.text(), color = LocalColors.current.text3) }
+    }
+    val report = content.deep.value ?: return
+    item { DeepScanCard(vm, content, report, word) }
+    val last = report.last ?: return
+    val allowed = vm.canDo(Permissions.DEEP_SCAN)
+    items(last.found, key = { "deep:" + it.root + ":" + it.path }) { item ->
+        val colors = LocalColors.current
+        Card {
+            val where = if (item.root == "java") t("deepscan.in_java", "where" to item.path) else item.path
+            Item(where, subtitle = t("deepscan.kind." + item.kind))
+            for (finding in item.findings) Note(said(finding), color = if (item.kind == "known_bad") colors.danger else colors.warning)
+            Note(t("deepscan.state." + item.state), color = colors.text3)
+            if (allowed && item.kind == "worth_a_look" && item.state == "found") {
+                Presses(listOf(Press(t("deepscan.quarantine"), { content.deepQuarantine(item, vm.strings) }, enabled = content.busy == null)))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeepScanCard(vm: AppViewModel, content: ContentPages, report: DeepScanReport, word: String) {
+    val colors = LocalColors.current
+    val now = rememberNow()
+    val allowed = vm.canDo(Permissions.DEEP_SCAN)
+    val jars = content.scan.value?.jars.orEmpty().map { it.filename }
+    var picked by remember { mutableStateOf(setOf("behaviour")) }
+    var what by rememberSaveable { mutableStateOf("mods") }
+    var jar by rememberSaveable { mutableStateOf<String?>(null) }
+    Card {
+        Note(t("deepscan.intro"), color = colors.text2)
+        for (scanner in report.shown) {
+            val about = listOfNotNull(
+                t(scanner.what),
+                scanner.took?.let { t("deepscan.took", "seconds" to it.seconds, "files" to it.files) } ?: t("deepscan.not_timed"),
+                scanner.size?.takeIf { !scanner.installed }?.let { t("deepscan.first_download", "size" to Math.round(it / 1e6)) },
+                scanner.downloaded?.let { t("deepscan.downloaded", "tag" to it.tag, "when" to Display.ago(vm.strings, it.at, now)) },
+            ).joinToString("\n")
+            Tick("${t(scanner.words)} (${t(scanner.speed)})", scanner.id in picked, subtitle = about, enabled = allowed && scanner.available) { on ->
+                picked = if (on) picked + scanner.id else picked - scanner.id
+            }
+            scanner.key?.let { hasKey -> VirusTotalKey(vm, content, hasKey) }
+        }
+        if (allowed) {
+            Item(t("deepscan.scope"))
+            for (option in listOf("jar", "mods", "folder")) {
+                val words = t("deepscan.scope.$option", "word" to word)
+                Item(words, onClick = { what = option }, trailing = { RadioButton(selected = what == option, onClick = null) })
+            }
+            if (what == "jar") {
+                for (name in jars) {
+                    Item(name, onClick = { jar = name }, trailing = { RadioButton(selected = jar == name, onClick = null) })
+                }
+            }
+            if (what == "folder") Note(t("deepscan.folder_note"), color = colors.text3)
+        }
+        val running = report.running
+        val last = report.last
+        when {
+            running != null -> Item(t("deepscan.running", "done" to (running.done ?: 0.0).toInt(), "total" to (running.total ?: 0.0).toInt()))
+            last == null -> Item(t("deepscan.never_run"))
+            else -> {
+                Item(t("deepscan.result", "when" to Display.ago(vm.strings, last.finished, now), "files" to last.files, "count" to last.found.size))
+                if (last.skipped > 0) Note(t("deepscan.result_skipped", "count" to last.skipped), color = colors.text3)
+                for (error in last.errors) Note(said(error), color = colors.warning)
+            }
+        }
+        if (allowed) {
+            val chosen = picked.filter { id -> report.shown.any { it.id == id && it.available } }
+            val ready = running == null && content.busy == null && chosen.isNotEmpty() && (what != "jar" || jar in jars)
+            Presses(listOf(Press(t("deepscan.run"), { content.runDeepScan(what, chosen.sorted(), jar.takeIf { what == "jar" }, vm.strings) }, enabled = ready)))
+            DeepScanPlan(vm, content, report.options, word)
+        }
+    }
+}
+
+/** The owner's own VirusTotal key: pasted once, never shown again. */
+@Composable
+private fun VirusTotalKey(vm: AppViewModel, content: ContentPages, hasKey: Boolean) {
+    val colors = LocalColors.current
+    if (vm.me?.isOwner != true) {
+        Note(t(if (hasKey) "deepscan.vt_key_saved" else "deepscan.vt_key_owner"), color = colors.text3)
+        return
+    }
+    val idle = content.busy == null
+    if (hasKey) {
+        Note(t("deepscan.vt_key_saved"), color = colors.text3)
+        Presses(listOf(Press(t("deepscan.vt_key_remove"), { content.removeVirusTotalKey(vm.strings) }, enabled = idle)))
+        return
+    }
+    var key by remember { mutableStateOf("") }
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        PasswordField(key, { key = it.trim().take(128) }, t("deepscan.vt_key"), hint = t("deepscan.vt_key_note"))
+    }
+    Presses(listOf(Press(t("deepscan.vt_key_save"), { content.saveVirusTotalKey(key, vm.strings) }, enabled = idle && key.isNotBlank())))
+}
+
+private val SCHEDULES = listOf("off", "daily", "weekly")
+private val DAYS = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+private val HOURS = (0..23).map { "%02d:00".format(it) }
+
+/** Deep scan before each start, and the daily or weekly run. */
+@Composable
+private fun DeepScanPlan(vm: AppViewModel, content: ContentPages, options: DeepScanOptions, word: String) {
+    val colors = LocalColors.current
+    val idle = content.busy == null
+    Tick(t("deepscan.before_start", "word" to word), options.beforeStart, enabled = idle) { content.deepOptions(vm.strings, beforeStart = it) }
+    Item(t("deepscan.schedule"))
+    for (option in SCHEDULES) {
+        Item(t("deepscan.schedule.$option"), onClick = { if (idle) content.deepOptions(vm.strings, schedule = option) }, trailing = {
+            RadioButton(selected = options.schedule == option, onClick = null)
+        })
+    }
+    if (options.schedule == "off") return
+    if (options.schedule == "weekly") {
+        Choice(t("deepscan.schedule_day"), DAYS.map { it to t("deepscan.day.$it") }, options.day, idle) { content.deepOptions(vm.strings, day = it) }
+    }
+    // Whole hours here; a time set on the desktop app with minutes is kept and shown.
+    val hours = if (options.time in HOURS) HOURS else HOURS + options.time
+    Choice(t("deepscan.schedule_time"), hours.map { it to it }, options.time, idle) { content.deepOptions(vm.strings, time = it) }
+    options.next?.let { Note(t("deepscan.next", "when" to Display.dateTime(vm.strings, it)), color = colors.text2) }
+    Note(t("deepscan.schedule_note"), color = colors.text3)
+}
+
+/** A row that opens a short list to pick one from. */
+@Composable
+private fun Choice(title: String, choices: List<Pair<String, String>>, picked: String, enabled: Boolean, onPick: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Item(title, subtitle = choices.firstOrNull { it.first == picked }?.second ?: picked, onClick = { if (enabled) open = true })
+    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        for ((value, words) in choices) {
+            DropdownMenuItem(text = { Text(words) }, onClick = { open = false; onPick(value) })
+        }
+    }
+}
+
 /** Why changes are off now, with Stop right here while the server runs. */
 @Composable
-private fun ChangesCard(vm: AppViewModel, serverId: String, changes: Changes, state: String?, ask: (ContentAsk) -> Unit) {
+private fun ChangesCard(vm: AppViewModel, serverId: String, changes: Changes, controls: Controls, ask: (ContentAsk) -> Unit) {
     val colors = LocalColors.current
     val strings = vm.strings
     when (changes) {
@@ -225,7 +577,7 @@ private fun ChangesCard(vm: AppViewModel, serverId: String, changes: Changes, st
         Changes.UNKNOWN -> Note(t("mobile.content.state_unknown"), color = colors.warning, modifier = Modifier.padding(top = 8.dp))
         Changes.STOP_FIRST -> Card(Modifier.padding(top = 8.dp)) {
             Note(t("mobile.content.stop_first"), color = colors.text, modifier = Modifier.padding(top = 10.dp))
-            if (Content.canStopHere(state, vm.canControl())) {
+            if (Content.canStopHere(controls.can, vm.canControl())) {
                 val busy = vm.server[serverId]?.busyAction
                 Presses(
                     listOf(
@@ -236,8 +588,9 @@ private fun ChangesCard(vm: AppViewModel, serverId: String, changes: Changes, st
                         }, danger = true, enabled = busy == null),
                     ),
                 )
+                vm.server[serverId]?.refused?.let { Note(it.text(), color = colors.danger) }
             } else {
-                Note(t("mods.running_notice", "state" to t(Display.state(state).key)), color = colors.text2)
+                Note(t("mods.running_notice", "state" to t(Display.state(controls.label).key)), color = colors.text2)
             }
         }
     }
@@ -262,6 +615,7 @@ private fun ModCard(vm: AppViewModel, content: ContentPages, mod: Mod, changes: 
     val strings = vm.strings
     val status = Content.status(mod)
     val idle = content.busy == null
+    var choosing by remember { mutableStateOf(false) }
     Card {
         Item(
             mod.name.ifBlank { mod.filename },
@@ -269,6 +623,9 @@ private fun ModCard(vm: AppViewModel, content: ContentPages, mod: Mod, changes: 
         )
         for (problem in Content.problems(mod)) Note(problem, color = if (mod.status == "error") colors.danger else colors.warning)
         Content.newer(strings, mod)?.let { Note(it, color = colors.accentInk) }
+        if (mod.addedByYou == true) Note(t("linked.added_by_you"), color = colors.text3)
+        Sides.words(strings, mod)?.let { Note(it, color = colors.text3) }
+        Content.held(strings, mod)?.let { Note(it, color = colors.text3) }
         if (vm.technical) Note(Content.technical(strings, mod), color = colors.text3)
         if (changes != Changes.NOT_ALLOWED) {
             val ready = changes == Changes.READY && idle
@@ -278,8 +635,91 @@ private fun ModCard(vm: AppViewModel, content: ContentPages, mod: Mod, changes: 
                     Press(t("mods.update"), { content.askUpdate(mod) }, enabled = ready).takeIf { mod.updateAvailable != null },
                     Press(t("mobile.content.versions"), { content.showVersions(mod) }, enabled = idle).takeIf { mod.modId.isNotBlank() },
                     Press(t("mods.remove"), { content.askRemove(mod, strings) }, danger = true, enabled = ready),
+                    Press(t("sides.who"), { choosing = true }, enabled = idle).takeIf { Sides.picks(mod).isNotEmpty() },
                 ),
             )
+        }
+    }
+    if (choosing) {
+        val ready = changes == Changes.READY && idle
+        Question(t("sides.who_title", "name" to mod.name.ifBlank { mod.filename }), confirm = null, onConfirm = {}, onDismiss = { choosing = false }) {
+            for (side in Sides.picks(mod)) {
+                // Players moves the jar out of the mods folder, so the server must be stopped.
+                val allowed = side != "players" || ready
+                Item(
+                    t("sides.mark_$side"),
+                    subtitle = t("mobile.content.stop_first").takeIf { !allowed },
+                    onClick = if (allowed) { { choosing = false; content.setSide(mod.filename, mod.name.ifBlank { mod.filename }, side, strings) } } else null,
+                )
+            }
+        }
+    }
+}
+
+/** The player-only folder: mods, resource packs and shader packs the server never loads. */
+private fun LazyListScope.playersOnly(
+    vm: AppViewModel,
+    content: ContentPages,
+    files: List<PlayerFile>,
+    options: PlayerOnlyOptions,
+    kind: ContentKind,
+    changes: Changes,
+    ask: (ContentAsk) -> Unit,
+) {
+    val manage = changes != Changes.NOT_ALLOWED
+    if (files.isEmpty() && !manage) return
+    item { SectionTitle(t("sides.players_title")) }
+    item {
+        val strings = vm.strings
+        val idle = content.busy == null
+        val pick = rememberFilePicker { file ->
+            if (Sides.accepts(file.name)) content.uploadForPlayers(file, strings)
+            else content.tell(Said(strings.t("mobile.content.wrong_file", "kind" to ".jar / .zip"), good = false))
+        }
+        Card {
+            Note(t("sides.players_intro"), color = LocalColors.current.text2)
+            if (files.isEmpty()) Note(t("sides.players_none"))
+            for (file in files) {
+                val name = file.name.ifBlank { file.filename }
+                Item(name, subtitle = listOf(file.version, t(if (file.kind == "mod") "sides.kind_mod" else "sides.kind_pack"), file.filename).filter { it.isNotBlank() }.joinToString(" · "))
+                if (file.changed) Note(t("sides.changed"), color = LocalColors.current.warning)
+                if (file.missing) {
+                    Note(t("sides.missing"), color = LocalColors.current.warning)
+                    if (manage && file.site == "modrinth") {
+                        Presses(listOf(Press(t("sides.get_again"), { content.fetchForPlayers(file.filename, strings) }, enabled = idle)))
+                    }
+                    continue
+                }
+                if (manage) {
+                    Presses(
+                        listOfNotNull(
+                            Press(t("sides.move_to_server"), { content.setSide(file.filename, name, "both", strings) }, enabled = changes == Changes.READY && idle)
+                                .takeIf { file.kind == "mod" && kind == ContentKind.MODS },
+                            Press(t("mods.remove"), {
+                                ask(ContentAsk(strings.t("sides.remove_title", "name" to name), strings.t("sides.remove_body"), strings.t("mods.remove"), true) {
+                                    content.removeForPlayers(file.filename, strings)
+                                })
+                            }, danger = true, enabled = idle),
+                        ),
+                    )
+                }
+            }
+            if (content.busy == "players") Note(t("mobile.content.reading"))
+            if (manage) Presses(listOf(Press(t("sides.players_add"), pick, enabled = idle)))
+            if (vm.canDo(Permissions.SETTINGS_SERVER)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+                    Checkbox(checked = options.backup, enabled = idle, onCheckedChange = { content.setPlayerOnlyOptions(options.copy(backup = it), strings) })
+                    Text(t("sides.option_backup"))
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+                    Checkbox(
+                        checked = options.skipListed,
+                        enabled = idle && options.backup,
+                        onCheckedChange = { content.setPlayerOnlyOptions(options.copy(skipListed = it), strings) },
+                    )
+                    Text(t("sides.option_skip_listed"))
+                }
+            }
         }
     }
 }
@@ -375,6 +815,22 @@ private fun AddFiles(vm: AppViewModel, content: ContentPages, kind: ContentKind)
                 ),
             )
             Note(t("pack.into_intro"), color = LocalColors.current.text3)
+            var packQuery by rememberSaveable { mutableStateOf("") }
+            OutlinedTextField(
+                value = packQuery,
+                onValueChange = { packQuery = it.take(100) },
+                label = { Text(t("pack.find_placeholder")) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            )
+            Presses(listOf(Press(t(if (busy == "find_pack") "mods.searching" else "pack.find"), { content.findPacks(packQuery, strings) }, enabled = busy == null && packQuery.isNotBlank())))
+            content.packsFound?.let { found ->
+                for (problem in found.problems) Note(problem)
+                Note(t(if (found.hits.isEmpty()) "mods.nothing_found" else "pack.find_pick"))
+                for (hit in found.hits) {
+                    Item(hit.title, subtitle = Modpacks.about(strings, hit), onClick = { content.readFound(hit, strings) })
+                }
+            }
         }
     }
 }
@@ -419,6 +875,13 @@ private fun LazyListScope.packsList(vm: AppViewModel, serverId: String, content:
         else -> item { Note(t("mobile.content.pack_world", "world" to list.world)) }
     }
     if (list.running && changes == Changes.READY) item { Note(t("addons.running"), color = LocalColors.current.text3) }
+    item {
+        Card {
+            Tick(t("make.required"), list.required, subtitle = t("addons.required_hint"), enabled = idle && changes == Changes.READY) {
+                content.setAddonsRequired(it, strings)
+            }
+        }
+    }
     item { SectionTitle(vm.strings.tn("addons.installed", list.addons.size)) }
     if (list.addons.isEmpty()) item { Card { Item(t("addons.none"), subtitle = t("addons.none_hint")) } }
     items(list.addons, key = { it.uuid }) { addon ->
@@ -468,9 +931,9 @@ private fun AddPack(vm: AppViewModel, content: ContentPages) {
 
 // ---------------------------------------------------------------- questions
 
-/** Remove, Update, Versions, Update all, install, the missing ones and a modpack: each asks first. */
+/** Remove, Update, Versions, Update all, install, the missing ones, a modpack and a file no site lists: each asks first. */
 @Composable
-private fun ContentDialogs(vm: AppViewModel, content: ContentPages, ask: (ContentAsk) -> Unit) {
+private fun ContentDialogs(vm: AppViewModel, content: ContentPages, onChangeType: () -> Unit, ask: (ContentAsk) -> Unit) {
     val strings = vm.strings
     content.removing?.let { r ->
         val needed = r.impact.dependents.map { d -> strings.t("mods.needed_by", "name" to d.name, "requires" to (d.requires ?: strings.t("value.unknown"))) }
@@ -488,6 +951,16 @@ private fun ContentDialogs(vm: AppViewModel, content: ContentPages, ask: (Conten
     content.project?.let { InstallDialog(vm, content) }
     content.missingPlan?.let { MissingDialog(vm, content) }
     content.modpack?.let { ModpackDialog(vm, content) }
+    content.packUpdate?.let { PackUpdateDialog(vm, content) }
+    content.makeOptions?.let { options -> MakeModpackDialog(vm, content, options, onChangeType) }
+    if (content.askingPackLink) PackLinkDialog(vm, content)
+    content.askingModrinth?.let { ask -> ModrinthProjectDialog(vm, content, ask) }
+    if (content.askingServerLink) ServerProjectDialog(vm, content)
+    content.unknown?.let { u ->
+        val body = listOfNotNull(u.file.name, u.warning, u.sha512?.let { strings.t("desktop.mods.unknown_hash", "hash" to it) }).joinToString("\n\n")
+        Confirm(strings.t("desktop.mods.unknown_title"), body, strings.t("desktop.mods.unknown_add"), danger = true,
+            onConfirm = { content.addUnknown(strings) }, onDismiss = content::cancelUnknown)
+    }
 }
 
 /** A sheet-like question: a title, scrolling words, and one button plus Cancel. */
@@ -522,7 +995,8 @@ private fun Loading(read: Read<*>) {
 @Composable
 private fun VersionsDialog(vm: AppViewModel, content: ContentPages, v: VersionsAsk, ask: (ContentAsk) -> Unit) {
     val strings = vm.strings
-    val canChange = Content.changes(vm.canDo(Permissions.MODS_MANAGE), stateFor(vm, content.serverId, content.mods.problem != null)) == Changes.READY
+    val controls = controlsFor(vm, content.serverId, content.mods.problem != null)
+    val canChange = Content.changes(vm.canDo(Permissions.MODS_MANAGE), controls.label, controls.can) == Changes.READY
     Question(strings.t("mods.versions_title", "name" to v.mod.name), confirm = null, onConfirm = {}, onDismiss = content::closeVersions) {
         Loading(v.versions)
         val list = v.versions.value?.versions ?: return@Question
@@ -554,6 +1028,504 @@ private fun VersionRow(vm: AppViewModel, version: ModVersion, canChange: Boolean
     }
 }
 
+/** After a mod or version change: the ones to change (one Update all), the
+ * ones with no version that fits (Turn off) and the ones nothing said about. */
+@Composable
+private fun StillFitCard(vm: AppViewModel, content: ContentPages, list: ModList, fit: ModFit, kind: ContentKind?, ready: Boolean) {
+    val strings = vm.strings
+    SectionTitle(t("fit.title"))
+    Card {
+        Note(StillFit.lead(strings, fit, kind == ContentKind.PLUGINS))
+        for (row in fit.needsChange) Item(row.name, subtitle = "${Content.change(strings, row.from, row.to)}\n${row.why}")
+        if (fit.noFit.isNotEmpty()) Note(t("fit.no_fit"), color = LocalColors.current.text)
+        for (row in fit.noFit) {
+            Item(row.name, subtitle = row.why)
+            val mod = list.mods.firstOrNull { it.filename == row.filename && it.enabled }
+            if (mod != null && vm.canDo(Permissions.MODS_MANAGE)) {
+                Presses(listOf(Press(t("mods.turn_off"), { content.setEnabled(mod, false, strings) }, enabled = ready)))
+            }
+        }
+        if (fit.cantTell.isNotEmpty()) Note(t("fit.cant_tell"), color = LocalColors.current.text)
+        for (row in fit.cantTell) Item(row.name, subtitle = row.why)
+        if (vm.canDo(Permissions.MODS_MANAGE)) {
+            Presses(
+                listOfNotNull(
+                    Press(t("fit.change"), { content.openFit(fit) }, enabled = ready).takeIf { fit.needsChange.isNotEmpty() },
+                    Press(t("fit.hide"), { content.hideFit(strings) }),
+                ),
+            )
+        }
+    }
+}
+
+/** The same mod twice, or mods that do the same job: which one to turn off
+ * when the facts say. Turn off has Undo like the mod's own row. */
+/** The modpack this server came from: Modpack update and Unlink. */
+@Composable
+private fun LinkedPackCard(vm: AppViewModel, content: ContentPages, pack: LinkedModpack, ready: Boolean) {
+    val strings = vm.strings
+    var unlinking by remember { mutableStateOf(false) }
+    SectionTitle(t("linked.title"))
+    Card {
+        for (line in LinkedPacks.lines(strings, pack)) Note(line)
+        if (vm.canDo(Permissions.MODS_MANAGE)) {
+            Presses(
+                listOfNotNull(
+                    Press(t("linked.update"), { content.previewPackUpdate(pack.update?.versionId, strings) }, enabled = ready)
+                        .takeIf { pack.update != null && vm.canDo(Permissions.SETTINGS_SERVER) },
+                    Press(t("linked.unlink"), { unlinking = true }, enabled = ready),
+                ),
+            )
+        }
+    }
+    if (unlinking) {
+        Confirm(strings.t("linked.unlink_title", "name" to pack.name), strings.t("linked.unlink_body"), strings.t("linked.unlink"), danger = true,
+            onConfirm = { unlinking = false; content.unlinkPack(strings) }, onDismiss = { unlinking = false })
+    }
+}
+
+@Composable
+private fun PackUpdateDialog(vm: AppViewModel, content: ContentPages) {
+    val read = content.packUpdate ?: return
+    val strings = vm.strings
+    var usePackConfigs by remember(read.token) { mutableStateOf(false) }
+    val problems = read.changes.problems
+    Question(
+        strings.t("linked.update_title", "name" to read.pack.name, "version" to read.changes.toVersion),
+        confirm = strings.t("linked.update").takeIf { problems.isEmpty() },
+        onConfirm = { content.updatePack(usePackConfigs, strings) },
+        onDismiss = content::cancelPackUpdate,
+    ) {
+        if (problems.isNotEmpty()) {
+            Text(t("pack.cant_import"), color = LocalColors.current.danger)
+            for (p in problems) Text("• $p", color = LocalColors.current.danger)
+            return@Question
+        }
+        for (line in LinkedPacks.changes(strings, read.changes)) Text(line, modifier = Modifier.padding(top = 4.dp))
+        if (read.changes.configsChangedByYou.isNotEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                Checkbox(checked = usePackConfigs, onCheckedChange = { usePackConfigs = it })
+                Text(t("linked.use_pack_configs"))
+            }
+        }
+        for (step in LinkedPacks.steps(strings, read)) Text("• $step", modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
+/** Make a modpack from this server, then share it through the phone's
+ * share menu or have the Discord bot post it. */
+@Composable
+private fun MakeModpackCard(vm: AppViewModel, content: ContentPages, idle: Boolean) {
+    val strings = vm.strings
+    val context = LocalContext.current
+    SectionTitle(t("make.title"))
+    Card {
+        Note(t("make.intro"))
+        val made = content.made
+        if (made != null) {
+            for (line in MadeModpacks.lines(strings, made)) Note(line, color = LocalColors.current.text)
+        }
+        Presses(
+            listOfNotNull(
+                Press(t("make.start"), { content.askMakeModpack(strings) }, enabled = idle),
+                Press(t("make.share"), {
+                    content.shareModpack(sharedFolder(context, "modpack"), strings) { shareFile(context, it, strings.t("make.share")) }
+                }, enabled = idle).takeIf { made != null },
+                Press(t("make.discord"), { content.postModpack(strings) }, enabled = idle).takeIf { made?.discord == true },
+            ),
+        )
+        if (made != null) {
+            Note(t("make.guide_title"), color = LocalColors.current.text)
+            Note(t("make.guide"))
+        }
+    }
+}
+
+/** The download link (on, off, New link, Copy) and the server resource pack. */
+@Composable
+private fun DownloadLinkCard(vm: AppViewModel, content: ContentPages, idle: Boolean) {
+    val strings = vm.strings
+    val clipboard = LocalClipboardManager.current
+    LaunchedEffect(content.serverId) { content.loadLink() }
+    val link = content.link ?: return
+    val owner = vm.canDo(Permissions.PC_SETTINGS)
+    val game = vm.canDo(Permissions.SETTINGS_GAME)
+    val pick = rememberFilePicker { file ->
+        if (file.name.lowercase().endsWith(".zip")) content.uploadPack(file, strings)
+        else content.tell(Said(strings.t("mobile.content.wrong_file", "kind" to ".zip"), good = false))
+    }
+    SectionTitle(t("link.title"))
+    Card {
+        Note(t("link.intro"))
+        for (line in DownloadLinks.lines(strings, link, owner)) Note(line, color = LocalColors.current.text)
+        Presses(
+            listOfNotNull(
+                Press(t(if (link.on) "link.turn_off" else "link.turn_on"), { content.switchLink(!link.on, strings) },
+                    enabled = idle && owner && (link.on || link.whyNot == null)),
+                Press(t("link.new"), { content.newLink(strings) }, enabled = idle).takeIf { link.on && owner },
+                link.modpackUrl?.let { url ->
+                    Press(t("link.copy"), {
+                        clipboard.setText(AnnotatedString(url))
+                        content.tell(Said(strings.t("link.copied"), good = true))
+                    })
+                },
+            ),
+        )
+        Note(t("pack.title"), color = LocalColors.current.text)
+        Note(t("pack.intro"))
+        for (line in DownloadLinks.packLines(strings, link)) Note(line, color = LocalColors.current.text)
+        link.resourcePack?.let { pack ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = pack.required, onCheckedChange = { content.setPackRequired(it, strings) }, enabled = idle && game)
+                Text(t("pack.required"))
+            }
+        }
+        Presses(
+            listOfNotNull(
+                Press(t("pack.pick"), pick, enabled = idle && game),
+                Press(t("pack.use_link"), { content.askingPackLink = true }, enabled = idle && game),
+                Press(t("pack.remove"), { content.removePack(strings) }, enabled = idle && game).takeIf { link.resourcePack != null },
+            ),
+        )
+        Note(t("pack.tailscale_only"))
+    }
+}
+
+/** Sign in with Modrinth, upload the modpack and own jars, the Server Project helper. */
+@Composable
+private fun ModrinthCard(vm: AppViewModel, content: ContentPages, idle: Boolean) {
+    val strings = vm.strings
+    val context = LocalContext.current
+    LaunchedEffect(content.serverId) { content.loadModrinth() }
+    LaunchedEffect(vm.modrinthReturn) {
+        vm.modrinthReturn?.let {
+            vm.modrinthReturn = null
+            content.finishModrinth(it, strings)
+        }
+    }
+    val share = content.modrinth ?: return
+    val owner = vm.canDo(Permissions.PC_SETTINGS)
+    val account = share.account
+    var showSteps by remember { mutableStateOf(false) }
+    SectionTitle(t("modrinth.title"))
+    Card {
+        Note(t("modrinth.intro"))
+        for (line in ModrinthCards.lines(strings, share, owner)) Note(line, color = LocalColors.current.text)
+        val made = share.made
+        Presses(
+            listOfNotNull(
+                Press(t("modrinth.sign_in"), { content.signInModrinth({ openLink(context, it) }, strings) }, enabled = idle)
+                    .takeIf { owner && account.available && !account.signedIn },
+                Press(
+                    if (made != null) strings.t("modrinth.upload_named", "name" to made.name, "version" to made.version) else t("modrinth.upload"),
+                    {
+                        if (share.project != null) content.uploadToModrinth("", "", strings)
+                        else content.askingModrinth = ModrinthAsk(null, made?.name ?: "")
+                    },
+                    enabled = idle && account.signedIn && made != null,
+                ),
+                Press(t("modrinth.own_jar"), {
+                    share.ownJars.firstOrNull { it.url == null }?.let { content.askingModrinth = ModrinthAsk(it, it.name) }
+                }, enabled = idle && account.signedIn).takeIf { share.ownJars.any { it.url == null } },
+                Press(t("modrinth.sign_out"), { content.signOutModrinth(strings) }, enabled = idle).takeIf { owner && account.signedIn },
+            ),
+        )
+        Note(t("modrinth.review_note"))
+        Note(t("modrinth.server_title"), color = LocalColors.current.text)
+        Note(t("modrinth.server_intro"))
+        for (line in ModrinthCards.serverLines(strings, share)) Note(line, color = LocalColors.current.text)
+        if (share.address != null) {
+            Presses(
+                listOf(
+                    Press(t("modrinth.server_how"), { showSteps = true }),
+                    Press(t("modrinth.server_paste"), { content.askingServerLink = true }, enabled = idle),
+                ),
+            )
+        }
+    }
+    if (showSteps) {
+        Question(strings.t("modrinth.server_title"), confirm = null, onConfirm = {}, onDismiss = { showSteps = false }) {
+            Text(ModrinthCards.steps(strings, share))
+        }
+    }
+}
+
+/** Far view: Off / Distant Horizons / Voxy, DH's unvisited land, Chunky at night, and (Technical) Rebuild. */
+@Composable
+private fun FarViewCard(vm: AppViewModel, content: ContentPages, idle: Boolean) {
+    val strings = vm.strings
+    LaunchedEffect(content.serverId) { content.loadFarView() }
+    val card = content.farView ?: return
+    var unvisited by remember(card) { mutableStateOf(card.unvisited) }
+    var ahead by remember(card) { mutableStateOf(card.loadAhead.on) }
+    var radius by remember(card) { mutableStateOf(card.loadAhead.radius.toString()) }
+    var asking by remember { mutableStateOf(false) }
+    SectionTitle(t("farview.title"))
+    Card {
+        Note(t("farview.intro"))
+        Note(FarViews.status(strings, card), color = LocalColors.current.text)
+        if (!card.supported) return@Card
+        val may = card.mayChange
+        Note(t(if (may) "farview.stop_first" else "farview.no_change"))
+        for (item in card.choices) {
+            for (line in FarViews.lines(strings, item, card.choice)) Note(line, color = LocalColors.current.text)
+            if (may && item.available && item.id != card.choice) {
+                Presses(listOf(Press(strings.t("farview.use", "name" to item.name), { content.chooseFarView(item.id, strings) }, enabled = idle)))
+            }
+        }
+        if (may && card.choice != "off") {
+            Note(t("farview.off_note"))
+            Presses(listOf(Press(t("farview.turn_off"), { content.chooseFarView("off", strings) }, enabled = idle)))
+        }
+        if (card.choice == "distanthorizons") {
+            Tick(t("farview.unvisited"), unvisited, subtitle = t("farview.unvisited_hint"), enabled = may) { unvisited = it }
+        }
+        val load = card.loadAhead
+        Tick(t("farview.load_ahead"), ahead, subtitle = strings.t("farview.load_ahead_hint", "night" to load.night), enabled = may && load.chunky) { ahead = it }
+        if (!load.chunky) {
+            Note(t("farview.needs_chunky"))
+            if (may) Presses(listOf(Press(t("farview.add_chunky"), { content.openProject(ModrinthHit(slug = "chunky", title = "Chunky")) }, enabled = idle)))
+        } else if (load.running) {
+            Note(t("farview.loading_now"), color = LocalColors.current.text)
+        }
+        OutlinedTextField(value = radius, onValueChange = { radius = it.filter(Char::isDigit).take(5) }, enabled = may,
+            label = { Text(t("farview.radius")) }, singleLine = true)
+        val blocks = radius.toIntOrNull()
+        if (may) {
+            Presses(listOf(Press(t("farview.save"), { content.saveFarView(unvisited, ahead, blocks ?: 0, strings) }, enabled = idle && blocks != null && blocks in 100..30000)))
+        }
+        Note(t("farview.backups_note"))
+        if (vm.technical && may) {
+            Note(t("farview.rebuild_hint"))
+            Presses(listOf(Press(t("farview.rebuild"), { asking = true }, enabled = idle)))
+        }
+    }
+    if (asking) {
+        Question(t("farview.rebuild"), t("farview.rebuild"), onConfirm = { asking = false; content.rebuildFarView(strings) }, onDismiss = { asking = false }) {
+            Text(t("farview.rebuild_ask"))
+        }
+    }
+}
+
+/** The anti-cheat picker: free from Modrinth, paid from the seller's page, or your own jar. */
+@Composable
+private fun AntiCheatCard(vm: AppViewModel, content: ContentPages, idle: Boolean) {
+    val strings = vm.strings
+    val context = LocalContext.current
+    LaunchedEffect(content.serverId) { content.loadAntiCheat() }
+    val pickJar = rememberFilePicker { file -> content.uploadMod(file, strings) }
+    val picker = content.antiCheat ?: return
+    SectionTitle(t("anticheat.title"))
+    Card {
+        Note(t("anticheat.intro"))
+        Note(AntiCheats.status(strings, picker), color = LocalColors.current.text)
+        if (!picker.supported) return@Card
+        Note(t("anticheat.cpu"))
+        if (!picker.mayInstall) Note(t("anticheat.no_install"))
+        Note(t("anticheat.free"), color = LocalColors.current.text)
+        for (item in picker.free) {
+            for (line in AntiCheats.free(strings, item)) Note(line, color = LocalColors.current.text)
+            if (!item.on && picker.mayInstall) {
+                Presses(listOf(Press(strings.t("anticheat.add", "name" to item.name), { content.openProject(ModrinthHit(slug = item.project, title = item.name)) }, enabled = idle)))
+            }
+        }
+        val ownJar = picker.mayInstall && picker.mayAddOwnJar
+        if (picker.paid.isNotEmpty()) {
+            Note(t("anticheat.paid"), color = LocalColors.current.text)
+            Note(t("anticheat.buy_note"))
+            for (item in picker.paid) {
+                for (line in AntiCheats.paid(strings, item)) Note(line, color = LocalColors.current.text)
+                Presses(
+                    listOfNotNull(
+                        Press(t("anticheat.seller"), { openLink(context, item.link) }),
+                        item.setup?.let { setup -> Press(t("anticheat.setup"), { openLink(context, setup) }) },
+                        Press(t("anticheat.from_file"), pickJar, enabled = idle).takeIf { ownJar && !item.on },
+                    ),
+                )
+            }
+            Note(t("anticheat.prices_note"))
+        }
+        Note(t("anticheat.custom"), color = LocalColors.current.text)
+        Note(t("anticheat.custom_about"))
+        if (ownJar) Presses(listOf(Press(t("anticheat.from_file"), pickJar, enabled = idle)))
+        else Note(t("anticheat.no_own_jar"))
+    }
+}
+
+/** The Modrinth address and one-line summary of a new project. */
+@Composable
+private fun ModrinthProjectDialog(vm: AppViewModel, content: ContentPages, ask: ModrinthAsk) {
+    val strings = vm.strings
+    var slug by remember { mutableStateOf(ModrinthCards.slug(ask.name)) }
+    var summary by remember { mutableStateOf("") }
+    Question(
+        ask.jar?.name ?: strings.t("modrinth.title"),
+        confirm = strings.t("modrinth.upload"),
+        enabled = slug.isNotBlank() && summary.trim().length >= 3,
+        onConfirm = { content.uploadToModrinth(slug.trim(), summary.trim(), strings) },
+        onDismiss = { content.askingModrinth = null },
+    ) {
+        if (ask.jar != null) Note(t("modrinth.own_jar_pick"))
+        OutlinedTextField(value = slug, onValueChange = { slug = it.take(64) }, label = { Text(t("modrinth.slug_prompt")) }, singleLine = true)
+        OutlinedTextField(value = summary, onValueChange = { summary = it.take(256) }, label = { Text(t("modrinth.summary_prompt")) })
+    }
+}
+
+@Composable
+private fun ServerProjectDialog(vm: AppViewModel, content: ContentPages) {
+    val strings = vm.strings
+    var link by remember { mutableStateOf("") }
+    Question(
+        strings.t("modrinth.server_title"),
+        confirm = strings.t("modrinth.server_paste"),
+        onConfirm = { content.setServerProject(link.trim(), strings) },
+        onDismiss = { content.askingServerLink = false },
+    ) {
+        OutlinedTextField(value = link, onValueChange = { link = it.take(200) }, label = { Text(t("modrinth.server_paste_prompt")) }, singleLine = true)
+    }
+}
+
+@Composable
+private fun PackLinkDialog(vm: AppViewModel, content: ContentPages) {
+    val strings = vm.strings
+    var url by remember { mutableStateOf("") }
+    var sha1 by remember { mutableStateOf("") }
+    Question(
+        strings.t("pack.title"),
+        confirm = strings.t("pack.use_link"),
+        enabled = url.isNotBlank(),
+        onConfirm = { content.setPackLink(url.trim(), sha1.trim(), strings) },
+        onDismiss = { content.askingPackLink = false },
+    ) {
+        OutlinedTextField(value = url, onValueChange = { url = it.take(1000) }, label = { Text(t("pack.link_prompt")) }, singleLine = true)
+        OutlinedTextField(value = sha1, onValueChange = { sha1 = it.take(40) }, label = { Text(t("pack.sha1_prompt")) }, singleLine = true)
+    }
+}
+
+@Composable
+private fun MakeModpackDialog(vm: AppViewModel, content: ContentPages, options: ModpackMakeOptions, onChangeType: () -> Unit) {
+    val strings = vm.strings
+    var name by remember(options) { mutableStateOf(options.name) }
+    var version by remember(options) { mutableStateOf(options.version) }
+    var leaveOut by remember(options) { mutableStateOf(true) }
+    var loader by remember(options) { mutableStateOf(options.playersLoaders.firstOrNull()?.id ?: "fabric") }
+    var configs by remember(options) { mutableStateOf(setOf<String>()) }
+    val companion = options.requiredToJoin.available
+    var required by remember(options) { mutableStateOf(companion && options.requiredToJoin.on) }
+    var chatOn by remember(options) { mutableStateOf(options.chatLine.on) }
+    var chatText by remember(options) { mutableStateOf(options.chatLine.text) }
+    val title = options.titleScreen
+    var buttonOn by remember(options) { mutableStateOf(title.button.on) }
+    var address by remember(options) { mutableStateOf(title.button.address) }
+    var flavorOn by remember(options) { mutableStateOf(title.flavorText.on) }
+    var flavor by remember(options) { mutableStateOf(title.flavorText.text) }
+    var backgroundOn by remember(options) { mutableStateOf(title.background.on) }
+    val hasBackground = title.backgroundSet || content.backgroundSet
+    val pickBackground = rememberFilePicker { file ->
+        if (file.name.lowercase().endsWith(".png")) content.uploadTitleBackground(file, strings)
+        else content.tell(Said(strings.t("mobile.content.wrong_file", "kind" to ".png"), good = false))
+    }
+    Question(
+        strings.t("make.title"),
+        confirm = strings.t("make.title"),
+        enabled = name.isNotBlank() && version.isNotBlank(),
+        onConfirm = {
+            // Left empty: the agent's own wording.
+            val chat = chatText.trim().takeIf { companion && it.isNotEmpty() }?.let { ChatLine(chatOn, it) }
+            val screen = TitleScreen(
+                TitleButton(buttonOn, address.trim()),
+                FlavorText(flavorOn, flavor.trim()),
+                OnOff(backgroundOn && hasBackground),
+            )
+            content.makeModpack(MakeModpack(name.trim(), version.trim(), leaveOut, configs.toList(), loader, required, chat, screen), strings)
+        },
+        onDismiss = content::cancelMakeModpack,
+    ) {
+        OutlinedTextField(value = name, onValueChange = { name = it.take(64) }, label = { Text(t("make.name")) }, singleLine = true)
+        OutlinedTextField(value = version, onValueChange = { version = it.take(32) }, label = { Text(t("make.version")) }, singleLine = true)
+        if (options.playersLoaders.isNotEmpty()) {
+            Text(t("make.loader"), modifier = Modifier.padding(top = 6.dp))
+            for (choice in options.playersLoaders) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = loader == choice.id, onClick = { loader = choice.id })
+                    Text(choice.name)
+                }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+            Checkbox(checked = leaveOut, onCheckedChange = { leaveOut = it })
+            Text(t("make.leave_out"))
+        }
+        Text(t("make.leave_out_hint"))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Needs the Companion mod on the server, which does the join check.
+            Checkbox(checked = required, onCheckedChange = { required = it }, enabled = companion)
+            Text(t("make.required"))
+        }
+        if (options.requiredToJoin.needsFabric) {
+            // Vanilla can't run the Companion: Fabric with no other mods plays the same.
+            Text(t("make.required_vanilla"))
+            TextButton(onClick = { content.cancelMakeModpack(); onChangeType() }) { Text(t("make.change_type")) }
+        } else {
+            Text(t(if (companion) "make.required_hint" else "make.required_later"))
+        }
+        if (companion) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = chatOn, onCheckedChange = { chatOn = it }, enabled = !required)
+                Text(t("make.chat_line"))
+            }
+            OutlinedTextField(value = chatText, onValueChange = { chatText = it.replace("\n", " ").take(300) }, enabled = !required, singleLine = true)
+            Text(t("make.chat_line_hint"))
+            // What friends with the Companion see when Minecraft starts.
+            Text(t("make.title_screen"), modifier = Modifier.padding(top = 6.dp))
+            Text(t("make.title_screen_hint"))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = buttonOn, onCheckedChange = { buttonOn = it })
+                Text(t("make.title_button"))
+            }
+            OutlinedTextField(value = address, onValueChange = { address = it.trim().take(260) }, enabled = buttonOn,
+                label = { Text(t("make.title_address")) }, singleLine = true)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = flavorOn, onCheckedChange = { flavorOn = it })
+                Text(t("make.flavor_text"))
+            }
+            OutlinedTextField(value = flavor, onValueChange = { flavor = it.replace("\n", " ").take(60) }, enabled = flavorOn, singleLine = true)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = backgroundOn && hasBackground, onCheckedChange = { backgroundOn = it }, enabled = hasBackground)
+                Text(t("make.background"))
+            }
+            Presses(listOf(Press(t("make.background_pick"), { pickBackground() }, enabled = content.busy == null)))
+        }
+        Text(t(if (options.configs.isEmpty()) "make.no_configs" else "make.configs"), modifier = Modifier.padding(top = 6.dp))
+        for (config in options.configs) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = config.path in configs,
+                    onCheckedChange = { on -> configs = if (on) configs + config.path else configs - config.path },
+                )
+                Text(config.path)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SameJobCard(vm: AppViewModel, content: ContentPages, list: ModList, ready: Boolean) {
+    val strings = vm.strings
+    SectionTitle(t("same.title"))
+    Card {
+        for (overlap in list.overlaps) {
+            Item(overlap.say, subtitle = overlap.why)
+            if (!vm.canDo(Permissions.MODS_MANAGE)) continue
+            for (row in SameJob.turnOff(overlap)) {
+                val mod = list.mods.firstOrNull { it.filename == row.filename && it.enabled } ?: continue
+                Item("${row.name} ${row.version}")
+                Presses(listOf(Press(t("mods.turn_off"), { content.setEnabled(mod, false, strings) }, enabled = ready)))
+            }
+        }
+    }
+}
+
 @Composable
 private fun UpdateAllDialog(vm: AppViewModel, content: ContentPages) {
     val read = content.plan ?: return
@@ -575,11 +1547,14 @@ private fun UpdateAllDialog(vm: AppViewModel, content: ContentPages) {
         blocked?.let { Text(it, color = LocalColors.current.warning, modifier = Modifier.padding(top = 6.dp)) }
         for (row in plan.updates) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                Checkbox(checked = row.filename in content.ticked, onCheckedChange = { on -> content.tick(row.filename, on) })
+                // A held one is listed but can't be ticked; Update now on its card skips the wait.
+                Checkbox(checked = row.filename in content.ticked, onCheckedChange = { on -> content.tick(row.filename, on) }, enabled = row.heldUntil == null)
                 Column {
                     Text(row.name.ifBlank { row.filename }, color = LocalColors.current.text)
                     Text(Content.change(strings, row.installedVersion, row.latestVersion))
                     if (!row.enabled) Text(t("mobile.content.update_all_off"), color = LocalColors.current.text3)
+                    row.saved?.let { Text(it, color = LocalColors.current.text3) }
+                    row.heldUntil?.let { Text(t("mobile.content.update_all_held", "when" to Display.dateTime(strings, it)), color = LocalColors.current.text3) }
                 }
             }
         }
@@ -678,6 +1653,7 @@ private fun ModpackDialog(vm: AppViewModel, content: ContentPages) {
         }
         if (pack.clientOnly.isNotEmpty()) Text(t("pack.client_only", "names" to pack.clientOnly.joinToString(", ")), modifier = Modifier.padding(top = 6.dp))
         if (pack.skippedOverrides.isNotEmpty()) Text(t("pack.skipped_extras", "names" to pack.skippedOverrides.joinToString(", ")), modifier = Modifier.padding(top = 6.dp))
+        for (note in Modpacks.notes(strings, pack)) Text(note, color = LocalColors.current.warning, modifier = Modifier.padding(top = 6.dp))
         if (pack.canImport) {
             Text(t("mobile.content.modpack_failed_note"), modifier = Modifier.padding(top = 8.dp))
             for (step in Modpacks.steps(strings, inspected)) Text("• $step", modifier = Modifier.padding(top = 2.dp))

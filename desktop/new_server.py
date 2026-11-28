@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFrame,
@@ -36,9 +35,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .mods import pack_lines
+from .mods import find_pack, pack_lines
 from .overview import card
-from .ui import clock, field, label, push, refill, size, swatches
+from .parts import Segmented
+from .ui import clock, field, label, notice, push, refill, size, swatches
 from .words import has, mode, text
 
 if TYPE_CHECKING:
@@ -76,15 +76,13 @@ class NewServerScreen(QScrollArea):
         column.setSpacing(12)
         column.addWidget(label(text("page.add_server"), name="title"))
         ways = QHBoxLayout()
-        ways.setSpacing(0)
-        self.way_group = QButtonGroup(self)
         self.panels = QStackedWidget()
-        for i, words in enumerate(WAYS):
-            button = push(text(words), "segment")
-            button.setCheckable(True)
-            button.clicked.connect(lambda _=False, n=i: self.panels.setCurrentIndex(n))
-            self.way_group.addButton(button, i)
-            ways.addWidget(button)
+        self.ways = Segmented(
+            [(str(i), text(words)) for i, words in enumerate(WAYS)],
+            "0",
+            lambda key: self.panels.setCurrentIndex(int(key)),
+        )
+        ways.addWidget(self.ways)
         ways.addStretch()
         column.addLayout(ways)
         self.said = label(kind="problem")
@@ -109,7 +107,7 @@ class NewServerScreen(QScrollArea):
     def load(self) -> None:
         """Each time the tab opens: a fresh start, with the PC's choices."""
         self.said.hide()
-        self.way_group.button(0).setChecked(True)
+        self.ways.choose("0")
         self.panels.setCurrentIndex(0)
         for layout in (self.steps, self.pack_column, self.have_column):
             refill(layout, [])
@@ -239,15 +237,18 @@ class NewServerScreen(QScrollArea):
         self.goal = goal
         technical = "true" if mode["technical"] else "false"
         window = self.window_
+        kind = self.choice.get("type")
         window.run(
             lambda: window.agent.call(
                 "GET", f"/server-types/recommend?goal={goal}&technical={technical}"
             ),
-            self.show_advice,
+            lambda advice: self.show_advice(advice, goal, kind),
             self.failed,
         )
 
-    def show_advice(self, advice: dict) -> None:
+    def show_advice(self, advice: dict, goal: str, kind: str | None) -> None:
+        if self.goal != goal or self.choice.get("type") != kind:
+            return  # another goal or a kind was picked while asking: an old answer
         self.advice = advice
         self.choice.update(type=None, minecraft=None, loader=None)
         refill(self.kinds_slot, [self.kinds_card()])
@@ -349,15 +350,23 @@ class NewServerScreen(QScrollArea):
         if self.choice["type"] is not kind:
             return  # another kind was chosen meanwhile
         frame, layout = card(text("new.step_version"))
+        # This kind's tips: always with tips on, else once when it's new to them.
+        tip = "bedrock" if kind.get("edition") == "bedrock" else kind.get("content") or "vanilla"
+        if tip in self.options.get("kind_tips", []):
+            layout.addWidget(notice(f"tip.kind.{tip}"))
         self.spawns: QCheckBox | None = None
         if self.goal == "vanilla" and kind["id"] in (self.advice or {}).get("warn", []):
-            layout.addWidget(label(text("new.farms_warning", name=kind["name"]), "notice"))
+            layout.addWidget(
+                notice("new.farms_warning", text("new.farms_warning", name=kind["name"]))
+            )
             if mode["technical"]:
                 self.spawns = QCheckBox(text("new.vanilla_spawns"))
                 layout.addWidget(self.spawns)
                 layout.addWidget(label(text("spawns.hint"), "sub"))
         if kind.get("never_recommended"):
-            layout.addWidget(label(text("new.fork_warning", name=kind["name"]), "notice"))
+            layout.addWidget(
+                notice("new.fork_warning", text("new.fork_warning", name=kind["name"]))
+            )
         if payload.get("latest_only"):
             layout.addWidget(label(text("new.bedrock_versions"), "sub"))
         if payload.get("source_problem"):
@@ -462,6 +471,7 @@ class NewServerScreen(QScrollArea):
                 field(text("new.memory"), self.memory, self.options.get("memory_reason") or "")
             )
             layout.addWidget(label(text("new.port_hint", port=self.options.get("port")), "muted"))
+        layout.addWidget(self.who_box())
         # Technical: a throwaway server for trying builds (agent/testserver.py).
         self.test = QCheckBox(text("test.make"))
         self.test.setVisible(mode["technical"])
@@ -469,6 +479,39 @@ class NewServerScreen(QScrollArea):
         if mode["technical"]:
             layout.addWidget(label(text("test.make_hint"), "sub"))
         return frame
+
+    def who_box(self) -> QWidget:
+        """ "Who's this server for?", from this PC's first-run answer. A few
+        friends or kids: the whitelist goes on, with their names."""
+        from .welcome import PLAYED_BY
+
+        box = QWidget()
+        column = QVBoxLayout(box)
+        column.setContentsMargins(0, 0, 0, 0)
+        self.who = QComboBox()
+        self.who.setObjectName("newPlayedBy")
+        self.who.addItem(text("welcome.for_unset"), "")
+        for value, words in PLAYED_BY:
+            self.who.addItem(text(words), value)
+        self.who.setCurrentIndex(max(0, self.who.findData(self.options.get("played_by") or "")))
+        column.addWidget(field(text("welcome.who_question"), self.who))
+        self.names = QLineEdit()
+        self.names.setObjectName("newPlayers")
+        self.names.setPlaceholderText(text("new.players_placeholder"))
+        names = field(text("new.players"), self.names, text("new.players_hint"))
+        column.addWidget(names)
+
+        def shown() -> None:
+            names.setVisible(self.who.currentData() in ("friends", "kids"))
+
+        self.who.currentIndexChanged.connect(lambda _i: shown())
+        shown()
+        return box
+
+    def players(self) -> list[str]:
+        if self.who.currentData() not in ("friends", "kids"):
+            return []
+        return [n.strip() for n in self.names.text().replace(";", ",").split(",") if n.strip()]
 
     def rules_card(self, kind: dict) -> QFrame:
         """Minecraft's rules (and for Bedrock, Mojang's Privacy Policy too)."""
@@ -526,6 +569,8 @@ class NewServerScreen(QScrollArea):
                     "vanilla_spawns": bool(self.spawns and self.spawns.isChecked()),
                     "eula_accepted": True,
                     "test": self.test.isChecked(),
+                    "played_by": self.who.currentData(),
+                    "players": self.players(),
                 }
                 window = self.window_
                 window.run(
@@ -576,7 +621,7 @@ class NewServerScreen(QScrollArea):
         row.addWidget(field(text("add.name"), name), 1)
         row.addWidget(folder, 1)
         layout.addLayout(row)
-        layout.addWidget(label(text("custom.warning"), "notice"))
+        layout.addWidget(notice("custom.warning"))
         trust = QCheckBox(text("custom.trust"))
         eula = QCheckBox(text("new.eula_tick"))
         layout.addWidget(trust)
@@ -690,7 +735,7 @@ class NewServerScreen(QScrollArea):
             row.addWidget(field(text("custom.based_on"), bases), 1)
             row.addWidget(field(text("bring.which_jar"), jars), 1)
             layout.addLayout(row)
-            layout.addWidget(label(text("custom.warning"), "notice"))
+            layout.addWidget(notice("custom.warning"))
             layout.addWidget(trust)
         name = QLineEdit(Path(found["path"]).stem[:60])
         name.setMaxLength(60)
@@ -855,14 +900,34 @@ class NewServerScreen(QScrollArea):
         row.addWidget(choose)
         row.addStretch()
         layout.addLayout(row)
+        line = QHBoxLayout()
+        self.pack_box = QLineEdit()
+        self.pack_box.setMaxLength(100)
+        self.pack_box.setPlaceholderText(text("pack.find_placeholder"))
+        self.pack_box.setAccessibleName(text("pack.find_placeholder"))
+        find = push(text("pack.find"))
+        line.addWidget(self.pack_box, 1)
+        line.addWidget(find)
+        layout.addLayout(line)
         self.pack_slot = QVBoxLayout()
         layout.addLayout(self.pack_slot)
         choose.clicked.connect(self.pick_pack)
+        find.clicked.connect(self.find_pack)
+        self.pack_box.returnPressed.connect(self.find_pack)
         return frame
+
+    def find_pack(self) -> None:
+        """A modpack from Modrinth or CurseForge by name, read like a file."""
+        query = self.pack_box.text().strip()
+        if query:
+            find_pack(self.window_, query, "", self.say_pack, self.show_pack)
+
+    def say_pack(self, words: str) -> None:
+        refill(self.pack_slot, [label(words, "sub")] if words else [])
 
     def take(self, paths: list[str]) -> None:
         """A modpack dropped on the "+" tab."""
-        self.way_group.button(1).setChecked(True)
+        self.ways.choose("1")
         self.panels.setCurrentIndex(1)
         self.read_pack(paths[0])
 
@@ -935,6 +1000,8 @@ class NewServerScreen(QScrollArea):
                 "name": name.text().strip(),
                 "directory": folder_box.text().strip(),
                 "eula_accepted": True,
+                # Its own jars are listed above the Create button.
+                "own_jars": bool(pack.get("own_jars")),
             }
             window.run(
                 lambda: window.agent.call("POST", f"/modpacks/{token}/new-server", body, slow=True),

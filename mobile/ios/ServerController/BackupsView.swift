@@ -9,7 +9,7 @@ struct SectionTitle: View {
 
     var body: some View {
         Text(text)
-            .font(.headline)
+            .font(.heading())
             .foregroundStyle(palette.textPrimary)
             .padding(.top, 8)
             .accessibilityAddTraits(.isHeader)
@@ -22,9 +22,31 @@ struct Hint: View {
     let palette: Palette
 
     var body: some View {
-        Text(verbatim: text)
+        Text(hiding: text)
             .font(.footnote)
             .foregroundStyle(palette.textSecondary)
+    }
+}
+
+/// A warning or tip with "Don't show again" (kept per account on the agent).
+/// [key] is its words' key; a hidden one shows nothing. Never for questions
+/// that protect a world.
+struct HideableNote: View {
+    @Environment(AppModel.self) private var model
+    let key: String
+    var text: String? = nil
+    let palette: Palette
+
+    var body: some View {
+        if !model.hidden.contains(key) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(text ?? model.t(key))
+                    .font(.footnote)
+                    .foregroundStyle(palette.tone(.warning))
+                Button(model.t("tips.dont_show")) { model.hide(key) }
+                    .font(.footnote)
+            }
+        }
     }
 }
 
@@ -91,8 +113,10 @@ struct BackupsView: View {
     @State private var asking: Confirming?
     @State private var picking = false
     @State private var moving = false
+    @State private var typedFolder = ""
 
     private var world: WorldPages { model.pages(serverId).world }
+    private var serverName: String { model.servers.first { $0.id == serverId }?.name ?? serverId }
 
     var body: some View {
         @Bindable var world = self.world
@@ -150,7 +174,10 @@ struct BackupsView: View {
                 if world.downloaded != nil { moving = true }
             }
         }
-        .task(id: serverId) { await world.loadBackups() }
+        .task(id: serverId) {
+            await world.loadBackups()
+            if model.can(Permissions.SETTINGS_SERVER) { await world.loadSize() }
+        }
     }
 
     // MARK: - The page
@@ -185,6 +212,12 @@ struct BackupsView: View {
             }
         } else {
             ProgressView().frame(maxWidth: .infinity)
+        }
+        if model.can(Permissions.SETTINGS_SERVER) {
+            leftOutCard(world, busy, palette)
+        }
+        if model.can(Permissions.BACKUPS_DELETE) {
+            cleanupCard(world, busy, palette)
         }
 
         SectionTitle(text: model.t("page.world"), palette: palette)
@@ -281,6 +314,7 @@ struct BackupsView: View {
         let when = Display.dateTime(strings, backup.createdAt)
         let idle = busy == nil
         var details = [kind, model.t(status.key), Display.bytes(strings, backup.sizeBytes)]
+        if backup.kept == true && backup.kind != "season" { details.insert(model.t("backups.kept"), at: 1) }
         if model.technical { details.append(when) }
 
         var presses = [
@@ -304,6 +338,18 @@ struct BackupsView: View {
                 Task { await world.copyAgain(backup, strings) }
             })
         }
+        if Backups.canKeep(backup, canDelete: model.can(Permissions.BACKUPS_DELETE)) {
+            let keep = backup.kept != true
+            presses.append(Press(title: model.t(keep ? "backups.keep" : "backups.unkeep"), enabled: idle) {
+                Task { await world.keep(backup, keep, strings) }
+            })
+        }
+        if Backups.canOpenAsServer(backup, canManage: model.can(Permissions.SERVERS_MANAGE)) {
+            let name = serverName
+            presses.append(Press(title: model.t(backup.kind == "season" ? "season.open" : "backups.open_as_server"), enabled: idle) {
+                Task { await world.openAsServer(backup, serverName: name, strings) }
+            })
+        }
         if model.can(Permissions.BACKUPS_DELETE) {
             presses.append(Press(title: model.t("backups.delete"), danger: true, enabled: idle) {
                 asking = Confirming(
@@ -317,15 +363,145 @@ struct BackupsView: View {
         }
 
         return CardBox(palette: palette) {
-            Text(verbatim: model.technical ? backup.name : when)
+            Text(hiding: model.technical ? backup.name : when)
                 .font(.headline)
                 .foregroundStyle(palette.textPrimary)
             Hint(text: details.joined(separator: " · "), palette: palette)
-            Text(verbatim: model.t("offsite.col") + ": " + copy.text)
+            Text(hiding: model.t("offsite.col") + ": " + copy.text)
                 .font(.footnote)
                 .foregroundStyle(copy.tone == .neutral ? palette.textSecondary : palette.tone(copy.tone))
             Presses(presses: presses, palette: palette)
         }
+    }
+
+    /// Left out of backups: what a backup weighs now, each folder left out
+    /// with "Back it up again", and map tiles that could be left out.
+    @ViewBuilder
+    private func leftOutCard(_ world: WorldPages, _ busy: String?, _ palette: Palette) -> some View {
+        let strings = model.strings
+        let size = world.size.value
+        SectionTitle(text: model.t("leftout.title"), palette: palette)
+        CardBox(palette: palette) {
+            Text(model.t("leftout.lead"))
+                .foregroundStyle(palette.textPrimary)
+            if let size {
+                Hint(
+                    text: model.t("leftout.size", ["size": Display.bytes(strings, size.totalBytes), "free": Display.bytes(strings, size.freeBytes)]),
+                    palette: palette
+                )
+                if size.excluded.isEmpty {
+                    Hint(text: model.t("leftout.none"), palette: palette)
+                }
+                ForEach(size.excluded, id: \.path) { folder in
+                    Text(hiding: folder.path + " · " + Display.bytes(strings, folder.sizeBytes))
+                        .foregroundStyle(palette.textPrimary)
+                    Presses(presses: [
+                        Press(title: model.t("leftout.put_back"), enabled: busy == nil) {
+                            Task { await world.saveExcludes(Backups.excludes(size, remove: folder.path), strings) }
+                        },
+                    ], palette: palette)
+                }
+                ForEach(size.suggested, id: \.path) { tip in
+                    Text(hiding: model.t("leftout.suggest", ["name": tip.name ?? "", "path": tip.path, "size": Display.bytes(strings, tip.sizeBytes)]))
+                        .foregroundStyle(palette.textPrimary)
+                    Presses(presses: [
+                        Press(title: model.t("leftout.leave_out"), enabled: busy == nil) {
+                            Task { await world.saveExcludes(Backups.excludes(size, add: tip.path), strings) }
+                        },
+                    ], palette: palette)
+                }
+                if model.technical {
+                    TextField(model.t("leftout.path_hint"), text: $typedFolder)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Presses(presses: [
+                        Press(title: model.t("leftout.leave_out"), enabled: busy == nil && !typedFolder.trimmingCharacters(in: .whitespaces).isEmpty) {
+                            let typed = typedFolder
+                            typedFolder = ""
+                            Task { await world.saveExcludes(Backups.excludes(size, add: typed), strings) }
+                        },
+                    ], palette: palette)
+                }
+            } else if world.size.loading {
+                Hint(text: model.t("leftout.measuring"), palette: palette)
+            } else if let problem = world.size.problem {
+                Hint(text: problem.message(strings), palette: palette)
+            }
+            Presses(presses: [
+                Press(title: model.t("leftout.measure"), enabled: !world.size.loading) {
+                    Task { await world.loadSize() }
+                },
+            ], palette: palette)
+        }
+    }
+
+    /// Clean up: shown first, ticked, moved to the bin; Undo and Empty now.
+    @ViewBuilder
+    private func cleanupCard(_ world: WorldPages, _ busy: String?, _ palette: Palette) -> some View {
+        let strings = model.strings
+        let found = world.cleanup.value
+        let bin = found?.bin ?? []
+        SectionTitle(text: model.t("cleanup.title"), palette: palette)
+        CardBox(palette: palette) {
+            Text(model.t("cleanup.lead", ["days": "7"]))
+                .foregroundStyle(palette.textPrimary)
+            if let problem = world.cleanup.problem {
+                Hint(text: problem.message(strings), palette: palette)
+            }
+            if let found, found.items.isEmpty {
+                Hint(text: model.t("cleanup.nothing"), palette: palette)
+            }
+            ForEach(found?.items ?? [], id: \.path) { item in
+                Toggle(
+                    Backups.cleanupLine(strings, item, technical: model.technical),
+                    isOn: Binding(
+                        get: { world.picked.contains(item.path) },
+                        set: { on in
+                            if on { world.picked.insert(item.path) } else { world.picked.remove(item.path) }
+                        }
+                    )
+                )
+                .foregroundStyle(palette.textPrimary)
+            }
+            if found?.dimensionsChecked == false {
+                Hint(text: model.t("cleanup.dimensions_unknown"), palette: palette)
+            }
+            if !bin.isEmpty {
+                let total = bin.reduce(Int64(0)) { $0 + ($1.sizeBytes ?? 0) }
+                let until = bin.compactMap(\.emptiesAt).min()
+                Hint(text: model.t("cleanup.bin", ["size": Display.bytes(strings, total), "when": Display.dateTime(strings, until)]), palette: palette)
+            }
+            Presses(presses: cleanupPresses(world, busy, items: found?.items ?? [], bin: bin), palette: palette)
+        }
+    }
+
+    private func cleanupPresses(_ world: WorldPages, _ busy: String?, items: [CleanupItem], bin: [CleanupBatch]) -> [Press] {
+        let strings = model.strings
+        var presses = [
+            Press(title: model.t("cleanup.look"), enabled: busy == nil && !world.cleanup.loading) {
+                Task { await world.loadCleanup() }
+            },
+        ]
+        if !items.isEmpty {
+            presses.append(Press(title: model.t("cleanup.move"), enabled: busy == nil && !world.picked.isEmpty) {
+                Task { await world.cleanUp(strings) }
+            })
+        }
+        if let newest = world.lastBatch ?? bin.first?.batch {
+            presses.append(Press(title: model.t("cleanup.undo_last"), enabled: busy == nil) {
+                Task { await world.cleanupUndo(newest, strings) }
+            })
+            presses.append(Press(title: model.t("cleanup.empty"), danger: true, enabled: busy == nil) {
+                asking = Confirming(
+                    title: model.t("cleanup.empty_title"),
+                    body: model.t("cleanup.empty_body"),
+                    confirm: model.t("cleanup.empty")
+                ) {
+                    Task { await world.cleanupEmpty(strings) }
+                }
+            })
+        }
+        return presses
     }
 
     private func offsitePresses(_ world: WorldPages, _ busy: String?, folder: String, canPick: Bool) -> [Press] {
@@ -356,7 +532,7 @@ struct BackupsView: View {
             } else if folder.isEmpty {
                 Hint(text: model.t("offsite.off"), palette: palette)
             } else if let reason = offsite?.unavailable {
-                Text(verbatim: model.t("offsite.folder_unavailable", ["folder": folder, "reason": reason]))
+                Text(hiding: model.t("offsite.folder_unavailable", ["folder": folder, "reason": reason]))
                     .font(.footnote)
                     .foregroundStyle(palette.tone(.warning))
             } else {
@@ -386,7 +562,7 @@ struct BackupsView: View {
                     let last = w.lastBackup?.createdAt.map { Display.ago(strings, $0, now: now) } ?? model.t("time.never")
                     let lastText = model.technical && w.lastBackup?.name != nil ? "\(w.lastBackup?.name ?? "") (\(last))" : last
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(verbatim: w.label)
+                        Text(hiding: w.label)
                             .foregroundStyle(palette.textPrimary)
                         Hint(
                             text: !w.exists ? model.t("backups.world_missing") : [

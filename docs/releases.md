@@ -65,7 +65,12 @@ people to install that release by hand once
    `docs/api/openapi-<version>.json` and points `docs/api/released.txt` at
    it. From then on, `tests/test_api_contract.py` fails if a later change
    removes a route or a field without deprecating it first.
-5. **Commit, merge to main, then tag**:
+5. **Anti-cheat prices.** The app reads Vulcan's price from Spiget by
+   itself. For any product in `PAID` in `agent/anticheat.py` without a
+   `spiget` number (Polar), open the seller's page, write the price in
+   `price` (or `None` if you can't see one) and set `PRICES_CHECKED` to this
+   month, like `"November 2026"`. Drop a product that is gone.
+6. **Commit, merge to main, then tag**:
 
    ```powershell
    git tag v1.2.0
@@ -94,6 +99,49 @@ Every action in the workflows is pinned to a full commit SHA, with its
 version in a comment. To update one, look up the new tag's commit
 (`git ls-remote https://github.com/actions/checkout refs/tags/v4.4.0`) and
 change the SHA and the comment together.
+
+## The Companion's releases
+
+The Companion mod and plugin (`companion/`) have their own tags,
+`companion-v0.1.0`, and their own workflow,
+`.github/workflows/companion-release.yml`. It builds the jars
+(Fabric, Forge, NeoForge, Paper, WaterdogPE) once on GitHub, writes a `.sha256` for each,
+attests them, and publishes the same files on GitHub and on Modrinth.
+
+**Once, before the first one:**
+
+1. On Modrinth, make the project under your own account (type Mod, with
+   the Fabric, Quilt, Forge, NeoForge, Paper and Purpur loaders) and say in its
+   description that it was written with AI help, as Modrinth's rules ask.
+   Copy its project ID (the project's page, the three dots, Copy ID).
+2. On Modrinth, Settings, Personal access tokens: make one with only
+   "Create versions". Keep it only as long as needed.
+3. On GitHub, Settings, Environments, New environment `modrinth`. Under
+   Deployment branches and tags, allow only the tag pattern
+   `companion-v*`. Add the secret `MODRINTH_TOKEN` (the token) and the
+   variable `MODRINTH_PROJECT_ID` (the ID).
+
+**Every release:** set `version` in `companion/build.gradle`, commit,
+merge to main, then:
+
+```powershell
+git tag companion-v0.1.0
+git push origin companion-v0.1.0
+```
+
+The workflow refuses if the tag and `build.gradle` disagree. Each build
+checks every library against `companion/gradle/verification-metadata.xml`.
+After changing a library's version, write the file again and look at what
+changed before committing it:
+
+```powershell
+cd companion
+.\gradlew.bat --write-verification-metadata sha256 build
+git diff gradle/verification-metadata.xml
+```
+
+Anyone can check a jar: compare it with its `.sha256`, and run
+`gh attestation verify commandblock-companion-fabric-0.1.0.jar --repo peyoteheadlights/command-block`.
 
 ## Code signing
 

@@ -1,0 +1,149 @@
+# Libraries OSV-Scanner flags in gradle/verification-metadata.xml that we
+# never ship. That file lists everything Gradle downloads to build and test,
+# including the Fabric/NeoForge/Forge build plugins and Minecraft's own game
+# libraries. The Companion jars only hold our own code (nothing is packed in),
+# so these never reach a player's game or a server through the Companion.
+#
+# Each one is ignored at its exact version only. A new version, or a library
+# that isn't listed here, is still checked. Remove an entry once Gradle stops
+# using that version.
+
+[[PackageOverrides]]
+name = "at.yawk.lz4:lz4-java"
+version = "1.10.1"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "com.google.guava:guava"
+version = "31.1-jre"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "com.google.guava:guava"
+version = "33.6.0-jre"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "commons-io:commons-io"
+version = "2.11.0"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "io.netty:netty-codec-http"
+version = "4.2.16.Final"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "io.netty:netty-handler"
+version = "4.2.16.Final"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.apache.commons:commons-compress"
+version = "1.18"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.apache.commons:commons-lang3"
+version = "3.12.0"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.apache.commons:commons-lang3"
+version = "3.9"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.apache.logging.log4j:log4j"
+version = "2.8.1"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.apache.logging.log4j:log4j-api"
+version = "2.22.1"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.apache.logging.log4j:log4j-api"
+version = "2.26.0"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.apache.logging.log4j:log4j-core"
+version = "2.22.1"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.apache.logging.log4j:log4j-core"
+version = "2.8.1"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.codehaus.plexus:plexus-utils"
+version = "3.5.1"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.jline:jline-parent"
+version = "3.20.0"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.jline:jline-reader"
+version = "3.20.0"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.apache.logging.log4j:log4j-api"
+version = "2.17.1"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.codehaus.plexus:plexus-utils"
+version = "3.3.1"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"
+
+[[PackageOverrides]]
+name = "org.jline:jline-reader"
+version = "3.25.1"
+ecosystem = "Maven"
+ignore = true
+reason = "Build only (Gradle plugins / Minecraft game files), not packed into the Companion jars"

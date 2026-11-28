@@ -88,6 +88,10 @@ class Facts:
     addons: dict[str, Any] | None = None
     speed_ups: dict[str, Any] = field(default_factory=dict)
     played_by: str = ""
+    # The same mod twice, or add-ons that do the same job (agent/mods/overlap.py).
+    overlaps: list[dict[str, Any]] = field(default_factory=list)
+    # The Modrinth Server Project lists an older upload of ours (agent/modrinthshare.py).
+    modrinth_older: dict[str, Any] | None = None
 
 
 @dataclass
@@ -147,7 +151,11 @@ def no_recent_backup(f: Facts) -> Recommendation | None:
 
 
 def no_backup_schedule(f: Facts) -> Recommendation | None:
-    if any(s.get("enabled") and s.get("task") == "backup" for s in f.schedules):
+    def backs_up(s: dict[str, Any]) -> bool:  # on its own or as one of its steps
+        steps = (s.get("payload") or {}).get("steps") or [] if s.get("task") == "steps" else [s]
+        return any(step.get("task") == "backup" for step in steps)
+
+    if any(s.get("enabled") and backs_up(s) for s in f.schedules):
         return None
     return Recommendation(
         id="no_backup_schedule",
@@ -429,6 +437,10 @@ DISCORD_WORDS = {
         "The Discord bot can't log in",
         "It asked for a switch that's off in Discord's developer portal.",
     ),
+    "refused": (
+        "The Discord bot can't log in",
+        "Discord closed its connection. Paste the token again to try once more.",
+    ),
     "manage_roles": (
         "The Discord bot can't give Discord roles",
         "It needs Manage Roles in {guild}.",
@@ -504,6 +516,29 @@ def known_bad_files(f: Facts) -> Recommendation | None:
         action={"label": "Open mods", "page": "mods"},
         fingerprint="bad:" + ",".join(sorted(names)),
         details={"files": f.bad_files, "source": "SHA-512 of each file, signed safety notes"},
+    )
+
+
+def overlapping_mods(f: Facts) -> Recommendation | None:
+    if not f.overlaps:
+        return None
+    first = f.overlaps[0]
+    names = " and ".join(m["name"] for m in first["mods"][:2])
+    count = len(f.overlaps)
+    return Recommendation(
+        id="overlapping_mods",
+        title=(
+            f"{first['mods'][0]['name']} is here twice"
+            if first["kind"] == "same_mod"
+            else f"{names} do the same job"
+        )
+        + (f" (and {count - 1} more)" if count > 1 else ""),
+        reason=first["why"],
+        evidence=first["say"],
+        action={"label": "Open mods", "page": "mods"},
+        fingerprint="overlaps:"
+        + ",".join(sorted(m["filename"] for o in f.overlaps for m in o["mods"])),
+        details={"overlaps": f.overlaps, "source": "the jars, the safety notes' same-job list"},
     )
 
 
@@ -658,6 +693,22 @@ def not_answering(f: Facts) -> Recommendation | None:
     )
 
 
+def older_on_modrinth(f: Facts) -> Recommendation | None:
+    """Only when the Server Project lists one of our own earlier uploads."""
+    older = f.modrinth_older
+    if not older:
+        return None
+    return Recommendation(
+        id="older_on_modrinth",
+        title="Your Modrinth server page lists an older modpack",
+        reason="Players who press Play on Modrinth get the old version and may not be able to join.",
+        evidence=f"Modrinth lists version {older['listed']}; the newest you put up is {older['newest']}.",
+        action={"label": "Open mods", "page": "mods"},
+        fingerprint=f"modrinth_older:{older['listed']}:{older['newest']}",
+        details={"source": "Modrinth's v3 project page, read when the Modrinth card was opened"},
+    )
+
+
 RULES: tuple[Rule, ...] = (
     not_answering,
     security_advisories,
@@ -676,6 +727,8 @@ RULES: tuple[Rule, ...] = (
     auto_restart_off,
     install_spark,
     mod_updates,
+    overlapping_mods,
+    older_on_modrinth,
     newer_build,
     newer_minecraft,
     addon_suggestions,
@@ -696,7 +749,7 @@ def evaluate(facts: Facts) -> list[Recommendation]:
 def gather(ctx, addons: dict[str, Any] | None = None) -> Facts:
     """Read one server's measured facts for the rules. ``addons`` is the
     last add-on suggestions check (agent/suggestions.py kept())."""
-    from . import suggestions
+    from . import modrinthshare, suggestions
 
     status = ctx.server.status()
     # The sampler's latest reading. Taking a fresh one here would restart
@@ -704,7 +757,10 @@ def gather(ctx, addons: dict[str, Any] | None = None) -> Facts:
     last = ctx.metrics.last or {}
     installed = ctx.mods.list_installed(use_cache=True)
     updates = [
-        {"mod_id": m["mod_id"], "name": m["name"]} for m in installed if m.get("update_available")
+        {"mod_id": m["mod_id"], "name": m["name"]}
+        for m in installed
+        # One in the update hold isn't offered yet.
+        if m.get("update_available") and not m["update_available"]["held_until"]
     ]
     server_type = ctx.config.server_type
     spark = any(
@@ -765,6 +821,8 @@ def gather(ctx, addons: dict[str, Any] | None = None) -> Facts:
         addons=addons,
         speed_ups=suggestions.speed_ups(ctx, addons, technical=False) if addons else {},
         played_by=ctx.config.server.played_by,
+        overlaps=ctx.mods.overlaps(),
+        modrinth_older=modrinthshare.older(ctx),
     )
 
 

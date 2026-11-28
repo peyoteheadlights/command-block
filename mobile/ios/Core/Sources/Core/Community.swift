@@ -122,7 +122,7 @@ public struct DiscordSetupDone: Decodable, Equatable, Sendable {
 
 public struct DiscordStatus: Decodable, Equatable, Sendable {
     public var tokenSet: Bool
-    /// off, connecting, connected, token_rejected, intents_refused or stopped.
+    /// off, connecting, connected, token_rejected, intents_refused, refused or stopped.
     public var state: String
     public var detail: String
     public var connectedAt: Double?

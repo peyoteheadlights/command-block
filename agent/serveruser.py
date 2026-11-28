@@ -138,6 +138,45 @@ def grant(folder: Path, rights: str = "M") -> None:
         )
 
 
+def deny_writes(path: Path) -> bool:
+    """Say "no writing or deleting" for the account on one shared mod file
+    (agent/mods/store.py). It's set on the file itself, not inherited, so
+    giving a server folder Modify later doesn't undo it. False when the
+    account isn't there or Windows refused."""
+    if not IS_WINDOWS or not account_exists():
+        return False
+    try:
+        code, out = _icacls([str(path), "/deny", f"{ACCOUNT}:(W,D)"])
+    except (OSError, subprocess.SubprocessError) as exc:
+        code, out = -1, str(exc)
+    if code != 0:
+        log.warning("couldn't take writing away on %s: %s", path, out.strip()[:300])
+    return code == 0
+
+
+def deny_all(folder: Path) -> bool:
+    """Say "no" to everything for the account on a folder and all it will
+    hold (the player-only folder, agent/mods/sides.py: the server never
+    needs it). A "deny" beats the Modify the server folder gives it.
+    Looked at first, so it isn't added twice. False when the account isn't
+    there or Windows refused."""
+    if not IS_WINDOWS or not account_exists():
+        return False
+    try:
+        code, now = _icacls([str(folder)])
+        if code == 0 and any(
+            ACCOUNT.lower() in line.lower() and "(deny)" in line.lower()
+            for line in now.splitlines()
+        ):
+            return True
+        code, out = _icacls([str(folder), "/deny", f"{ACCOUNT}:(OI)(CI)F"])
+    except (OSError, subprocess.SubprocessError) as exc:
+        code, out = -1, str(exc)
+    if code != 0:
+        log.warning("couldn't lock %s from the server's user: %s", folder, out.strip()[:300])
+    return code == 0
+
+
 def remove_grant(folder: Path) -> str | None:
     """Take the account's access off a folder (Turn off). Returns why it
     failed, or None."""
@@ -184,6 +223,13 @@ async def start(
     folders = [Path(cwd), *(writable or [])]
     for folder in folders:
         await asyncio.to_thread(grant, folder)
+    # The shared mod files the server's mods folder links to: read and run
+    # only (each file also says no writing, agent/mods/store.py).
+    from .mods.store import folder as store_folder
+
+    store = store_folder(config)
+    if store.is_dir():
+        await asyncio.to_thread(grant, store, "RX")
     home = java_home(cmd[0])
     if home:
         try:

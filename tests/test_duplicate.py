@@ -276,3 +276,36 @@ def test_full_path_folder_settings_never_point_the_copy_at_the_source(core, tmp_
     assert "backups" not in copied
     # The source's own entry is untouched.
     assert entry["backups"] == {"directory": str(elsewhere)}
+
+
+async def test_the_files_are_listed_after_the_world_is_saved(core, tmp_path, monkeypatch):
+    source = core.servers["survival"]
+    await source.server.start()
+    assert await source.server.wait_online(20)
+    seen = []
+    real_send, real_walk = source.server.send_command, duplicate.walk_source
+
+    async def spy(command, **kwargs):
+        seen.append(command)
+        return await real_send(command, **kwargs)
+
+    def walk(*args, **kwargs):
+        seen.append("walk")
+        return real_walk(*args, **kwargs)
+
+    monkeypatch.setattr(source.server, "send_command", spy)
+    monkeypatch.setattr(duplicate, "walk_source", walk)
+    done = await finish(
+        core,
+        await duplicate.start_duplicate(
+            core, source, name="Live", directory=str(tmp_path / "Live"), world="copy"
+        ),
+    )
+    monkeypatch.undo()
+    assert done.state == SUCCEEDED, done.message
+    assert [c for c in seen if c.startswith("save") or c == "walk"] == [
+        "save-all flush",
+        "save-off",
+        "walk",
+        "save-on",
+    ]

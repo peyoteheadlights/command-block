@@ -772,6 +772,9 @@ class Listener:
             "version": {"name": self.version, "protocol": protocol},
             "players": {"max": self.max_players, "online": 0},
             "description": {"text": self.asleep_words},
+            # The Companion's title-screen button says "Asleep, ask to start"
+            # (Minecraft ignores fields it doesn't know).
+            "commandblock": {"asleep": True},
         }
         return packet(0, mc_string(json.dumps(status)))
 
@@ -903,7 +906,13 @@ def move_server(ctx: ServerContext, fallback: bool) -> str:
         props.set(k, v)
     ctx.db.set_setting(RESTORE_KEY, restore)
     props.write(path)
-    host = restore.get("server-ip", "").strip()
+    return guard_host(ctx)
+
+
+def guard_host(ctx: ServerContext) -> str:
+    """The address the guard listens on: the owner's own server-ip, kept
+    by move_server ("" for every address)."""
+    host = (ctx.db.get_setting(RESTORE_KEY) or {}).get("server-ip", "").strip()
     return "" if host in ("", "0.0.0.0", "127.0.0.1") else host
 
 
@@ -1147,6 +1156,24 @@ class GuardHub:
         ctx.server.behind_guard = public
         ctx.db.set_setting("join_addon", addon or "")
         return ["--port", str(private)]
+
+    async def take_back(self, ctx: ServerContext) -> None:
+        """A server an agent that died left running behind the guard: open
+        its public port again, to the private port it was started on."""
+        args = ctx.server.launch_args
+        try:
+            private = int(args[args.index("--port") + 1])
+        except (ValueError, IndexError):
+            return
+        addon = ctx.db.get_setting("join_addon") or None
+        public = ctx.server.behind_guard or ctx.core.ports.port_of(ctx).port
+        try:
+            listener = await self._open(ctx, public, guard_host(ctx))
+        except OSError as exc:
+            await self.alert(ctx, "port", str(exc))
+            return
+        listener.private, listener.header, listener.mode = private, addon is not None, "proxy"
+        listener.status_cache = None
 
     # -- the supervisor ----------------------------------------------------------
     async def _supervise(self) -> None:

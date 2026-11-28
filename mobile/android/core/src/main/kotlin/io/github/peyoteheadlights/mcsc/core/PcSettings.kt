@@ -22,7 +22,19 @@ data class SettingsSecrets(
 )
 
 @Serializable
-data class PcSettingsView(val config: JsonObject = JsonObject(emptyMap()), val secrets: SettingsSecrets = SettingsSecrets())
+data class PcSettingsView(
+    val config: JsonObject = JsonObject(emptyMap()),
+    val secrets: SettingsSecrets = SettingsSecrets(),
+    /** The shared mod and plugin files (agent/mods/store.py); null from an older agent. */
+    @SerialName("mod_storage") val modStorage: ModStorage? = null,
+)
+
+@Serializable
+data class ModStorage(
+    val files: Int = 0,
+    @SerialName("on_disk") val onDisk: Long = 0,
+    val saved: Long = 0,
+)
 
 @Serializable
 data class SettingsSaved(
@@ -174,6 +186,7 @@ object PcSettings {
     val THRESHOLDS = listOf(
         "cpu_percent" to "appset.cpu_alert",
         "ram_percent" to "appset.ram_alert",
+        "high_minutes" to "appset.high_minutes",
         "disk_free_gb" to "appset.disk_alert",
         "tps_min" to "appset.tps_alert",
         "mspt_max" to "appset.mspt_alert",
@@ -238,6 +251,13 @@ object PcSettings {
     fun saved(strings: Strings, result: SettingsSaved): Pair<String, Boolean> = when {
         result.rejected.isNotEmpty() -> result.rejected.values.joinToString(" ") to false
         else -> strings.t("settings.saved") to true
+    }
+
+    /** Real disk use of the shared mod files; null when the agent doesn't say. */
+    fun modFiles(strings: Strings, view: PcSettingsView): String? {
+        val usage = view.modStorage ?: return null
+        if (usage.files == 0) return strings.t("modfiles.none")
+        return strings.t("modfiles.usage", "used" to Display.bytes(strings, usage.onDisk), "saved" to Display.bytes(strings, usage.saved))
     }
 
     /** The line under "Keep the PC awake": what Windows does now. */
@@ -327,6 +347,21 @@ object PcSettings {
         "running", "queued" -> Exporting.Running(job.step, job.progress)
         "succeeded" -> job.result?.savedTo?.let { Exporting.Saved(it, job.result.sizeBytes) } ?: Exporting.Failed(job.message)
         else -> Exporting.Failed(job.message)
+    }
+
+    /** Reads an export's progress. A dropped connection (the phone slept,
+     * Wi-Fi changed) doesn't end it, since the PC goes on writing: the read
+     * is tried again, with [pause] between, and only the last failure shows. */
+    suspend fun readExport(read: suspend () -> ExportJob, tries: Int = 30, pause: suspend () -> Unit): Exporting {
+        repeat(tries - 1) {
+            try {
+                return exporting(read())
+            } catch (e: AgentException) {
+                if (e !is AgentException.Unreachable && e !is AgentException.StillWorking) throw e
+            }
+            pause()
+        }
+        return exporting(read())
     }
 
     fun exportSaid(strings: Strings, state: Exporting): String? = when (state) {

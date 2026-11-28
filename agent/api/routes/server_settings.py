@@ -8,12 +8,19 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ... import colors, memory
 from ...config import SERVER_OVERRIDES, ConfigError
 from ...events import Event
-from ...minecraft import cpu
+from ...minecraft import cpu, java
 from ...security.auth import Principal
 from ...security.permissions import SETTINGS_SERVER, SETTINGS_VIEW, require
 from ..deps import audit, get_server
-from ..responses import ColorSaved, MemoryOverview, MemorySaved, ServerSettings, ServerSettingsSaved
-from .models import MemoryRequest, ServerColorRequest, ServerSettingsRequest
+from ..responses import (
+    ColorSaved,
+    MemoryOverview,
+    MemorySaved,
+    ServerGroupSaved,
+    ServerSettings,
+    ServerSettingsSaved,
+)
+from .models import MemoryRequest, ServerColorRequest, ServerGroupRequest, ServerSettingsRequest
 
 router = APIRouter()
 
@@ -25,11 +32,13 @@ SERVER_SETTABLE = (
     "server.autostart_minecraft",
     "server.jvm_args",
     "server.cpu_cores",
+    "server.low_priority",
     "server.autosleep",
     "server.autosleep_minutes",
     "server.bedrock_auto_update",
     "server.join_protection",
     "server.join_size",
+    "server.played_by",
     "server.join_limits",
     "server.join_home_only",
     "server.start_on_join",
@@ -39,6 +48,7 @@ SERVER_SETTABLE = (
     "backups.include",
     "backups.stop_server_for_backup",
     "backups.on_stop",
+    "backups.exclude",
     "mods.backup_before_install",
     "mods.update_check_hours",
 )
@@ -129,10 +139,31 @@ async def update_server_settings(
             except PathSafetyError as exc:
                 rejected[key] = str(exc)
                 continue
+        if key == "backups.exclude":
+            from ...backups.manager import BackupError, check_excludes
+            from ...minecraft.properties import world_folders
+
+            base = ctx.config.server_dir
+            try:
+                value = check_excludes(value, base, world_folders(base, ctx.config.server_type))
+            except BackupError as exc:
+                rejected[key] = str(exc)
+                continue
+        if key == "server.jvm_args":
+            found_args = java.jvm_args_problem(value, principal.is_owner)
+            if found_args:
+                rejected[key] = found_args
+                continue
         if key == "server.cpu_cores":
             found = cpu.shape_problems(value) or cpu.problems(value)
             if found:
                 rejected[key] = found[0]
+                continue
+        if key == "monitor.ignored_exit_codes":
+            try:
+                value = ", ".join(str(c) for c in sorted(cpu.exit_codes(value)))
+            except ValueError as exc:
+                rejected[key] = str(exc)
                 continue
         target = _where(ctx, key)
         previous = target.get(key)
@@ -164,6 +195,8 @@ async def update_server_settings(
     if "server.cpu_cores" in applied and ctx.server.running:
         # Applied to the running server at once, and read back from it.
         result["cpu_cores"] = await ctx.server.apply_cpu_cores()
+    if "server.low_priority" in applied:
+        ctx.server.apply_priority()  # at once on a running server
     return result
 
 
@@ -206,6 +239,23 @@ async def set_color(
     audit(ctx, request, "server_color", detail=color)
     await _announce_change(ctx, f"Changed {ctx.name}'s color")
     return {"ok": True, "color": color}
+
+
+@router.put("/group", response_model=ServerGroupSaved)
+async def set_group(
+    payload: ServerGroupRequest,
+    request: Request,
+    principal: Principal = Depends(require(SETTINGS_SERVER)),
+    ctx=Depends(get_server),
+):
+    """The heading this server is under on All servers. Empty: no group."""
+    group = " ".join(payload.group.split())  # one line, single spaces
+    ctx.core.db.set_server_group(ctx.server_id, group)
+    audit(ctx, request, "server_group", detail=group or "none")
+    await _announce_change(
+        ctx, f"Moved {ctx.name} to a group" if group else f"Took {ctx.name} out of its group"
+    )
+    return {"ok": True, "group": group}
 
 
 async def _announce_change(ctx, message: str) -> None:

@@ -253,6 +253,24 @@ def test_tinting_matches_the_recorded_cases_for_every_theme():
         assert got == want, (case["theme"], case["base"])
 
 
+def test_the_binder_look_matches_the_recorded_cases():
+    """The phone apps' tests check the same cases (shared/look-cases.json):
+    plain paper, with the server's color on the band, buttons and edges."""
+    from desktop import theme as look
+
+    cases = json.loads((SHARED / "look-cases.json").read_text(encoding="utf-8"))
+    assert len(cases) == 52
+    checked = 0
+    for case in cases:
+        if case["theme"] not in ("light", "dark"):
+            continue  # the desktop app has no graphite or contrast theme
+        got = look.tokens(case["theme"] == "dark", case["base"])
+        for name, value in case["tokens"].items():
+            assert got[name.removeprefix("--")] == value, (case["theme"], case["base"], name)
+        checked += 1
+    assert checked == 26
+
+
 @pytest.mark.parametrize("theme", ["light", "dark", "graphite", "contrast"])
 def test_every_palette_color_keeps_text_readable(theme):
     """WCAG AA in every theme: 4.5:1 for text, 3:1 for marks."""

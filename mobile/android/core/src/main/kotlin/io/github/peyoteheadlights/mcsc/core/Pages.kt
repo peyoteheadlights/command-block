@@ -172,6 +172,13 @@ object PlayerButtons {
         "players.tag_banned".takeIf { on(page.lists?.banned, name) },
     )
 
+    /** The Companion's last check of this player, or null if never checked. */
+    fun modpack(strings: Strings, known: KnownPlayer): String? = when {
+        known.modpackOk == null -> null
+        known.modpackVersion.isNullOrEmpty() -> strings.t("players.modpack_none")
+        else -> strings.t(if (known.modpackOk == 1) "players.modpack" else "players.modpack_bad", "version" to known.modpackVersion)
+    }
+
     /** The remove button on a list card. */
     fun removeFrom(list: String): String = when (list) {
         "ops" -> PlayerActions.DEOP

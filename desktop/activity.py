@@ -9,41 +9,21 @@ import time
 from datetime import date
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
 
 from .fixes import get_help, run_fix, sure
 from .overview import card, title_of
+from .parts import Row, Segmented
+from .theme import SHARED
 from .ui import Page, clock, duration, label, push, refill
 from .words import mode, text
 
 if TYPE_CHECKING:
     from .window import MainWindow
 
-# Event type to its sentence. Anything else
-# shows the agent's own message.
-FEED = {
-    kind: f"feed.{kind}"
-    for kind in (
-        "server_started",
-        "server_stopped",
-        "server_crashed",
-        "server_restarted",
-        "server_recovered",
-        "crash_loop",
-        "player_joined",
-        "player_left",
-        "backup_completed",
-        "backup_failed",
-        "low_tps",
-        "high_mspt",
-        "high_ram",
-        "high_cpu",
-        "low_disk",
-        "auth_failure",
-        "agent_started",
-        "agent_stopping",
-    )
-}
+# Event type to its sentence (shared/feed.json, as the phones read it).
+# Anything else shows the agent's own message.
+FEED: dict[str, str] = json.loads((SHARED / "feed.json").read_text(encoding="utf-8"))
 # Steps on the way to something that matters: Simple leaves them out.
 INTERNAL = {
     "state",
@@ -119,21 +99,16 @@ class ActivityPage(Page):
         super().__init__(window)
         self.crashes_only = False
         top = QHBoxLayout()
-        self.filters = QButtonGroup(self)
-        for crashes in (False, True):
-            button = push("")
-            button.setCheckable(True)
-            button.setProperty("kind", "segment")
-            button.setChecked(crashes == self.crashes_only)
-            button.clicked.connect(lambda _=False, c=crashes: self.show_crashes(c))
-            self.filters.addButton(button, int(crashes))
-            top.addWidget(button)
+        self.filters = Segmented(
+            [("all", ""), ("crashes", "")], "all", lambda key: self.show_crashes(key == "crashes")
+        )
+        top.addWidget(self.filters)
         top.addStretch()
         self.help = push("")
         self.help.clicked.connect(lambda: get_help(self.window_, self.say))
         top.addWidget(self.help)
         self.column.addLayout(top)
-        self.box, layout = card("")
+        self.box, layout = card("", box=False)
         self.items = QVBoxLayout()
         layout.addLayout(self.items)
         self.column.addWidget(self.box)
@@ -144,9 +119,10 @@ class ActivityPage(Page):
         self.load()
 
     def load(self) -> None:
-        self.filters.button(0).setText(text("desktop.activity.everything"))
-        self.filters.button(1).setText(text("page.crashes"))
-        self.filters.button(int(self.crashes_only)).setChecked(True)
+        self.filters.buttons["all"].setText(text("desktop.activity.everything"))
+        self.filters.buttons["crashes"].setText(text("page.crashes"))
+        self.filters.updateGeometry()  # the words set its width
+        self.filters.choose("crashes" if self.crashes_only else "all")
         self.help.setText(text("gethelp.button"))
         self.help.setVisible(self.window_.role in (None, "owner"))  # help.bundle
         if self.crashes_only:
@@ -198,11 +174,8 @@ class ActivityPage(Page):
         )
 
     def crash_row(self, crash: dict, newest: bool = False) -> QFrame:
-        frame = QFrame()
-        frame.setProperty("kind", "row")
-        column = QVBoxLayout(frame)
-        column.setContentsMargins(12, 8, 8, 8)
-        top = QHBoxLayout()
+        frame = Row()
+        column, top = frame.column, frame.line
         analysis = (crash.get("context") or {}).get("analysis") or {}
         category = crash.get("category") or analysis.get("category")
         confidence = crash.get("confidence") or analysis.get("confidence")
@@ -216,9 +189,9 @@ class ActivityPage(Page):
                     "address",
                 )
             )
-        chip = label(sure(confidence), "chip")
-        chip.setWordWrap(False)
-        top.addWidget(chip)
+        how_sure = label(sure(confidence), "sub")
+        how_sure.setWordWrap(False)
+        top.addWidget(how_sure)
         fix = crash.get("fix")
         if newest and fix:  # an older crash's fix may no longer apply
             button = push(fix["label"], "primary")
@@ -226,7 +199,6 @@ class ActivityPage(Page):
             top.addWidget(button)
         more = push(text("crashes.details"))
         top.addWidget(more)
-        column.addLayout(top)
         details = self.crash_details(crash, analysis, confidence)
         details.hide()
 

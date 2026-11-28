@@ -248,13 +248,20 @@ final class WorldTests: XCTestCase {
         var cron = nightly
         cron.kind = "cron"
         cron.expr = "0 4 * * *"
-        XCTAssertEqual(Schedules.whenText(s, cron), "cron 0 4 * * *")
+        XCTAssertEqual(Schedules.whenText(s, cron), "Cron 0 4 * * *")
+        var yearly = nightly
+        yearly.kind = "yearly"
+        yearly.expr = "01-01"
+        XCTAssertEqual(Schedules.whenText(s, yearly), "yearly 01-01")
         XCTAssertEqual(Schedules.taskName(s, "backup", tasks: tasks), "Back up")
         XCTAssertEqual(Schedules.taskName(s, "mystery", tasks: tasks), "mystery")
         var off = nightly
         off.enabled = false
         XCTAssertEqual(Schedules.next(s, off), "Off")
         XCTAssertEqual(Schedules.next(s, nightly), "Never")
+        var event = nightly
+        event.kind = "event"
+        XCTAssertEqual(Schedules.next(s, event), "When it happens")
 
         let toggled = Schedules.toggled(nightly)
         XCTAssertFalse(toggled.enabled)
@@ -263,10 +270,45 @@ final class WorldTests: XCTestCase {
         let sent = try JSONSerialization.jsonObject(with: AgentClient.encode(toggled)) as? [String: Any]
         XCTAssertEqual((sent?["payload"] as? [String: Any])?["note"] as? String, "keep")
 
-        let added = Schedules.newBody(s, name: "  ", task: "backup", kind: "interval", expr: " 6h ", tasks: tasks)
+        let added = Schedules.newBody(s, name: "  ", steps: [Schedules.Step(task: "backup")], kind: "interval", expr: " 6h ", tasks: tasks)
         XCTAssertEqual(added.name, "Back up")
         XCTAssertEqual(added.expr, "6h")
         XCTAssertTrue(added.enabled)
+    }
+
+    func testSeveralStepsAreSentAsStepsInARowAndOneStepAsItsOwnTask() {
+        let tasks = ["backup", "message", "command", "steps"]
+        XCTAssertEqual(Schedules.stepTasks(tasks, technical: false), ["backup", "message"])
+        XCTAssertEqual(Schedules.stepTasks(tasks, technical: true), ["backup", "message", "command"])
+        XCTAssertFalse(Schedules.kinds(technical: false).contains("cron"))
+
+        let one = Schedules.newBody(
+            s, name: "Hi", steps: [Schedules.Step(task: "message", words: " Hello ")], kind: "daily", expr: "04:00",
+            tasks: tasks, onlyIfRunning: true
+        )
+        XCTAssertEqual(one.task, "message")
+        XCTAssertEqual(one.payload["text"], .string("Hello"))
+        XCTAssertEqual(one.payload["only_if_running"], .bool(true))
+
+        let steps = [
+            Schedules.Step(task: "message", words: "Backing up"),
+            Schedules.Step(task: "command", words: "kill @a"),
+            Schedules.Step(task: "backup", after: "Done"),
+        ]
+        let many = Schedules.newBody(s, name: "", steps: steps, kind: "daily", expr: "04:00", tasks: tasks, keepGoing: true, confirm: true)
+        XCTAssertEqual(many.task, "steps")
+        XCTAssertEqual(many.payload["keep_going"], .bool(true))
+        guard case .array(let list) = many.payload["steps"], case .object(let command) = list[1], case .object(let backup) = list[2] else {
+            return XCTFail("steps not sent as a list")
+        }
+        XCTAssertEqual(list.count, 3)
+        XCTAssertEqual(command["confirm"], .bool(true))
+        XCTAssertEqual(backup["after"], .string("Done"))
+        XCTAssertEqual(Schedules.summary(s, Schedule(id: 1, task: "steps", payload: many.payload), tasks: tasks), "3 steps")
+        XCTAssertEqual(
+            Schedules.summary(s, Schedule(id: 2, task: "message", payload: one.payload), tasks: tasks),
+            "Send a message to players: Hello"
+        )
     }
 
     // MARK: - Restore world
@@ -342,6 +384,51 @@ final class WorldTests: XCTestCase {
         XCTAssertEqual(sent?["start_after"] as? Bool, true)
     }
 
+    func testBackupsAndDiskKeepRestoreAsANewServerAndTheCleanUp() async throws {
+        let scheduled = Backup(id: 3, kind: "scheduled", createdAt: 1_763_510_400, status: "ok", includes: "world,config")
+        XCTAssertTrue(Backups.canKeep(scheduled, canDelete: true))
+        var manual = scheduled
+        manual.kind = "manual"
+        XCTAssertFalse(Backups.canKeep(manual, canDelete: true))
+        XCTAssertFalse(Backups.canKeep(scheduled, canDelete: false))
+        XCTAssertTrue(Backups.canOpenAsServer(scheduled, canManage: true))
+        var single = scheduled
+        single.includes = "config/a.yml"
+        XCTAssertFalse(Backups.canOpenAsServer(single, canManage: true))
+        XCTAssertEqual(Backups.copyName(s, serverName: "Survival", backup: scheduled, zone: utc), "Survival from 2025-11-19")
+        XCTAssertEqual(Backups.besideFolder("C:\\Servers\\Survival copy", name: "b"), "C:\\Servers\\b")
+        XCTAssertEqual(Backups.besideFolder("/srv/a", name: "b"), "/srv/b")
+
+        let log = CleanupItem(path: "logs/a.log.gz", kind: "old_log", sizeBytes: 2048)
+        XCTAssertEqual(Backups.cleanupLine(s, log, technical: false), "Old log · 2.0 KB")
+        XCTAssertEqual(Backups.cleanupLine(s, log, technical: true), "Old log · logs/a.log.gz · 2.0 KB")
+        XCTAssertTrue(Backups.ticked(log))
+        XCTAssertFalse(Backups.ticked(CleanupItem(path: "world/dimensions/x", kind: "unused_dimension")))
+        let size = BackupSize(excluded: [SizedFolder(path: "a/b")])
+        XCTAssertEqual(Backups.excludes(size, add: " c/d "), ["a/b", "c/d"])
+        XCTAssertEqual(Backups.excludes(size, remove: "a/b"), [])
+
+        StubAgent.json("{\"ok\": true, \"id\": 3, \"name\": \"s.zip\", \"kept\": true}")
+        let kept = try await client().keepBackup(serverId: "survival", backupId: 3, keep: true)
+        XCTAssertTrue(kept.kept)
+        XCTAssertEqual(path(0), "/api/servers/survival/backups/3/keep")
+        XCTAssertEqual(body(0), "{\"keep\":true}")
+
+        StubAgent.json("{\"items\": [{\"path\": \"logs/a.log.gz\", \"kind\": \"old_log\", \"size_bytes\": 5}], \"dimensions_checked\": false, \"bin\": []}")
+        let found = try await client().cleanup(serverId: "survival")
+        XCTAssertEqual(found.items.first?.kind, "old_log")
+        XCTAssertFalse(found.dimensionsChecked)
+
+        StubAgent.json("{\"ok\": true, \"batch\": \"20261119-120000\", \"moved\": [\"logs/a.log.gz\"], \"skipped\": [], \"size_bytes\": 5, \"bin_days\": 7}")
+        let done = try await client().cleanUp(serverId: "survival", paths: ["logs/a.log.gz"])
+        XCTAssertEqual(done.batch, "20261119-120000")
+        XCTAssertTrue(body(2).contains("a.log.gz"))
+
+        StubAgent.json("{\"job\": {\"id\": \"j1\", \"kind\": \"duplicate\", \"state\": \"running\"}}")
+        _ = try await client().duplicate(serverId: "survival", name: "S", directory: "C:/s2", world: "fresh", fromBackup: 3)
+        XCTAssertTrue(body(3).contains("\"from_backup\":3"), body(3))
+    }
+
     func testTheChangeListsAreReadAndUndoAndRedoSentToTheServersOwnRoutes() async throws {
         let c = client()
         StubAgent.json(
@@ -404,6 +491,24 @@ final class WorldTests: XCTestCase {
         do {
             _ = try await slow.backups(serverId: "survival")
             XCTFail("No answer read as a list")
+        } catch {
+            XCTAssertEqual(error as? AgentError, .unreachable)
+        }
+    }
+
+    func testSlowWorkWhoseConnectionDropsMayStillBeRunningOnThePC() async {
+        StubAgent.enqueue(StubAgent.Answer(status: 0, headers: [:], body: Data(), failure: URLError(.networkConnectionLost)))
+        do {
+            _ = try await client().backUp(serverId: "survival")
+            XCTFail("A dropped backup read as done")
+        } catch {
+            XCTAssertEqual(error as? AgentError, .stillWorking)
+        }
+        // A PC that is off is still unreachable.
+        StubAgent.enqueue(StubAgent.Answer(status: 0, headers: [:], body: Data(), failure: URLError(.cannotConnectToHost)))
+        do {
+            _ = try await client().backUp(serverId: "survival")
+            XCTFail("A backup on a PC that is off read as done")
         } catch {
             XCTAssertEqual(error as? AgentError, .unreachable)
         }

@@ -55,6 +55,24 @@ final class AlertSyncTests: XCTestCase {
         XCTAssertEqual(later.unread, 1)
     }
 
+    func testMarkAllReadWhileTheListIsBeingCaughtUpIsKept() async throws {
+        let agent = Agent(last: 10)
+        let sync = agent.sync
+        var state = try await sync.catchUp(AlertState())
+        agent.last = 12
+        state = try await sync.catchUp(state)
+        let started = state
+        let readMeanwhile = state.markAllRead() // tapped while the next read waits
+        agent.last = 13
+        let caughtUp = try await sync.catchUp(started).keepingMarks(readMeanwhile)
+        XCTAssertEqual(caughtUp.readUpTo, 12)
+        XCTAssertEqual(caughtUp.unread, 1)
+        // A list that started again keeps its own fresh mark.
+        agent.last = 2
+        let restarted = try await sync.catchUp(caughtUp).keepingMarks(caughtUp.markAllRead())
+        XCTAssertEqual(restarted.readUpTo, 2)
+    }
+
     func testThePhoneKeepsTheNewest200() async throws {
         let agent = Agent(last: 0)
         let sync = agent.sync

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -78,10 +79,16 @@ class ModrinthClient:
             await self._client.aclose()
 
     async def _get(self, path: str, params: dict | None = None) -> Any:
+        return await self._send("GET", path, params=params)
+
+    async def _post(self, path: str, body: dict[str, Any]) -> Any:
+        return await self._send("POST", path, json=body)
+
+    async def _send(self, method: str, path: str, **sent: Any) -> Any:
         client = await self._http()
         url = f"{self.base}{path}"
         try:
-            response = await client.get(url, params=params)
+            response = await client.request(method, url, **sent)
         except httpx.HTTPError as exc:
             raise ModrinthError(
                 "Couldn't reach Modrinth. Check the PC's internet connection and try again."
@@ -109,10 +116,15 @@ class ModrinthClient:
         loaders: tuple[str, ...] | None = None,
         limit: int = 20,
         offset: int = 0,
+        project_type: str | None = None,
     ) -> dict[str, Any]:
+        """Mods (or plugins) for this server; with ``project_type``
+        "modpack", modpacks for any loader unless ``loaders`` says which."""
         loaders = self.loaders if loaders is None else loaders
         facets: list[list[str]] = []
-        if self.project_kind == "mod":
+        if project_type:
+            facets.append([f"project_type:{project_type}"])
+        elif self.project_kind == "mod":
             facets.append(["project_type:mod"])
         if loaders:
             # Inside one list Modrinth reads the facets as "any of these".
@@ -144,9 +156,13 @@ class ModrinthClient:
                     "follows": hit.get("follows"),
                     "categories": hit.get("categories", []),
                     "versions": hit.get("versions", []),
+                    "minecraft_version": newest(hit.get("versions")),
+                    "loaders": [
+                        LOADER_NAMES[c] for c in hit.get("categories", []) if c in LOADER_NAMES
+                    ],
                     "latest_version": hit.get("latest_version"),
-                    "client_side": hit.get("client_side"),
-                    "server_side": hit.get("server_side"),
+                    "disclosures": disclosures(hit.get("disclosure_types")),
+                    **sides(hit),
                     "icon_url": hit.get("icon_url"),
                     "license": hit.get("license"),
                     "page": f"https://modrinth.com/{self.page_kind(hit)}/{hit.get('slug')}",
@@ -195,8 +211,7 @@ class ModrinthClient:
             "loaders": data.get("loaders", []),
             "game_versions": data.get("game_versions", []),
             "downloads": data.get("downloads"),
-            "client_side": data.get("client_side"),
-            "server_side": data.get("server_side"),
+            **sides(data),
             "license": (data.get("license") or {}).get("id"),
             "icon_url": data.get("icon_url"),
             "page": f"https://modrinth.com/{self.page_kind(data)}/{data.get('slug')}",
@@ -290,6 +305,35 @@ class ModrinthClient:
                     return version
         return versions[0] if versions else None
 
+    async def installed_versions(self, sha1s: list[str]) -> dict[str, dict[str, Any]]:
+        """What each installed file is on Modrinth, by its sha1, in one call.
+        A file Modrinth doesn't know is left out."""
+        data = await self._post("/version_files", {"hashes": sha1s, "algorithm": "sha1"})
+        return _by_hash(data)
+
+    async def fitting_versions(
+        self, sha1s: list[str], minecraft_version: str
+    ) -> dict[str, dict[str, Any]]:
+        """The newest version that fits this Minecraft version and the
+        server's loader, for each installed file by its sha1, in one call.
+        A file with no fitting version is left out."""
+        body = {
+            "hashes": sha1s,
+            "algorithm": "sha1",
+            "loaders": list(self.loaders),
+            "game_versions": [minecraft_version],
+        }
+        return _by_hash(await self._post("/version_files/update", body))
+
+    async def version_by_hash(self, sha512: str) -> dict[str, Any] | None:
+        """The version a file belongs to, found by its SHA-512, or None."""
+        try:
+            return self._version_summary(
+                await self._get(f"/version_file/{sha512}", {"algorithm": "sha512"})
+            )
+        except ModrinthNotFound:
+            return None
+
     async def by_hash(self, sha512: str) -> str | None:
         """The project a file belongs to, found by its SHA-512, or None."""
         try:
@@ -297,6 +341,17 @@ class ModrinthClient:
         except ModrinthNotFound:
             return None
         return str(found.get("project_id") or "") or None
+
+    async def file_url(self, sha512: str) -> str | None:
+        """Where Modrinth serves the file with this SHA-512, or None."""
+        try:
+            found = await self._get(f"/version_file/{sha512}", {"algorithm": "sha512"})
+        except ModrinthNotFound:
+            return None
+        for file in found.get("files") or []:
+            if str((file.get("hashes") or {}).get("sha512", "")).lower() == sha512.lower():
+                return str(file.get("url") or "") or None
+        return None
 
     # ------------------------------------------------------------------
     async def download(self, version: dict[str, Any]) -> tuple[bytes, str, str]:
@@ -339,3 +394,93 @@ class ModrinthClient:
                 "The downloaded file isn't a mod (.jar) file, so it was thrown away."
             )
         return data, filename, fetched.sha256
+
+
+def _by_hash(data: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(data, dict):
+        raise ModrinthError("Modrinth sent an answer that couldn't be read.")
+    return {
+        str(sha).lower(): ModrinthClient._version_summary(v)
+        for sha, v in data.items()
+        if isinstance(v, dict)
+    }
+
+
+LOADER_NAMES = {"fabric": "Fabric", "quilt": "Quilt", "forge": "Forge", "neoforge": "NeoForge"}
+
+# What a project told Modrinth it holds (Modrinth's rules since 2026-08),
+# in plain words. One Modrinth adds later is shown by its own name.
+DISCLOSURES = {
+    "ai_content": "Made with AI",
+    "ai_content_code": "Code made with AI",
+    "ai_content_text": "Text made with AI",
+    "advertisements": "Shows ads",
+    "paid_features": "Paid features",
+    "telemetry": "Collects usage data",
+    "telemetry_opt_in": "Collects usage data if you say yes",
+    "telemetry_always_active": "Always collects usage data",
+    "archived": "No longer updated",
+    "epilepsy_triggers": "Flashing lights",
+    "system_interactions": "Reaches outside Minecraft",
+    "derivative_work": "Based on someone else's work",
+}
+
+
+def disclosures(found: Any) -> list[str]:
+    if not isinstance(found, list):
+        return []
+    return [
+        DISCLOSURES.get(d) or d.replace("_", " ").capitalize()
+        for d in found
+        if isinstance(d, str) and d
+    ]
+
+
+def newest(versions: Any) -> str | None:
+    """The newest Minecraft release in a list ("1.21.10" after "1.21.9"),
+    or None when there's none to tell."""
+    from ..servertypes.versions import version_key
+
+    releases = [v for v in versions or [] if isinstance(v, str) and re.fullmatch(r"[\d.]+", v)]
+    return max(releases, key=version_key) if releases else None
+
+
+# Modrinth's ``environment`` values (it replaced the project's client_side
+# and server_side), sorted by what each needs on the server and in players'
+# games. "unknown" says nothing.
+SERVER_NEEDS = {
+    "client_and_server",
+    "server_only",
+    "server_only_client_optional",
+    "dedicated_server_only",
+}
+SERVER_NO = {"client_only", "singleplayer_only"}
+CLIENT_NEEDS = {
+    "client_and_server",
+    "client_only",
+    "client_only_server_optional",
+    "singleplayer_only",
+}
+CLIENT_NO = {"server_only", "dedicated_server_only"}
+
+
+def sides(data: dict[str, Any]) -> dict[str, str | None]:
+    """``client_side`` and ``server_side`` (required, optional or
+    unsupported) read from Modrinth's ``environment``. A project lists one
+    value per kind of version it has. The old fields are used only while
+    Modrinth still sends them and ``environment`` says nothing."""
+    found = data.get("environment")
+    values = {found} if isinstance(found, str) else set(found or [])
+    values.discard("unknown")
+    if not values:
+        return {"client_side": data.get("client_side"), "server_side": data.get("server_side")}
+
+    def side(needs: set[str], no: set[str]) -> str:
+        if values & needs:
+            return "required"
+        return "unsupported" if values <= no else "optional"
+
+    return {
+        "client_side": side(CLIENT_NEEDS, CLIENT_NO),
+        "server_side": side(SERVER_NEEDS, SERVER_NO),
+    }

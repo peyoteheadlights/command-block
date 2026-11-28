@@ -76,7 +76,7 @@ public final class NoLog: AgentLog {
 /// Keychain; `onSignedOut` is called on a 401, so the app forgets the token
 /// and locks itself out at once.
 public final class AgentClient: @unchecked Sendable {
-    public static let QUICK_ACTIONS = ["start", "stop", "restart"]
+    public static let QUICK_ACTIONS = ["start", "stop", "restart", "force_stop"]
 
     /// How long a request may wait with nothing arriving: a PC that is off
     /// is noticed quickly.
@@ -149,12 +149,31 @@ public final class AgentClient: @unchecked Sendable {
         return try await call("POST", "/api/auth/login", body: try AgentClient.encode(body), signedIn: false, as: LoginResult.self)
     }
 
-    public func logout() async {
-        _ = try? await call("POST", "/api/auth/logout", body: Data("{}".utf8), as: Empty.self)
+    /// False when the PC didn't hear it: its sign-in for this phone stays until it is signed out there.
+    @discardableResult
+    public func logout() async -> Bool {
+        do {
+            _ = try await call("POST", "/api/auth/logout", body: Data("{}".utf8), as: Empty.self)
+            return true
+        } catch AgentError.signedOut {
+            return true
+        } catch {
+            return false
+        }
     }
 
     public func me() async throws -> Me {
         try await call("GET", "/api/auth/me", as: Me.self)
+    }
+
+    /// Owner only: starts the server now without waiting for the jar checks.
+    public func skipCheck(serverId: String) async throws -> Ok {
+        try await call(
+            "POST",
+            "/api/servers/\(AgentClient.pathSegment(serverId))/server/skip-check",
+            body: Data("{}".utf8),
+            as: Ok.self
+        )
     }
 
     public func servers() async throws -> ServerList {
@@ -170,10 +189,12 @@ public final class AgentClient: @unchecked Sendable {
         guard AgentClient.QUICK_ACTIONS.contains(action) else {
             throw NotAnAction(action: action)
         }
+        // Force stop is a stop the agent ends without the console.
+        let force = action == "force_stop"
         return try await call(
             "POST",
-            "/api/servers/\(AgentClient.pathSegment(serverId))/server/\(action)",
-            body: Data("{}".utf8),
+            "/api/servers/\(AgentClient.pathSegment(serverId))/server/\(force ? "stop" : action)",
+            body: Data((force ? #"{"force":true}"# : "{}").utf8),
             timeout: AgentClient.actionTimeout,
             as: ServerAction.self
         )
@@ -297,6 +318,11 @@ public final class AgentClient: @unchecked Sendable {
                 && Date().timeIntervalSince(started) >= slowWait * 0.9 {
                 throw AgentError.stillWorking
             }
+            // The PC got the work and then the connection dropped (the phone
+            // slept, Wi-Fi changed): the job goes on there.
+            if slow && nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorNetworkConnectionLost {
+                throw AgentError.stillWorking
+            }
             throw translateFailure(error)
         }
         let data = result.0
@@ -359,7 +385,7 @@ public final class AgentClient: @unchecked Sendable {
     /// with the sign-in in a header (never in the address), and returns its
     /// size. `progress` gets the bytes so far and the size, when the PC said
     /// it, about twice a second. A refusal comes back in the agent's words.
-    func downloadZip(_ path: String, to destination: URL, progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> Int64 {
+    func downloadZip(_ path: String, to destination: URL, type: String = "application/zip", progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> Int64 {
         let logPath = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map { String($0) } ?? path
         guard let url = URL(string: pairing.origin + path) else {
             throw AgentError.notAnAgent
@@ -418,7 +444,7 @@ public final class AgentClient: @unchecked Sendable {
             try? files.removeItem(at: file)
             throw AgentClient.refusal(http, data, isJson: contentType.contains("application/json"))
         }
-        guard contentType.hasPrefix("application/zip") else {
+        guard contentType.hasPrefix(type) else {
             try? files.removeItem(at: file)
             throw AgentError.notAnAgent
         }

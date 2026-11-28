@@ -284,6 +284,55 @@ with Microsoft" the owner clicked (`microsoft.account`, owner only):
   agent's user, joins only the server's own address, and exits when the join
   is done.
 
+### Deep scan's outside scanners, after a click
+
+Deep scan can also run three separate programs: MCAntiMalware (GPL-3),
+jNeedle (MIT) and ClamAV (GPL-2). None of them is shipped or copied into
+this repo. `agent/mods/scanprograms.py` is the only place that starts them:
+
+- each is downloaded the first time someone with `deepscan.run` ticks it
+  and clicks Run, from that project's GitHub release only (one fixed URL per
+  program), and checked against the size and SHA-256 written in the code
+  before it is kept. A file that doesn't match is deleted;
+- ClamAV's zip is unpacked by the agent itself: every entry passes the
+  zip-slip check, links are refused, and the total is capped at 1 GB;
+- runs before a start and scheduled runs only use programs that are already
+  downloaded, and never download one. ClamAV is offered on Windows only,
+  since its download is a Windows build;
+- the command is a list, never through a shell, built from fixed flags and
+  paths the agent chose (the server folder, the mods folder, or one jar
+  already listed). MCAntiMalware runs with `--singleScan true
+  --disableAutoUpdate true` so it never updates itself. It runs at below
+  normal priority with no window and is stopped after 3 hours, or after
+  15 minutes in a run before a start;
+- only what it prints is read. A hit must name a file inside what was
+  scanned, or it is shown as an error, never acted on;
+- ClamAV's `freshclam` updates its signatures from `database.clamav.net` once
+  a day, and jNeedle downloads its own list from `maven.kosmx.dev`. Both run
+  as the agent's user.
+
+### Deep scan's VirusTotal lookup, with the owner's key
+
+`agent/mods/virustotal.py` asks VirusTotal what its engines said about a jar:
+
+- only the owner can save or remove the key (`POST`/`DELETE
+  /mods/deepscan/virustotal`, owner plus `deepscan.run`). The key is checked
+  with one lookup first, then kept in `virustotal-key.bin` like other secrets
+  and never sent back to the apps;
+- only a SHA-256 goes out, as `GET /api/v3/files/<sha256>`. Anything else is
+  refused before a request. `downloads.py` allows only that path on
+  `www.virustotal.com` and drops the `x-apikey` header on a redirect;
+- it runs only when someone ticks it, never in a run before a start or on
+  the schedule, so those can't use up the day's lookups;
+- a free key allows 4 lookups a minute and 500 a day, so lookups wait for a
+  free slot and the day's count is kept on disk. The key and the count are
+  shared by every server on the agent. Answers are kept for a week (a day for
+  a file VirusTotal didn't know);
+- 3 or more engines saying malicious makes a file Known bad, which is
+  quarantined like the other scanners' hits; 1 or 2 make it Worth a look.
+  The finding always says how many of how many engines, and which;
+- a free key is for non-commercial use only, and the key settings say so.
+
 ### The owner's Microsoft sign-in
 
 Online-mode Java servers and Bedrock servers can only be joined with a real
@@ -365,6 +414,21 @@ after the owner's click (`servers.manage`, which no moderator can have):
   memory (1 to 4 GB), and it is killed after 3 hours. A run that doesn't
   leave a `level.dat` is an error with the log's path, even when Chunker
   exits with 0.
+
+### playit.gg's Reconnect, after a click
+
+playit.gg's program (`playitd`, BSD-2-Clause) is installed by the desktop
+app after a click (`desktop/pc.py`, its signed setup). The agent only talks
+to it over its local pipe, with one exception: the Reconnect button, which
+shows when the program stopped. `agent/playit.py` `reconnect()` is the only
+place that runs it, and only after the owner's click (`pc.settings` and
+owner only, `POST /playit/reconnect`):
+
+- the command is a fixed list (`[playit.exe, "start"]`), never through a
+  shell, and nothing from a request reaches it. The program's path is the
+  one its setup put it at;
+- `stdin` is `DEVNULL`, output is captured and only its first 300
+  characters are shown, and it is killed after 60 seconds.
 
 ### The separate Windows user
 
@@ -867,7 +931,8 @@ says "Couldn't check for safety notes".
 
 Nothing downloaded is executed by the agent, with the documented exceptions
 under Command injection: the loader installer, Chunker (shipped with the
-app, never downloaded), Mojang's Bedrock server program, the owner's own server jar (picked by the owner, never
+app, never downloaded), Mojang's Bedrock server program, deep scan's outside scanners (MCAntiMalware,
+jNeedle and ClamAV), the owner's own server jar (picked by the owner, never
 downloaded), and an update of this app, which runs only after its signature and
 checksum check out.
 
@@ -910,6 +975,25 @@ changes made outside the app (a bracketed console line such as
 off), and the chat spam rule (several new names saying the same line turn
 the whitelist on with Minecraft's own command). The failed sign-in alert
 counts the tries from the same rows the lockout reads.
+
+The jar check also notes each jar's SHA-256. A jar that is new or different
+since the last check gets a "Changed outside the app" line, one
+notification and a Protection line, unless the app wrote it: an install,
+upload, update, Undo or rename, anything written while a mod change job
+ran, or a SHA-256 already in the add-on history (`agent/mods/jarscan.py`).
+The first check never warns, and the line stays until someone with mod
+rights presses "That was me". It never blocks a start on its own.
+
+Update hold: a version its site put out less than 3 days ago (the owner
+picks 0 to 14 in the jar check's options) is left out of Update all, the
+update notices and the update recommendation, so a hijacked release has
+time to be found and pulled (`agent/mods/manager.py`, `updateall.py`).
+Update now on one mod or plugin skips the wait. A version with no published
+date is not held.
+
+On Windows the card also says whether the running server was started as
+the separate Windows user (below), and asks for a restart when the setting
+was turned on after it started.
 
 Help has a read-only fractureiser check (Technical, owner only): it looks for
 the known files, startup entries and Run key values and lists what it

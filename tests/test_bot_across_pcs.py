@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 
 import pytest
 
@@ -91,6 +92,17 @@ def on_pc(pc: PC, work):
 def run(fake, name, options=None, **kwargs) -> list[str]:
     token = fake.command(name, options, **kwargs)
     return wait_for(lambda: fake.replies(token), 15)
+
+
+def run_until_off(fake, name, options=None, **kwargs) -> list[str]:
+    """Like run, but waits for "That PC is off". A slow runner can say
+    "Still waiting" first and then edit it into the off answer."""
+    token = fake.command(name, options, **kwargs)
+    return wait_for(lambda: [w for w in fake.replies(token) if "That PC is off" in w], 15)
+
+
+async def minute(pc: PC) -> None:
+    pc.core.botpc.minute(pc.core.discord)
 
 
 def link_headers(a: PC, b: PC) -> dict[str, str]:
@@ -231,9 +243,9 @@ def test_that_pc_is_off_and_start_tries_help_wake_first(pcs, fake, monkeypatch):
     sent = []
     monkeypatch.setattr(wake, "send_wake", lambda mac, broadcast: sent.append((mac, broadcast)))
     b.off()
-    words = run(fake, "status", {"server": ref})[-1]
+    words = run_until_off(fake, "status", {"server": ref})[-1]
     assert words.startswith("That PC is off") and "Asked" not in words
-    words = run(fake, "start", {"server": ref}, roles=[ROLE])[-1]
+    words = run_until_off(fake, "start", {"server": ref}, roles=[ROLE])[-1]
     assert "That PC is off" in words and "Asked" in words and "wake up" in words
     assert sent == [("aa:bb:cc:dd:ee:ff", "192.168.1.255")]
 
@@ -292,3 +304,148 @@ def test_a_removed_bot_link_or_pc_is_out_of_discord(pcs, fake):
     assert a.call("DELETE", f"/api/pcs/{b.core.pcs.pc}", owner).status_code == 200
     assert a.core.auth.records.get("bot_link", b.core.pcs.pc) is None
     assert f"bot_link:{b.core.pcs.pc}" not in a.core.auth.records.keys
+
+
+def test_a_pc_that_hasnt_heard_of_a_bot_pc_doesnt_start_one(pcs, fake, monkeypatch):
+    """Asking which bot to run never makes this PC the Bot PC: only the PC
+    the synced pick names runs the live connection."""
+    a, b = pcs("a"), pcs("b")
+    join(b, a, a.sign_in())
+    monkeypatch.setenv("MCSC_DISCORD_BOT_TOKEN", GOOD_TOKEN)
+    assert b.core.botpc.wanted() == (None, "")
+    assert b.core.botpc.choice() is None
+
+
+def test_two_pcs_with_a_bot_each_join_and_the_pc_that_allowed_keeps_it(pcs, fake):
+    a, b = pcs("a"), pcs("b")
+    owner = a.sign_in()
+    for pc, token in ((a, owner), (b, b.sign_in())):
+        pc.config.env_path = pc.config.source.parent / ".env"
+        assert (
+            pc.call("PUT", "/api/discord/token", token, json={"token": GOOD_TOKEN}).status_code
+            == 200
+        )
+        wait_for(lambda pc=pc: pc.core.discord and pc.core.discord.connected)
+    join(b, a, owner)
+    wait_for(lambda: b.core.discord and b.core.discord.rest_only)
+    assert a.core.botpc.bot_pc() == b.core.botpc.bot_pc() == a.core.pcs.pc
+    assert a.core.discord is not None and not a.core.discord.rest_only
+
+
+def test_a_server_on_a_pc_that_went_quiet_shows_as_unknown(pcs, fake, monkeypatch):
+    from agent.discord import botpc
+
+    a, b, _owner = two_pcs(pcs)
+    ref = remote(a, b)
+    assert a.core.botpc.remote()[ref]["state"] == "OFFLINE"
+    monkeypatch.setattr(botpc, "NEWS_STALE", 1.0, raising=False)
+    monkeypatch.setattr(botpc, "NEWS_EVERY", 0.0, raising=False)
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "UNKNOWN", 5)
+    b.core.botpc.publish()  # B says it again, as it does every minute
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "OFFLINE")
+
+
+def test_a_pc_whose_clock_was_pushed_ahead_still_says_it_is_there(pcs, fake, monkeypatch):
+    from agent.discord import botpc
+
+    a, b, _owner = two_pcs(pcs)
+    ref = remote(a, b)
+    hour_ahead = f"{int(time.time() * 1000) + 3_600_000:013d}.00000.other"
+    b.core.auth.records.clock.observe(hour_ahead)  # another PC's clock is an hour fast
+    monkeypatch.setattr(botpc, "NEWS_STALE", 1.0, raising=False)
+    monkeypatch.setattr(botpc, "NEWS_EVERY", 0.5, raising=False)
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "UNKNOWN")
+    b.core.botpc.publish()  # B's minute
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "OFFLINE")
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "UNKNOWN")
+    b.core.botpc.publish()  # and the next one
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "OFFLINE")
+
+
+def test_a_restarted_bot_pc_doesnt_show_every_other_pc_as_unknown(pcs, fake):
+    from agent.discord.botpc import BotPC
+
+    a, b, _owner = two_pcs(pcs)
+    ref = remote(a, b)
+    a.core.botpc = BotPC(a.core)  # the agent started again
+    assert a.core.botpc.remote()[ref]["state"] == "OFFLINE"
+
+
+def test_pasting_the_token_again_after_discord_refused_starts_the_bot_again(pcs, fake):
+    a, _b, owner = two_pcs(pcs)
+    fake.socket.drop(4014)  # intents not turned on yet
+    wait_for(lambda: a.core.discord.gateway.state == "intents_refused")
+    # Turned on in the Developer Portal, then the same token pasted again.
+    assert a.call("PUT", "/api/discord/token", owner, json={"token": GOOD_TOKEN}).status_code == 200
+    wait_for(lambda: a.core.discord and a.core.discord.connected)
+
+
+def test_leaving_discord_reaches_a_pc_that_was_off_once_it_answers(pcs, fake, monkeypatch):
+    a, b, owner = two_pcs(pcs)
+    answer = a.call(
+        "PUT", f"/api/discord/guilds/{GUILD_ID}/options", owner, json={"remove_on_leave": True}
+    )
+    assert answer.status_code == 200, answer.text
+    wait_for(lambda: a.core.discord and a.core.discord.connected and a.core.discord.guilds)
+    sent: list[str] = []
+    real_post = a.core.botpc._post
+
+    async def b_is_off(where, what, *rest):
+        sent.append(what)
+        raise OSError("off")
+
+    monkeypatch.setattr(a.core.botpc, "_post", b_is_off)
+    left = {"guild_id": GUILD_ID, "user": {"id": MEMBER_ID}}
+    on_pc(a, a.core.discord.member_left(left))
+    wait_for(lambda: sent == ["member_left"])
+
+    async def b_is_on(where, what, *rest):
+        sent.append(what)
+        return await real_post(where, what, *rest)
+
+    monkeypatch.setattr(a.core.botpc, "_post", b_is_on)
+    on_pc(a, minute(a))  # the bot's minute tries again
+    wait_for(lambda: sent == ["member_left", "member_left"])
+    wait_for(lambda: not a.core.db.get_setting("bot_member_left", []))
+    on_pc(a, minute(a))  # delivered: not sent again
+    on_pc(a, a.core.botpc.deliver())  # and a delivery now has nothing to send
+    assert sent == ["member_left", "member_left"]
+
+
+def test_still_waiting_never_covers_an_answer_the_other_pc_gave_first(pcs, fake, monkeypatch):
+    a, b, owner = two_pcs(pcs)
+    ref = set_up(a, b, owner)
+    real_post = a.core.botpc._post
+
+    back: list[bool] = []
+
+    async def slow_way_back(where, what, *rest):
+        answered = await real_post(where, what, *rest)
+        await asyncio.sleep(3)  # B answered Discord; its answer to A is slow
+        back.append(True)
+        return answered
+
+    monkeypatch.setattr(a.core.botpc, "_post", slow_way_back)
+    token = fake.command("start", {"server": ref}, roles=[ROLE])
+    wait_for(lambda: any("don't allow" in w for w in fake.replies(token)), 15)
+    wait_for(lambda: back, 15)  # A has B's slow answer
+    edits = [body for m, path, body in fake.calls if m == "PATCH" and token in path]
+    assert not any("Still waiting" in str(body) for body in edits)
+
+
+def test_a_pc_slow_to_answer_is_still_waiting_not_off(pcs, fake, monkeypatch):
+    a, b, owner = two_pcs(pcs)
+    ref = set_up(a, b, owner)
+    real_post, woken = a.core.botpc._post, []
+
+    async def slow_relay(where, what, *rest):
+        await asyncio.sleep(3)
+        return await real_post(where, what, *rest)
+
+    monkeypatch.setattr(a.core.botpc, "_post", slow_relay)
+    monkeypatch.setattr(a.core.botpc, "wake", lambda pc: woken.append(pc) or True)
+    token = fake.command("start", {"server": ref}, roles=[ROLE])
+    words = wait_for(lambda: len(fake.replies(token)) > 1 and fake.replies(token), 15)
+    assert words[0].startswith("Still waiting for")
+    assert "don't allow" in words[-1]  # B's own answer, in the same reply
+    assert woken == []

@@ -99,7 +99,8 @@ def test_an_unchanged_value_rewrites_nothing(tmp_path):
         ("view-distance", 99),
         ("view-distance", 2),
         ("pvp", "yes"),
-        ("motd", "two\nlines"),
+        ("motd", "three\nlines\nhere"),  # the MOTD can be two lines, not more
+        ("motd", "carriage\rreturn"),
         ("motd", "x" * 151),
         ("server-port", 80),
         ("server-port", 70000),
@@ -187,6 +188,20 @@ def test_saving_keeps_a_copy_and_offers_undo(multi_client, multi):
     assert safety["kind"] == "safety"
 
 
+def test_undo_with_the_answers_change_id_leaves_a_newer_change_alone(multi_client, multi):
+    folder = multi.for_server("survival").server_dir
+    write(folder)
+    url = "/api/servers/survival/game-settings"
+    mine = multi_client.put(url, json={"values": {"difficulty": "hard"}}).json()
+    multi_client.put(url, json={"values": {"pvp": False}})  # someone else, since
+    undo = multi_client.post(
+        "/api/servers/survival/changes/undo", json={"change_id": mine["undo"]["change_id"]}
+    )
+    assert undo.status_code == 409, undo.text
+    text = (folder / "server.properties").read_text(encoding="utf-8")
+    assert "pvp=false" in text and "difficulty=hard" in text
+
+
 def test_a_port_another_server_uses_is_refused_by_name(multi_client, multi):
     folder = multi.for_server("survival").server_dir
     write(folder)
@@ -235,7 +250,9 @@ async def test_a_change_while_running_waits_for_a_restart(tmp_path):
         await ctx.server.start()
         assert await ctx.server.wait_online(20)
         await asyncio.sleep(0.05)
-        result = await gamesettings.save(ctx, updates={"difficulty": "hard"})
+        # Not difficulty: a running server takes that at once (see
+        # test_less_downtime). The player limit is only read at start.
+        result = await gamesettings.save(ctx, updates={"max-players": "7"})
         assert result["running"] is True
         # The file changed after the server started: what it runs is not
         # what the file says until it restarts.

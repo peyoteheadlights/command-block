@@ -138,6 +138,10 @@ struct AddServerView: View {
             Section { Text(model.t("new.bedrock_versions")).font(.footnote).foregroundStyle(.secondary) }
         }
         if let kind = adding.type {
+            // This kind's tips: always with tips on, else once when it's new to them.
+            if let tip = AddServer.tip(options, kind, hidden: model.hidden) {
+                Section { HideableNote(key: tip, palette: model.basePalette(colorScheme)) }
+            }
             versionStep(adding)
             detailsStep(adding, options, memory: AddServer.memoryShown(kind))
             rulesStep(adding, options, kind.edition)
@@ -163,7 +167,7 @@ struct AddServerView: View {
                 if recommended { Text(model.t("new.recommended")).font(.footnote).foregroundStyle(.green) }
             }
             ForEach(Array(AddServer.rows(model.strings, kind, technical: model.technical).enumerated()), id: \.offset) { _, row in
-                Text(verbatim: "\(row.0): \(row.1)").font(.footnote).foregroundStyle(.secondary)
+                Text(hiding: "\(row.0): \(row.1)").font(.footnote).foregroundStyle(.secondary)
             }
             Button(model.t(chosen ? "new.chosen" : "new.choose")) { Task { await adding.pickType(kind) } }
                 .buttonStyle(.bordered)
@@ -208,9 +212,19 @@ struct AddServerView: View {
         Section(model.t("new.step_details")) {
             TextField(model.t("add.name"), text: Binding(get: { adding.name }, set: { adding.name = String($0.prefix(60)) }))
             folderRows(adding, label: "new.folder", hint: "new.folder_hint")
+            Picker(model.t("welcome.who_question"), selection: Binding(get: { adding.playedBy }, set: { adding.playedBy = $0 })) {
+                Text(model.t("welcome.for_unset")).tag("")
+                ForEach(AddServer.playedBy.indices, id: \.self) { i in
+                    Text(model.t(AddServer.playedBy[i].key)).tag(AddServer.playedBy[i].value)
+                }
+            }
+            if AddServer.namesAsked(adding.playedBy) {
+                TextField(model.t("new.players"), text: Binding(get: { adding.players }, set: { adding.players = $0 }), prompt: Text(model.t("new.players_placeholder")))
+                Text(model.t("new.players_hint")).font(.footnote).foregroundStyle(.secondary)
+            }
             if memory, let mb = adding.memoryMb {
                 Stepper(value: Binding(get: { mb }, set: { adding.nudgeMemory($0 - mb) }), in: 1024...(64 * 1024), step: 512) {
-                    Text(verbatim: model.t("new.memory") + ": " + Memory.gb(mb))
+                    Text(hiding: model.t("new.memory") + ": " + Memory.gb(mb))
                 }
             }
             ServerColorPicker(colors: options.palette, current: adding.color, locked: false, palette: model.serverPalette(adding.color, colorScheme)) { adding.color = $0 }
@@ -255,6 +269,30 @@ struct AddServerView: View {
             if adding.busy == "inspect" { Text(model.t("mobile.content.reading")).foregroundStyle(.secondary) }
             Button(model.t("mobile.content.modpack_choose")) { pickingPack = true }
                 .disabled(adding.busy != nil)
+            TextField(model.t("pack.find_placeholder"), text: Binding(get: { adding.packQuery }, set: { adding.packQuery = String($0.prefix(100)) }))
+            Button(model.t(adding.busy == "find" ? "mods.searching" : "pack.find")) {
+                let strings = model.strings
+                Task { await adding.findPacks(strings) }
+            }
+            .disabled(adding.busy != nil || adding.packQuery.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        if let found = adding.packsFound {
+            Section {
+                ForEach(found.problems, id: \.self) { Text($0).font(.footnote).foregroundStyle(.secondary) }
+                Text(model.t(found.hits.isEmpty ? "mods.nothing_found" : "pack.find_pick")).font(.footnote)
+                ForEach(found.hits) { hit in
+                    Button {
+                        let strings = model.strings
+                        Task { await adding.readFound(hit, strings) }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(hit.title)
+                            Text(Modpacks.about(model.strings, hit)).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    .disabled(adding.busy != nil)
+                }
+            }
         }
         if let inspected = adding.pack {
             let pack = inspected.pack
@@ -267,6 +305,7 @@ struct AddServerView: View {
                 if !pack.clientOnly.isEmpty {
                     Text(model.t("pack.client_only", ["names": pack.clientOnly.joined(separator: ", ")])).font(.footnote)
                 }
+                ForEach(Modpacks.notes(model.strings, pack), id: \.self) { Text(hiding: $0).font(.footnote).foregroundStyle(.orange) }
             }
             if pack.canImport {
                 detailsStep(adding, options, memory: true)

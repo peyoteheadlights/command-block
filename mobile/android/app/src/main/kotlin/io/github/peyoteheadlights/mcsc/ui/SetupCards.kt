@@ -10,7 +10,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.runtime.setValue
@@ -21,7 +20,10 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import io.github.peyoteheadlights.mcsc.core.ConsoleFriends
+import io.github.peyoteheadlights.mcsc.core.ConsoleFriendsText
 import io.github.peyoteheadlights.mcsc.core.Crossplay
 import io.github.peyoteheadlights.mcsc.core.Duplicate
 import io.github.peyoteheadlights.mcsc.core.RawChange
@@ -77,7 +79,37 @@ fun CrossplayCard(vm: AppViewModel, setup: SetupPages, canEdit: Boolean, ask: (S
             Text(t("cross.differences"), color = colors.text)
             for (line in info.differences) Text("• $line", color = colors.text2)
         }
+        info.consoleFriends?.let { ConsoleFriendsPart(vm, setup, it, ask) }
     }
+}
+
+/** "Let console friends join": the risks first (CONSOLE_ON), owner only. */
+@Composable
+private fun ConsoleFriendsPart(vm: AppViewModel, setup: SetupPages, info: ConsoleFriends, ask: (SetupAsk) -> Unit) {
+    val colors = LocalColors.current
+    val context = LocalContext.current
+    Text(t("console.title"), color = colors.text)
+    Text(t("console.what"), color = colors.text2)
+    ConsoleFriendsText.state(vm.strings, info)?.let { Text(it, color = colors.text) }
+    info.signIn?.let { code ->
+        OutlinedButton(onClick = { openLink(context, code.url) }) { Text(code.url) }
+    }
+    info.problem?.let { Text(it, color = colors.danger) }
+    if (!info.available && !info.on) return
+    if (vm.me?.isOwner != true) {
+        Text(t("console.owner_only"), color = colors.text2)
+        return
+    }
+    if (info.on) {
+        OutlinedButton(onClick = { setup.setConsoleFriends(false, vm.strings) }, enabled = setup.busy == null) {
+            Text(t(if (setup.busy == "console") "console.turning_off" else "console.turn_off"))
+        }
+    } else {
+        Button(onClick = { ask(SetupAsk.CONSOLE_ON) }, enabled = setup.busy == null) {
+            Text(t(if (setup.busy == "console") "console.turning_on" else "console.turn_on"))
+        }
+    }
+    Text(t("console.stopped_first"), color = colors.text2)
 }
 
 /** Duplicate: a copy with its own port and color; the world copied or

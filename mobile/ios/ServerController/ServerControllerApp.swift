@@ -6,11 +6,17 @@ struct ServerControllerApp: App {
     @UIApplicationDelegateAdaptor(PushDelegate.self) private var push
     @State private var model = AppModel()
 
+    init() {
+        _ = Bundled.fonts  // Archivo, before the first heading is drawn
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environment(model)
                 .preferredColorScheme(model.theme.colorScheme)
+                // Section headings keep their sentence case, never ALL CAPS.
+                .textCase(nil)
         }
     }
 }
@@ -71,7 +77,7 @@ struct PrivacyCover: View {
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
                 Text(model.t("mobile.app_name"))
-                    .font(.title2.weight(.semibold))
+                    .font(.heading(.title2))
             }
         }
     }
@@ -92,7 +98,7 @@ struct LockView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
                 Text(model.t("mobile.lock.title"))
-                    .font(.title2.weight(.semibold))
+                    .font(.heading(.title2))
                     .multilineTextAlignment(.center)
                 Button {
                     ask()

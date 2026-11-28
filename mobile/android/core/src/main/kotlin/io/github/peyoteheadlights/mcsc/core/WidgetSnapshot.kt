@@ -10,6 +10,8 @@ data class WidgetServer(
     val state: String = States.UNKNOWN,
     val playersOnline: Int? = null,
     val maxPlayers: Int? = null,
+    /** The agent's label, so a stuck server reads "Not answering" here too. */
+    val label: String = "unknown",
 )
 
 /**
@@ -28,7 +30,7 @@ data class WidgetSnapshot(
     /** The snapshot as it may be shown at [now]. */
     fun shown(now: Double): WidgetSnapshot =
         if (reached && now - checkedAt <= FRESH_FOR) this
-        else copy(servers = servers.map { it.copy(state = States.UNKNOWN, playersOnline = null) })
+        else copy(servers = servers.map { it.copy(state = States.UNKNOWN, label = "unknown", playersOnline = null) })
 
     fun isFresh(now: Double): Boolean = reached && now - checkedAt <= FRESH_FOR
 
@@ -40,7 +42,7 @@ data class WidgetSnapshot(
             checkedAt = now,
             reached = true,
             servers = list.servers.map {
-                WidgetServer(it.id, it.name, it.color, it.state, it.playersOnline, it.maxPlayers)
+                WidgetServer(it.id, it.name, it.color, it.state, it.playersOnline, it.maxPlayers, it.label)
             },
         )
 
@@ -49,7 +51,7 @@ data class WidgetSnapshot(
             checkedAt = now,
             reached = false,
             problemKey = problem.key,
-            servers = previous?.servers.orEmpty().map { it.copy(state = States.UNKNOWN, playersOnline = null) },
+            servers = previous?.servers.orEmpty().map { it.copy(state = States.UNKNOWN, label = "unknown", playersOnline = null) },
         )
     }
 }

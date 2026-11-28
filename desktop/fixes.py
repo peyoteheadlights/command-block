@@ -46,6 +46,19 @@ def run_fix(window: MainWindow, sid: str, fix: dict, say: Say) -> None:
             here(lambda exc: say(str(exc))),
         )
 
+    def undo_of(result: dict) -> Callable[[], None] | None:
+        """Undo for just this change: if someone made another since, the
+        agent puts nothing back rather than undo theirs."""
+        change_id = (result.get("undo") or {}).get("change_id")
+        if change_id is None:
+            return None
+        return lambda: call(
+            "POST",
+            "/changes/undo",
+            lambda _r: say(text("desktop.fix.undone")),
+            {"change_id": change_id},
+        )
+
     kind = fix["kind"]
     if kind == "restart":
         window.server_action(sid, "restart")
@@ -161,12 +174,7 @@ def run_fix(window: MainWindow, sid: str, fix: dict, say: Say) -> None:
             call(
                 "PUT",
                 "/game-settings",
-                lambda _r: say(
-                    text("desktop.fix.distance_done"),
-                    lambda: call(
-                        "POST", "/changes/undo", lambda _r: say(text("desktop.fix.undone")), {}
-                    ),
-                ),
+                lambda r: say(text("desktop.fix.distance_done"), undo_of(r)),
                 {"values": values},
             )
     elif kind == "java":

@@ -2,7 +2,10 @@
 
 Minecraft Java servers listen on a TCP port; Geyser (Bedrock players) and
 Bedrock servers listen on a UDP port (a Bedrock server on two: server-port
-for IPv4, 19132 by default, and server-portv6, 19133). This module:
+for IPv4, 19132 by default, and server-portv6, 19133). From Bedrock 1.26.50
+(NetherNet) a Bedrock server's server-port is TCP too, and players' game
+traffic goes to server-udp-ports, which set_udp_ports() makes the same
+number as server-port. This module:
 
   * reads each server's real game port from its server.properties
   * knows each server's Bedrock (Geyser) UDP port when crossplay is on,
@@ -18,6 +21,7 @@ for IPv4, 19132 by default, and server-portv6, 19133). This module:
 from __future__ import annotations
 
 import os
+import re
 import socket
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,6 +108,40 @@ def bedrock_v6_port(server_dir: Path) -> GamePort:
     )
 
 
+def udp_ports(server_dir: Path) -> str | None:
+    """server-udp-ports when it is one port or one range ("19132",
+    "19140-19155"), for the router step. None when it isn't set, or is a
+    public:local mapping or has an address, which the owner set up themselves."""
+    from .minecraft.properties import PropertiesFile
+
+    path = Path(server_dir) / "server.properties"
+    try:
+        value = (PropertiesFile.read(path).get("server-udp-ports") or "").strip()
+    except (OSError, ValueError):
+        return None
+    return value if re.fullmatch(r"\d{1,5}(-\d{1,5})?", value) else None
+
+
+def set_udp_ports(server_dir: Path) -> int | None:
+    """Bedrock 1.26.50+ (NetherNet) gives each player a random UDP port
+    unless server-udp-ports is set, and random ports can't be forwarded or
+    let through a firewall. When it isn't set, set it to the game port's
+    number, which Mojang lets all players share. Returns the port written,
+    or None when nothing was changed (already set, or no server.properties)."""
+    from .minecraft.properties import PropertiesFile
+
+    path = Path(server_dir) / "server.properties"
+    if not path.is_file():
+        return None
+    parsed = PropertiesFile.read(path)
+    if (parsed.get("server-udp-ports") or "").strip():
+        return None  # the owner's (or ours from before): never changed here
+    port = read_properties_port(server_dir) or BEDROCK_DEFAULT_PORT
+    parsed.set("server-udp-ports", str(port))
+    parsed.write(path)
+    return port
+
+
 def is_free(port: int, protocol: str = "tcp", host: str = "0.0.0.0") -> bool:
     """True when nothing on this machine holds the port. Checked by binding
     it, which is the only reliable test; the socket is closed at once."""
@@ -150,6 +188,15 @@ class PortManager:
         found = [self.port_of(ctx)]
         if ctx.config.server_type.edition == "bedrock":
             found.append(bedrock_v6_port(ctx.config.server_dir))
+            # NetherNet's join page is TCP on the same number.
+            found.append(GamePort(found[0].port, "tcp", "NetherNet's join page"))
+            # WaterdogPE in front of it, for playit (agent/waterdog.py).
+            waterdog = self.core.waterdog.of(ctx)
+            if waterdog:
+                found += [
+                    GamePort(waterdog["listen"], "udp", "WaterdogPE"),
+                    GamePort(waterdog["media"], "udp", "WaterdogPE's NetherNet"),
+                ]
         geyser = self.bedrock_port_of(ctx)
         if geyser:
             found.append(geyser)
@@ -186,9 +233,9 @@ class PortManager:
         start = BEDROCK_DEFAULT_PORT
         for port in range(start, min(start + SUGGEST_RANGE, 65535), 2):
             pair = (port, port + 1)
-            if any(("udp", p) in taken for p in pair):
+            if any(("udp", p) in taken for p in pair) or ("tcp", port) in taken:
                 continue
-            if all(is_free(p, "udp") for p in pair):
+            if all(is_free(p, "udp") for p in pair) and is_free(port, "tcp"):
                 return pair
         return None
 
@@ -220,8 +267,12 @@ class PortManager:
             if other is ctx or not other.server.running:
                 continue
             theirs = {(p.protocol, p.port) for p in self.claimed(other)}
+            said: set[int] = set()
             for protocol, port in sorted(my_ports & theirs):
-                if (protocol, port) == (mine.protocol, mine.port):
+                if port == mine.port:
+                    if port in said:
+                        continue  # a Bedrock game port is both TCP and UDP
+                    said.add(port)
                     problems.append(
                         f"Port {port} is already used by the running server "
                         f"'{other.name}'. Change server-port in this server's "
@@ -255,9 +306,11 @@ class PortManager:
                 "so Minecraft may fail to start."
             )
         for extra in self.claimed(ctx)[1:]:
-            if extra.protocol == "udp" and not is_free(extra.port, "udp"):
+            if extra.protocol == "tcp" and extra.port != mine.port:
+                continue  # a live map's port, held by the server itself
+            if not is_free(extra.port, extra.protocol):
                 warnings.append(
-                    f"Port {extra.port}, which Bedrock players use, looks busy on this PC, "
-                    "so they may not be able to join."
+                    f"Port {extra.port} ({extra.protocol.upper()}), which Bedrock players use, "
+                    "looks busy on this PC, so they may not be able to join."
                 )
         return warnings

@@ -39,6 +39,11 @@ class Prefs(context: Context) {
         get() = p.getBoolean("technical", false)
         set(value) = p.edit { putBoolean("technical", value) }
 
+    /** Streamer mode: hide addresses, folders and keys on screen. */
+    var streamer: Boolean
+        get() = p.getBoolean("streamer", false)
+        set(value) = p.edit { putBoolean("streamer", value) }
+
     /** Ask for the phone's unlock when opening the app. On by default. */
     var unlock: Boolean
         get() = p.getBoolean("unlock", true)
@@ -56,11 +61,6 @@ class Prefs(context: Context) {
     var agentVersion: String?
         get() = p.getString("agent_version", null)
         set(value) = p.edit { putString("agent_version", value) }
-
-    /** The newest alert already shown on the lock screen. */
-    var notifiedUpTo: Long
-        get() = p.getLong("notified_up_to", 0)
-        set(value) = p.edit { putLong("notified_up_to", value) }
 
     /** What waking the PC needs, kept while it answered (core/Wake.kt), as JSON. */
     var wake: String?

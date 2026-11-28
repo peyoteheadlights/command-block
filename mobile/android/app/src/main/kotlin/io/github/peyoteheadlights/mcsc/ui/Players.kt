@@ -12,7 +12,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -108,7 +107,7 @@ private fun LazyListScope.playersPage(
         items(page.online) { player ->
             Card {
                 val bedrock = if (player.edition == "bedrock") " · " + t("players.bedrock") else ""
-                Item(player.username, subtitle = t("players.col_session") + ": " + Display.playingFor(vm.strings, player) + bedrock)
+                Item(player.username, subtitle = t("players.col_session") + ": " + Display.playingFor(vm.strings, player) + bedrock, leading = { Face() })
                 Buttons(PlayerButtons.forPlayer(player.username, true, page, canManage, canOp), player.username, busy, press)
             }
         }
@@ -149,7 +148,8 @@ private fun LazyListScope.playersPage(
         Card {
             val tags = PlayerButtons.tags(known.username, page).map { t(it) }
             val seen = t("players.col_last") + ": " + Display.ago(vm.strings, known.lastSeen, now)
-            Item(known.username, subtitle = (listOf(seen) + tags).joinToString(" · "))
+            val modpack = listOfNotNull(PlayerButtons.modpack(vm.strings, known))
+            Item(known.username, subtitle = (listOf(seen) + modpack + tags).joinToString(" · "), leading = { Face() })
             val online = page.online.any { it.username.equals(known.username, ignoreCase = true) }
             Buttons(PlayerButtons.forPlayer(known.username, online, page, canManage, canOp), known.username, busy, press)
         }

@@ -144,6 +144,10 @@ object Moderators {
         return if (next.isEmpty()) emptySet() else next + Permissions.SERVER_VIEW
     }
 
+    /** Ticks or unticks every switch of a group at once, with what each needs. */
+    fun toggleAll(permissions: Set<String>, group: List<String>, on: Boolean, catalogue: PermissionCatalogue): Set<String> =
+        group.fold(permissions) { next, permission -> toggle(next, permission, on, catalogue) }
+
     /** The switches a group shows: the Technical-only ones only in Technical mode. */
     fun shown(group: PermissionGroup, technical: Boolean, catalogue: PermissionCatalogue): List<String> =
         group.permissions.filter { technical || it !in catalogue.technical }

@@ -165,6 +165,23 @@ def standard_places() -> list[Path]:
     return places
 
 
+def _put_back_previous(folder: Path) -> None:
+    """A power cut in the middle of an update, between parking the old
+    program folder as ``<folder>.previous`` and moving the new one in, leaves
+    no program folder and the new copy waiting as ``<folder>.incoming``. The
+    parked copy is the last one that worked, so it goes back, and the PC is
+    found as it was before the update. A parked copy with no new one beside
+    it is an old leftover and stays where it is."""
+    try:
+        folder = Path(folder)
+        previous = folder.with_name(folder.name + ".previous")
+        incoming = folder.with_name(folder.name + ".incoming")
+        if not folder.exists() and incoming.is_dir() and classify(previous) is not None:
+            previous.rename(folder)
+    except OSError:
+        pass
+
+
 def find_installs(
     *,
     task_folder: Path | None = None,
@@ -181,6 +198,7 @@ def find_installs(
     def add(folder: Path | None, source: str) -> None:
         if folder is None:
             return
+        _put_back_previous(folder)
         found = classify(folder)
         if found is None:
             return

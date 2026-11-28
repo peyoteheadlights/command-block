@@ -694,7 +694,8 @@ async def test_a_bedrock_server_and_geyser_on_one_port_cant_both_run(tmp_path):
     try:
         bedrock_ctx, java_ctx = core.servers["bedrock"], core.servers["java"]
         claimed = {(p.protocol, p.port) for p in core.ports.claimed(bedrock_ctx)}
-        assert claimed == {("udp", 19132), ("udp", 19133)}
+        # UDP for RakNet (IPv4 and IPv6), TCP for NetherNet's join page
+        assert claimed == {("udp", 19132), ("udp", 19133), ("tcp", 19132)}
         assert ("udp", 19133) in {(p.protocol, p.port) for p in core.ports.claimed(java_ctx)}
         taken = core.ports.used(exclude="bedrock")
         assert taken[("udp", 19133)] == "java"
@@ -796,6 +797,21 @@ def test_crossplay_says_why_it_doesnt_apply(bedrock_client):
         body["available"] is False
         and "Bedrock players join it directly" in (body["unavailable_reason"])
     )
+
+
+def test_required_to_join_sets_bedrocks_own_key(bedrock_client, tmp_path):
+    props = tmp_path / "bedrock" / "server.properties"
+    assert bedrock_client.get("/api/servers/bedrock/addons").json()["required"] is False
+    body = bedrock_client.put(
+        "/api/servers/bedrock/addons/required", json={"required": True}
+    ).json()
+    assert body["ok"] is True and body["required"] is True and body["undo"]
+    assert "texturepack-required=true" in props.read_text()
+    assert bedrock_client.get("/api/servers/bedrock/addons").json()["required"] is True
+    bedrock_client.put("/api/servers/bedrock/addons/required", json={"required": False})
+    assert "texturepack-required=false" in props.read_text()
+    java = bedrock_client.put("/api/servers/java/addons/required", json={"required": True})
+    assert java.status_code == 400
 
 
 def test_how_friends_join_shows_only_the_bedrock_address(bedrock_client):
@@ -1013,3 +1029,19 @@ def test_the_game_port_cant_be_the_servers_own_ipv6_port(bedrock_client):
     )
     assert answer.status_code == 400
     assert "IPv6" in json.dumps(answer.json())
+
+
+async def test_a_running_bedrock_server_is_duplicated_under_save_hold(running, tmp_path):
+    from agent import duplicate
+    from agent.jobs import RUNNING, SUCCEEDED
+
+    sent = record_commands(running)
+    job = await duplicate.start_duplicate(
+        running.core, running, name="Copy", directory=str(tmp_path / "Copy"), world="copy"
+    )
+    assert await wait_for(lambda: running.core.jobs.get(job.id).state != RUNNING, 30)
+    done = running.core.jobs.get(job.id)
+    assert done.state == SUCCEEDED, done.message
+    assert "save hold" in sent and "save resume" in sent
+    assert "save-off" not in sent
+    assert (tmp_path / "Copy" / "worlds" / "Bedrock level" / "level.dat").is_file()

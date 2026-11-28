@@ -43,6 +43,11 @@ class PlayerTracker:
         # Diagnose server's test player while it's in: not a player, so no
         # join message, quest, player hours or alert (agent/diagnose.py).
         self.ignored: set[str] = set()
+        # The Companion checks a player before "joined the game": a new
+        # player's result waits here until their row exists.
+        self._pending_check: dict[str, tuple[bool, str | None, float]] = {}
+        # Failed checks per player in the last day, for the alert after 3.
+        self._failures: dict[str, list[float]] = {}
 
     # ------------------------------------------------------------------
     async def handle_signals(self, sig, line) -> None:
@@ -63,6 +68,8 @@ class PlayerTracker:
         if sig.player_uuid:
             name, uuid = sig.player_uuid
             self._pending_uuid[name] = uuid
+        if sig.companion_check and sig.companion_check[0] not in self.ignored:
+            await self.companion_checked(*sig.companion_check)
         if sig.player_joined and sig.player_joined not in self.ignored:
             await self.player_joined(sig.player_joined)
         if sig.player_left and sig.player_left not in self.ignored:
@@ -140,6 +147,8 @@ class PlayerTracker:
                     "edition": edition,
                 },
             )
+        if username in self._pending_check:
+            self._store_check(username, *self._pending_check.pop(username))
         self.db.insert(
             "player_sessions",
             {
@@ -159,12 +168,55 @@ class PlayerTracker:
                     "uuid": uuid,
                     "edition": edition,
                     "online": len(self.online()),
+                    "first": not row,
                 },
             )
         )
 
-    async def player_left(self, username: str) -> None:
+    async def companion_checked(self, username: str, passed: bool, version: str | None) -> None:
+        """The Companion mod checked a player's modpack. A failure goes to
+        Recent activity; the third in a day from one player is an alert."""
         now = time.time()
+        if not self._store_check(username, passed, version, now):
+            self._pending_check[username] = (passed, version, now)
+            if len(self._pending_check) > 200:  # never joined: forget the oldest
+                self._pending_check.pop(next(iter(self._pending_check)))
+        if passed:
+            return
+        has = f"has {version}" if version else "has no Companion or modpack"
+        await self.bus.publish(
+            Event(
+                type="companion_check_failed",
+                level="warning",
+                message=f"{username} failed the modpack check ({has})",
+                data={"username": username, "version": version},
+            )
+        )
+        day = [t for t in self._failures.get(username, []) if t > now - 86400] + [now]
+        self._failures[username] = day
+        if len(self._failures) > 500:
+            self._failures.pop(next(iter(self._failures)))
+        if len(day) == 3:
+            await self.bus.publish(
+                Event(
+                    type="companion_checks_failing",
+                    level="warning",
+                    message=f"{username} failed the modpack check 3 times today",
+                    data={"username": username, "version": version},
+                )
+            )
+
+    def _store_check(self, username: str, passed: bool, version: str | None, at: float) -> bool:
+        """True if the player has a row to keep it in."""
+        changed = self.db.execute(
+            "UPDATE players SET modpack_version = ?, modpack_ok = ?, modpack_checked = ? "
+            "WHERE server_id = ? AND username = ?",
+            (version or "", int(passed), at, self.server_id, username),
+        )
+        return changed.rowcount > 0
+
+    async def player_left(self, username: str, at: float | None = None) -> None:
+        now = at if at is not None else time.time()
         self.mark_verified("leave observed in console")
         row = self.db.query_one(
             "SELECT * FROM players WHERE server_id = ? AND username = ?", (self.server_id, username)
@@ -209,14 +261,15 @@ class PlayerTracker:
         # what established the count.
         self.mark_verified("/list reply from the server")
 
-    async def clear_online(self) -> None:
+    async def clear_online(self, at: float | None = None) -> None:
         """Called when the server stops or crashes: nobody is online any more.
 
         Closing these sessions is itself a verified fact - the process is
-        gone, so no one can be connected to it.
+        gone, so no one can be connected to it. ``at``: when they ended, if
+        not now (the agent's last sign of life, after it was cut off).
         """
         for player in self.online():
-            await self.player_left(player["username"])
+            await self.player_left(player["username"], at=at)
         self.mark_verified("server process is not running")
 
     def names_by_id(self) -> dict[str, str]:
@@ -232,7 +285,8 @@ class PlayerTracker:
     def online(self) -> list[dict[str, Any]]:
         rows = self.db.query(
             "SELECT username, uuid, session_started, total_seconds, sessions, first_seen, "
-            "last_seen, edition FROM players WHERE server_id = ? AND online = 1 "
+            "last_seen, edition, modpack_version, modpack_ok FROM players "
+            "WHERE server_id = ? AND online = 1 "
             "ORDER BY session_started ASC",
             (self.server_id,),
         )

@@ -23,6 +23,15 @@ version 3 (`licenses/LGPL-3.0.txt`, which builds on `licenses/GPL-3.0.txt`).
   HarfBuzz and libpng), listed with their licenses at
   https://doc.qt.io/qt-6.8/licenses-used-in-qt.html.
 
+## Archivo (the heading font)
+
+Headings and the server tabs in every app, and the desktop app's page list, use Archivo
+(https://github.com/Omnibus-Type/Archivo), Copyright 2020 The Archivo
+Project Authors, under the SIL Open Font License 1.1
+(`licenses/Archivo-OFL.txt`). Three weights ship unchanged in
+`shared/fonts` (Medium, SemiBold and Bold), and the desktop app and both
+phone apps carry them. Nothing is downloaded when an app runs.
+
 ## Diagnose server's test player
 
 Diagnose server joins with Mineflayer (https://github.com/PrismarineJS/mineflayer,
@@ -53,3 +62,37 @@ fastutil, lz4-java, JetBrains Annotations and Hive Games' LevelDB for Java,
 under the Apache License 2.0 (`licenses/Apache-2.0.txt`), and the small
 libraries Guava pulls in. Their versions are in Chunker's
 `gradle/libs.versions.toml`.
+
+## Router port (UPnP)
+
+"Let friends join from the internet" asks the home router to open the game
+port with async-upnp-client (https://github.com/StevenLooman/async_upnp_client),
+Copyright Steven Looman, under the Apache License 2.0
+(`licenses/Apache-2.0.txt`). It brings aiohttp and its helpers (Apache 2.0),
+voluptuous (BSD), python-didl-lite (Apache 2.0) and defusedxml (PSF), with the
+versions in `requirements-build.lock`.
+
+## YARA-X and YARA Forge
+
+Deep scan checks files with YARA-X 1.25 by VirusTotal
+(https://github.com/VirusTotal/yara-x), Copyright (c) 2024 The YARA-X
+Authors, under the BSD 3-Clause License (`licenses/YARA-X-BSD-3-Clause.txt`).
+It ships as the `yara_x` Python package, not changed.
+
+The YARA Forge rule set (https://github.com/YARAHQ/yara-forge) isn't
+shipped. It is downloaded from its GitHub releases, checked against the
+release's checksum, only when the owner ticks it in Deep scan. Each rule in
+it keeps the license its author gave it, which is written inside the rule.
+
+## MCAntiMalware, jNeedle and ClamAV
+
+Deep scan can run these as separate programs. They aren't shipped and none
+of their code is in this repo. Each is downloaded from its GitHub release,
+checked against a pinned checksum, only when someone ticks it in Deep scan:
+
+- MCAntiMalware 15.16 by OpticFusion1
+  (https://github.com/OpticFusion1/MCAntiMalware), GPL-3.0;
+- jNeedle 1.1.0 by KosmX (https://github.com/KosmX/jneedle), MIT;
+- ClamAV 1.5.5 by Cisco Talos (https://github.com/Cisco-Talos/clamav),
+  GPL-2.0. Its signatures are downloaded by its own `freshclam`.
+

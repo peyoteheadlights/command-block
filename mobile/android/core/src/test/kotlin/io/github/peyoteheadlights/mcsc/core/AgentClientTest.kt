@@ -36,6 +36,22 @@ class AgentClientTest {
     }
 
     @Test
+    fun `sign-out says whether the PC heard it`() = runBlocking {
+        TestAgent().use { agent ->
+            agent.server.enqueue(agent.json("""{"ok": true}"""))
+            assertTrue(client(agent).logout())
+            // Already signed out on the PC: nothing left there.
+            agent.server.enqueue(agent.json("""{"detail": "Not signed in"}""", code = 401))
+            assertTrue(client(agent).logout())
+            agent.server.enqueue(agent.json("""{"detail": "Oops"}""", code = 500))
+            assertFalse(client(agent).logout())
+        }
+        val port = TestAgent().use { it.port }
+        val off = AgentClient(Pairing("localhost", port, null), { token }, systemTrust = TestAgent.trustingNothing())
+        assertFalse(off.logout())
+    }
+
+    @Test
     fun `signing the phone out on the PC signs the app out`() = runBlocking {
         TestAgent().use { agent ->
             agent.server.enqueue(agent.json("""{"detail": "Not signed in"}""", code = 401))
@@ -81,11 +97,27 @@ class AgentClientTest {
     }
 
     @Test
-    fun `only start, stop and restart can be sent`() {
+    fun `only start, stop, restart and force stop can be sent`() {
         TestAgent().use { agent ->
             assertThrows(IllegalArgumentException::class.java) {
                 runBlocking { client(agent).serverAction("survival", "command") }
             }
+        }
+    }
+
+    @Test
+    fun `force stop is a stop with force on, and the label and buttons are read`() = runBlocking {
+        TestAgent().use { agent ->
+            agent.server.enqueue(agent.json("""{"result": "VERIFIED", "state": "OFFLINE"}"""))
+            client(agent).serverAction("survival", "force_stop")
+            val sent = agent.server.takeRequest()
+            assertEquals("/api/servers/survival/server/stop", sent.path)
+            assertEquals("""{"force":true}""", sent.body.readUtf8())
+
+            agent.server.enqueue(agent.json("""{"state": "ONLINE", "label": "not_answering", "can": ["stop", "restart"]}"""))
+            val status = client(agent).status("survival")
+            assertEquals("not_answering", status.label)
+            assertEquals(listOf("stop", "restart"), status.can)
         }
     }
 

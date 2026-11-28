@@ -60,14 +60,14 @@ struct SchedulesView: View {
             }
             ForEach(list.schedules) { schedule in
                 CardBox(palette: palette) {
-                    Text(verbatim: schedule.name)
+                    Text(hiding: schedule.name)
                         .font(.headline)
                         .foregroundStyle(palette.textPrimary)
                     Hint(
-                        text: Schedules.taskName(strings, schedule.task, tasks: list.tasks) + " · " + Schedules.whenText(strings, schedule),
+                        text: Schedules.summary(strings, schedule, tasks: list.tasks) + " · " + Schedules.whenText(strings, schedule),
                         palette: palette
                     )
-                    Text(verbatim: model.t("schedules.col_next") + ": " + Schedules.next(strings, schedule))
+                    Text(hiding: model.t("schedules.col_next") + ": " + Schedules.next(strings, schedule))
                         .font(.footnote)
                         .foregroundStyle(palette.textPrimary)
                     Hint(text: model.t("schedules.col_result") + ": " + (schedule.lastResult ?? "—"), palette: palette)
@@ -92,7 +92,7 @@ struct SchedulesView: View {
     }
 }
 
-/// Name, task, how often and when; Create sends it.
+/// Name, the steps, how often and when; Create sends it.
 private struct AddScheduleForm: View {
     let world: WorldPages
     let tasks: [String]
@@ -100,13 +100,17 @@ private struct AddScheduleForm: View {
 
     @Environment(AppModel.self) private var model
     @State private var name = ""
-    @State private var task = ""
+    @State private var steps: [Schedules.Step] = []
     @State private var kind = Schedules.KINDS[0]
     @State private var expr = ""
+    @State private var keepGoing = false
+    @State private var onlyIfRunning = false
+    @State private var skipWhenEmpty = false
 
     var body: some View {
         let adding = world.busy == "add"
-        let chosen = tasks.contains(task) ? task : (tasks.first ?? "")
+        let choices = Schedules.stepTasks(tasks, technical: model.strings.technical)
+        let shown = steps.isEmpty ? [Schedules.Step(task: choices.first ?? "")] : steps
         VStack(alignment: .leading, spacing: 12) {
             SectionTitle(text: model.t("schedules.add"), palette: palette)
             CardBox(palette: palette) {
@@ -116,18 +120,22 @@ private struct AddScheduleForm: View {
                     .onChange(of: name) {
                         if name.count > Schedules.NAME_LENGTH { name = String(name.prefix(Schedules.NAME_LENGTH)) }
                     }
-                Picker(model.t("schedules.task"), selection: Binding(get: { chosen }, set: { task = $0 })) {
-                    ForEach(tasks, id: \.self) { option in
-                        Text(Schedules.taskName(model.strings, option, tasks: tasks)).tag(option)
-                    }
+                ForEach(shown.indices, id: \.self) { index in
+                    stepFields(index, shown, choices)
                 }
-                .pickerStyle(.menu)
+                Button(model.t("schedules.add_step")) { steps = shown + [Schedules.Step(task: choices.first ?? "")] }
+                    .disabled(shown.count >= Schedules.MAX_STEPS)
+                if shown.count > 1 {
+                    Toggle(model.t("schedules.keep_going"), isOn: $keepGoing)
+                }
+                Toggle(model.t("schedules.only_if_running"), isOn: $onlyIfRunning)
+                Toggle(model.t("schedules.skip_when_empty"), isOn: $skipWhenEmpty)
                 Picker(model.t("schedules.repeat"), selection: $kind) {
-                    ForEach(Schedules.KINDS, id: \.self) { option in
+                    ForEach(Schedules.kinds(technical: model.strings.technical), id: \.self) { option in
                         Text(model.t(Schedules.kindKey(option))).tag(option)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 TextField(model.t("schedules.when_placeholder"), text: $expr)
                     .textFieldStyle(.roundedBorder)
                     .textInputAutocapitalization(.never)
@@ -139,17 +147,78 @@ private struct AddScheduleForm: View {
                 Hint(text: model.t("schedules.when_hint"), palette: palette)
                 Button(model.t(adding ? "action.saving" : "schedules.create")) {
                     let strings = model.strings
-                    let sent = (name, chosen, kind, expr)
+                    let sent = (name, shown, kind, expr, keepGoing, onlyIfRunning, skipWhenEmpty)
+                    let body: (Bool) -> ScheduleBody = { confirm in
+                        Schedules.newBody(
+                            strings, name: sent.0, steps: sent.1, kind: sent.2, expr: sent.3, tasks: tasks,
+                            keepGoing: sent.4, onlyIfRunning: sent.5, skipWhenEmpty: sent.6, confirm: confirm
+                        )
+                    }
                     Task {
-                        if await world.addSchedule(name: sent.0, task: sent.1, kind: sent.2, expr: sent.3, strings) {
-                            name = ""
-                            expr = ""
-                        }
+                        if await world.addSchedule(body, strings) { emptied() }
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(palette.accent)
-                .disabled(adding || world.busy != nil || chosen.isEmpty || expr.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(adding || world.busy != nil || shown.contains { $0.task.isEmpty } || expr.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .alert(
+            model.t("schedules.confirm_title"),
+            isPresented: Binding(get: { world.scheduleDanger != nil }, set: { _ in }),
+            actions: {
+                Button(model.t("action.save"), role: .destructive) {
+                    let strings = model.strings
+                    Task { if await world.answerDanger(true, strings) { emptied() } }
+                }
+                Button(model.t("mobile.common.cancel"), role: .cancel) {
+                    let strings = model.strings
+                    Task { _ = await world.answerDanger(false, strings) }
+                }
+            },
+            message: { Text(hiding: world.scheduleDanger ?? "") }
+        )
+    }
+
+    private func emptied() {
+        name = ""
+        expr = ""
+        steps = []
+    }
+
+    /// One step: what it does, its words, and Remove when there are more.
+    @ViewBuilder
+    private func stepFields(_ index: Int, _ shown: [Schedules.Step], _ choices: [String]) -> some View {
+        let step = shown[index]
+        let edit = { (change: (inout Schedules.Step) -> Void) in
+            var next = shown
+            change(&next[index])
+            steps = next
+        }
+        Picker(
+            model.t("schedules.task"),
+            selection: Binding(get: { step.task }, set: { value in edit { $0.task = value } })
+        ) {
+            ForEach(choices, id: \.self) { option in
+                Text(Schedules.taskName(model.strings, option, tasks: tasks)).tag(option)
+            }
+        }
+        .pickerStyle(.menu)
+        if let key = Schedules.wordsKey(step.task) {
+            TextField(model.t(key), text: Binding(get: { step.words }, set: { value in edit { $0.words = value } }))
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel(model.t(key))
+        }
+        if step.task == "backup" {
+            TextField(model.t("schedules.after"), text: Binding(get: { step.after }, set: { value in edit { $0.after = value } }))
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel(model.t("schedules.after"))
+        }
+        if shown.count > 1 {
+            Button(model.t("schedules.remove_step"), role: .destructive) {
+                var next = shown
+                next.remove(at: index)
+                steps = next
             }
         }
     }

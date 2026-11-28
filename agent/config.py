@@ -154,6 +154,9 @@ class ServerSettings(Section):
     # Logical CPU cores this server may use, counted from 0 (Task Manager's
     # "Set affinity" order). Empty: every core. See agent/minecraft/cpu.py.
     cpu_cores: list[int] = field(default_factory=list)
+    # Run Java at "below normal" priority, so the PC stays usable when it's
+    # busy (Technical, off by default). See agent/minecraft/cpu.py.
+    low_priority: bool = False
     # Let Bedrock players join through Geyser and Floodgate, and the UDP
     # port Geyser listens on (0: none picked yet). See agent/crossplay.py.
     crossplay: bool = False
@@ -169,6 +172,9 @@ class ServerSettings(Section):
     # "Who's this server for?"), "" when not answered. Picks Simple mode's
     # one add-on suggestion (agent/suggestions.py).
     played_by: str = ""
+    # "Let friends join from the internet": the router sends the game ports
+    # to this PC by UPnP while the server runs (agent/internet.py).
+    internet: bool = False
     # Join protection (agent/joinguard.py): the guard in front of a Java
     # server, off by default. Size "" picks small or big by itself; limits
     # the owner changed in Technical; only home network and Tailscale.
@@ -200,6 +206,9 @@ class MonitorSettings(Section):
     # Any other value is used as-is; "" or "off" disables TPS monitoring.
     tps_command: str = "auto"
     history_days: int = 14
+    # Exit codes that mean "stopped", not "crashed" (Technical), for example
+    # "1, 130" from a plugin's own restart command: no crash alert, no restart.
+    ignored_exit_codes: str = ""
 
 
 @dataclass(frozen=True)
@@ -209,6 +218,8 @@ class ThresholdSettings(Section):
     disk_free_gb: float = 20.0
     tps_min: float = 18.0
     mspt_max: float = 50.0
+    # CPU and memory alerts wait until it has stayed high this long.
+    high_minutes: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -294,6 +305,10 @@ class BackupSettings(Section):
     # cloud folder (OneDrive, Google Drive, Dropbox). Empty: no second copy.
     # See agent/backups/offsite.py.
     offsite_directory: str = ""
+    # Folders left out of manual and scheduled backups, as paths inside the
+    # server folder ("plugins/dynmap/web/tiles"): map tiles the map add-on
+    # can draw again. Backups made before a change always hold everything.
+    exclude: list[str] = field(default_factory=list)
     # Back up after a planned stop if someone played since the last backup
     # (off by default: weak mini PCs stop quicker without it).
     on_stop: bool = False
@@ -304,16 +319,38 @@ class ModSettings(Section):
     directory: str = "mods"
     backup_directory: str = "mod-backups"
     trash_directory: str = "mod-trash"
+    quarantine_directory: str = "mod-quarantine"
     modrinth_api: str = "https://api.modrinth.com/v2"
     # CurseForge through our relay (agent/mods/curseforge.py). The web key
     # only names the Firebase project for its anonymous sign-in; it isn't a
     # secret and it isn't CurseForge's key, which the app never has.
     curseforge_relay: str = "https://europe-west1-command-block-d4526.cloudfunctions.net/curseforge"
     firebase_web_key: str = "AIzaSyDUobgN-1BPbhI4jsLAASFU2Mf6rp3So_g"
+    # Sign in with Modrinth's function (agent/modrinthshare.py): it only
+    # swaps the sign-in code for a token, with a secret the app never has.
+    modrinth_sign_in: str = "https://europe-west1-command-block-d4526.cloudfunctions.net/modrinth"
     user_agent: str = "command-block (self-hosted)"
     backup_before_install: bool = True
     auto_stop_for_install: bool = False
     update_check_hours: float = 12
+    # Update hold: a version out for fewer days than this is left out of
+    # Update all and the update notices (0 to 14, 0 is no hold).
+    update_hold_days: int = 3
+    # Jar check: look every jar up again once a week, and check a jar
+    # as soon as it changes.
+    rescan_weekly: bool = True
+    rescan_on_change: bool = True
+    # Look at changed jars before each start, and wait for it.
+    check_before_start: bool = False
+    # Known bad found while the server runs: tell the owner and keep it
+    # running instead of stopping it after a minute.
+    ask_before_stop: bool = False
+    # Deep scan with the scanners that are already there: before each
+    # start, and/or on a schedule ("off", "daily" or "weekly").
+    deep_scan_before_start: bool = False
+    deep_scan_schedule: str = "off"
+    deep_scan_time: str = "04:00"
+    deep_scan_day: str = "sun"
 
 
 @dataclass(frozen=True)
@@ -355,6 +392,8 @@ class NotificationSettings(Section):
             "backup_failed": True,
             "mod_installed": True,
             "mod_removed": True,
+            "jar_scan_found": True,
+            "jar_changed": True,
             "mod_updated": True,
             "mod_dependency_problem": True,
             "auth_failure": True,
@@ -381,6 +420,7 @@ class NotificationSettings(Section):
             "ops_changed": True,
             "lists_changed": True,
             "chat_spam": True,
+            "companion_checks": True,
             "join_protection": True,
             "your_pcs": True,
         }
@@ -1061,6 +1101,10 @@ class Config:
         return self._first.mod_trash_dir
 
     @property
+    def mod_quarantine_dir(self) -> Path:
+        return self._first.mod_quarantine_dir
+
+    @property
     def crash_dir(self) -> Path:
         return self._first.crash_dir
 
@@ -1267,6 +1311,10 @@ class ServerConfig:
         return self.resolve_data(self.mods.trash_directory)
 
     @property
+    def mod_quarantine_dir(self) -> Path:
+        return self.resolve_data(self.mods.quarantine_directory)
+
+    @property
     def crash_dir(self) -> Path:
         return self.resolve_data("crashes")
 
@@ -1276,5 +1324,6 @@ class ServerConfig:
             self.backup_dir,
             self.mod_backup_dir,
             self.mod_trash_dir,
+            self.mod_quarantine_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)

@@ -35,8 +35,14 @@ final class AddServerPages {
     /// Technical mode's typed folder, used as it is.
     var typedFolder: String?
     var ruled = false
+    /// "Who's this server for?", from this PC's first-run answer; and friends' names.
+    var playedBy = ""
+    var players = ""
     var jar = ""
     private(set) var pack: ModpackInspected?
+    var packQuery = ""
+    /// Modpacks found by name; picking one reads it like a picked file.
+    private(set) var packsFound: ModSearch?
     private(set) var task: Job?
     private(set) var busy: String?
     var said: Said?
@@ -79,6 +85,8 @@ final class AddServerPages {
         typedFolder = nil
         ruled = false
         jar = ""
+        packQuery = ""
+        packsFound = nil
         said = nil
         addedLines = []
         added = nil
@@ -101,6 +109,7 @@ final class AddServerPages {
             let read = try await client.newServerOptions()
             color = color ?? read.color
             memoryMb = memoryMb ?? read.memoryMb
+            playedBy = read.playedBy
             options = PageRead(value: read)
         } catch let problem as AgentError {
             noted(problem)
@@ -115,7 +124,8 @@ final class AddServerPages {
     func resume() async {
         guard let client = client() else { return }
         do {
-            if let running = AddServer.creating(try await client.runningJobs().jobs) { task = running }
+            // None running: a missed "done" must not keep Create locked.
+            task = AddServer.creating(try await client.runningJobs().jobs)
         } catch let problem as AgentError {
             noted(problem)
         } catch {}
@@ -168,14 +178,16 @@ final class AddServerPages {
         guard let client = client(), let kind = type, let chosen = version, busy == nil else { return }
         busy = "create"
         said = nil
+        var lost = false
         defer {
             busy = nil
-            task = nil
+            if !lost { task = nil }
         }
         let request = NewServerRequest(
             name: name.trimmingCharacters(in: .whitespaces), directory: folder, type: kind.id, minecraft: chosen.minecraft,
             loader: kind.picksLoader ? loader : nil, memoryMb: AddServer.memoryShown(kind) ? memoryMb : nil,
-            color: color, eulaAccepted: ruled
+            color: color, eulaAccepted: ruled,
+            playedBy: playedBy, players: AddServer.players(playedBy, players)
         )
         do {
             let made = try await client.createServer(request)
@@ -183,6 +195,11 @@ final class AddServerPages {
         } catch let problem as AgentError {
             noted(problem)
             said = Said(text: problem.message(strings), good: false)
+            // Lost track of it: the PC may still be making it, so read what it's doing.
+            if problem == .stillWorking {
+                lost = true
+                await resume()
+            }
         } catch {}
     }
 
@@ -222,24 +239,61 @@ final class AddServerPages {
         } catch {}
     }
 
+    func findPacks(_ strings: Strings) async {
+        let query = packQuery.trimmingCharacters(in: .whitespaces)
+        guard let client = client(), busy == nil, !query.isEmpty else { return }
+        busy = "find"
+        said = nil
+        defer { busy = nil }
+        do {
+            packsFound = try await client.searchModpacks(query: query)
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+    }
+
+    func readFound(_ hit: ModrinthHit, _ strings: Strings) async {
+        guard let client = client(), busy == nil else { return }
+        busy = "inspect"
+        said = nil
+        defer { busy = nil }
+        await dropPack()
+        do {
+            let read = try await client.fetchModpack(hit, serverId: nil)
+            pack = read
+            packsFound = nil
+            if name.trimmingCharacters(in: .whitespaces).isEmpty { name = read.pack.name }
+        } catch let problem as AgentError {
+            noted(problem)
+            said = Said(text: problem.message(strings), good: false)
+        } catch {}
+    }
+
     func createFromPack(_ strings: Strings) async {
         guard let client = client(), let read = pack, busy == nil else { return }
         busy = "create"
         said = nil
+        var lost = false
         defer {
             busy = nil
-            task = nil
+            if !lost { task = nil }
         }
         do {
             let made = try await client.modpackServer(
                 token: read.token, name: name.trimmingCharacters(in: .whitespaces), directory: folder,
-                memoryMb: memoryMb, color: color, eulaAccepted: ruled
+                memoryMb: memoryMb, color: color, eulaAccepted: ruled, ownJars: !read.pack.ownJars.isEmpty
             )
             pack = nil
             await done(strings, made.serverId, made.name)
         } catch let problem as AgentError {
             noted(problem)
             said = Said(text: problem.message(strings), good: false)
+            // Lost track of it: the PC may still be making it, so read what it's doing.
+            if problem == .stillWorking {
+                lost = true
+                await resume()
+            }
         } catch {}
     }
 

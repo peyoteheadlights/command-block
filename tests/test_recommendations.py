@@ -135,6 +135,19 @@ def test_every_recommendation_has_evidence_and_a_way_to_the_fix():
             "minecraft": {"from": "1.21", "minecraft": "1.21.1"},
         },
         addons={"items": [ADDON]},
+        overlaps=[
+            {
+                "kind": "same_job",
+                "why": "They all draw a web map of the world.",
+                "keep": "bluemap.jar",
+                "say": "Keep BlueMap, turn off Dynmap",
+                "mods": [
+                    {"name": "BlueMap", "filename": "bluemap.jar"},
+                    {"name": "Dynmap", "filename": "dynmap.jar"},
+                ],
+            }
+        ],
+        modrinth_older={"listed": "1", "newest": "2"},
     )
     found = rec.evaluate(f)
     assert len(found) == len(rec.RULES)
@@ -165,6 +178,8 @@ def test_a_backup_older_than_a_week():
 def test_no_backup_schedule():
     assert ids(facts(schedules=[{"task": "backup", "enabled": 0}])) == ["no_backup_schedule"]
     assert ids(facts(schedules=[{"task": "restart", "enabled": 1}])) == ["no_backup_schedule"]
+    steps = {"task": "steps", "enabled": 1, "payload": {"steps": [{"task": "backup"}]}}
+    assert ids(facts(schedules=[steps])) == []
 
 
 # ------------------------------------------------------------------ crashes

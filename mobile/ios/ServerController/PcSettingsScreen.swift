@@ -214,7 +214,7 @@ final class PcPages {
 
     /// Starts the update, then waits for the PC to come back by itself.
     func install() async {
-        guard let client = client(), let before = checks ?? update, let target = before.latest?.version else { return }
+        guard let client = client(), let before = checks ?? update, let target = before.latest?.version, busy == nil else { return }
         checks = nil
         busy = "update"
         said = nil
@@ -267,12 +267,14 @@ final class PcPages {
             let started = try await client.startExport(
                 PcSettings.exportBody(worlds: worlds, backups: backups, secrets: secrets, passphrase: passphrase, folder: folder)
             )
-            var state = PcSettings.exporting(try await client.exportJob(started.jobId))
+            let read = { try await client.exportJob(started.jobId) }
+            let pause = { try await Task.sleep(nanoseconds: 1_000_000_000) }
+            var state = try await PcSettings.readExport(read, pause: pause)
             exporting = state
             while case .running = state, !stopped {
-                try await Task.sleep(nanoseconds: 1_000_000_000)
+                try await pause()
                 if stopped { return nil }
-                state = PcSettings.exporting(try await client.exportJob(started.jobId))
+                state = try await PcSettings.readExport(read, pause: pause)
                 exporting = state
             }
             var good = false
@@ -392,6 +394,11 @@ struct PcSettingsScreen: View {
                             ]))
                             .font(.footnote).foregroundStyle(.secondary)
                         }
+                    }
+                }
+                if let words = PcSettings.modFiles(model.strings, view) {
+                    Section(model.t("modfiles.title")) {
+                        Text(words).font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 Section(model.t("appset.maintenance")) {

@@ -55,7 +55,18 @@ class BackupRequest(BaseModel):
 class RestoreRequest(BaseModel):
     confirm: bool = False
     start_after: bool = False
-    safety_backup: bool = True
+
+
+class KeepRequest(BaseModel):
+    keep: bool = True
+
+
+class CleanupRequest(BaseModel):
+    paths: list[str] = Field(max_length=500)
+
+
+class CleanupBatchRequest(BaseModel):
+    batch: str | None = Field(default=None, max_length=40)
 
 
 class UndoRequest(BaseModel):
@@ -73,6 +84,53 @@ class ModInstallRequest(BaseModel):
 
 class ModFileRequest(BaseModel):
     filename: str = Field(max_length=180)
+
+
+class ModSideRequest(ModFileRequest):
+    side: Literal["server", "players", "both"]
+
+
+class PlayerOnlyOptionsRequest(BaseModel):
+    backup: bool = True
+    skip_listed: bool = False
+
+
+class JarScanUndoRequest(BaseModel):
+    id: str = Field(max_length=200)
+
+
+class JarChangedOkRequest(BaseModel):
+    filename: str | None = Field(default=None, max_length=180)  # None: every jar
+
+
+class DeepScanRequest(BaseModel):
+    scope: Literal["jar", "mods", "folder"]
+    scanners: list[str] = Field(max_length=10)
+    filename: str | None = Field(default=None, max_length=180)
+
+
+class VirusTotalKeyRequest(BaseModel):
+    key: str = Field(pattern=r"^\s*[A-Za-z0-9]{32,128}\s*$")
+
+
+class DeepScanQuarantineRequest(BaseModel):
+    root: Literal["server", "mods", "java"]
+    path: str = Field(max_length=1000)
+
+
+class JarScanOptionsRequest(BaseModel):
+    weekly: bool | None = None
+    on_change: bool | None = None
+    before_start: bool | None = None
+    ask_first: bool | None = None  # owner only
+    update_hold_days: int | None = Field(default=None, ge=0, le=14)  # owner only
+
+
+class DeepScanOptionsRequest(BaseModel):
+    before_start: bool | None = None
+    schedule: Literal["off", "daily", "weekly"] | None = None
+    time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    day: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"] | None = None
 
 
 class ModUpdateRequest(ModFileRequest):
@@ -160,6 +218,25 @@ class ServerSettingsRequest(BaseModel):
     updates: dict[str, Any]
 
 
+class ServerOrderRequest(BaseModel):
+    ids: list[str] = Field(max_length=500, description="Server ids, first to last")
+
+
+class ServerIdsRequest(BaseModel):
+    ids: list[str] | None = Field(
+        default=None, max_length=500, description="Only these servers; null: all of them"
+    )
+
+
+class ServerGroupRequest(BaseModel):
+    group: str = Field(max_length=40, description="The heading it goes under; empty: none")
+
+
+class GameRulesRequest(BaseModel):
+    rules: dict[str, bool | int] = Field(default_factory=dict, max_length=200)
+    preset: str | None = Field(default=None, max_length=40)
+
+
 class ServerColorRequest(BaseModel):
     color: str = Field(max_length=16, description='A palette id such as "teal", or "#RRGGBB"')
 
@@ -167,6 +244,23 @@ class ServerColorRequest(BaseModel):
 class PreferencesRequest(BaseModel):
     mode: Literal["simple", "technical"] | None = None
     theme: Literal["system", "light", "dark", "graphite", "contrast"] | None = None
+    tips: Literal["on", "off"] | None = None
+
+
+class WelcomeRequest(BaseModel):
+    # None: "I know what I'm doing".
+    first_time: bool | None = None
+    kinds: list[Literal["vanilla", "mods", "plugins", "bedrock"]] = Field(
+        default_factory=list, max_length=4
+    )
+    played_by: Literal["", "friends", "kids", "community"] = ""
+    # False (PC settings): change the answers only, not the mode and tips.
+    set_defaults: bool = True
+
+
+class HideRequest(BaseModel):
+    # A warning's or tip's words key, like "new.farms_warning".
+    key: str = Field(pattern=r"^[a-z0-9_.]{1,80}$")
 
 
 class RecommendationActionRequest(BaseModel):
@@ -222,6 +316,10 @@ class CreateServerRequest(BaseModel):
     eula_accepted: bool = False
     # A Test server (agent/testserver.py).
     test: bool = False
+    # "Who's this server for?"; null takes this PC's first-run answer.
+    played_by: Literal["", "friends", "kids", "community"] | None = None
+    # Friends' names for the whitelist (friends or kids only), added on first start.
+    players: list[str] = Field(default_factory=list, max_length=50)
 
 
 class CustomServerRequest(BaseModel):
@@ -262,6 +360,10 @@ class AddonToggleRequest(BaseModel):
     enabled: bool
 
 
+class AddonRequiredRequest(BaseModel):
+    required: bool
+
+
 class BedrockTermsRequest(BaseModel):
     # True only when the person ticked the box themselves.
     accepted: bool
@@ -273,12 +375,22 @@ class CrossplayRequest(BaseModel):
     port: int | None = Field(default=None, ge=1, le=65535)
 
 
+class ConsoleFriendsRequest(BaseModel):
+    enabled: bool
+    # True only after the person read the risks and said yes.
+    accept_risks: bool = False
+
+
 class GameSettingsRequest(BaseModel):
     values: dict[str, Any] = Field(max_length=40)
 
 
 class GameSettingsRawRequest(BaseModel):
     text: str = Field(max_length=256 * 1024)
+
+
+class ServerIconRequest(BaseModel):
+    png: str = Field(min_length=1, max_length=360 * 1024, description="The PNG, in base64")
 
 
 class PlayerActionRequest(BaseModel):
@@ -317,7 +429,8 @@ class DuplicateRequest(BaseModel):
     # Make the copy a Test server.
     test: bool = False
     # Open an old season: the world comes from this season backup.
-    season_backup: int | None = None
+    # A backup to make the new server from (Restore as a new server).
+    from_backup: int | None = None
 
 
 class ModpackNewRequest(BaseModel):
@@ -327,6 +440,8 @@ class ModpackNewRequest(BaseModel):
     color: str | None = Field(default=None, max_length=16)
     # True only when the person ticked the box themselves.
     eula_accepted: bool = False
+    # True only when the person was shown the pack's own jars and said yes.
+    own_jars: bool = False
 
 
 class CurseForgeModpackRequest(BaseModel):
@@ -334,9 +449,119 @@ class CurseForgeModpackRequest(BaseModel):
     server_id: str = Field(default="", max_length=64)
 
 
+class ModrinthModpackRequest(BaseModel):
+    project: str = Field(pattern=r"^[A-Za-z0-9_.\-]{1,64}$", description="Modrinth id or slug")
+    server_id: str = Field(default="", max_length=64)
+
+
 class ModpackIntoRequest(BaseModel):
     token: str = Field(min_length=32, max_length=32)
     confirm: bool = False
+    # True only when the person was shown the pack's own jars and said yes.
+    own_jars: bool = False
+
+
+class ModpackPreviewRequest(BaseModel):
+    version_id: str | None = Field(
+        default=None, pattern=r"^[\w:.-]{1,80}$", description="Null: the newest"
+    )
+
+
+class ModpackUpdateRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=32)
+    use_pack_configs: bool = False
+    confirm: bool = False
+    # True only when the person was shown the pack's own jars and said yes.
+    own_jars: bool = False
+
+
+class ModpackChatLine(BaseModel):
+    """The line players without the modpack see when it isn't required."""
+
+    on: bool = True
+    text: str = Field(min_length=1, max_length=300)
+
+
+class ModpackOnOff(BaseModel):
+    on: bool = False
+
+
+class ModpackTitleButton(BaseModel):
+    on: bool = False
+    address: str = Field(default="", max_length=260)
+
+
+class ModpackFlavorText(BaseModel):
+    on: bool = False
+    text: str = Field(default="", max_length=60)
+
+
+class ModpackTitleScreen(BaseModel):
+    """The Companion's title screen (agent/titlescreen.py)."""
+
+    button: ModpackTitleButton = Field(default_factory=ModpackTitleButton)
+    flavor_text: ModpackFlavorText = Field(default_factory=ModpackFlavorText)
+    background: ModpackOnOff = Field(default_factory=ModpackOnOff)
+
+
+class ModpackMakeRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    version: str = Field(min_length=1, max_length=32)
+    # On by default: friends get a smaller file without the server's mods.
+    leave_out_server_only: bool = True
+    configs: list[str] = Field(default_factory=list, max_length=2000)
+    # For a plugin or plain server: the loader players' mods are for.
+    players_loader: str = Field(default="fabric", pattern=r"^[a-z]{1,16}$")
+    # Needs the Companion mod on the server (agent/companion.py).
+    required: bool = False
+    chat_line: ModpackChatLine | None = None
+    title_screen: ModpackTitleScreen | None = None
+
+
+class ModpackPostRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=32)
+
+
+class DownloadLinkRequest(BaseModel):
+    on: bool
+
+
+class ResourcePackRequest(BaseModel):
+    """An outside link (with the site's SHA-1, if it gives one), or just
+    "Players must accept the resource pack" when ``url`` is left out."""
+
+    url: str | None = Field(default=None, max_length=1000)
+    sha1: str = Field(default="", max_length=40)
+    required: bool = False
+
+
+class ModrinthSignInRequest(BaseModel):
+    """``pc<port>``: the desktop app waits on 127.0.0.1:<port> of its own
+    computer. ``phone``: the phone app opens mcsc://modrinth."""
+
+    return_to: str = Field(pattern=r"^(pc[1-9][0-9]{0,4}|phone)$")
+
+
+class ModrinthFinishRequest(BaseModel):
+    code: str = Field(max_length=200)
+    state: str = Field(max_length=200)
+
+
+class ModrinthUploadRequest(BaseModel):
+    """``slug`` and ``summary`` only the first time (the project is made)."""
+
+    slug: str = Field(default="", max_length=64)
+    summary: str = Field(default="", max_length=256)
+
+
+class ModrinthJarRequest(BaseModel):
+    path: str = Field(max_length=500)
+    slug: str = Field(max_length=64)
+    summary: str = Field(max_length=256)
+
+
+class ModrinthServerProjectRequest(BaseModel):
+    link: str = Field(default="", max_length=200)
 
 
 class ChatRequest(BaseModel):
@@ -678,3 +903,54 @@ class BotLinkRequest(BaseModel):
     name: str | None = Field(None, max_length=20)
     servers: list[str] = Field(default_factory=list, max_length=50)
     until: float | None = None
+
+
+class InternetRequest(BaseModel):
+    """Turn "Let friends join from the internet" on or off."""
+
+    on: bool
+
+
+class InternetTestRequest(BaseModel):
+    # True when the owner said yes to sending the address to mcsrvstat.us
+    # (asked once, kept for this PC).
+    allow_mcsrvstat: bool = False
+
+
+class WaterdogRequest(BaseModel):
+    # playit's config.yml box (tunnel page, Configuration help, WaterdogPE tab).
+    # It holds the tunnel's token: never logged or sent back.
+    box: str = Field(min_length=1, max_length=64 * 1024)
+
+
+class DuckDnsRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    token: str = Field(min_length=1, max_length=80)
+
+
+class NoIpRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=253)
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class PhoneTestRequest(BaseModel):
+    """The phone app's ping over mobile data."""
+
+    address: str = Field(min_length=1, max_length=64)
+    port: int = Field(ge=1, le=65535)
+    works: bool
+
+
+class FarViewChoiceRequest(BaseModel):
+    choice: Literal["off", "distanthorizons", "voxy"]
+
+
+class FarViewOptionsRequest(BaseModel):
+    """Far view's settings: DH's "generate unvisited land" and Chunky's
+    night load (how far out from 0, 0, and which world; empty: the main one)."""
+
+    unvisited: bool = False
+    load_ahead: bool = False
+    radius: int = Field(2000, ge=100, le=30000)
+    world: str = Field("", max_length=32, pattern=r"^[A-Za-z0-9_\-]*$")

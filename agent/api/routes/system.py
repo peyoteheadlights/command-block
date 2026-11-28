@@ -3,24 +3,31 @@ port suggestion, and the Windows startup test."""
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ... import colors
 from ...config import PROJECT_ROOT, ConfigError
+from ...minecraft.state import ExitReason
 from ...ports import read_properties_port
 from ...security.auth import Principal
 from ...security.paths import PathSafetyError, check_server_folder
 from ...security.permissions import (
+    SERVER_CONTROL,
     SERVER_VIEW,
     SERVERS_MANAGE,
     SYSTEM_VIEW,
     can_see_server,
+    on_server,
     require,
 )
 from ..deps import audit, get_core
+from ..errors import DOMAIN_ERRORS
 from ..responses import (
+    AllServersAction,
+    Ok,
     PortSuggestion,
     PowerStatus,
     ServerAdded,
@@ -28,7 +35,7 @@ from ..responses import (
     ServerRemoved,
     StartupReport,
 )
-from .models import ServerAddRequest
+from .models import ServerAddRequest, ServerIdsRequest, ServerOrderRequest
 
 router = APIRouter()
 
@@ -40,10 +47,9 @@ DEFAULT_JARS = ("fabric-server-launch.jar", "server.jar")
 async def servers(principal: Principal = Depends(require(SERVER_VIEW)), core=Depends(get_core)):
     """Every registered server with its measured state, players and uptime."""
     rows = []
-    for ctx in core.servers.values():
-        if not can_see_server(principal, ctx.server_id):
+    for row in _ordered(core):
+        if not can_see_server(principal, row["id"]):
             continue  # a helper limited to other servers
-        row = ctx.summary()
         row["current"] = row["default"]
         rows.append(row)
     return {
@@ -52,6 +58,92 @@ async def servers(principal: Principal = Depends(require(SERVER_VIEW)), core=Dep
         "palette": colors.palette(),
         "next_color": colors.next_unused(ctx.color for ctx in core.servers.values()),
     }
+
+
+def _ordered(core) -> list[dict]:
+    """Every server's summary in the owner's order; servers never moved
+    keep the order they were added in, after the moved ones."""
+    rows = [ctx.summary() for ctx in core.servers.values()]
+    return sorted(rows, key=lambda r: (r["position"] is None, r["position"] or 0))
+
+
+@router.put("/servers/order", response_model=Ok)
+async def set_order(
+    payload: ServerOrderRequest,
+    request: Request,
+    principal: Principal = Depends(require(SERVERS_MANAGE)),
+    core=Depends(get_core),
+):
+    """The order of All servers, dragged by the owner. The same on every app."""
+    ids = list(dict.fromkeys(payload.ids))
+    unknown = [i for i in ids if i not in core.servers]
+    if unknown:
+        raise HTTPException(
+            status_code=404, detail=f"No server called {unknown[0]!r} is on this PC."
+        )
+    # Servers the app didn't send (added meanwhile) go after, in their old order.
+    rest = [r["id"] for r in _ordered(core) if r["id"] not in ids]
+    core.db.set_server_order(ids + rest)
+    audit(core, request, "server_order", detail=", ".join(ids)[:300])
+    return {"ok": True}
+
+
+def _controlled(principal: Principal, core, ids: list[str] | None) -> list:
+    """The servers this account may start and stop, of the ones asked for
+    (all of them when none are named), in the list's order."""
+    chosen = [core.servers[r["id"]] for r in _ordered(core) if ids is None or r["id"] in ids]
+    return [ctx for ctx in chosen if SERVER_CONTROL in on_server(principal, ctx.server_id)]
+
+
+@router.post("/servers/start-all", response_model=AllServersAction)
+async def start_all(
+    payload: ServerIdsRequest,
+    request: Request,
+    principal: Principal = Depends(require(SERVER_VIEW)),
+    core=Depends(get_core),
+):
+    """Start every stopped server the account may start, one after another
+    (each is only launched here; "Online" comes on the live feed later)."""
+    results = []
+    for ctx in _controlled(principal, core, payload.ids):
+        row = {"id": ctx.server_id, "name": ctx.name}
+        if ctx.server.running:
+            results.append({**row, "result": "already"})
+            continue
+        try:
+            await ctx.server.start(actor=principal.user)
+        except DOMAIN_ERRORS as exc:
+            audit(ctx, request, "server_start", result="failed", detail=str(exc))
+            results.append({**row, "result": "failed", "detail": str(exc)})
+            continue
+        audit(ctx, request, "server_start", detail="start all")
+        results.append({**row, "result": "started"})
+    return {"servers": results}
+
+
+@router.post("/servers/stop-all", response_model=AllServersAction)
+async def stop_all(
+    payload: ServerIdsRequest,
+    request: Request,
+    principal: Principal = Depends(require(SERVER_VIEW)),
+    core=Depends(get_core),
+):
+    """Stop every running server the account may stop, all at once, and
+    wait for each to save and exit."""
+    running = [ctx for ctx in _controlled(principal, core, payload.ids) if ctx.server.running]
+
+    async def stop(ctx) -> dict:
+        row = {"id": ctx.server_id, "name": ctx.name}
+        try:
+            await ctx.server.stop(actor=principal.user, reason=ExitReason.USER_STOP)
+        except DOMAIN_ERRORS as exc:
+            audit(ctx, request, "server_stop", result="failed", detail=str(exc))
+            return {**row, "result": "failed", "detail": str(exc)}
+        audit(ctx, request, "server_stop", detail="stop all")
+        stopped = ctx.server.state.value in ("OFFLINE", "CRASHED")
+        return {**row, "result": "stopped" if stopped else "stopping"}
+
+    return {"servers": list(await asyncio.gather(*(stop(ctx) for ctx in running)))}
 
 
 def _new_id(name: str, taken: list[str]) -> str:
