@@ -38,10 +38,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .backups.manager import single_files
 from .backups import hold
 from .backups.hold import resume_saving
-from .backups.manager import in_scope
+from .backups.manager import in_scope, single_files
 from .config import PROJECT_ROOT
 from .events import Event
 from .jobs import Job

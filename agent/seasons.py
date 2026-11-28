@@ -52,7 +52,7 @@ async def new_season(
     title = "Start a new season"
 
     async def change(job: JobHandle | None) -> dict[str, Any]:
-        moved.extend(await asyncio.to_thread(_move_aside, base, existing))
+        moved.extend(await asyncio.to_thread(_move_aside, ctx.db, base, existing))
         try:
             props = PropertiesFile.read(base / FILENAME)
             props.set("level-seed", seed)

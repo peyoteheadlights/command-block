@@ -932,8 +932,8 @@ class BackupManager:
         except Exception as exc:
             # What this restore made where nothing was before goes too.
             moved_names = {live for live, _ in moved}
-            new = [(base / u, None) for u in sorted(units) if base / u not in moved_names]
-            left = put_back_moved([*new, *moved])
+            made = [(base / u, None) for u in sorted(units) if base / u not in moved_names]
+            left = put_back_moved([*made, *moved])
             if left:
                 raise BackupError(
                     f"Restore failed: {exc}. The previous files could not be put back; "
