@@ -339,6 +339,41 @@ def test_a_server_on_a_pc_that_went_quiet_shows_as_unknown(pcs, fake, monkeypatc
     wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "OFFLINE")
 
 
+def test_a_pc_whose_clock_was_pushed_ahead_still_says_it_is_there(pcs, fake, monkeypatch):
+    from agent.discord import botpc
+
+    a, b, _owner = two_pcs(pcs)
+    ref = remote(a, b)
+    hour_ahead = f"{int(time.time() * 1000) + 3_600_000:013d}.00000.other"
+    b.core.auth.records.clock.observe(hour_ahead)  # another PC's clock is an hour fast
+    monkeypatch.setattr(botpc, "NEWS_STALE", 1.0, raising=False)
+    monkeypatch.setattr(botpc, "NEWS_EVERY", 0.5, raising=False)
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "UNKNOWN")
+    b.core.botpc.publish()  # B's minute
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "OFFLINE")
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "UNKNOWN")
+    b.core.botpc.publish()  # and the next one
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "OFFLINE")
+
+
+def test_a_restarted_bot_pc_doesnt_show_every_other_pc_as_unknown(pcs, fake):
+    from agent.discord.botpc import BotPC
+
+    a, b, _owner = two_pcs(pcs)
+    ref = remote(a, b)
+    a.core.botpc = BotPC(a.core)  # the agent started again
+    assert a.core.botpc.remote()[ref]["state"] == "OFFLINE"
+
+
+def test_pasting_the_token_again_after_discord_refused_starts_the_bot_again(pcs, fake):
+    a, _b, owner = two_pcs(pcs)
+    fake.socket.drop(4014)  # intents not turned on yet
+    wait_for(lambda: a.core.discord.gateway.state == "intents_refused")
+    # Turned on in the Developer Portal, then the same token pasted again.
+    assert a.call("PUT", "/api/discord/token", owner, json={"token": GOOD_TOKEN}).status_code == 200
+    wait_for(lambda: a.core.discord and a.core.discord.connected)
+
+
 def test_leaving_discord_reaches_a_pc_that_was_off_once_it_answers(pcs, fake, monkeypatch):
     a, b, owner = two_pcs(pcs)
     answer = a.call(
@@ -369,6 +404,24 @@ def test_leaving_discord_reaches_a_pc_that_was_off_once_it_answers(pcs, fake, mo
     on_pc(a, minute(a))  # delivered: not sent again
     time.sleep(0.5)
     assert sent == ["member_left", "member_left"]
+
+
+def test_still_waiting_never_covers_an_answer_the_other_pc_gave_first(pcs, fake, monkeypatch):
+    a, b, owner = two_pcs(pcs)
+    ref = set_up(a, b, owner)
+    real_post = a.core.botpc._post
+
+    async def slow_way_back(where, what, *rest):
+        answered = await real_post(where, what, *rest)
+        await asyncio.sleep(3)  # B answered Discord; its answer to A is slow
+        return answered
+
+    monkeypatch.setattr(a.core.botpc, "_post", slow_way_back)
+    token = fake.command("start", {"server": ref}, roles=[ROLE])
+    wait_for(lambda: any("don't allow" in w for w in fake.replies(token)), 15)
+    time.sleep(4)
+    edits = [body for m, path, body in fake.calls if m == "PATCH" and token in path]
+    assert not any("Still waiting" in str(body) for body in edits)
 
 
 def test_a_pc_slow_to_answer_is_still_waiting_not_off(pcs, fake, monkeypatch):

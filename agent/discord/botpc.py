@@ -38,7 +38,6 @@ from typing import Any
 import httpx
 
 from ..security.auth import AuthError
-from ..security.records import Clock
 from ..security.tls import pinned_context
 from ..yourpcs import PC_HEADER, PcError
 
@@ -50,6 +49,11 @@ CALL_SECONDS = 2.0  # to reach the other PC; after that it's "off"
 ANSWER_SECONDS = 10.0  # reached, then this long for its answer
 WAITING = {"waiting": True}  # reached, but no answer yet: it may still be at it
 NEWS_EVERY = 60.0  # each PC says what it has at least this often
+REFUSED = (
+    "token_rejected",
+    "intents_refused",
+    "refused",
+)  # stopped until the token is pasted again
 NEWS_STALE = 180.0  # no word from a PC this long: its servers' states are unknown
 # The Discord settings copied to the other PCs: each table's columns.
 TABLES = {
@@ -74,6 +78,8 @@ class BotPC:
         self.records.applied[SETTINGS] = self._applied
         self.records.applied[NEWS] = self._applied
         self._heard: dict[str, float] = {}  # pc -> when its bot_news came in
+        self._started = time.time()  # a PC not heard from since: counted as heard then
+        self._published = 0.0  # when this PC last wrote its bot_news, by its own clock
         self._delivering = False
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()
@@ -167,7 +173,12 @@ class BotPC:
         async with self._lock:
             mode, token = self.wanted()
             bot = self.core.discord
-            if bot is not None and mode and (bot.rest_only, bot.token) == (mode == "rest", token):
+            if (
+                bot is not None
+                and mode
+                and (bot.rest_only, bot.token) == (mode == "rest", token)
+                and bot.gateway.state not in REFUSED  # pasted again after Discord said no
+            ):
                 return
             if bot is not None:
                 self.core.discord = None
@@ -239,12 +250,9 @@ class BotPC:
             "wake": self.core.wake.for_bot(),
         }
         old = self.records.get(NEWS, self.me)
-        if (
-            old is None
-            or old["body"] != body
-            or time.time() - Clock.parse(old["hlc"])[0] / 1000 >= NEWS_EVERY
-        ):
+        if old is None or old["body"] != body or time.time() - self._published >= NEWS_EVERY:
             self.records.put(NEWS, self.me, body)
+            self._published = time.time()
 
     def linked(self) -> list[str]:
         """The other PCs the bot can reach: in Your PCs, with a Bot link."""
@@ -260,7 +268,7 @@ class BotPC:
         NEWS_STALE seconds: its servers' state is UNKNOWN."""
         out = {}
         for pc in self.linked():
-            quiet = time.time() - self._heard.get(pc, 0) >= NEWS_STALE
+            quiet = time.time() - self._heard.get(pc, self._started) >= NEWS_STALE
             for server in self.news(pc).get("servers") or []:
                 out[f"{server['id']}@{pc}"] = {
                     **server,

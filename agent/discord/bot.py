@@ -61,7 +61,7 @@ INTENTS = client.GUILDS
 MESSAGE_INTENTS = client.GUILD_MESSAGES | client.MESSAGE_CONTENT
 EPHEMERAL = 64
 ALREADY_ANSWERED = 40060  # Discord: this interaction already has its first answer
-SAY_WAITING = 2.5  # another PC this slow: say "Still waiting" before Discord's 3 s run out
+SAY_WAITING = 2.0  # another PC this slow: say "Still waiting" before Discord's 3 s run out
 # Minecraft names as the server prints them; Floodgate's "." is kept.
 NAME_RE = re.compile(r"^\.?[A-Za-z0-9_]{1,16}$")
 PROFILE_KEY = "discord_profile"
@@ -433,7 +433,12 @@ class Bot:
             before = db.get_setting(SEEN_KEY, {}) or {}
             saved: dict = {} if resync else dict(before)
             if any(isinstance(v, int) for v in saved.values()):
-                saved = {gid: dict(saved) for gid in self.guilds}  # one "seen" for all before
+                ids = {
+                    r["guild_id"] for r in db.query("SELECT DISTINCT guild_id FROM discord_roles")
+                }
+                saved = {
+                    gid: dict(saved) for gid in ids | set(self.guilds)
+                }  # one "seen" for all before
             levels_now = {m: levels.level_of(xp) for m, xp in self.xp().items()}
             for gid in list(self.guilds):
                 seen: dict[str, int] = saved.get(gid, {})
@@ -444,15 +449,16 @@ class Bot:
                 changed = {m: lv for m, lv in now.items() if seen.get(m) != lv}
                 roles = layout.level_roles(db, gid)
                 retired = layout.level_settings(db, gid).get("retired") or []
-                if not changed or (not roles and not retired and not self._announces(gid)):
+                if not changed:
                     continue
-                try:
-                    await self._update_guild_levels(gid, seen, now, changed, roles, retired)
-                except client.DiscordError as exc:
-                    log.info("couldn't update Levels in a Discord server: %s", exc)
-                    continue  # try again next minute
-                if resync and retired:
-                    layout.set_level_settings(db, gid, retired=[])
+                if roles or retired or self._announces(gid):
+                    try:
+                        await self._update_guild_levels(gid, seen, now, changed, roles, retired)
+                    except client.DiscordError as exc:
+                        log.info("couldn't update Levels in a Discord server: %s", exc)
+                        continue  # try again next minute
+                    if resync and retired:
+                        layout.set_level_settings(db, gid, retired=[])
                 # Kept: who's still linked, and (to try again) anyone Discord failed for.
                 saved[gid] = {
                     m: lv for m, lv in now.items() if lv >= 0 and not (m in gone and lv == 0)
@@ -478,14 +484,19 @@ class Bot:
             if old is not None and level > old and self._announces(gid):
                 name = found.get(role or "", {}).get("name") if role else None
                 channel = layout.levels_channel(db, gid)
-                await self.rest.request(
-                    "POST",
-                    f"/channels/{channel}/messages",
-                    {
-                        "content": progress.level_up(member, level, name),
-                        "allowed_mentions": {"parse": []},
-                    },
-                )
+                try:
+                    await self.rest.request(
+                        "POST",
+                        f"/channels/{channel}/messages",
+                        {
+                            "content": progress.level_up(member, level, name),
+                            "allowed_mentions": {"parse": []},
+                        },
+                    )
+                except client.DiscordError as exc:
+                    if exc.status not in (403, 404):
+                        now[member] = seen.get(member, -1)  # post it next minute
+                    log.info("couldn't post a level-up: %s", exc)
 
     def _announces(self, guild_id: str) -> bool:
         return bool(
@@ -1482,12 +1493,25 @@ class Bot:
         )
         said_waiting = False
         if not (await asyncio.wait({asked}, timeout=SAY_WAITING))[0]:
-            said_waiting = True
+            body = {
+                "type": 4,
+                "data": {
+                    "content": self.core.botpc.waiting_words(ref),
+                    "allowed_mentions": {"parse": []},
+                    "flags": EPHEMERAL,
+                },
+            }
             try:
-                await self.respond(data, self.core.botpc.waiting_words(ref))
+                # Straight to Discord, not _callback: an answer that PC
+                # already gave is never edited over.
+                await self.rest.request(
+                    "POST", f"/interactions/{data['id']}/{data['token']}/callback", body
+                )
+                said_waiting = True
             except client.DiscordError as exc:
-                if exc.code != ALREADY_ANSWERED:  # that PC answered first
-                    raise
+                # ALREADY_ANSWERED: that PC answered first. Anything else
+                # (Discord's 3 s ran out): that PC's answer still comes.
+                log.info("couldn't say still waiting: %s", exc)
         if await asked is not None:
             return
         starting = name in ("/start", "button start_yes", "/request-start")
