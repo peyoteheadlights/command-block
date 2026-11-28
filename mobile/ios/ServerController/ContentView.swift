@@ -247,7 +247,7 @@ struct ContentView: View {
         let idle = content.busy == nil
         SaidRow(said: content.said, palette: palette)
         CardBox(palette: palette) {
-            Text(verbatim: model.t("make.required_vanilla")).foregroundStyle(palette.textSecondary)
+            Text(hiding: model.t("make.required_vanilla")).foregroundStyle(palette.textSecondary)
             if model.can(Permissions.SETTINGS_SERVER) {
                 Button(model.t("make.change_type")) { model.serversPath.append(.settings(serverId)) }
             }
@@ -429,13 +429,13 @@ struct ContentView: View {
                 let radius = Int(farRadius) ?? load?.radius ?? 2000
                 SectionTitle(text: model.t("farview.title"), palette: palette)
                 CardBox(palette: palette) {
-                    Text(verbatim: model.t("farview.intro")).foregroundStyle(palette.textSecondary)
-                    Text(verbatim: FarViews.status(strings, card)).foregroundStyle(palette.textPrimary)
+                    Text(hiding: model.t("farview.intro")).foregroundStyle(palette.textSecondary)
+                    Text(hiding: FarViews.status(strings, card)).foregroundStyle(palette.textPrimary)
                     if card.supported {
-                        Text(verbatim: model.t(may ? "farview.stop_first" : "farview.no_change")).foregroundStyle(palette.textSecondary)
+                        Text(hiding: model.t(may ? "farview.stop_first" : "farview.no_change")).foregroundStyle(palette.textSecondary)
                         ForEach(card.choices) { item in
                             ForEach(FarViews.lines(strings, item, now: card.choice), id: \.self) { line in
-                                Text(verbatim: line).foregroundStyle(palette.textPrimary)
+                                Text(hiding: line).foregroundStyle(palette.textPrimary)
                             }
                             if may && item.available && item.id != card.choice {
                                 Presses(presses: [
@@ -475,7 +475,7 @@ struct ContentView: View {
                                 ], palette: palette)
                             }
                         } else if load?.running ?? false {
-                            Text(verbatim: model.t("farview.loading_now")).foregroundStyle(palette.textPrimary)
+                            Text(hiding: model.t("farview.loading_now")).foregroundStyle(palette.textPrimary)
                         }
                         TextField(model.t("farview.radius"), text: Binding(
                             get: { farRadius.isEmpty ? String(load?.radius ?? 2000) : farRadius },
@@ -1792,7 +1792,7 @@ private struct MakeModpackSheet: View {
                 if options.requiredToJoin {
                     // What friends with the Companion see when Minecraft starts.
                     Section(model.t("make.title_screen")) {
-                        Text(verbatim: model.t("make.title_screen_hint")).font(.footnote).foregroundStyle(.secondary)
+                        Text(hiding: model.t("make.title_screen_hint")).font(.footnote).foregroundStyle(.secondary)
                         Toggle(model.t("make.title_button"), isOn: $buttonOn)
                         TextField(model.t("make.title_address"), text: $address).disabled(!buttonOn)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
