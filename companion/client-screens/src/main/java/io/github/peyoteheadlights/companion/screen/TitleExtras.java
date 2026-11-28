@@ -30,7 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The title screen, shared by the Fabric and NeoForge mods: the small join
+ * The title screen, shared by the Fabric, Forge and NeoForge mods: the small join
  * button beside Realms, the owner's background picture and the yellow
  * flavor text. Everything comes from the modpack's players file and the
  * two PNGs next to it; anything missing or odd leaves Minecraft's own.

@@ -1,10 +1,11 @@
 pluginManagement {
     repositories {
         maven { name = 'Fabric'; url = 'https://maven.fabricmc.net/' }
+        maven { name = 'Forge'; url = 'https://maven.minecraftforge.net/' }
         mavenCentral()
         gradlePluginPortal()
     }
 }
 
 rootProject.name = 'command-block-companion'
-include 'common', 'fabric', 'neoforge', 'paper', 'waterdog'
+include 'common', 'fabric', 'forge', 'neoforge', 'paper', 'waterdog'

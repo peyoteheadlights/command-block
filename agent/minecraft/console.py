@@ -115,7 +115,7 @@ ADVANCEMENT_RE = re.compile(
     rf"^(?P<name>{PLAYER}) has (?:made the advancement|completed the challenge|reached the goal)"
     r" \[[^\]]+\]$"
 )
-# The Companion mod's line after each join check (Fabric and NeoForge log it
+# The Companion mod's line after each join check (Fabric, Forge and NeoForge log it
 # under their own logger name; Paper puts the plugin's name in front).
 COMPANION_RE = re.compile(
     rf"^(?:\[CommandBlockCompanion\] )?Companion check: (?P<name>{PLAYER}) "

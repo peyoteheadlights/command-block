@@ -19,7 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The player's side of updating, shared by the Fabric and NeoForge mods
+ * The player's side of updating, shared by the Fabric, Forge and NeoForge mods
  * (only Minecraft's own classes): remembers this server's offer and the
  * last check, and makes the "Update modpack" button when the player is
  * behind. Network threads write, the game thread reads: volatile.

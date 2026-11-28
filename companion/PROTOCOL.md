@@ -19,7 +19,7 @@ whole packet (`BadInput`), never part of it.
 | `commandblock:check` | server to player, player to server | Challenge, Answer |
 | `commandblock:offer` | server to player | Offer |
 
-On Fabric and NeoForge each packet is one Minecraft byte array: a VarInt
+On Fabric, Forge and NeoForge each packet is one Minecraft byte array: a VarInt
 length, then the bytes, at most `CheckPayload.MAX_BYTES` (128 132 bytes,
 a challenge with 4000 hashes). Paper hands plugins the raw packet, so the
 plugin adds and strips that VarInt length itself (`CompanionPlugin.frame`
@@ -121,7 +121,7 @@ check found the player behind. See "Updates" below.
 
 Written by the app each time the owner makes a modpack
 (`agent/companion.py`, `write`), read by `Settings.parse`. Where:
-`config/commandblock-companion.json` on Fabric and NeoForge servers,
+`config/commandblock-companion.json` on Fabric, Forge and NeoForge servers,
 `plugins/CommandBlockCompanion/config.json` on Paper. At most 2 MiB.
 Every object must have exactly these keys, no more and no fewer.
 
