@@ -721,7 +721,9 @@ class ModsPage(SharePage):
                 label(issue["detail"], "problem" if issue.get("severity") == "error" else "sub")
             )
         if newer and newer.get("held_until"):
-            words.addWidget(label(text("mods.update_held", when=clock(newer["held_until"])), "muted"))
+            words.addWidget(
+                label(text("mods.update_held", when=clock(newer["held_until"])), "muted")
+            )
         h.addLayout(words, 1)
         name = mod.get("name") or mod["filename"]
         if manage:

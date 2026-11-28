@@ -333,8 +333,7 @@ def test_a_server_on_a_pc_that_went_quiet_shows_as_unknown(pcs, fake, monkeypatc
     assert a.core.botpc.remote()[ref]["state"] == "OFFLINE"
     monkeypatch.setattr(botpc, "NEWS_STALE", 1.0, raising=False)
     monkeypatch.setattr(botpc, "NEWS_EVERY", 0.0, raising=False)
-    time.sleep(1.2)
-    assert a.core.botpc.remote()[ref]["state"] == "UNKNOWN"
+    wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "UNKNOWN", 5)
     b.core.botpc.publish()  # B says it again, as it does every minute
     wait_for(lambda: a.core.botpc.remote()[ref]["state"] == "OFFLINE")
 
@@ -402,7 +401,7 @@ def test_leaving_discord_reaches_a_pc_that_was_off_once_it_answers(pcs, fake, mo
     wait_for(lambda: sent == ["member_left", "member_left"])
     wait_for(lambda: not a.core.db.get_setting("bot_member_left", []))
     on_pc(a, minute(a))  # delivered: not sent again
-    time.sleep(0.5)
+    on_pc(a, a.core.botpc.deliver())  # and a delivery now has nothing to send
     assert sent == ["member_left", "member_left"]
 
 
@@ -411,15 +410,18 @@ def test_still_waiting_never_covers_an_answer_the_other_pc_gave_first(pcs, fake,
     ref = set_up(a, b, owner)
     real_post = a.core.botpc._post
 
+    back: list[bool] = []
+
     async def slow_way_back(where, what, *rest):
         answered = await real_post(where, what, *rest)
         await asyncio.sleep(3)  # B answered Discord; its answer to A is slow
+        back.append(True)
         return answered
 
     monkeypatch.setattr(a.core.botpc, "_post", slow_way_back)
     token = fake.command("start", {"server": ref}, roles=[ROLE])
     wait_for(lambda: any("don't allow" in w for w in fake.replies(token)), 15)
-    time.sleep(4)
+    wait_for(lambda: back, 15)  # A has B's slow answer
     edits = [body for m, path, body in fake.calls if m == "PATCH" and token in path]
     assert not any("Still waiting" in str(body) for body in edits)
 

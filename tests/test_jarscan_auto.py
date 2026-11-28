@@ -15,6 +15,7 @@ from agent.minecraft.process import ServerError
 from agent.mods import deepscan, jarscan
 from agent.security import permissions as P
 
+from .fake_discord import wait_for
 from .test_deepscan import BAD_CLASSES, CLASS, amsi  # noqa: F401
 from .test_helpers import add_helper
 from .test_jarscan import BASE, Sites, bad_jar, mod_with, row
@@ -242,9 +243,7 @@ def test_skip_lets_the_start_go_on(client, ctx, monkeypatch):
     monkeypatch.setattr(ctx.jarscan, "_checks", slow_checks)
     assert client.post(f"{BASE}/server/skip-check").status_code == 409
     starting = client.portal.start_task_soon(ctx.jarscan.before_start)
-    deadline = time.time() + 5
-    while not ctx.server.checking_jars and time.time() < deadline:
-        time.sleep(0.02)
+    wait_for(lambda: ctx.server.checking_jars, 5)
     assert ctx.jarscan.report()["checking"] is True
     assert client.get(f"{BASE}/status").json()["checking_jars"] is True
     assert client.post(f"{BASE}/server/skip-check").status_code == 200

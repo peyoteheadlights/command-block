@@ -47,8 +47,8 @@ from .minecraft.crash import CrashReporter
 from .minecraft.playeractions import PlayerActions
 from .minecraft.process import MinecraftServer, ServerError
 from .mods import sides
-from .mods.fit import Later as FitCheck
 from .mods.deepscan import DeepScanner
+from .mods.fit import Later as FitCheck
 from .mods.jarscan import JarScanner
 from .mods.manager import ModManager
 from .monitoring.answering import AnswerWatch
