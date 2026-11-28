@@ -13,6 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 
 /**
  * The server's half of the check, shared by the Fabric mod, the NeoForge
@@ -39,18 +40,22 @@ public final class ServerSide {
     private final SecureRandom random;
     private final Consumer<String> log;
     private final LongSupplier clock;
+    /** True for Bedrock players (Geyser and Floodgate): never checked. */
+    private final Predicate<UUID> bedrock;
     /** Players to show the chat line once they're in. */
     private final Map<UUID, String> chatLines = new ConcurrentHashMap<>();
     /** Required modpacks: when each player's next check is, and the one waiting for an answer. */
     private final Map<UUID, Recheck> rechecks = new ConcurrentHashMap<>();
 
-    private ServerSide(Settings settings, Path serverDir, Consumer<String> log, LongSupplier clock) {
+    private ServerSide(Settings settings, Path serverDir, Consumer<String> log, LongSupplier clock,
+            Predicate<UUID> bedrock) {
         this.settings = settings;
         this.random = new SecureRandom();
         this.checker = Checker.create(settings, serverDir, random);
         this.gate = new Gate(settings.handshakesPerIpPerMinute());
         this.log = log;
         this.clock = clock;
+        this.bedrock = bedrock;
     }
 
     /**
@@ -58,10 +63,12 @@ public final class ServerSide {
      * log line says why (the Companion then does nothing).
      */
     public static ServerSide load(Path settingsFile, Path serverDir, Consumer<String> info, Consumer<String> warn) {
-        return load(settingsFile, serverDir, info, warn, System::currentTimeMillis);
+        return load(settingsFile, serverDir, info, warn, System::currentTimeMillis,
+                Bedrock.find(Bedrock.FLOODGATE_API));
     }
 
-    static ServerSide load(Path settingsFile, Path serverDir, Consumer<String> info, Consumer<String> warn, LongSupplier clock) {
+    static ServerSide load(Path settingsFile, Path serverDir, Consumer<String> info, Consumer<String> warn,
+            LongSupplier clock, Predicate<UUID> bedrock) {
         String name = settingsFile.getFileName().toString();
         Settings settings;
         try {
@@ -76,18 +83,23 @@ public final class ServerSide {
             warn.accept("Not checking players: " + name + " can't be used (" + e.getMessage() + ")");
             return null;
         }
-        ServerSide side = new ServerSide(settings, serverDir, info, clock);
+        ServerSide side = new ServerSide(settings, serverDir, info, clock, bedrock);
         info.accept("Checking players for '" + settings.modpackName() + "' " + settings.modpackVersion()
                 + " (" + (settings.required() ? "required to join" : "not required") + ")");
         return side;
     }
 
     /**
-     * A player starts joining, from this address. False when they may not
-     * be checked now (too many joins from that address): a required
-     * modpack then sends them away, otherwise they get in unchecked.
+     * A player starts joining, from this address. False when they aren't
+     * checked: Bedrock players never are (they get in, with no chat line),
+     * and with too many joins from that address a required modpack sends
+     * them away, otherwise they get in unchecked.
      */
-    public boolean mayCheck(String ip, Consumer<String> kick) {
+    public boolean mayCheck(UUID id, String name, String ip, Consumer<String> kick) {
+        if (bedrock.test(id)) {
+            log.accept("Companion check: " + name + " skipped, Bedrock player");
+            return false;
+        }
         if (gate.allow(ip, clock.getAsLong())) {
             return true;
         }
@@ -149,7 +161,7 @@ public final class ServerSide {
 
     /** The player is in the world: returns their chat line (or null), and plans their first recheck. */
     public String joined(UUID id) {
-        if (settings.required()) {
+        if (settings.required() && !bedrock.test(id)) {
             rechecks.put(id, new Recheck(nextCheck(), null, 0));
         }
         return chatLines.remove(id);

@@ -97,7 +97,8 @@ public final class Companion {
             return; // no settings: the app hasn't made a modpack here
         }
         Consumer<String> kick = message -> handler.disconnect(Component.literal(message));
-        if (!side.mayCheck(address(handler.getConnection().getRemoteAddress()), kick)) {
+        GameProfile profile = handler.getOwner();
+        if (!side.mayCheck(profile.id(), profile.name(), address(handler.getConnection().getRemoteAddress()), kick)) {
             return;
         }
         if (handler.hasChannel(CheckPayload.TYPE)) {
@@ -105,7 +106,6 @@ public final class Companion {
             joining.put(handler, check);
             event.register(check);
         } else {
-            GameProfile profile = handler.getOwner();
             side.judged(profile.id(), profile.name(), null, null, kick); // no Companion at all
         }
     }

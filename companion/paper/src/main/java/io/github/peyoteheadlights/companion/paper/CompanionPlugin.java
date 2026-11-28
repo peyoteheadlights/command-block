@@ -69,7 +69,7 @@ public final class CompanionPlugin extends JavaPlugin implements Listener, Plugi
         UUID id = connection.getProfile().getId();
         String name = connection.getProfile().getName();
         Consumer<String> kick = message -> connection.disconnect(Component.text(message));
-        if (!side.mayCheck(connection.getClientAddress().getAddress().getHostAddress(), kick)) {
+        if (!side.mayCheck(id, name, connection.getClientAddress().getAddress().getHostAddress(), kick)) {
             return;
         }
         if (id == null || !connection.getListeningPluginChannels().contains(CHANNEL)) {
